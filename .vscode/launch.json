@@ -1,0 +1,170 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Web (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:8081",
+      "webRoot": "${workspaceFolder}/expo-app",
+      "sourceMaps": true,
+      "sourceMapPathOverrides": {
+        "webpack:///./*": "${webRoot}/*",
+        "webpack:///src/*": "${webRoot}/sources/*",
+        "webpack:///*": "*",
+        "webpack:///./~/*": "${webRoot}/node_modules/*"
+      },
+      "preLaunchTask": "Start Expo Web",
+      "presentation": {
+        "hidden": false,
+        "group": "web",
+        "order": 1
+      }
+    },
+    {
+      "name": "Debug Web (Edge)",
+      "type": "msedge",
+      "request": "launch",
+      "url": "http://localhost:8081",
+      "webRoot": "${workspaceFolder}/expo-app",
+      "sourceMaps": true,
+      "sourceMapPathOverrides": {
+        "webpack:///./*": "${webRoot}/*",
+        "webpack:///src/*": "${webRoot}/sources/*",
+        "webpack:///*": "*",
+        "webpack:///./~/*": "${webRoot}/node_modules/*"
+      },
+      "preLaunchTask": "Start Expo Web",
+      "presentation": {
+        "hidden": false,
+        "group": "web",
+        "order": 2
+      }
+    },
+    {
+      "name": "Attach to Packager (React Native)",
+      "type": "reactnativedirect",
+      "request": "attach",
+      "port": 8081,
+      "cwd": "${workspaceFolder}/expo-app",
+      "sourceMaps": true,
+      "sourceMapPathOverrides": {
+        "webpack:///./*": "${workspaceFolder}/expo-app/*"
+      },
+      "presentation": {
+        "hidden": false,
+        "group": "native",
+        "order": 1
+      }
+    },
+    {
+      "name": "Debug iOS",
+      "type": "reactnativedirect",
+      "request": "launch",
+      "platform": "ios",
+      "target": "simulator",
+      "cwd": "${workspaceFolder}/expo-app",
+      "sourceMaps": true,
+      "runArguments": ["--configuration", "Debug"],
+      "launchActivity": "",
+      "presentation": {
+        "hidden": false,
+        "group": "native",
+        "order": 2
+      }
+    },
+    {
+      "name": "Debug iOS (Device)",
+      "type": "reactnativedirect",
+      "request": "launch",
+      "platform": "ios",
+      "target": "device",
+      "cwd": "${workspaceFolder}/expo-app",
+      "sourceMaps": true,
+      "runArguments": ["--configuration", "Debug", "--device"],
+      "presentation": {
+        "hidden": false,
+        "group": "native",
+        "order": 3
+      }
+    },
+    {
+      "name": "Debug Android",
+      "type": "reactnativedirect",
+      "request": "launch",
+      "platform": "android",
+      "cwd": "${workspaceFolder}/expo-app",
+      "sourceMaps": true,
+      "runArguments": ["--variant=debug"],
+      "presentation": {
+        "hidden": false,
+        "group": "native",
+        "order": 4
+      }
+    },
+    {
+      "name": "Debug Android (Device)",
+      "type": "reactnativedirect",
+      "request": "launch",
+      "platform": "android",
+      "target": "device",
+      "cwd": "${workspaceFolder}/expo-app",
+      "sourceMaps": true,
+      "runArguments": ["--variant=debug", "--deviceId", "${command:PickAndroidDevice}"],
+      "presentation": {
+        "hidden": false,
+        "group": "native",
+        "order": 5
+      }
+    },
+    {
+      "name": "Debug Expo Go (iOS)",
+      "type": "reactnativedirect",
+      "request": "launch",
+      "platform": "ios",
+      "target": "simulator",
+      "cwd": "${workspaceFolder}/expo-app",
+      "sourceMaps": true,
+      "expoHostType": "lan",
+      "presentation": {
+        "hidden": false,
+        "group": "expo-go",
+        "order": 1
+      }
+    },
+    {
+      "name": "Debug Expo Go (Android)",
+      "type": "reactnativedirect",
+      "request": "launch",
+      "platform": "android",
+      "cwd": "${workspaceFolder}/expo-app",
+      "sourceMaps": true,
+      "expoHostType": "lan",
+      "presentation": {
+        "hidden": false,
+        "group": "expo-go",
+        "order": 2
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug iOS + Packager",
+      "configurations": ["Attach to Packager (React Native)", "Debug iOS"],
+      "presentation": {
+        "hidden": false,
+        "group": "compounds",
+        "order": 1
+      }
+    },
+    {
+      "name": "Debug Android + Packager",
+      "configurations": ["Attach to Packager (React Native)", "Debug Android"],
+      "presentation": {
+        "hidden": false,
+        "group": "compounds",
+        "order": 2
+      }
+    }
+  ]
+}

@@ -1,0 +1,699 @@
+import * as React from 'react';
+import { useCallback, useState } from 'react';
+import {
+  Alert,
+  TextInput,
+  View,
+  Text,
+  ScrollView,
+  TouchableOpacity,
+  Platform,
+  ActivityIndicator,
+} from 'react-native';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
+import { StyleSheet } from 'react-native-unistyles';
+
+import { useWallet } from '@/state/wallet';
+import { t } from '@/text';
+import {
+  createWallet,
+  importPrivateKey,
+  loadWallet,
+  saveKeyToFile,
+  type WalletFile,
+} from './WalletHelper';
+
+type CreateWalletStep = 'idle' | 'created' | 'enterPassword' | 'saving' | 'done';
+type ImportKeyStep = 'idle' | 'enterKey' | 'enterPassword' | 'saving' | 'done';
+
+const isWeb = Platform.OS === 'web';
+
+export default function KeysScreen() {
+  const { publicInfo, isUnlocked, storeEncryptedWallet, lockWallet } = useWallet();
+
+  const hasExistingWallet = !!publicInfo?.hasEncryptedWallet;
+
+  // State for wallet creation flow
+  const [step, setStep] = useState<CreateWalletStep>('idle');
+  const [newWallet, setNewWallet] = useState<WalletFile | null>(null);
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [walletAddress, setWalletAddress] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+
+  // State for loading existing wallet
+  const [loadMode, setLoadMode] = useState(false);
+  const [loadPassword, setLoadPassword] = useState('');
+  const [loadedWallet, setLoadedWallet] = useState<WalletFile | null>(null);
+
+  // State for import private key flow
+  const [importStep, setImportStep] = useState<ImportKeyStep>('idle');
+  const [privateKeyInput, setPrivateKeyInput] = useState('');
+  const [importedWallet, setImportedWallet] = useState<WalletFile | null>(null);
+
+  // Create a new wallet
+  const handleCreateWallet = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMessage('');
+
+    try {
+      const wallet = await createWallet();
+      setNewWallet(wallet);
+      setWalletAddress(wallet.wallet.address);
+      setStep('created');
+    } catch (error) {
+      console.error('Error creating wallet:', error);
+      setErrorMessage(`Failed to create wallet: ${(error as Error).message}`);
+      Alert.alert('Error', `Failed to create wallet: ${(error as Error).message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Proceed to password entry
+  const handleProceedToPassword = useCallback(() => {
+    setStep('enterPassword');
+  }, []);
+
+  // Save wallet with password
+  const handleSaveWallet = useCallback(async () => {
+    if (!newWallet) {
+      setErrorMessage('No wallet to save');
+      return;
+    }
+
+    if (!password) {
+      setErrorMessage('Please enter a password');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMessage('Passwords do not match');
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMessage('Password must be at least 6 characters');
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage('');
+    setStep('saving');
+
+    try {
+      const encryptedContent = await saveKeyToFile(newWallet, password);
+
+      await storeEncryptedWallet(encryptedContent, newWallet.wallet.address, password);
+
+      const fileName = `wallet_${newWallet.wallet.address.slice(0, 8)}_${Date.now()}.json`;
+
+      if (isWeb) {
+        const blob = new Blob([encryptedContent], { type: 'application/json' });
+
+        if ('showSaveFilePicker' in globalThis) {
+          try {
+            const handle = await (globalThis as any).showSaveFilePicker({
+              suggestedName: fileName,
+              types: [
+                {
+                  description: 'JSON Wallet File',
+                  accept: { 'application/json': ['.json'] },
+                },
+              ],
+            });
+            const writable = await handle.createWritable();
+            await writable.write(blob);
+            await writable.close();
+
+            setStep('done');
+            Alert.alert('Success', 'Wallet saved successfully. Keep your password safe!');
+          } catch (pickerError: any) {
+            if (pickerError.name === 'AbortError') {
+              setStep('enterPassword');
+              setErrorMessage('Save cancelled. Please try again.');
+              setIsLoading(false);
+              return;
+            }
+            throw pickerError;
+          }
+        } else {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = fileName;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(url);
+
+          setStep('done');
+          Alert.alert('Success', 'Wallet created and downloaded successfully!');
+        }
+      } else {
+        const documentsDir = (FileSystem as any).documentDirectory;
+        if (!documentsDir) {
+          throw new Error('Documents directory not available');
+        }
+
+        const filePath = `${documentsDir}${fileName}`;
+        await (FileSystem as any).writeAsStringAsync(filePath, encryptedContent);
+
+        const sharingAvailable = await Sharing.isAvailableAsync();
+
+        if (sharingAvailable) {
+          Alert.alert(
+            'Wallet Created',
+            'Your encrypted wallet file is ready. Use the share sheet to save it.',
+            [
+              {
+                text: 'Save Wallet File',
+                onPress: () => {
+                  Sharing.shareAsync(filePath, {
+                    mimeType: 'application/json',
+                    dialogTitle: 'Save your encrypted wallet file',
+                    UTI: 'public.json',
+                  })
+                    .then(() => setStep('done'))
+                    .catch(() => setStep('done'));
+                },
+              },
+            ],
+          );
+        } else {
+          setStep('done');
+          Alert.alert('Wallet Saved', `Wallet saved as "${fileName}".`);
+        }
+      }
+    } catch (error) {
+      console.error('Error saving wallet:', error);
+      setErrorMessage(`Failed to save wallet: ${(error as Error).message}`);
+      setStep('enterPassword');
+      Alert.alert('Error', `Failed to save wallet: ${(error as Error).message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [newWallet, password, confirmPassword, storeEncryptedWallet]);
+
+  // Reset to start over
+  const handleReset = useCallback(() => {
+    setStep('idle');
+    setNewWallet(null);
+    setPassword('');
+    setConfirmPassword('');
+    setWalletAddress('');
+    setErrorMessage('');
+    setLoadMode(false);
+    setLoadPassword('');
+    setLoadedWallet(null);
+    setImportStep('idle');
+    setPrivateKeyInput('');
+    setImportedWallet(null);
+  }, []);
+
+  // Start import private key flow
+  const handleStartImport = useCallback(() => {
+    setImportStep('enterKey');
+    setErrorMessage('');
+  }, []);
+
+  // Import private key
+  const handleImportKey = useCallback(async () => {
+    if (!privateKeyInput.trim()) {
+      setErrorMessage('Please enter a private key');
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage('');
+
+    try {
+      const wallet = await importPrivateKey(privateKeyInput);
+      setImportedWallet(wallet);
+      setWalletAddress(wallet.wallet.address);
+      setImportStep('enterPassword');
+    } catch (error) {
+      console.error('Error importing private key:', error);
+      setErrorMessage(`Failed to import key: ${(error as Error).message}`);
+      Alert.alert('Error', `Failed to import key: ${(error as Error).message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [privateKeyInput]);
+
+  // Save imported wallet
+  const handleSaveImportedWallet = useCallback(async () => {
+    if (!importedWallet) return;
+
+    if (!password || password !== confirmPassword) {
+      setErrorMessage('Passwords do not match');
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMessage('Password must be at least 6 characters');
+      return;
+    }
+
+    setIsLoading(true);
+    setImportStep('saving');
+
+    try {
+      const encryptedContent = await saveKeyToFile(importedWallet, password);
+      await storeEncryptedWallet(encryptedContent, importedWallet.wallet.address, password);
+
+      setImportStep('done');
+      Alert.alert('Success', 'Imported wallet saved successfully!');
+    } catch (error) {
+      setErrorMessage(`Failed to save wallet: ${(error as Error).message}`);
+      setImportStep('enterPassword');
+      Alert.alert('Error', `Failed to save wallet: ${(error as Error).message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [importedWallet, password, confirmPassword, storeEncryptedWallet]);
+
+  // Render functions
+  const renderIdleState = () => (
+    <View style={styles.container}>
+      {hasExistingWallet && (
+        <View style={styles.walletInfo}>
+          <Text style={styles.label}>Current Wallet:</Text>
+          <Text style={styles.address} selectable>
+            {publicInfo?.address}
+          </Text>
+          <View style={styles.statusRow}>
+            <View style={[styles.statusDot, isUnlocked && styles.statusDotUnlocked]} />
+            <Text style={styles.statusText}>{isUnlocked ? 'Unlocked' : 'Locked'}</Text>
+          </View>
+          {isUnlocked && (
+            <TouchableOpacity style={styles.button} onPress={lockWallet}>
+              <Text style={styles.buttonText}>Lock Wallet</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+      <Text style={styles.description}>Create a new wallet or load an existing one.</Text>
+
+      <TouchableOpacity
+        style={[styles.button, styles.buttonPrimary]}
+        onPress={handleCreateWallet}
+        disabled={isLoading}>
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Create New Wallet</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={styles.button}
+        onPress={handleStartImport}
+        disabled={isLoading}>
+        <Text style={styles.buttonText}>Import Private Key</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderCreatedState = () => (
+    <View style={styles.container}>
+      <Text style={styles.title}>New Wallet Created!</Text>
+
+      <View style={styles.walletInfo}>
+        <Text style={styles.label}>Your wallet address:</Text>
+        <Text style={styles.address} selectable>
+          {walletAddress}
+        </Text>
+      </View>
+
+      <Text style={styles.warning}>
+        Important: You must save this wallet with a secure password. Without the password, you
+        won't be able to access your funds.
+      </Text>
+
+      <View style={styles.buttonRow}>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonPrimary, styles.buttonFlex]}
+          onPress={handleProceedToPassword}>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Save with Password</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.button, styles.buttonFlex]} onPress={handleReset}>
+          <Text style={styles.buttonText}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderPasswordState = () => (
+    <View style={styles.container}>
+      <Text style={styles.title}>Set Wallet Password</Text>
+
+      <Text style={styles.description}>
+        This password will encrypt your wallet file. Make sure to remember it - there is no way to
+        recover your wallet without it!
+      </Text>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Password</Text>
+        <TextInput
+          style={styles.input}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Enter password (min 6 characters)"
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Confirm Password</Text>
+        <TextInput
+          style={styles.input}
+          value={confirmPassword}
+          onChangeText={setConfirmPassword}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Confirm password"
+        />
+      </View>
+
+      {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+
+      <View style={styles.buttonRow}>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonPrimary, styles.buttonFlex]}
+          onPress={handleSaveWallet}
+          disabled={isLoading}>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+            {isLoading ? 'Saving...' : 'Save Wallet'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonFlex]}
+          onPress={() => setStep('created')}
+          disabled={isLoading}>
+          <Text style={styles.buttonText}>Back</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderDoneState = () => (
+    <View style={styles.container}>
+      <Text style={[styles.title, styles.successText]}>Wallet Saved Successfully!</Text>
+
+      <View style={styles.walletInfo}>
+        <Text style={styles.label}>Wallet address:</Text>
+        <Text style={styles.address} selectable>
+          {walletAddress}
+        </Text>
+      </View>
+
+      <Text style={styles.description}>
+        Your wallet has been encrypted and saved. Make sure to:{'\n'}• Keep your password safe
+        {'\n'}• Backup your wallet file{'\n'}• Never share your password or wallet file
+      </Text>
+
+      <TouchableOpacity
+        style={[styles.button, styles.buttonPrimary]}
+        onPress={handleReset}>
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Done</Text>
+      </TouchableOpacity>
+    </View>
+  );
+
+  const renderImportEnterKeyState = () => (
+    <View style={styles.container}>
+      <Text style={styles.title}>Import Private Key</Text>
+
+      <Text style={styles.description}>
+        Enter your private key in hex format (64 characters) or WIF format. Your key will be
+        encrypted with a password before saving.
+      </Text>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Private Key</Text>
+        <TextInput
+          style={[styles.input, styles.inputMultiline]}
+          value={privateKeyInput}
+          onChangeText={setPrivateKeyInput}
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry
+          multiline
+          numberOfLines={3}
+          placeholder="Enter private key (hex or WIF)"
+        />
+      </View>
+
+      {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+
+      <View style={styles.buttonRow}>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonPrimary, styles.buttonFlex]}
+          onPress={handleImportKey}
+          disabled={isLoading}>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+            {isLoading ? 'Importing...' : 'Import Key'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonFlex]}
+          onPress={handleReset}
+          disabled={isLoading}>
+          <Text style={styles.buttonText}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderImportPasswordState = () => (
+    <View style={styles.container}>
+      <Text style={styles.title}>Set Wallet Password</Text>
+
+      <View style={styles.walletInfo}>
+        <Text style={styles.label}>Imported wallet address:</Text>
+        <Text style={styles.address} selectable>
+          {walletAddress}
+        </Text>
+      </View>
+
+      <Text style={styles.description}>
+        Choose a strong password to encrypt your wallet. You will need this password to access
+        your wallet.
+      </Text>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Password</Text>
+        <TextInput
+          style={styles.input}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Enter password (min 6 characters)"
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Confirm Password</Text>
+        <TextInput
+          style={styles.input}
+          value={confirmPassword}
+          onChangeText={setConfirmPassword}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Confirm password"
+        />
+      </View>
+
+      {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+
+      <View style={styles.buttonRow}>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonPrimary, styles.buttonFlex]}
+          onPress={handleSaveImportedWallet}
+          disabled={isLoading}>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+            {isLoading ? 'Saving...' : 'Save Wallet'}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonFlex]}
+          onPress={handleReset}
+          disabled={isLoading}>
+          <Text style={styles.buttonText}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  return (
+    <ScrollView style={styles.scrollView}>
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Manage Keys</Text>
+      </View>
+
+      {isLoading && step === 'idle' && importStep === 'idle' ? (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" />
+        </View>
+      ) : importStep === 'enterKey' ? (
+        renderImportEnterKeyState()
+      ) : importStep === 'enterPassword' || importStep === 'saving' ? (
+        renderImportPasswordState()
+      ) : importStep === 'done' ? (
+        renderDoneState()
+      ) : step === 'idle' ? (
+        renderIdleState()
+      ) : step === 'created' ? (
+        renderCreatedState()
+      ) : step === 'enterPassword' || step === 'saving' ? (
+        renderPasswordState()
+      ) : step === 'done' ? (
+        renderDoneState()
+      ) : null}
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create((theme) => ({
+  scrollView: {
+    flex: 1,
+    backgroundColor: theme.colors.groupped.background,
+  },
+  header: {
+    padding: theme.margins.lg,
+    backgroundColor: theme.colors.header.background,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.divider,
+  },
+  headerTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: theme.colors.text,
+  },
+  container: {
+    padding: theme.margins.lg,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: theme.colors.text,
+    marginBottom: theme.margins.md,
+  },
+  successText: {
+    color: '#34C759',
+  },
+  description: {
+    fontSize: 14,
+    color: theme.colors.textSecondary,
+    marginBottom: theme.margins.lg,
+    lineHeight: 20,
+  },
+  warning: {
+    fontSize: 14,
+    color: theme.colors.textSecondary,
+    marginBottom: theme.margins.lg,
+    lineHeight: 20,
+    backgroundColor: theme.colors.surfacePressed,
+    padding: theme.margins.md,
+    borderRadius: theme.borderRadius.md,
+  },
+  walletInfo: {
+    backgroundColor: theme.colors.surface,
+    padding: theme.margins.md,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.margins.lg,
+  },
+  label: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+    marginBottom: theme.margins.xs,
+  },
+  address: {
+    fontSize: 14,
+    color: theme.colors.text,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', web: 'monospace' }),
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: theme.margins.sm,
+    gap: theme.margins.xs,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#8E8E93',
+  },
+  statusDotUnlocked: {
+    backgroundColor: '#34C759',
+  },
+  statusText: {
+    fontSize: 12,
+    color: theme.colors.textSecondary,
+  },
+  inputGroup: {
+    marginBottom: theme.margins.md,
+  },
+  inputLabel: {
+    fontSize: 14,
+    color: theme.colors.text,
+    marginBottom: theme.margins.xs,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: theme.colors.divider,
+    backgroundColor: theme.colors.surface,
+    color: theme.colors.text,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.margins.md,
+    fontSize: 14,
+  },
+  inputMultiline: {
+    minHeight: 80,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', web: 'monospace' }),
+  },
+  error: {
+    fontSize: 14,
+    color: '#FF3B30',
+    marginBottom: theme.margins.md,
+  },
+  button: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.margins.md,
+    alignItems: 'center',
+    marginTop: theme.margins.sm,
+    borderWidth: 1,
+    borderColor: theme.colors.divider,
+  },
+  buttonPrimary: {
+    backgroundColor: theme.colors.text,
+    borderColor: theme.colors.text,
+  },
+  buttonText: {
+    fontSize: 16,
+    color: theme.colors.text,
+    fontWeight: '600',
+  },
+  buttonTextPrimary: {
+    color: theme.colors.groupped.background,
+  },
+  buttonRow: {
+    flexDirection: 'row',
+    gap: theme.margins.sm,
+  },
+  buttonFlex: {
+    flex: 1,
+  },
+  loadingContainer: {
+    padding: theme.margins.xl,
+    alignItems: 'center',
+  },
+}));

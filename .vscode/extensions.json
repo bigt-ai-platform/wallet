@@ -1,0 +1,26 @@
+{
+  "recommendations": [
+    // React Native
+    "msjsdiag.vscode-react-native",
+    "dsznajder.es7-react-js-snippets",
+
+    // TypeScript/JavaScript
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+
+    // Git
+    "eamodio.gitlens",
+
+    // Debugging
+    "msjsdiag.debugger-for-chrome",
+    "ms-vscode.vscode-typescript-next",
+
+    // Utilities
+    "christian-kohler.path-intellisense",
+    "visualstudioexptteam.vscodeintellicode",
+    "usernamehw.errorlens",
+
+    // Expo
+    "expo.vscode-expo-tools"
+  ]
+}

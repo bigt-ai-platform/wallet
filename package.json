@@ -1,0 +1,17 @@
+{
+  "name": "bapp-monorepo",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "expo-app"
+    ],
+    "nohoist": [
+      "**/react",
+      "**/react-dom",
+      "**/react-native",
+      "**/react-native/**",
+      "**/react-native-edge-to-edge/**"
+    ]
+  },
+  "packageManager": "yarn@1.22.22"
+}

@@ -1,0 +1,145 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Start Expo Web",
+      "type": "shell",
+      "command": "yarn",
+      "args": ["web"],
+      "options": {
+        "cwd": "${workspaceFolder}/expo-app"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^.*$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Starting.*",
+          "endsPattern": ".*Compiled successfully.*"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "expo"
+      }
+    },
+    {
+      "label": "Start Expo Dev Server",
+      "type": "shell",
+      "command": "yarn",
+      "args": ["start"],
+      "options": {
+        "cwd": "${workspaceFolder}/expo-app"
+      },
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": {
+          "regexp": "^.*$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Starting.*",
+          "endsPattern": ".*Metro.*waiting.*"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "expo"
+      }
+    },
+    {
+      "label": "Start Expo iOS",
+      "type": "shell",
+      "command": "yarn",
+      "args": ["ios"],
+      "options": {
+        "cwd": "${workspaceFolder}/expo-app"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "expo"
+      }
+    },
+    {
+      "label": "Start Expo Android",
+      "type": "shell",
+      "command": "yarn",
+      "args": ["android"],
+      "options": {
+        "cwd": "${workspaceFolder}/expo-app"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "expo"
+      }
+    },
+    {
+      "label": "TypeCheck",
+      "type": "shell",
+      "command": "yarn",
+      "args": ["typecheck"],
+      "options": {
+        "cwd": "${workspaceFolder}/expo-app"
+      },
+      "problemMatcher": "$tsc",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "group": "build"
+      }
+    },
+    {
+      "label": "Test",
+      "type": "shell",
+      "command": "yarn",
+      "args": ["test"],
+      "options": {
+        "cwd": "${workspaceFolder}/expo-app"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "group": "test"
+      }
+    },
+    {
+      "label": "Prebuild (Generate Native Projects)",
+      "type": "shell",
+      "command": "yarn",
+      "args": ["prebuild"],
+      "options": {
+        "cwd": "${workspaceFolder}/expo-app"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "build"
+      }
+    },
+    {
+      "label": "Clean Build",
+      "type": "shell",
+      "command": "rm -rf node_modules .expo android ios && yarn install",
+      "options": {
+        "cwd": "${workspaceFolder}/expo-app"
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "group": "build"
+      }
+    }
+  ]
+}

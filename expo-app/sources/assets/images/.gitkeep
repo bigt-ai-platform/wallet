@@ -1,0 +1,13 @@
+# Placeholder for assets
+#
+# Required assets:
+# - icon.png (1024x1024) - App icon
+# - icon-adaptive.png (1024x1024) - Android adaptive icon foreground
+# - icon-monochrome.png (1024x1024) - Android monochrome icon
+# - icon-notification.png (1024x1024) - Notification icon
+# - favicon.png (48x48 or larger) - Web favicon
+#
+# You can generate these using tools like:
+# - https://icon.kitchen/
+# - https://www.figma.com/
+# - Or any image editor
