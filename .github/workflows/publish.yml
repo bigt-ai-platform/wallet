@@ -46,6 +46,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Checkout bigtangle-ts
+        uses: actions/checkout@v4
+        with:
+          repository: bigtangle/bigtangle-ts
+          path: bigtangle-ts
+
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -99,6 +106,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Checkout bigtangle-ts
+        uses: actions/checkout@v4
+        with:
+          repository: bigtangle/bigtangle-ts
+          path: bigtangle-ts
+
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -163,6 +177,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Checkout bigtangle-ts
+        uses: actions/checkout@v4
+        with:
+          repository: bigtangle/bigtangle-ts
+          path: bigtangle-ts
+
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -217,6 +238,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Checkout bigtangle-ts
+        uses: actions/checkout@v4
+        with:
+          repository: bigtangle/bigtangle-ts
+          path: bigtangle-ts
+
 
       - name: Download web artifacts
         uses: actions/download-artifact@v4
@@ -297,4 +325,5 @@ jobs:
           echo "- **iOS**: ${{ needs.publish-ios.result }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.check.outputs.message }}" >> $GITHUB_STEP_SUMMARY
+
 
