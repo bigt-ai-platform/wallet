@@ -69,6 +69,10 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Install bigtangle-ts dependencies
+        working-directory: ./bigtangle-ts
+        run: npm install
+
       - name: Build bigtangle-ts
         working-directory: ./bigtangle-ts
         run: npm run build
@@ -141,6 +145,10 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Install bigtangle-ts dependencies
+        working-directory: ./bigtangle-ts
+        run: npm install
+
       - name: Build bigtangle-ts
         working-directory: ./bigtangle-ts
         run: npm run build
@@ -209,6 +217,10 @@ jobs:
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
+
+      - name: Install bigtangle-ts dependencies
+        working-directory: ./bigtangle-ts
+        run: npm install
 
       - name: Build bigtangle-ts
         working-directory: ./bigtangle-ts
