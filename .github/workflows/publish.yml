@@ -50,8 +50,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: expo-app/package-lock.json
+          cache: 'yarn'
+          cache-dependency-path: yarn.lock
 
       - name: Setup Expo
         uses: expo/expo-github-action@v8
@@ -61,11 +61,11 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./expo-app
-        run: npm ci
+        run: yarn install --frozen-lockfile
 
       - name: Type check
         working-directory: ./expo-app
-        run: npm run typecheck
+        run: yarn typecheck
 
       - name: Export web build
         working-directory: ./expo-app
@@ -105,8 +105,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: expo-app/package-lock.json
+          cache: 'yarn'
+          cache-dependency-path: yarn.lock
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -122,14 +122,14 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./expo-app
-        run: npm ci
+        run: yarn install --frozen-lockfile
 
       - name: Type check
         working-directory: ./expo-app
-        run: npm run typecheck
+        run: yarn typecheck
 
       - name: Setup EAS CLI
-        run: npm install -g eas-cli
+        run: yarn install -g eas-cli
 
       - name: Build Android APK (Development)
         if: github.event.inputs.profile == 'preview' || github.ref != 'refs/heads/main'
@@ -169,8 +169,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: expo-app/package-lock.json
+          cache: 'yarn'
+          cache-dependency-path: yarn.lock
 
       - name: Setup Expo
         uses: expo/expo-github-action@v8
@@ -180,14 +180,14 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./expo-app
-        run: npm ci
+        run: yarn install --frozen-lockfile
 
       - name: Type check
         working-directory: ./expo-app
-        run: npm run typecheck
+        run: yarn typecheck
 
       - name: Setup EAS CLI
-        run: npm install -g eas-cli
+        run: yarn install -g eas-cli
 
       - name: Build iOS (Development)
         if: github.event.inputs.profile == 'preview' || github.ref != 'refs/heads/main'
