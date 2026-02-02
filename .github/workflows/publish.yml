@@ -70,11 +70,11 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Type check
-        
+        working-directory: ./expo-app
         run: yarn typecheck
 
       - name: Export web build
-        
+        working-directory: ./expo-app
         run: npx expo export:web
         env:
           APP_ENV: production
@@ -137,7 +137,7 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Type check
-        
+        working-directory: ./expo-app
         run: yarn typecheck
 
       - name: Setup EAS CLI
@@ -201,7 +201,7 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Type check
-        
+        working-directory: ./expo-app
         run: yarn typecheck
 
       - name: Setup EAS CLI
