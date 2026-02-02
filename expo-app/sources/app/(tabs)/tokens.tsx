@@ -69,9 +69,10 @@ export default function TokensScreen() {
   }
 
   return (
-    <View style={stylesheet.container}>
+    <View style={stylesheet.container} testID="tokens-screen">
       <View style={stylesheet.searchContainer}>
         <TextInput
+          testID="tokens-search-input"
           style={stylesheet.searchInput}
           value={searchQuery}
           onChangeText={setSearchQuery}
@@ -80,14 +81,14 @@ export default function TokensScreen() {
         />
       </View>
 
-      <ScrollView contentContainerStyle={stylesheet.content}>
+      <ScrollView contentContainerStyle={stylesheet.content} testID="tokens-scroll-view">
         {filteredTokens.length === 0 ? (
           <Text style={stylesheet.emptyText}>
             {searchQuery ? 'No tokens found matching your search' : 'No tokens available'}
           </Text>
         ) : (
-          filteredTokens.map((token) => (
-            <TouchableOpacity key={token.tokenid} style={stylesheet.tokenCard}>
+          filteredTokens.map((token, index) => (
+            <TouchableOpacity key={token.tokenid} style={stylesheet.tokenCard} testID={`token-card-${index}`}>
               <View style={stylesheet.tokenInfo}>
                 <Text style={stylesheet.tokenName}>{token.tokenname}</Text>
                 <Text style={stylesheet.tokenId}>{token.tokenid}</Text>

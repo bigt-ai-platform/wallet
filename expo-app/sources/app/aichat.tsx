@@ -89,11 +89,13 @@ export default function AiChatScreen() {
 
   return (
     <KeyboardAvoidingView
+      testID="aichat-screen"
       style={stylesheet.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={100}
     >
       <ScrollView
+        testID="aichat-messages-scroll"
         ref={scrollViewRef}
         style={stylesheet.messagesContainer}
         contentContainerStyle={stylesheet.messagesContent}
@@ -107,16 +109,16 @@ export default function AiChatScreen() {
             </Text>
           </View>
         ) : (
-          messages.map((message) => (
-            <View key={message.id} style={stylesheet.messageGroup}>
+          messages.map((message, index) => (
+            <View key={message.id} style={stylesheet.messageGroup} testID={`message-group-${index}`}>
               {/* User Question */}
-              <View style={stylesheet.questionBubble}>
+              <View style={stylesheet.questionBubble} testID={`question-bubble-${index}`}>
                 <Text style={stylesheet.questionText}>{message.question}</Text>
               </View>
 
               {/* AI Answer */}
               {message.answer ? (
-                <View style={stylesheet.answerBubble}>
+                <View style={stylesheet.answerBubble} testID={`answer-bubble-${index}`}>
                   <Text style={stylesheet.answerText}>{message.answer}</Text>
                 </View>
               ) : (
@@ -138,6 +140,7 @@ export default function AiChatScreen() {
 
       <View style={stylesheet.inputContainer}>
         <TextInput
+          testID="aichat-input"
           style={stylesheet.input}
           value={question}
           onChangeText={setQuestion}
@@ -149,6 +152,7 @@ export default function AiChatScreen() {
           onSubmitEditing={handleSend}
         />
         <TouchableOpacity
+          testID="aichat-send-button"
           style={[stylesheet.sendButton, (!question.trim() || loading) && stylesheet.sendButtonDisabled]}
           onPress={handleSend}
           disabled={!question.trim() || loading}
