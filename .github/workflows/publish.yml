@@ -76,7 +76,7 @@ jobs:
 
       - name: Export web build
         working-directory: ./expo-app
-        run: npx expo export:web
+        run: npx expo export --platform web
         env:
           APP_ENV: production
 
