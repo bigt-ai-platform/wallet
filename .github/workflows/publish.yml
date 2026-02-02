@@ -60,15 +60,14 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install dependencies
-        working-directory: ./expo-app
         run: yarn install --frozen-lockfile
 
       - name: Type check
-        working-directory: ./expo-app
+        
         run: yarn typecheck
 
       - name: Export web build
-        working-directory: ./expo-app
+        
         run: npx expo export:web
         env:
           APP_ENV: production
@@ -121,11 +120,10 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install dependencies
-        working-directory: ./expo-app
         run: yarn install --frozen-lockfile
 
       - name: Type check
-        working-directory: ./expo-app
+        
         run: yarn typecheck
 
       - name: Setup EAS CLI
@@ -133,21 +131,21 @@ jobs:
 
       - name: Build Android APK (Development)
         if: github.event.inputs.profile == 'preview' || github.ref != 'refs/heads/main'
-        working-directory: ./expo-app
+        
         run: eas build --platform android --profile preview --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Build Android AAB (Production)
         if: github.event.inputs.profile == 'production' || github.ref == 'refs/heads/main'
-        working-directory: ./expo-app
+        
         run: eas build --platform android --profile production --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Submit to Google Play (Production only)
         if: github.ref == 'refs/heads/main' && (github.event.inputs.profile == 'production' || github.event_name == 'push')
-        working-directory: ./expo-app
+        
         run: eas submit --platform android --latest --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -179,11 +177,10 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install dependencies
-        working-directory: ./expo-app
         run: yarn install --frozen-lockfile
 
       - name: Type check
-        working-directory: ./expo-app
+        
         run: yarn typecheck
 
       - name: Setup EAS CLI
@@ -191,21 +188,21 @@ jobs:
 
       - name: Build iOS (Development)
         if: github.event.inputs.profile == 'preview' || github.ref != 'refs/heads/main'
-        working-directory: ./expo-app
+        
         run: eas build --platform ios --profile preview --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Build iOS (Production)
         if: github.event.inputs.profile == 'production' || github.ref == 'refs/heads/main'
-        working-directory: ./expo-app
+        
         run: eas build --platform ios --profile production --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
 
       - name: Submit to App Store (Production only)
         if: github.ref == 'refs/heads/main' && (github.event.inputs.profile == 'production' || github.event_name == 'push')
-        working-directory: ./expo-app
+        
         run: eas submit --platform ios --latest --non-interactive
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
@@ -300,3 +297,4 @@ jobs:
           echo "- **iOS**: ${{ needs.publish-ios.result }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.check.outputs.message }}" >> $GITHUB_STEP_SUMMARY
+
