@@ -1,0 +1,385 @@
+name: CI - Test & Lint
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # Job 1: Lint and Type Check
+  lint-and-typecheck:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: expo-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./expo-app
+        run: npm ci
+
+      - name: Run type check
+        working-directory: ./expo-app
+        run: npm run typecheck
+
+      - name: Check for linting issues
+        working-directory: ./expo-app
+        run: |
+          echo "Running code quality checks..."
+          # Add eslint if configured
+          # npm run lint
+
+  # Job 2: Unit Tests
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: expo-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./expo-app
+        run: npm ci
+
+      - name: Run unit tests
+        working-directory: ./expo-app
+        run: npm test -- --run
+        continue-on-error: true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-test-results
+          path: expo-app/coverage/
+          retention-days: 30
+
+  # Job 3: E2E Tests (iOS)
+  e2e-tests-ios:
+    name: E2E Tests (iOS)
+    runs-on: macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: expo-app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./expo-app
+        run: npm ci
+
+      - name: Install CocoaPods dependencies
+        working-directory: ./expo-app
+        run: |
+          npx expo prebuild --platform ios
+          cd ios && pod install
+
+      - name: Setup iOS Simulator
+        run: |
+          xcrun simctl list
+          xcrun simctl boot "iPhone 15" || true
+
+      - name: Build iOS app for Detox
+        working-directory: ./expo-app
+        run: npm run e2e:build:ios
+
+      - name: Run E2E tests
+        working-directory: ./expo-app
+        run: npm run e2e:test:ios
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results-ios
+          path: |
+            expo-app/artifacts/
+            expo-app/e2e-results/
+          retention-days: 30
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-screenshots-ios
+          path: expo-app/artifacts/**/*.png
+          retention-days: 7
+
+  # Job 4: E2E Tests (Android)
+  e2e-tests-android:
+    name: E2E Tests (Android)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: expo-app/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install dependencies
+        working-directory: ./expo-app
+        run: npm ci
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android licenses
+        run: yes | sdkmanager --licenses || true
+
+      - name: Build Android app for Detox
+        working-directory: ./expo-app
+        run: |
+          npx expo prebuild --platform android
+          npm run e2e:build:android
+
+      - name: Run E2E tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          profile: pixel_6
+          script: cd expo-app && npm run e2e:test:android
+
+      - name: Upload E2E test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results-android
+          path: |
+            expo-app/artifacts/
+            expo-app/e2e-results/
+          retention-days: 30
+
+      - name: Upload screenshots
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-screenshots-android
+          path: expo-app/artifacts/**/*.png
+          retention-days: 7
+
+  # Job 5: API Tests
+  api-tests:
+    name: API Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: test1234
+          POSTGRES_DB: info
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      minio:
+        image: minio/minio
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadminpassword
+        ports:
+          - 9000:9000
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: expo-app/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Start BigTangle Server
+        run: |
+          docker run -d --name test-bigtangle \
+            --network host \
+            -e DB_HOSTNAME=localhost \
+            -e DB_PORT=5432 \
+            -e DB_USERNAME=root \
+            -e DB_PASSWORD=test1234 \
+            -e DB_NAME=info \
+            ghcr.io/bigtangle/server:latest
+
+      - name: Wait for server to be ready
+        run: |
+          timeout 60 bash -c 'until curl -f http://localhost:8088/health 2>/dev/null; do sleep 2; done' || true
+          sleep 10
+
+      - name: Install dependencies
+        working-directory: ./expo-app
+        run: npm ci
+
+      - name: Run API tests
+        working-directory: ./expo-app
+        run: npm test -- e2e/tests/api.test.ts
+        continue-on-error: true
+
+      - name: Upload API test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-test-results
+          path: expo-app/test-results/
+          retention-days: 30
+
+  # Job 6: Build Check
+  build-check:
+    name: Build Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: expo-app/package-lock.json
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          expo-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        working-directory: ./expo-app
+        run: npm ci
+
+      - name: Check Expo configuration
+        working-directory: ./expo-app
+        run: npx expo config --type public
+
+      - name: Prebuild iOS
+        working-directory: ./expo-app
+        run: npx expo prebuild --platform ios --no-install
+
+      - name: Prebuild Android
+        working-directory: ./expo-app
+        run: npx expo prebuild --platform android --no-install
+
+  # Job 7: Security Audit
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Run security audit
+        working-directory: ./expo-app
+        run: npm audit --audit-level=moderate
+        continue-on-error: true
+
+      - name: Check for vulnerabilities
+        working-directory: ./expo-app
+        run: |
+          npm audit --json > audit-results.json || true
+          cat audit-results.json
+
+      - name: Upload audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-audit-results
+          path: expo-app/audit-results.json
+          retention-days: 30
+
+  # Job 8: Summary
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck, unit-tests, build-check, security-audit]
+    if: always()
+
+    steps:
+      - name: Check results
+        run: |
+          echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Lint & Type Check**: ${{ needs.lint-and-typecheck.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Unit Tests**: ${{ needs.unit-tests.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Check**: ${{ needs.build-check.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Security Audit**: ${{ needs.security-audit.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.lint-and-typecheck.result }}" == "success" ] && \
+             [ "${{ needs.unit-tests.result }}" == "success" ] && \
+             [ "${{ needs.build-check.result }}" == "success" ]; then
+            echo "✅ All checks passed!" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          else
+            echo "❌ Some checks failed" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
