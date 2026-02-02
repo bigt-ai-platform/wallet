@@ -104,7 +104,7 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./expo-app/web-build
-          cname: your-domain.com # Optional: Add your custom domain
+          cname: bigt.ai
 
   # Job 2: Build and publish Android
   publish-android:
