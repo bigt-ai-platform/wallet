@@ -1,13 +1,13 @@
 import { Buffer } from "buffer";
 import { beforeEach, describe, expect, test } from "vitest";
-import { Address, Block, Coin, ECKey, Token, MultiSignAddress, CoinConstants, NetworkParameters, UTXO, Utils, Wallet } from "@bigtangle/bigtangle-ts";
-import { TokenType } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/core/TokenType";
-import { ReqCmd } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/params/ReqCmd";
-import { GetOutputsResponse } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/response/GetOutputsResponse";
+import { Address, Block, Coin, ECKey, Token, MultiSignAddress, CoinConstants, NetworkParameters, UTXO, Utils, Wallet } from "bigtangle-ts";
+import { TokenType } from "bigtangle-ts/dist/net/bigtangle/core/TokenType";
+import { ReqCmd } from "bigtangle-ts/dist/net/bigtangle/params/ReqCmd";
+import { GetOutputsResponse } from "bigtangle-ts/dist/net/bigtangle/response/GetOutputsResponse";
 import { RemoteTest } from "./RemoteTest";
-import { MemoInfo } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/core/MemoInfo";
-import { OkHttp3Util } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/utils/OkHttp3Util";
-import { WalletUtil } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/utils/WalletUtil";
+import { MemoInfo } from "bigtangle-ts/dist/net/bigtangle/core/MemoInfo";
+import { OkHttp3Util } from "bigtangle-ts/dist/net/bigtangle/utils/OkHttp3Util";
+import { WalletUtil } from "bigtangle-ts/dist/net/bigtangle/utils/WalletUtil";
 class RemoteFromAddressTests extends RemoteTest {
   public static yuanTokenPub =
     "02a717921ede2c066a4da05b9cdce203f1002b7e2abeee7546194498ef2fa9b13a";

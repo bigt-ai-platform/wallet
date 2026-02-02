@@ -4,23 +4,23 @@
  * Handles transaction creation, signing, and broadcasting
  */
 
-import { ECKey, TestParams, Utils } from '@bigtangle/bigtangle-ts';
+import { ECKey, TestParams, Utils } from 'bigtangle-ts';
 // @ts-ignore
-import { Transaction } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/core/Transaction';
+import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
 // @ts-ignore
-import { TransactionInput } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/core/TransactionInput';
+import { TransactionInput } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionInput';
 // @ts-ignore
-import { TransactionOutput } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/core/TransactionOutput';
+import { TransactionOutput } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutput';
 // @ts-ignore
-import { Coin } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/core/Coin';
+import { Coin } from 'bigtangle-ts/dist/net/bigtangle/core/Coin';
 // @ts-ignore
-import { Address } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/core/Address';
+import { Address } from 'bigtangle-ts/dist/net/bigtangle/core/Address';
 // @ts-ignore
-import { Script } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/script/Script';
+import { Script } from 'bigtangle-ts/dist/net/bigtangle/script/Script';
 // @ts-ignore
-import { TransactionOutPoint } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/core/TransactionOutPoint';
+import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutPoint';
 // @ts-ignore
-import { Sha256Hash } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/core/Sha256Hash';
+import { Sha256Hash } from 'bigtangle-ts/dist/net/bigtangle/core/Sha256Hash';
 
 import { httpService } from './http';
 import type { UTXO, ApiResponse } from '@/types/api';

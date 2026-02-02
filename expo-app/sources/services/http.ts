@@ -143,7 +143,11 @@ export class HttpService {
       };
     }
 
-    return response as ApiResponse<WalletAccountItem[]>;
+    // Return a properly typed failure response
+    return {
+      success: false,
+      error: response.error || 'Failed to get balances',
+    } as ApiResponse<WalletAccountItem[]>;
   }
 
   /**
@@ -163,7 +167,11 @@ export class HttpService {
       };
     }
 
-    return response as ApiResponse<UTXO[]>;
+    // Return a properly typed failure response
+    return {
+      success: false,
+      error: response.error || 'Failed to get outputs',
+    } as ApiResponse<UTXO[]>;
   }
 
   /**
@@ -182,7 +190,11 @@ export class HttpService {
       };
     }
 
-    return response as ApiResponse<TokenItem[]>;
+    // Return a properly typed failure response
+    return {
+      success: false,
+      error: response.error || 'Failed to get tokens list',
+    } as ApiResponse<TokenItem[]>;
   }
 
   /**
@@ -202,7 +214,11 @@ export class HttpService {
       };
     }
 
-    return response as ApiResponse<WalletAccountItem[]>;
+    // Return a properly typed failure response
+    return {
+      success: false,
+      error: response.error || 'Failed to get user token items',
+    } as ApiResponse<WalletAccountItem[]>;
   }
 
   /**
@@ -221,7 +237,11 @@ export class HttpService {
       };
     }
 
-    return response as ApiResponse<MarketPrice[]>;
+    // Return a properly typed failure response
+    return {
+      success: false,
+      error: response.error || 'Failed to get market prices',
+    } as ApiResponse<MarketPrice[]>;
   }
 
   /**
@@ -241,7 +261,11 @@ export class HttpService {
       };
     }
 
-    return response as ApiResponse<TokenItem[]>;
+    // Return a properly typed failure response
+    return {
+      success: false,
+      error: response.error || 'Failed to search exchange tokens',
+    } as ApiResponse<TokenItem[]>;
   }
 
   /**
@@ -264,7 +288,11 @@ export class HttpService {
       };
     }
 
-    return response as ApiResponse<T[]>;
+    // Return a properly typed failure response
+    return {
+      success: false,
+      error: response.error || 'Failed to get user data',
+    } as ApiResponse<T[]>;
   }
 
   /**

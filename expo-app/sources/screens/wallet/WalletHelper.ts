@@ -4,11 +4,11 @@
  * Uses imports from bigtangle-ts to work in both Node.js and webpack environments.
  */
 
-import { Base58, ECKey, TestParams, Utils } from '@bigtangle/bigtangle-ts';
+import { Base58, ECKey, TestParams, Utils } from 'bigtangle-ts';
 // @ts-ignore - These are not exported in index but exist in dist
-import { KeyCrypterScrypt } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/crypto/KeyCrypterScrypt';
+import { KeyCrypterScrypt } from 'bigtangle-ts/dist/net/bigtangle/crypto/KeyCrypterScrypt';
 // @ts-ignore
-import { Wallet } from '@bigtangle/bigtangle-ts/dist/net/bigtangle/wallet/Wallet';
+import { Wallet } from 'bigtangle-ts/dist/net/bigtangle/wallet/Wallet';
 
 export interface CredentialEntry {
   url: string;

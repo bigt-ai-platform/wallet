@@ -33,7 +33,7 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
-    "bigtangle.d.ts"
+    "bigtangle-ts.d.ts"
   ],
   "exclude": [
     "sources/trash/**/*",

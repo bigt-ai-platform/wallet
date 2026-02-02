@@ -1,14 +1,14 @@
 import { expect } from "vitest";
 import { ObjectMapper } from "jackson-js";
 import { Buffer } from "buffer";
-import { Address, Block, Coin, ECKey, Sha256Hash, UTXO, Utils, NetworkParameters, TestParams, Wallet, CoinConstants } from "@bigtangle/bigtangle-ts";
-import { ReqCmd } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/params/ReqCmd";
-import { GetBalancesResponse } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/response/GetBalancesResponse";
-import { GetTokensResponse } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/response/GetTokensResponse";
-import { TokenIndexResponse } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/response/TokenIndexResponse";
-import { OkHttp3Util } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/utils/OkHttp3Util";
-import { Json } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/utils/Json";
-import { WalletUtil } from "@bigtangle/bigtangle-ts/dist/net/bigtangle/utils/WalletUtil";
+import { Address, Block, Coin, ECKey, Sha256Hash, UTXO, Utils, NetworkParameters, TestParams, Wallet, CoinConstants } from "bigtangle-ts";
+import { ReqCmd } from "bigtangle-ts/dist/net/bigtangle/params/ReqCmd";
+import { GetBalancesResponse } from "bigtangle-ts/dist/net/bigtangle/response/GetBalancesResponse";
+import { GetTokensResponse } from "bigtangle-ts/dist/net/bigtangle/response/GetTokensResponse";
+import { TokenIndexResponse } from "bigtangle-ts/dist/net/bigtangle/response/TokenIndexResponse";
+import { OkHttp3Util } from "bigtangle-ts/dist/net/bigtangle/utils/OkHttp3Util";
+import { Json } from "bigtangle-ts/dist/net/bigtangle/utils/Json";
+import { WalletUtil } from "bigtangle-ts/dist/net/bigtangle/utils/WalletUtil";
 export abstract class RemoteTest {
   public objectMapper = new ObjectMapper();
   public contextRoot = "http://localhost:8088/";

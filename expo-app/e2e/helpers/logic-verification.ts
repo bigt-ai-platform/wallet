@@ -5,7 +5,7 @@
  * These complement UI tests by ensuring the underlying logic is correct.
  */
 
-import { ECKey, Address, Wallet, NetworkParameters, TestParams, UTXO } from '@bigtangle/bigtangle-ts';
+import { ECKey, Address, Wallet, NetworkParameters, TestParams, UTXO } from 'bigtangle-ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**

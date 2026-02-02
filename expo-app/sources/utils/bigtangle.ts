@@ -6,10 +6,10 @@
  */
 
 // Import bigtangle-ts library
-import * as Bigtangle from '@bigtangle/bigtangle-ts';
+import * as Bigtangle from 'bigtangle-ts';
 
 // Re-export for convenience
-export * from '@bigtangle/bigtangle-ts';
+export * from 'bigtangle-ts';
 
 /**
  * Initialize bigtangle with default configuration
