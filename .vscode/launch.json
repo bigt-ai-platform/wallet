@@ -15,6 +15,11 @@
         "webpack:///./~/*": "${webRoot}/node_modules/*"
       },
       "preLaunchTask": "Start Expo Web",
+      "serverReadyAction": {
+        "pattern": "Web is waiting on (https?://[^\\s]+)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      },
       "presentation": {
         "hidden": false,
         "group": "web",
@@ -110,7 +115,11 @@
       "target": "device",
       "cwd": "${workspaceFolder}/expo-app",
       "sourceMaps": true,
-      "runArguments": ["--variant=debug", "--deviceId", "${command:PickAndroidDevice}"],
+      "runArguments": [
+        "--variant=debug",
+        "--deviceId",
+        "${command:PickAndroidDevice}"
+      ],
       "presentation": {
         "hidden": false,
         "group": "native",

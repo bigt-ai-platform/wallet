@@ -2,10 +2,21 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Kill Expo Processes",
+      "type": "shell",
+      "command": "pkill -f 'npx expo start' 2>/dev/null || true; lsof -ti:8081 | xargs kill -9 2>/dev/null || true; sleep 1",
+      "options": {
+        "cwd": "${workspaceFolder}/expo-app"
+      },
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      }
+    },
+    {
       "label": "Start Expo Web",
       "type": "shell",
-      "command": "yarn",
-      "args": ["web"],
+      "command": "npx expo start --web --port 8081 --offline",
       "options": {
         "cwd": "${workspaceFolder}/expo-app"
       },
@@ -20,14 +31,15 @@
         "background": {
           "activeOnStart": true,
           "beginsPattern": "Starting.*",
-          "endsPattern": ".*Compiled successfully.*"
+          "endsPattern": ".*Web is waiting.*"
         }
       },
       "presentation": {
         "reveal": "always",
         "panel": "new",
         "group": "expo"
-      }
+      },
+      "dependsOn": ["Kill Expo Processes"]
     },
     {
       "label": "Start Expo Dev Server",

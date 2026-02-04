@@ -12,7 +12,6 @@
     "eamodio.gitlens",
 
     // Debugging
-    "msjsdiag.debugger-for-chrome",
     "ms-vscode.vscode-typescript-next",
 
     // Utilities
