@@ -48,6 +48,11 @@
   // TypeScript
   "typescript.tsdk": "expo-app/node_modules/typescript/lib",
   "typescript.enablePromptUseWorkspaceTsdk": true,
+  "typescript.preferences.importModuleSpecifier": "relative",
+
+  // JavaScript/TypeScript validation
+  "javascript.validate.enable": true,
+  "typescript.validate.enable": true,
   "typescript.preferences.importModuleSpecifier": "non-relative",
   "typescript.updateImportsOnFileMove.enabled": "always",
 
@@ -57,13 +62,8 @@
 
   // React Native
   "reactNative.packager.port": 8081,
-  "reactNative.android.runArguments.simulator": [
-    "--variant=debug"
-  ],
-  "reactNative.ios.runArguments.simulator": [
-    "--configuration",
-    "Debug"
-  ],
+  "reactNative.android.runArguments.simulator": ["--variant=debug"],
+  "reactNative.ios.runArguments.simulator": ["--configuration", "Debug"],
 
   // Emmet
   "emmet.includeLanguages": {

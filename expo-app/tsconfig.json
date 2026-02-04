@@ -4,9 +4,7 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "./sources/*"
-      ]
+      "@/*": ["./sources/*"]
     },
     "jsx": "react-jsx",
     "esModuleInterop": true,
@@ -22,6 +20,7 @@
     "isolatedModules": true,
     "noEmit": true,
     "incremental": true,
+    "skipDefaultLibCheck": true,
     "plugins": [
       {
         "name": "expo-router/typescript-plugin"
@@ -33,10 +32,8 @@
     "**/*.tsx",
     ".expo/types/**/*.ts",
     "expo-env.d.ts",
-    "bigtangle-ts.d.ts"
+    "bigtangle-ts.d.ts",
+    "e2e/**/*.ts"
   ],
-  "exclude": [
-    "sources/trash/**/*",
-    "node_modules"
-  ]
+  "exclude": ["sources/trash/**/*", "node_modules", "e2e/node_modules"]
 }

@@ -4,7 +4,7 @@
  * Main screen for sending payments and transactions
  */
 
-import * as React from 'react';
+import * as React from "react";
 import {
   View,
   Text,
@@ -13,21 +13,24 @@ import {
   ScrollView,
   ActivityIndicator,
   Alert,
-} from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
-import { useWallet } from '@/state/wallet';
-import { httpService } from '@/services/http';
-import { sendTransaction } from '@/services/transaction';
-import type { WalletAccountItem } from '@/types/api';
+} from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { router } from "expo-router";
+import { useWallet } from "@/state/wallet";
+import { httpService } from "@/services/http";
+import { sendTransaction } from "@/services/transaction";
+import type { WalletAccountItem } from "@/types/api";
 
 export default function TransactionScreen() {
-  const { publicInfo, isUnlocked, getUnlockedWallet, getPassword } = useWallet();
+  const { publicInfo, isUnlocked, getUnlockedWallet, getPassword } =
+    useWallet();
 
-  const [selectedToken, setSelectedToken] = React.useState<WalletAccountItem | null>(null);
+  const [selectedToken, setSelectedToken] =
+    React.useState<WalletAccountItem | null>(null);
   const [tokens, setTokens] = React.useState<WalletAccountItem[]>([]);
-  const [toAddress, setToAddress] = React.useState('');
-  const [amount, setAmount] = React.useState('');
-  const [memo, setMemo] = React.useState('');
+  const [toAddress, setToAddress] = React.useState("");
+  const [amount, setAmount] = React.useState("");
+  const [memo, setMemo] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [loadingTokens, setLoadingTokens] = React.useState(false);
 
@@ -43,7 +46,9 @@ export default function TransactionScreen() {
 
     setLoadingTokens(true);
     try {
-      const response = await httpService.getMyValidTokenItemList(publicInfo.address);
+      const response = await httpService.getMyValidTokenItemList(
+        publicInfo.address,
+      );
       if (response.success && response.data) {
         setTokens(response.data);
         if (response.data.length > 0 && !selectedToken) {
@@ -51,7 +56,7 @@ export default function TransactionScreen() {
         }
       }
     } catch (error) {
-      console.error('Error loading tokens:', error);
+      console.error("Error loading tokens:", error);
     } finally {
       setLoadingTokens(false);
     }
@@ -62,22 +67,22 @@ export default function TransactionScreen() {
     const password = getPassword();
 
     if (!wallet || !isUnlocked) {
-      Alert.alert('Error', 'Please unlock your wallet first');
+      Alert.alert("Error", "Please unlock your wallet first");
       return;
     }
 
     if (!selectedToken) {
-      Alert.alert('Error', 'Please select a token');
+      Alert.alert("Error", "Please select a token");
       return;
     }
 
     if (!toAddress) {
-      Alert.alert('Error', 'Please enter recipient address');
+      Alert.alert("Error", "Please enter recipient address");
       return;
     }
 
     if (!amount || parseFloat(amount) <= 0) {
-      Alert.alert('Error', 'Please enter valid amount');
+      Alert.alert("Error", "Please enter valid amount");
       return;
     }
 
@@ -85,7 +90,7 @@ export default function TransactionScreen() {
     const balance = parseFloat(selectedToken.balance);
 
     if (amountNum > balance) {
-      Alert.alert('Error', 'Insufficient balance');
+      Alert.alert("Error", "Insufficient balance");
       return;
     }
 
@@ -95,15 +100,15 @@ export default function TransactionScreen() {
 
     // Confirm transaction
     Alert.alert(
-      'Confirm Transaction',
+      "Confirm Transaction",
       `Send ${amount} ${selectedToken.tokenname} to:\n${toAddress}\n\nFee: ~0.00001 ${selectedToken.tokenname}`,
       [
         {
-          text: 'Cancel',
-          style: 'cancel',
+          text: "Cancel",
+          style: "cancel",
         },
         {
-          text: 'Send',
+          text: "Send",
           onPress: async () => {
             setLoading(true);
             try {
@@ -117,38 +122,40 @@ export default function TransactionScreen() {
               });
 
               if (!result.success) {
-                throw new Error(result.error || 'Transaction failed');
+                throw new Error(result.error || "Transaction failed");
               }
 
               Alert.alert(
-                'Success',
+                "Success",
                 `Transaction sent!\n\nTx Hash: ${result.data?.substring(0, 16)}...`,
                 [
                   {
-                    text: 'OK',
+                    text: "OK",
                     onPress: () => {
                       // Clear form
-                      setToAddress('');
-                      setAmount('');
-                      setMemo('');
+                      setToAddress("");
+                      setAmount("");
+                      setMemo("");
                       // Reload tokens to show updated balance
                       loadTokens();
                     },
                   },
-                ]
+                ],
               );
             } catch (error) {
-              console.error('Error sending transaction:', error);
+              console.error("Error sending transaction:", error);
               Alert.alert(
-                'Error',
-                error instanceof Error ? error.message : 'Failed to send transaction'
+                "Error",
+                error instanceof Error
+                  ? error.message
+                  : "Failed to send transaction",
               );
             } finally {
               setLoading(false);
             }
           },
         },
-      ]
+      ],
     );
   };
 
@@ -156,8 +163,13 @@ export default function TransactionScreen() {
     return (
       <View style={stylesheet.container}>
         <View style={stylesheet.centered}>
-          <Text style={stylesheet.subtitle}>Please unlock your wallet to make transactions</Text>
-          <TouchableOpacity style={stylesheet.button} onPress={() => {}}>
+          <Text style={stylesheet.subtitle}>
+            Please unlock your wallet to make transactions
+          </Text>
+          <TouchableOpacity
+            style={[stylesheet.button, stylesheet.primaryButton]}
+            onPress={() => router.push("/wallet/keys")}
+          >
             <Text style={stylesheet.buttonText}>Unlock Wallet</Text>
           </TouchableOpacity>
         </View>
@@ -166,7 +178,10 @@ export default function TransactionScreen() {
   }
 
   return (
-    <ScrollView style={stylesheet.container} contentContainerStyle={stylesheet.content}>
+    <ScrollView
+      style={stylesheet.container}
+      contentContainerStyle={stylesheet.content}
+    >
       <Text style={stylesheet.title}>Send Payment</Text>
 
       {/* Token Selection */}
@@ -181,7 +196,8 @@ export default function TransactionScreen() {
                 key={token.tokenid}
                 style={[
                   stylesheet.tokenCard,
-                  selectedToken?.tokenid === token.tokenid && stylesheet.tokenCardSelected,
+                  selectedToken?.tokenid === token.tokenid &&
+                    stylesheet.tokenCardSelected,
                 ]}
                 onPress={() => setSelectedToken(token)}
               >
@@ -246,7 +262,11 @@ export default function TransactionScreen() {
 
       {/* Send Button */}
       <TouchableOpacity
-        style={[stylesheet.button, stylesheet.primaryButton, loading && stylesheet.buttonDisabled]}
+        style={[
+          stylesheet.button,
+          stylesheet.primaryButton,
+          loading && stylesheet.buttonDisabled,
+        ]}
         onPress={handleSend}
         disabled={loading}
       >
@@ -270,13 +290,13 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   centered: {
     flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+    justifyContent: "center",
+    alignItems: "center",
     padding: 16,
   },
   title: {
     fontSize: 24,
-    fontWeight: 'bold',
+    fontWeight: "bold",
     color: theme.colors.text.primary,
     marginBottom: 24,
   },
@@ -284,14 +304,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     fontSize: 16,
     color: theme.colors.text.secondary,
     marginBottom: 16,
-    textAlign: 'center',
+    textAlign: "center",
   },
   section: {
     marginBottom: 24,
   },
   label: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
     color: theme.colors.text.primary,
     marginBottom: 8,
   },
@@ -305,7 +325,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     borderColor: theme.colors.border,
   },
   inputRow: {
-    flexDirection: 'row',
+    flexDirection: "row",
     gap: 8,
   },
   inputFlex: {
@@ -313,7 +333,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   textArea: {
     minHeight: 80,
-    textAlignVertical: 'top',
+    textAlignVertical: "top",
   },
   placeholder: {
     color: theme.colors.text.secondary,
@@ -334,11 +354,11 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   tokenCardSelected: {
     borderColor: theme.colors.primary,
-    backgroundColor: theme.colors.primary + '20',
+    backgroundColor: theme.colors.primary + "20",
   },
   tokenName: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
     color: theme.colors.text.primary,
     marginBottom: 4,
   },
@@ -350,7 +370,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.groupped.surface,
     borderRadius: 8,
     padding: 16,
-    alignItems: 'center',
+    alignItems: "center",
     borderWidth: 1,
     borderColor: theme.colors.border,
   },
@@ -363,8 +383,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   },
   buttonText: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
+    fontWeight: "600",
+    color: "#fff",
   },
   iconButton: {
     backgroundColor: theme.colors.groupped.surface,
@@ -372,13 +392,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     padding: 12,
     borderWidth: 1,
     borderColor: theme.colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     minWidth: 60,
   },
   iconButtonText: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: "600",
     color: theme.colors.primary,
   },
 }));

@@ -1,6 +1,19 @@
 import { Buffer } from "buffer";
 import { beforeEach, describe, expect, test } from "vitest";
-import { Address, Block, Coin, ECKey, Token, MultiSignAddress, CoinConstants, NetworkParameters, UTXO, Utils, Wallet } from "bigtangle-ts";
+import {
+  Address,
+  Block,
+  Coin,
+  ECKey,
+  Token,
+  MultiSignAddress,
+  CoinConstants,
+  NetworkParameters,
+  TestParams,
+  UTXO,
+  Utils,
+  Wallet,
+} from "bigtangle-ts";
 import { TokenType } from "bigtangle-ts/dist/net/bigtangle/core/TokenType";
 import { ReqCmd } from "bigtangle-ts/dist/net/bigtangle/params/ReqCmd";
 import { GetOutputsResponse } from "bigtangle-ts/dist/net/bigtangle/response/GetOutputsResponse";
@@ -8,11 +21,16 @@ import { RemoteTest } from "./RemoteTest";
 import { MemoInfo } from "bigtangle-ts/dist/net/bigtangle/core/MemoInfo";
 import { OkHttp3Util } from "bigtangle-ts/dist/net/bigtangle/utils/OkHttp3Util";
 import { WalletUtil } from "bigtangle-ts/dist/net/bigtangle/utils/WalletUtil";
+import {
+  TEST_WALLETS,
+  getAllUserKeys,
+  getYuanIssuerKey,
+} from "../helpers/test-wallet-seed";
+
 class RemoteFromAddressTests extends RemoteTest {
-  public static yuanTokenPub =
-    "02a717921ede2c066a4da05b9cdce203f1002b7e2abeee7546194498ef2fa9b13a";
-  public static yuanTokenPriv =
-    "8db6bd17fa4a827619e165bfd4b0f551705ef2d549a799e7f07115e5c3abad55";
+  // Use test wallet seeds instead of hardcoded values
+  public static yuanTokenPub = TEST_WALLETS.YUAN_ISSUER.publicKey!;
+  public static yuanTokenPriv = TEST_WALLETS.YUAN_ISSUER.privateKey;
 
   yuanWallet: Wallet | undefined;
   tokenid: string = "";
@@ -20,17 +38,16 @@ class RemoteFromAddressTests extends RemoteTest {
 
   public async testUserpay() {
     this.tokenid = ECKey.fromPrivateString(
-      RemoteFromAddressTests.yuanTokenPriv
+      RemoteFromAddressTests.yuanTokenPriv,
     ).getPublicKeyAsHex();
 
-    const k1 = //ECKey.createNewKey();
-   ECKey.fromPrivateString( '9c845f50a809cf6bb3ff7a3679195141dc97bd62e237a2ced3d6373735a38891');
-    //console.log(k1.getPrivateKeyAsHex());
-    const k2 = //ECKey.createNewKey()
-   ECKey.fromPrivateString(  '88c8383183d9db0a5fdbd8d862709f729e055d8981b8515044f28d4cf12d3f27');
-   // console.log(k2.getPrivateKeyAsHex());
-    this.userkeys.push(k1);
-    this.userkeys.push(k2);
+    // Use test wallet seeds instead of hardcoded keys
+    this.userkeys = getAllUserKeys();
+    const networkParams = new TestParams();
+
+    console.log("Test wallets initialized:");
+    console.log(`  User 1: ${this.userkeys[0].toAddress(networkParams).toString()}`);
+    console.log(`  User 2: ${this.userkeys[1].toAddress(networkParams).toString()}`);
 
     await this.payBigTo(
       [
@@ -38,16 +55,16 @@ class RemoteFromAddressTests extends RemoteTest {
         ...this.userkeys,
       ],
       CoinConstants.FEE_DEFAULT.getValue() * BigInt(1000) * BigInt(10000),
-      []
+      [],
     );
 
-        await this.testTokens();
+    await this.testTokens();
 
     // Now create yuanWallet after token creation so it can access the created tokens
     this.yuanWallet = await Wallet.fromKeysURL(
       this.networkParameters,
       [ECKey.fromPrivateString(RemoteFromAddressTests.yuanTokenPriv)],
-      this.contextRoot
+      this.contextRoot,
     );
     this.checkBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
       ECKey.fromPrivateString(RemoteFromAddressTests.yuanTokenPriv),
@@ -69,13 +86,16 @@ class RemoteFromAddressTests extends RemoteTest {
     await new Promise((resolve) => setTimeout(resolve, 5000));
 
     // Wait for bc token balance to be available before buying
-    await this.waitForBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, this.userkeys);
+    await this.waitForBalance(
+      NetworkParameters.BIGTANGLE_TOKENID_STRING,
+      this.userkeys,
+    );
 
     await this.buy(this.userkeys);
-        // Search orders using WalletUtil after buying ticket
+    // Search orders using WalletUtil after buying ticket
     await this.searchOrder();
-     await this.sell(this.userkeys);
- 
+    await this.sell(this.userkeys);
+
     await this.searchOrder();
   }
 
@@ -88,7 +108,7 @@ class RemoteFromAddressTests extends RemoteTest {
       const wallet = await Wallet.fromKeysURL(
         this.networkParameters,
         this.userkeys,
-        this.contextRoot
+        this.contextRoot,
       );
 
       try {
@@ -98,14 +118,14 @@ class RemoteFromAddressTests extends RemoteTest {
           null, // address4search
           "publish", // state4search
           false, // isMine
-          this.contextRoot
+          this.contextRoot,
         );
         console.log("Orders found:", orders);
 
         // Verify that at least one open order was found
         expect(orders).toBeDefined();
         expect(Array.isArray(orders)).toBe(true);
-   
+
         console.log(`Verified ${orders.length} open order(s) found`);
       } catch (error) {
         console.error("Error in searchOrder:", error);
@@ -124,7 +144,7 @@ class RemoteFromAddressTests extends RemoteTest {
     const w = await Wallet.fromKeysURL(
       this.networkParameters,
       keys,
-      this.contextRoot
+      this.contextRoot,
     );
 
     // Now purchase yuan tokens using native token as payment
@@ -133,10 +153,10 @@ class RemoteFromAddressTests extends RemoteTest {
       this.tokenid, // tokenid to buy (yuan token)
       BigInt(2), // amount of yuan tokens to buy (reduced)
       BigInt(1), // price per yuan token (reduced)
-      null, //  
-      null, //  
+      null, //
+      null, //
       NetworkParameters.BIGTANGLE_TOKENID_STRING, // payment token (native)
-      true // is buy order
+      true, // is buy order
     );
     console.log(`Buy order result: ${bs ? bs.toString() : "null"}`);
   }
@@ -157,7 +177,7 @@ class RemoteFromAddressTests extends RemoteTest {
     const b = await this.yuanWallet!.payToList(
       null,
       giveMoneyResult,
-      Buffer.from(Utils.HEX.decode(this.tokenid))
+      Buffer.from(Utils.HEX.decode(this.tokenid)),
     );
     if (b !== null) {
       console.log(`Payment block: ${b.toString()}`);
@@ -169,7 +189,7 @@ class RemoteFromAddressTests extends RemoteTest {
   public async testTokens() {
     const domain = "";
     const fromPrivate = ECKey.fromPrivateString(
-      RemoteFromAddressTests.yuanTokenPriv
+      RemoteFromAddressTests.yuanTokenPriv,
     );
 
     await this.testCreateMultiSigToken(
@@ -178,7 +198,7 @@ class RemoteFromAddressTests extends RemoteTest {
       2,
       domain,
       "人民币 CNY",
-      BigInt(10000000)
+      BigInt(10000000),
     );
   }
 
@@ -194,7 +214,7 @@ class RemoteFromAddressTests extends RemoteTest {
       const response = await OkHttp3Util.postClass<GetOutputsResponse>(
         this.contextRoot + ReqCmd.outputsOfTokenid,
         Buffer.from(JSON.stringify(requestParam)),
-        GetOutputsResponse
+        GetOutputsResponse,
       );
 
       // Check if response is an actual GetOutputsResponse instance or just a plain object
@@ -221,7 +241,7 @@ class RemoteFromAddressTests extends RemoteTest {
 
   public getAddress(): Address {
     return ECKey.fromPrivateString(
-      RemoteFromAddressTests.yuanTokenPriv
+      RemoteFromAddressTests.yuanTokenPriv,
     ).toAddress(this.networkParameters);
   }
 
@@ -232,7 +252,7 @@ class RemoteFromAddressTests extends RemoteTest {
     decimals: number,
     domainname: string,
     description: string,
-    amount: bigint
+    amount: bigint,
   ): Promise<void> {
     // Calculate the token ID as a hash of the public key (this is the standard way tokens are identified)
 
@@ -248,7 +268,7 @@ class RemoteFromAddressTests extends RemoteTest {
         true,
         null,
         TokenType.currency,
-        this.tokenid
+        this.tokenid,
       );
       const signkey = ECKey.fromPrivateString(RemoteTest.testPriv);
       await this.wallet.multiSign(this.tokenid, signkey, null);
@@ -266,7 +286,7 @@ class RemoteFromAddressTests extends RemoteTest {
     increment: boolean,
     tokenKeyValues: any, // Replace with proper type if TokenKeyValues exists
     tokentype: TokenType,
-    tokenid: string
+    tokenid: string,
   ): Promise<Block> {
     if (!this.wallet) {
       throw new Error("Wallet not initialized");
@@ -296,7 +316,7 @@ class RemoteFromAddressTests extends RemoteTest {
       domainname,
       increment,
       token,
-      addresses
+      addresses,
     );
   }
 
@@ -314,7 +334,7 @@ class RemoteFromAddressTests extends RemoteTest {
     domainname: string,
     increment: boolean,
     token: Token,
-    addresses: MultiSignAddress[]
+    addresses: MultiSignAddress[],
   ): Promise<Block> {
     if (!this.wallet) {
       throw new Error("Wallet not initialized");
@@ -327,11 +347,11 @@ class RemoteFromAddressTests extends RemoteTest {
       token,
       addresses,
       Buffer.from(key.getPubKey()),
-      new MemoInfo("coinbase")
+      new MemoInfo("coinbase"),
     );
   }
 
-    protected async checkBalance1(tokenid: string, keys: ECKey[]): Promise<UTXO> {
+  protected async checkBalance1(tokenid: string, keys: ECKey[]): Promise<UTXO> {
     // Get the UTXOs for the provided keys
     const utxos = await this.getBalanceByKeys(false, keys);
     let targetUtxo: UTXO | null = null;
@@ -342,10 +362,11 @@ class RemoteFromAddressTests extends RemoteTest {
         break;
       }
     }
-return targetUtxo;
-    
+    if (!targetUtxo) {
+      throw new Error('No UTXO found with balance');
+    }
+    return targetUtxo;
   }
-
 
   protected async checkBalance(tokenid: string, keys: ECKey[]): Promise<void> {
     // Get the UTXOs for the provided keys
@@ -364,7 +385,11 @@ return targetUtxo;
     expect(targetUtxo).not.toBeNull();
   }
 
-  protected async waitForBalance(tokenid: string, keys: ECKey[], maxWaitMs: number = 30000): Promise<void> {
+  protected async waitForBalance(
+    tokenid: string,
+    keys: ECKey[],
+    maxWaitMs: number = 30000,
+  ): Promise<void> {
     const startTime = Date.now();
     const checkInterval = 2000; // Check every 2 seconds
 
@@ -373,23 +398,29 @@ return targetUtxo;
 
       for (const utxo of utxos) {
         if (tokenid === utxo.getTokenId()) {
-          console.log(`Balance available for token ${tokenid}: ${utxo.getValue().toString()}`);
+          console.log(
+            `Balance available for token ${tokenid}: ${utxo.getValue().toString()}`,
+          );
           return; // Balance found, exit
         }
       }
 
-      console.log(`Waiting for balance of token ${tokenid}... (${Date.now() - startTime}ms elapsed)`);
+      console.log(
+        `Waiting for balance of token ${tokenid}... (${Date.now() - startTime}ms elapsed)`,
+      );
       await new Promise((resolve) => setTimeout(resolve, checkInterval));
     }
 
-    throw new Error(`Timeout waiting for balance of token ${tokenid} after ${maxWaitMs}ms`);
+    throw new Error(
+      `Timeout waiting for balance of token ${tokenid} after ${maxWaitMs}ms`,
+    );
   }
 
   protected async sell(keys: ECKey[]): Promise<void> {
     const w = await Wallet.fromKeysURL(
       this.networkParameters,
       keys,
-      this.contextRoot
+      this.contextRoot,
     );
 
     // Now sell yuan tokens for native token
@@ -401,7 +432,7 @@ return targetUtxo;
       null, //
       null, // to address
       NetworkParameters.BIGTANGLE_TOKENID_STRING, // payment token (native)
-      false // is buy order - false means it's a sell order
+      false, // is buy order - false means it's a sell order
     );
 
     console.log(`sell order result: ${bs ? bs.toString() : "null"}`);

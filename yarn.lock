@@ -3207,10 +3207,10 @@ big-integer@1.6.x:
   resolved "https://registry.yarnpkg.com/big-integer/-/big-integer-1.6.52.tgz#60a887f3047614a8e1bffe5d7173490a97dc8c85"
   integrity sha512-QxD8cf2eVqJOOz63z6JIN9BzvVs/dlySa5HGSBH5xtR8dPteIRQnBxxKqkNTiT6jbDTF6jAfrd4oMcND9RGbQg==
 
-bigtangle-ts@^1.0.5:
-  version "1.0.6"
-  resolved "https://registry.yarnpkg.com/bigtangle-ts/-/bigtangle-ts-1.0.6.tgz#c85d1f25869bd76e37482284f949a4d81dba6fec"
-  integrity sha512-4OZFK08Xv4kR+w2+OdTsE+RTP0fXBwsHTJSftK8kMFfKy6CGO6yWZLLcN2Y9x0uLCI+jPbm4kAlp4qBrEhpYCw==
+bigtangle-ts@1.0.7:
+  version "1.0.7"
+  resolved "https://registry.yarnpkg.com/bigtangle-ts/-/bigtangle-ts-1.0.7.tgz#71ea0e6ce530afab9971cf44d2c00cdb8e28a55d"
+  integrity sha512-IBrN4SjbZD8HImrf8xDqr3sPc05thIoSnf8mXQ4yVtzCU39sw5MBAGysoDDeB9xlWc1SwclORZSHcu6uk6X3aQ==
   dependencies:
     "@babel/runtime" "^7.28.4"
     "@noble/ciphers" "^2.1.1"
@@ -4327,6 +4327,11 @@ expo-device@~8.0.8:
   integrity sha512-jd5BxjaF7382JkDMaC+P04aXXknB2UhWaVx5WiQKA05ugm/8GH5uaz9P9ckWdMKZGQVVEOC8MHaUADoT26KmFA==
   dependencies:
     ua-parser-js "^0.7.33"
+
+expo-document-picker@~14.0.8:
+  version "14.0.8"
+  resolved "https://registry.yarnpkg.com/expo-document-picker/-/expo-document-picker-14.0.8.tgz#ca1d99cc432c48e69a6390eb035f3301557e3699"
+  integrity sha512-3tyQKpPqWWFlI8p9RiMX1+T1Zge5mEKeBuXWp1h8PEItFMUDSiOJbQ112sfdC6Hxt8wSxreV9bCRl/NgBdt+fA==
 
 expo-file-system@~19.0.14, expo-file-system@~19.0.21:
   version "19.0.21"
