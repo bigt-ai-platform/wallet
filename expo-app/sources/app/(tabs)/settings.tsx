@@ -82,7 +82,7 @@ export default function SettingsScreen() {
   };
 
   return (
-    <ScrollView style={stylesheet.container} contentContainerStyle={stylesheet.content}>
+    <ScrollView style={stylesheet.container} contentContainerStyle={stylesheet.content} testID="settings-screen">
       <Text style={stylesheet.title}>Settings</Text>
 
       {/* Network Settings */}
@@ -101,6 +101,7 @@ export default function SettingsScreen() {
             onValueChange={handleTestnetToggle}
             trackColor={{ false: '#767577', true: stylesheet.switchTrack.color }}
             thumbColor={useTestnet ? '#fff' : '#f4f3f4'}
+            testID="testnet-toggle"
           />
         </View>
 
@@ -117,6 +118,7 @@ export default function SettingsScreen() {
             placeholderTextColor={stylesheet.placeholder.color}
             autoCapitalize="none"
             autoCorrect={false}
+            testID="server-url-input"
           />
         </View>
       </View>
@@ -137,7 +139,7 @@ export default function SettingsScreen() {
       {/* Actions */}
       <View style={stylesheet.actions}>
         {hasChanges && (
-          <TouchableOpacity style={[stylesheet.button, stylesheet.primaryButton]} onPress={handleSave}>
+          <TouchableOpacity style={[stylesheet.button, stylesheet.primaryButton]} onPress={handleSave} testID="save-settings-button">
             <Text style={stylesheet.buttonText}>Save Changes</Text>
           </TouchableOpacity>
         )}

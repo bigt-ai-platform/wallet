@@ -161,7 +161,7 @@ export default function TransactionScreen() {
 
   if (!isUnlocked) {
     return (
-      <View style={stylesheet.container}>
+      <View style={stylesheet.container} testID="transaction-screen">
         <View style={stylesheet.centered}>
           <Text style={stylesheet.subtitle}>
             Please unlock your wallet to make transactions
@@ -181,11 +181,12 @@ export default function TransactionScreen() {
     <ScrollView
       style={stylesheet.container}
       contentContainerStyle={stylesheet.content}
+      testID="transaction-screen"
     >
       <Text style={stylesheet.title}>Send Payment</Text>
 
       {/* Token Selection */}
-      <View style={stylesheet.section}>
+      <View style={stylesheet.section} testID="token-selection">
         <Text style={stylesheet.label}>Select Token</Text>
         {loadingTokens ? (
           <ActivityIndicator />
@@ -221,8 +222,9 @@ export default function TransactionScreen() {
             placeholderTextColor={stylesheet.placeholder.color}
             autoCapitalize="none"
             autoCorrect={false}
+            testID="recipient-address-input"
           />
-          <TouchableOpacity style={stylesheet.iconButton}>
+          <TouchableOpacity style={stylesheet.iconButton} testID="qr-scan-button">
             <Text style={stylesheet.iconButtonText}>QR</Text>
           </TouchableOpacity>
         </View>
@@ -238,6 +240,7 @@ export default function TransactionScreen() {
           placeholder="0.00"
           placeholderTextColor={stylesheet.placeholder.color}
           keyboardType="decimal-pad"
+          testID="amount-input"
         />
         {selectedToken && (
           <Text style={stylesheet.hint}>
@@ -257,6 +260,7 @@ export default function TransactionScreen() {
           placeholderTextColor={stylesheet.placeholder.color}
           multiline
           numberOfLines={3}
+          testID="memo-input"
         />
       </View>
 
@@ -269,6 +273,7 @@ export default function TransactionScreen() {
         ]}
         onPress={handleSend}
         disabled={loading}
+        testID="send-button"
       >
         {loading ? (
           <ActivityIndicator color="#fff" />

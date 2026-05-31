@@ -48,3 +48,8 @@ CLAUDE.local.md
 
 # Development planning notes (keep local, don't commit)
 notes/
+
+# Playwright
+playwright-report/
+test-results/
+

@@ -26,7 +26,12 @@
     "e2e:test:android": "detox test --configuration android.emu.debug",
     "e2e:test": "detox test",
     "e2e:test:ios:release": "detox test --configuration ios.sim.release",
-    "e2e:test:android:release": "detox test --configuration android.emu.release"
+    "e2e:test:android:release": "detox test --configuration android.emu.release",
+    "playwright:install": "npx playwright install --with-deps chromium",
+    "playwright:test": "npx playwright test --config ../e2e/playwright.config.ts",
+    "playwright:report": "npx playwright show-report ../e2e/playwright-report",
+    "web:build": "npx expo export --platform web --output-dir ../e2e/web-build",
+    "web:serve": "npx http-server ../e2e/web-build -p 8081 --proxy http://localhost:8081?"
   },
   "jest": {
     "preset": "jest-expo"
@@ -98,6 +103,8 @@
     "react-test-renderer": "19.0.0",
     "tsx": "^4.20.4",
     "typescript": "~5.9.2",
+    "http-server": "^14.1.1",
+    "@playwright/test": "^1.52.0",
     "vitest": "^3.2.4"
   },
   "private": true,

@@ -55,7 +55,7 @@ export default function WalletScreen() {
 
   if (!isUnlocked) {
     return (
-      <View style={stylesheet.container}>
+      <View style={stylesheet.container} testID="wallet-screen">
         <View style={stylesheet.centered}>
           <Text style={stylesheet.subtitle}>Please unlock your wallet</Text>
           <TouchableOpacity
@@ -70,15 +70,15 @@ export default function WalletScreen() {
   }
 
   return (
-    <ScrollView style={stylesheet.container} contentContainerStyle={stylesheet.content}>
+    <ScrollView style={stylesheet.container} contentContainerStyle={stylesheet.content} testID="wallet-screen">
       {/* Wallet Address */}
       <View style={stylesheet.section}>
         <Text style={stylesheet.label}>Your Address</Text>
-        <Text style={stylesheet.address}>{publicInfo?.address}</Text>
+        <Text style={stylesheet.address} testID="wallet-address">{publicInfo?.address}</Text>
       </View>
 
       {/* Assets */}
-      <View style={stylesheet.section}>
+      <View style={stylesheet.section} testID="wallet-assets">
         <View style={stylesheet.sectionHeader}>
           <Text style={stylesheet.label}>Assets</Text>
           <TouchableOpacity onPress={handleRefresh} disabled={refreshing}>
@@ -116,6 +116,7 @@ export default function WalletScreen() {
         <TouchableOpacity
           style={stylesheet.actionButton}
           onPress={() => router.push('/wallet/keys')}
+          testID="manage-wallet-button"
         >
           <Text style={stylesheet.actionButtonText}>Manage Keys</Text>
         </TouchableOpacity>

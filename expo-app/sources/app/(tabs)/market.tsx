@@ -67,7 +67,7 @@ export default function MarketScreen() {
 
   if (loading) {
     return (
-      <View style={stylesheet.container}>
+      <View style={stylesheet.container} testID="market-screen">
         <View style={stylesheet.centered}>
           <ActivityIndicator size="large" />
           <Text style={stylesheet.loadingText}>Loading market prices...</Text>
@@ -81,6 +81,7 @@ export default function MarketScreen() {
       style={stylesheet.container}
       contentContainerStyle={stylesheet.content}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />}
+      testID="market-screen"
     >
       <Text style={stylesheet.title}>Market Prices</Text>
 
@@ -88,7 +89,7 @@ export default function MarketScreen() {
         <Text style={stylesheet.emptyText}>No market data available</Text>
       ) : (
         prices.map((item, index) => (
-          <View key={index} style={stylesheet.priceCard}>
+          <View key={index} style={stylesheet.priceCard} testID={`price-card-${index}`}>
             <View style={stylesheet.priceLeft}>
               <Text style={stylesheet.tokenName}>{item.tokenname}</Text>
               <Text style={stylesheet.tokenId}>{item.tokenid.substring(0, 16)}...</Text>

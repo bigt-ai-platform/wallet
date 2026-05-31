@@ -239,6 +239,66 @@ import { MyComponent } from '@/components/MyComponent';
 - ✅ Android 6.0+ (API level 23+)
 - ✅ Web (modern browsers)
 
+## Architecture Details
+
+### Bigtangle Blockchain Integration
+
+The app integrates with the Bigtangle blockchain via `@bigtangle/bigtangle-ts` (local dependency at `../bigtangle-ts`).
+
+**Key capabilities:**
+- Blockchain protocol implementation
+- Cryptographic utilities (secp256k1, scrypt, AES)
+- UTXO-based transaction handling
+- Wallet management with address derivation
+- Network communication via HTTP and WebSocket
+
+**Utility helper:** `sources/utils/bigtangle.ts` provides convenience functions for initialization and version info.
+
+**Dependencies brought in:** `@noble/ciphers`, `@noble/hashes`, `axios`, `bs58`, `secp256k1`, `socket.io-client`
+
+### Wallet System
+
+The wallet system provides secure key management with encryption at rest and in-memory-only decrypted keys.
+
+**Core files:**
+- `sources/screens/wallet/WalletHelper.ts` — bigtangle-ts wallet utilities (create, save, load, import)
+- `sources/state/wallet/index.tsx` — React Context-based state management with auto-lock
+- `sources/storage/index.ts` — MMKV-based encrypted storage abstraction
+
+**Security model:**
+- Scrypt key derivation (N=16384, r=8, p=1) + AES encryption for wallet files
+- Private keys decrypted only in memory; cleared on app background
+- Password never persisted (session-only)
+- WIF and hex private key import supported
+
+**State management:**
+- `WalletProvider` context wraps the app
+- `useWallet()` hook exposes `publicInfo`, `isUnlocked`, `storeEncryptedWallet`, `unlockWallet`, `lockWallet`, `clearWallet`
+- Public info (address, hasEncryptedWallet) always accessible; private keys only when unlocked
+
+### Transaction System
+
+UTXO-based payment sending implemented in `sources/services/transaction.ts`.
+
+**Flow:**
+1. Fetch UTXOs from network
+2. Greedy largest-first UTXO selection to meet amount + fee
+3. Transaction creation with bigtangle-ts classes (`Transaction`, `TransactionInput`, `TransactionOutput`, `Coin`, `Script`)
+4. SIGHASH_ALL signing via `ECKey.sign()`
+5. Broadcast to `POST {serverUrl}/broadcastTransaction`
+
+**Fee estimation:** base 1000 satoshis + 500 per input + 300 per output
+
+**Integration:** Transaction screen (`sources/app/(tabs)/index.tsx`) with token selection, recipient, amount, memo fields, and confirmation dialog.
+
+### HTTP Service Layer
+
+Singleton API service at `sources/services/http.ts` with endpoints for balances, outputs, tokens, market prices, and user data. Supports mainnet/testnet switching with configurable server URLs. Type-safe request/response handling via `sources/types/api.ts`.
+
+### Internationalization
+
+All user-facing strings use the `t()` function from `@/text`. Translations are in `sources/text/translations/`. Currently supports English (`en.ts`) with an extensible system for additional languages.
+
 ## License
 
 [Your License Here]

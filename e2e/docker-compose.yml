@@ -1,0 +1,103 @@
+version: "3.8"
+
+networks:
+  e2e-network:
+    driver: bridge
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: e2e-postgres
+    networks:
+      - e2e-network
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: test1234
+      POSTGRES_DB: info
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d info"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio
+    container_name: e2e-minio
+    networks:
+      - e2e-network
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadminpassword
+      MINIO_DEFAULT_BUCKETS: testbigtangle
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  bigtangle:
+    image: ghcr.io/bigtangle/server:latest
+    container_name: e2e-bigtangle
+    networks:
+      - e2e-network
+    ports:
+      - "8088:8088"
+    environment:
+      DB_PASSWORD: test1234
+      DB_USER: root
+      DB_PORT: 5432
+      DB_NAME: info
+      DB_HOSTNAME: postgres
+      SERVER_PORT: 8088
+      SERVER_NET: Test
+      SERVICE_MINING: "true"
+      SERVICE_MCMC: "true"
+      SERVICE_MCMC_RATE: 1000
+      SERVER_MINERADDRESS: 1LLtbSLJJn1D2churfWG55aDYqQQTu4eqH
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadminpassword
+      JAVA_OPTS: "-Ddebug -Xmx5028m --add-exports java.base/sun.nio.ch=ALL-UNNAMED -Dminio.url=http://minio:9000 -Dminio.access-key=minioadmin -Dminio.secret-key=minioadminpassword"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    container_name: e2e-app
+    networks:
+      - e2e-network
+    ports:
+      - "8081:8081"
+    depends_on:
+      bigtangle:
+        condition: service_started
+
+  playwright:
+    image: mcr.microsoft.com/playwright:v1.52.0
+    container_name: e2e-playwright
+    networks:
+      - e2e-network
+    working_dir: /e2e
+    volumes:
+      - ./playwright.config.ts:/e2e/playwright.config.ts
+      - ./playwright:/e2e/playwright
+    command: npx playwright test --reporter=list
+    depends_on:
+      app:
+        condition: service_started
+    environment:
+      APP_URL: http://app:8081
