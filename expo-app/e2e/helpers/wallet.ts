@@ -93,7 +93,13 @@ export async function importWalletFromKey(
  */
 export async function unlockWallet(password: string = TEST_WALLET.password) {
   // Check if unlock screen is visible
-  const unlockVisible = await element(by.id('unlock-wallet-button')).exists();
+  let unlockVisible = false;
+  try {
+    await detoxExpect(element(by.id('unlock-wallet-button'))).toBeVisible();
+    unlockVisible = true;
+  } catch {
+    unlockVisible = false;
+  }
 
   if (unlockVisible) {
     await tapByTestId('unlock-wallet-button');
@@ -123,7 +129,13 @@ export async function lockWallet() {
   await tapByTestId('lock-wallet-button');
 
   // Confirm lock if prompted
-  const confirmVisible = await element(by.text('Lock Wallet')).exists();
+  let confirmVisible = false;
+  try {
+    await detoxExpect(element(by.text('Lock Wallet'))).toBeVisible();
+    confirmVisible = true;
+  } catch {
+    confirmVisible = false;
+  }
   if (confirmVisible) {
     await element(by.text('Lock Wallet')).tap();
   }
@@ -170,7 +182,13 @@ export async function clearWallet() {
     await waitForElementToBeVisible(by.id('keys-screen'));
 
     // Tap clear wallet if button exists
-    const clearVisible = await element(by.id('clear-wallet-button')).exists();
+    let clearVisible = false;
+    try {
+      await detoxExpect(element(by.id('clear-wallet-button'))).toBeVisible();
+      clearVisible = true;
+    } catch {
+      clearVisible = false;
+    }
     if (clearVisible) {
       await tapByTestId('clear-wallet-button');
 

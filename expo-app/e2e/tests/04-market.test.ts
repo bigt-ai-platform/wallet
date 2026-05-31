@@ -114,8 +114,22 @@ describe('Market', () => {
     await waitForNetwork(3000);
 
     // Check for empty state or data
-    const hasData = await element(by.id('price-card-0')).exists();
-    const isEmpty = await element(by.text('No market data available')).exists();
+    let hasData = false;
+    let isEmpty = false;
+    try {
+      await detoxExpect(element(by.id('price-card-0'))).toBeVisible();
+      hasData = true;
+    } catch {
+      hasData = false;
+    }
+    if (!hasData) {
+      try {
+        await detoxExpect(element(by.text('No market data available'))).toBeVisible();
+        isEmpty = true;
+      } catch {
+        isEmpty = false;
+      }
+    }
 
     if (isEmpty) {
       await detoxExpect(element(by.text('No market data available'))).toBeVisible();

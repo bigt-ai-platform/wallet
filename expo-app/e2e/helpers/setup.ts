@@ -225,14 +225,16 @@ export async function sendToBackgroundAndResume(duration: number = 3000) {
 }
 
 /**
- * Grant permissions
+ * Grant permissions via launch app
  */
 export async function grantPermissions(permissions: string[]) {
   if (device.getPlatform() === 'ios') {
-    await device.setPermissions({
-      camera: 'granted',
-      notifications: 'granted',
-      ...permissions.reduce((acc, p) => ({ ...acc, [p]: 'granted' }), {}),
+    await device.launchApp({
+      permissions: {
+        camera: 'YES',
+        notifications: 'YES',
+        ...permissions.reduce((acc, p) => ({ ...acc, [p]: 'YES' }), {}),
+      },
     });
   }
 }

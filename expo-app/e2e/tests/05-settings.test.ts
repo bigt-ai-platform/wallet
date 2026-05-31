@@ -139,7 +139,7 @@ describe('Settings', () => {
   it('should show unsaved changes indicator', async () => {
     // Modify a setting
     await clearTextByTestId('server-url-input');
-    await typeTextByTextId('server-url-input', 'https://changed.com');
+    await typeTextByTestId('server-url-input', 'https://changed.com');
 
     // Save button should be visible/enabled
     await detoxExpect(element(by.id('save-settings-button'))).toBeVisible();

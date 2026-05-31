@@ -74,7 +74,8 @@ describe('Wallet Logic Verification', () => {
 
       // ============ UI + LOGIC CONSISTENCY ============
       // Verify displayed address matches computed address
-      const displayedAddress = await element(by.id('wallet-address')).getText();
+      const addrAttrs: any = await element(by.id('wallet-address')).getAttributes();
+      const displayedAddress = addrAttrs.text || addrAttrs.label || '';
       expect(displayedAddress).toBe(verification.address);
 
       console.log('✅ Wallet creation verified:');
@@ -180,7 +181,8 @@ describe('Wallet Logic Verification', () => {
 
       // ============ UI + LOGIC CONSISTENCY ============
       // Verify displayed address matches expected address
-      const displayedAddress = await element(by.id('wallet-address')).getText();
+      const addrAttrs2: any = await element(by.id('wallet-address')).getAttributes();
+      const displayedAddress = addrAttrs2.text || addrAttrs2.label || '';
       expect(displayedAddress).toBe(expectedAddress);
 
       console.log('✅ Import verified:');
@@ -246,7 +248,8 @@ describe('Wallet Logic Verification', () => {
       await tapByTestId('import-button');
 
       await waitForElementToBeVisible(by.id('wallet-address'));
-      const firstImportAddress = await element(by.id('wallet-address')).getText();
+      const firstAttrs: any = await element(by.id('wallet-address')).getAttributes();
+      const firstImportAddress = firstAttrs.text || firstAttrs.label || '';
 
       // Clear and import again
       await tapByTestId('clear-wallet-button');
@@ -258,7 +261,8 @@ describe('Wallet Logic Verification', () => {
       await tapByTestId('import-button');
 
       await waitForElementToBeVisible(by.id('wallet-address'));
-      const secondImportAddress = await element(by.id('wallet-address')).getText();
+      const secondAttrs: any = await element(by.id('wallet-address')).getAttributes();
+      const secondImportAddress = secondAttrs.text || secondAttrs.label || '';
 
       // ============ UI + LOGIC CONSISTENCY ============
       expect(firstImportAddress).toBe(secondImportAddress);

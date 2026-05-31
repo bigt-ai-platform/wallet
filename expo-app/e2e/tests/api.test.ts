@@ -46,8 +46,12 @@ class RemoteFromAddressTests extends RemoteTest {
     const networkParams = new TestParams();
 
     console.log("Test wallets initialized:");
-    console.log(`  User 1: ${this.userkeys[0].toAddress(networkParams).toString()}`);
-    console.log(`  User 2: ${this.userkeys[1].toAddress(networkParams).toString()}`);
+    console.log(
+      `  User 1: ${this.userkeys[0].toAddress(networkParams).toString()}`,
+    );
+    console.log(
+      `  User 2: ${this.userkeys[1].toAddress(networkParams).toString()}`,
+    );
 
     await this.payBigTo(
       [
@@ -363,7 +367,7 @@ class RemoteFromAddressTests extends RemoteTest {
       }
     }
     if (!targetUtxo) {
-      throw new Error('No UTXO found with balance');
+      throw new Error("No UTXO found with balance");
     }
     return targetUtxo;
   }
