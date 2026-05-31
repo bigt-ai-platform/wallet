@@ -101,16 +101,6 @@ export interface UTXO {
 }
 
 /**
- * AI Chat message
- */
-export interface AiChatMessage {
-  id: string;
-  question: string;
-  answer: string;
-  timestamp: number;
-}
-
-/**
  * API Response wrapper
  */
 export interface ApiResponse<T> {

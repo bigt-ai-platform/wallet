@@ -14,10 +14,9 @@ Successfully created and enhanced comprehensive E2E tests covering all main app 
 | 04-market.test.ts | 9 | ✅ **UI + Logic (Phase 2)** |
 | 05-wallet-asset.test.ts | 22 | UI Only |
 | 06-tokens.test.ts | 22 | ✅ **UI + Logic (Phase 2)** |
-| 07-aichat.test.ts | 34 | UI Only |
 | 08-wallet-logic.test.ts | Example | ✅ **Full Logic Demo (Phase 1)** |
 
-**Total**: 115+ tests | **Enhanced**: 8+ tests with logic verification
+**Total**: 81+ tests | **Enhanced**: 8+ tests with logic verification
 
 ## Test Files
 
@@ -176,60 +175,7 @@ Successfully created and enhanced comprehensive E2E tests covering all main app 
 **Logic Checks**:
 - ✅ `verifyTokenFilter()` - Tests search algorithm
 
-### 7. `07-aichat.test.ts` (34 tests)
-
-**Tests AI chat functionality**
-
-**Chat Interface**:
-- Display chat screen
-- Display chat input
-- Display send button
-- Display message history
-- Scroll to latest message
-
-**Message Sending**:
-- Send a message
-- Display sent message
-- Clear input after send
-- Handle empty input
-- Handle long messages
-- Handle special characters
-- Send multiple messages
-- Messages appear in order
-
-**AI Response**:
-- Receive AI response
-- Display AI message
-- Show loading indicator during response
-- Handle response errors
-- Retry failed responses
-
-**Message Display**:
-- Show user messages (right side, blue)
-- Show AI messages (left side, gray)
-- Format messages correctly
-- Show timestamps
-- Handle long responses
-- Handle code blocks in responses
-
-**Keyboard Behavior**:
-- Show keyboard on focus
-- Hide keyboard after send
-- Scroll to input when keyboard shows
-- Handle keyboard dismissal
-
-**Conversation Management**:
-- Clear conversation history
-- Load previous conversations
-- Handle empty chat state
-
-**Error Handling**:
-- Handle network errors
-- Show error messages
-- Retry on failure
-- Handle timeout
-
-### 8. `08-wallet-logic.test.ts` ✅ NEW Phase 1
+### 7. `08-wallet-logic.test.ts` ✅ NEW Phase 1
 
 **Comprehensive wallet logic testing example**
 
@@ -387,8 +333,8 @@ Enhanced tests output verification results:
 ## Test Statistics
 
 ### Test Files and Counts
-- **Total Test Files**: 8 (7 original + 1 new logic example)
-- **Total Tests**: 115+
+- **Total Test Files**: 7 (6 original + 1 new logic example)
+- **Total Tests**: 81+
 - **Tests with Logic Verification**: 8+ tests across 4 files
 
 ### Test Categories
@@ -400,7 +346,6 @@ Enhanced tests output verification results:
 | Market | 9 | ✅ 1 test |
 | Wallet Assets | 22 | - |
 | Tokens | 22 | ✅ 1 test |
-| AI Chat | 34 | - |
 | Wallet Logic | Example | ✅ All tests |
 
 ### Enhancement Progress

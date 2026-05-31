@@ -28,7 +28,6 @@ const DEFAULT_MAINNET_URL = 'https://p.bigtangle.org:8088/';
 const DEFAULT_TESTNET_URL = 'https://testp.bigtangle.org:8088/';
 const DEFAULT_MOBILE_URL = 'https://m.bigtangle.org';
 const DEFAULT_MOBILE_TEST_URL = 'https://testm.bigtangle.org';
-const AI_CHAT_URL = 'https://bigtangle.de:8092/relay';
 
 /**
  * Storage keys
@@ -300,50 +299,6 @@ export class HttpService {
    */
   async getContacts(address: string): Promise<ApiResponse<ContactInfo[]>> {
     return this.getUserData<ContactInfo>(address, UserDataType.ContactInfo);
-  }
-
-  /**
-   * AI Chat query
-   */
-  async aiChatQuery(question: string): Promise<ApiResponse<string>> {
-    try {
-      const response = await this.request<any>(
-        '',
-        'POST',
-        {
-          messages: [
-            {
-              role: 'user',
-              content: question,
-            },
-          ],
-        },
-        AI_CHAT_URL
-      );
-
-      if (response.success && response.data) {
-        // Parse AI response
-        const choices = response.data.choices;
-        if (choices && choices.length > 0) {
-          const answer = choices[0].message?.content || 'No response';
-          return {
-            success: true,
-            data: answer,
-          };
-        }
-      }
-
-      return {
-        success: false,
-        error: 'No response from AI',
-      };
-    } catch (error) {
-      console.error('[HTTP] AI Chat failed:', error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      };
-    }
   }
 
   /**

@@ -105,7 +105,7 @@ e2e/
 │   ├── 04-market.test.ts          # Market data
 │   ├── 05-settings.test.ts        # Settings
 │   ├── 06-tokens.test.ts          # Token browsing and search
-│   └── 07-aichat.test.ts          # AI chat functionality
+│   └── 08-wallet-logic.test.ts    # Wallet logic verification
 ├── jest.config.js         # Jest configuration
 └── E2E_TESTING.md        # This file
 ```
@@ -162,17 +162,6 @@ e2e/
 - ✅ Scroll and refresh
 - ✅ Display token metadata
 - ✅ Performance testing
-
-### 7. AI Chat (`07-aichat.test.ts`)
-- ✅ Display chat interface
-- ✅ Send messages
-- ✅ Display responses
-- ✅ Handle loading state
-- ✅ Handle errors
-- ✅ Maintain conversation history
-- ✅ Auto-scroll to latest message
-- ✅ Keyboard behavior
-- ✅ Multiline input support
 
 ## Helper Functions
 
@@ -472,7 +461,6 @@ Planned test coverage:
 - ⏳ Network error handling
 - ⏳ Performance tests
 - ✅ Token browsing and search
-- ✅ AI chat functionality
 
 ## Resources
 

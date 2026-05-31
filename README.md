@@ -9,7 +9,6 @@ A cross-platform (Android, iOS, Web) mobile application for Bigtangle blockchain
 - **Transaction Payments**: Send tokens with UTXO-based transactions
 - **Market Prices**: View live token prices and trading information
 - **Token Browser**: Search and browse available tokens
-- **AI Chat**: Interactive AI assistant for blockchain queries
 - **Settings**: Network configuration (mainnet/testnet) and server selection
 
 ### Transaction System ✅
