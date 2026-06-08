@@ -46,13 +46,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Checkout bigtangle-ts
-        uses: actions/checkout@v4
-        with:
-          repository: bigtangle/bigtangle-ts
-          path: bigtangle-ts
-
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -67,17 +60,6 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Install bigtangle-ts dependencies
-        working-directory: ./bigtangle-ts
-        run: npm install
-
-      - name: Build bigtangle-ts
-        working-directory: ./bigtangle-ts
-        run: npm run build
-
-      - name: Re-install dependencies to update bigtangle-ts symlink
         run: yarn install --frozen-lockfile
 
       - name: Type check
@@ -118,13 +100,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Checkout bigtangle-ts
-        uses: actions/checkout@v4
-        with:
-          repository: bigtangle/bigtangle-ts
-          path: bigtangle-ts
-
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -145,17 +120,6 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Install bigtangle-ts dependencies
-        working-directory: ./bigtangle-ts
-        run: npm install
-
-      - name: Build bigtangle-ts
-        working-directory: ./bigtangle-ts
-        run: npm run build
-
-      - name: Re-install dependencies to update bigtangle-ts symlink
         run: yarn install --frozen-lockfile
 
       - name: Type check
@@ -200,13 +164,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Checkout bigtangle-ts
-        uses: actions/checkout@v4
-        with:
-          repository: bigtangle/bigtangle-ts
-          path: bigtangle-ts
-
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -221,17 +178,6 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Install dependencies
-        run: yarn install --frozen-lockfile
-
-      - name: Install bigtangle-ts dependencies
-        working-directory: ./bigtangle-ts
-        run: npm install
-
-      - name: Build bigtangle-ts
-        working-directory: ./bigtangle-ts
-        run: npm run build
-
-      - name: Re-install dependencies to update bigtangle-ts symlink
         run: yarn install --frozen-lockfile
 
       - name: Type check
@@ -273,13 +219,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Checkout bigtangle-ts
-        uses: actions/checkout@v4
-        with:
-          repository: bigtangle/bigtangle-ts
-          path: bigtangle-ts
-
 
       - name: Download web artifacts
         uses: actions/download-artifact@v4
