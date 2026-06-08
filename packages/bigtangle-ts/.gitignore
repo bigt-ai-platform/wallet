@@ -1,0 +1,34 @@
+# Node
+node_modules/
+
+# Build output
+dist/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript
+*.tsbuildinfo
+
+# Env
+.env
+.env.*
+
+# VSCode
+.vscode/
+
+# Test coverage
+coverage/
+.tmp/
+
+# Misc
+*.log
+bigtangle-bigtangle-ts-1.0.0.tgz
+bigtangle-ts-1.0.0.tgz
+bigtangle-ts-1.0.0.tgz

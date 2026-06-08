@@ -2,6 +2,7 @@
 
 # dependencies
 node_modules/
+package-lock.json
 
 # Expo
 .expo/
@@ -22,6 +23,8 @@ expo-env.d.ts
 
 # Metro
 .metro-health-check*
+
+.npmignore
 
 # debug
 npm-debug.*
