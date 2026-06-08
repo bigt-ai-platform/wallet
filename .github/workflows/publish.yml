@@ -62,6 +62,10 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Build bigtangle-ts
+        working-directory: ./packages/bigtangle-ts
+        run: yarn build
+
       - name: Type check
         working-directory: ./expo-app
         run: yarn typecheck
@@ -122,6 +126,10 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
+      - name: Build bigtangle-ts
+        working-directory: ./packages/bigtangle-ts
+        run: yarn build
+
       - name: Type check
         working-directory: ./expo-app
         run: yarn typecheck
@@ -179,6 +187,10 @@ jobs:
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
+
+      - name: Build bigtangle-ts
+        working-directory: ./packages/bigtangle-ts
+        run: yarn build
 
       - name: Type check
         working-directory: ./expo-app
