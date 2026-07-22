@@ -171,3 +171,33 @@ export interface MarketOrder {
   endTime?: number;
   status?: 'pending' | 'active' | 'filled' | 'cancelled';
 }
+
+export interface OrderRecordResponse {
+  blockHashHex?: string;
+  offerValue: number;
+  offerTokenid: string;
+  targetValue: number;
+  targetTokenid: string;
+  beneficiaryAddress?: string;
+  validToTime?: number;
+  validFromTime?: number;
+  side?: 'BUY' | 'SELL';
+  orderBaseToken?: string;
+  price?: number;
+  tokenDecimals?: number;
+  confirmed?: boolean;
+  spent?: boolean;
+  time?: number;
+}
+
+export interface OrderOpenParams {
+  side: 'buy' | 'sell';
+  tokenId: string;
+  tokenName: string;
+  baseToken: string;
+  price: string;
+  amount: string;
+  decimals: number;
+  fromAddress: string;
+  privateKeyHex: string;
+}

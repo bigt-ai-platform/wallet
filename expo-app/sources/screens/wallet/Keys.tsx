@@ -856,7 +856,7 @@ const styles = StyleSheet.create((theme) => ({
   headerTitle: {
     fontSize: 24,
     fontWeight: "bold",
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
   },
   container: {
     padding: theme.margins.lg,
@@ -864,7 +864,7 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     fontSize: 20,
     fontWeight: "bold",
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     marginBottom: theme.margins.md,
   },
   successText: {
@@ -872,13 +872,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   description: {
     fontSize: 14,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     marginBottom: theme.margins.lg,
     lineHeight: 20,
   },
   warning: {
     fontSize: 14,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     marginBottom: theme.margins.lg,
     lineHeight: 20,
     backgroundColor: theme.colors.surfacePressed,
@@ -893,12 +893,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   label: {
     fontSize: 12,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
     marginBottom: theme.margins.xs,
   },
   address: {
     fontSize: 14,
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     fontFamily: Platform.select({
       ios: "Menlo",
       android: "monospace",
@@ -922,21 +922,21 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusText: {
     fontSize: 12,
-    color: theme.colors.textSecondary,
+    color: theme.colors.text.secondary,
   },
   inputGroup: {
     marginBottom: theme.margins.md,
   },
   inputLabel: {
     fontSize: 14,
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     marginBottom: theme.margins.xs,
   },
   input: {
     borderWidth: 1,
     borderColor: theme.colors.divider,
     backgroundColor: theme.colors.surface,
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     borderRadius: theme.borderRadius.md,
     padding: theme.margins.md,
     fontSize: 14,
@@ -964,12 +964,12 @@ const styles = StyleSheet.create((theme) => ({
     borderColor: theme.colors.divider,
   },
   buttonPrimary: {
-    backgroundColor: theme.colors.text,
-    borderColor: theme.colors.text,
+    backgroundColor: theme.colors.text.primary,
+    borderColor: theme.colors.text.primary,
   },
   buttonText: {
     fontSize: 16,
-    color: theme.colors.text,
+    color: theme.colors.text.primary,
     fontWeight: "600",
   },
   buttonTextPrimary: {

@@ -26,7 +26,7 @@ test.describe('Settings Screen', () => {
   test('shows app version information', async ({ page }) => {
     await waitForApp(page);
     await clickTab(page, 'Settings');
-    await expect(page.getByText('1.0.0').first()).toBeAttached({ timeout: 10000 });
+    await expect(page.getByText('App Version').first()).toBeAttached({ timeout: 10000 });
   });
 
   test('shows reset to defaults button', async ({ page }) => {

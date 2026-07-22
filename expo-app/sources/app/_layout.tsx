@@ -7,6 +7,7 @@ import { Stack } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { WalletProvider } from '@/state/wallet';
 import '../unistyles';
+import '../lib/i18n';
 
 export {
     ErrorBoundary,

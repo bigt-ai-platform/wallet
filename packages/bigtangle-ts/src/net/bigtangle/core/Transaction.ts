@@ -43,6 +43,7 @@ import { VarInt } from "./VarInt";
 import { MessageSerializer } from "./MessageSerializer";
 import { ScriptBuilder } from "../script/ScriptBuilder";
 import { TransactionSignature } from "../crypto/TransactionSignature";
+import { PQConstants } from "../crypto/pq/PQConstants";
 import { JsonProperty } from "jackson-js";
 
 import { UnsafeByteArrayOutputStream } from "./UnsafeByteArrayOutputStream";
@@ -104,6 +105,18 @@ export class Transaction extends ChildMessage {
   @JsonProperty() private dataClassName: string | null = null;
 
   @JsonProperty() private toAddressInSubtangle: Uint8Array | null = null;
+
+  @JsonProperty() private pqKeyBundle: Uint8Array | null = null;
+  @JsonProperty() private pqSignatureBundle: Uint8Array | null = null;
+
+  public getPqKeyBundle(): Uint8Array | null { return this.pqKeyBundle; }
+  public setPqKeyBundle(b: Uint8Array | null): void { this.pqKeyBundle = b; }
+
+  public getPqSignatureBundle(): Uint8Array | null { return this.pqSignatureBundle; }
+  public setPqSignatureBundle(b: Uint8Array | null): void { this.pqSignatureBundle = b; }
+
+  public getToAddressInSubtangle(): Uint8Array | null { return this.toAddressInSubtangle; }
+  public setToAddressInSubtangle(b: Uint8Array | null): void { this.toAddressInSubtangle = b; }
 
   public getData(): Uint8Array | null {
     return this.data;
@@ -619,6 +632,22 @@ export class Transaction extends ChildMessage {
       this.optimalEncodingMessageSize += len;
     }
 
+    // PQ witness data (conditional on version).
+    if (this.version >= PQConstants.TX_PQ_VERSION) {
+      len = this.readUint32();
+      this.optimalEncodingMessageSize += 4;
+      if (len > 0) {
+        this.pqKeyBundle = this.readBytes(len);
+        this.optimalEncodingMessageSize += len;
+      }
+      len = this.readUint32();
+      this.optimalEncodingMessageSize += 4;
+      if (len > 0) {
+        this.pqSignatureBundle = this.readBytes(len);
+        this.optimalEncodingMessageSize += len;
+      }
+    }
+
     this.length = this.cursor - this.offset;
      this.calcHash;
   }
@@ -1103,6 +1132,13 @@ export class Transaction extends ChildMessage {
       tx.inputs[i].clearScriptBytes();
     }
 
+    // Clear PQ witness data to break circular dependency:
+    // the PQ signature bundle cannot sign itself.
+    if (tx.version >= PQConstants.TX_PQ_VERSION) {
+      tx.setPqKeyBundle(null);
+      tx.setPqSignatureBundle(null);
+    }
+
     // Set the input to the script of its output. Bitcoin Core does this
     // but the step has no obvious purpose as the signature covers the hash 
     // of the prevout transaction which obviously includes the output script
@@ -1312,6 +1348,22 @@ export class Transaction extends ChildMessage {
       Utils.uint32ToByteStreamLE(this.dataSignature.length, stream);
       stream.write(this.dataSignature);
     }
+
+    // PQ witness data at the end (wire format only, not part of sighash).
+    if (this.version >= PQConstants.TX_PQ_VERSION) {
+      if (this.pqKeyBundle == null) {
+        Utils.uint32ToByteStreamLE(0, stream);
+      } else {
+        Utils.uint32ToByteStreamLE(this.pqKeyBundle.length, stream);
+        stream.write(this.pqKeyBundle);
+      }
+      if (this.pqSignatureBundle == null) {
+        Utils.uint32ToByteStreamLE(0, stream);
+      } else {
+        Utils.uint32ToByteStreamLE(this.pqSignatureBundle.length, stream);
+        stream.write(this.pqSignatureBundle);
+      }
+    }
   }
 
   /**
@@ -1397,6 +1449,22 @@ export class Transaction extends ChildMessage {
       Utils.uint32ToByteStreamLE(this.toAddressInSubtangle.length, stream);
       if (this.toAddressInSubtangle.length > 0) {
         stream.write(this.toAddressInSubtangle);
+      }
+    }
+
+    // PQ witness data (included in tx hash, excluded from sighash).
+    if (this.version >= PQConstants.TX_PQ_VERSION) {
+      if (this.pqKeyBundle == null) {
+        Utils.uint32ToByteStreamLE(0, stream);
+      } else {
+        Utils.uint32ToByteStreamLE(this.pqKeyBundle.length, stream);
+        stream.write(this.pqKeyBundle);
+      }
+      if (this.pqSignatureBundle == null) {
+        Utils.uint32ToByteStreamLE(0, stream);
+      } else {
+        Utils.uint32ToByteStreamLE(this.pqSignatureBundle.length, stream);
+        stream.write(this.pqSignatureBundle);
       }
     }
 

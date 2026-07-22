@@ -13,6 +13,7 @@ export default defineConfig({
   timeout: 30000,
   use: {
     baseURL: process.env.APP_URL || 'http://localhost:8081',
+    headless: process.env.CI ? true : false,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     navigationTimeout: 15000,
@@ -20,7 +21,9 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+      },
     },
   ],
   outputDir: 'test-results',

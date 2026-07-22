@@ -79,6 +79,13 @@ export { Wallet } from './net/bigtangle/wallet/Wallet';
 // Crypto functionality
 export { KeyCrypterScrypt } from './net/bigtangle/crypto/KeyCrypterScrypt';
 
+// Post-quantum cryptography
+export { PQConstants } from './net/bigtangle/crypto/pq/PQConstants';
+export { KeyBundle, KeyBundleEntry } from './net/bigtangle/crypto/pq/KeyBundle';
+export { SignatureBundle, SignatureBundleEntry } from './net/bigtangle/crypto/pq/SignatureBundle';
+export { PQAddress } from './net/bigtangle/crypto/pq/PQAddress';
+export { PQKeyDerivation } from './net/bigtangle/crypto/pq/PQKeyDerivation';
+
 // DID and agent-to-agent communication
 export { DidKey } from './net/bigtangle/crypto/DidKey';
 export type { DidDocument, DidVerificationMethod } from './net/bigtangle/crypto/DidKey';

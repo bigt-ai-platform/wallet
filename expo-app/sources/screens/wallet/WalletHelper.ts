@@ -8,6 +8,8 @@ import { Base58, ECKey, TestParams, Utils } from 'bigtangle-ts';
 // @ts-ignore - These are not exported in index but exist in dist
 import { KeyCrypterScrypt } from 'bigtangle-ts/dist/net/bigtangle/crypto/KeyCrypterScrypt';
 // @ts-ignore
+import { EncryptedData } from 'bigtangle-ts/dist/net/bigtangle/crypto/EncryptedData';
+// @ts-ignore
 import { Wallet } from 'bigtangle-ts/dist/net/bigtangle/wallet/Wallet';
 
 export interface CredentialEntry {
@@ -111,13 +113,14 @@ export async function saveKeyToFile(
   const encryptedData = await keyCrypter.encrypt(plainBytes, key);
 
   // Serialize the EncryptedData object to a JSON-safe format
+  const scryptParams = keyCrypter.getScryptParameters();
   const output = {
-    salt: Utils.HEX.encode(keyCrypter.scryptParameters.salt),
+    salt: Utils.HEX.encode(scryptParams.salt),
     iv: Utils.HEX.encode(encryptedData.initialisationVector),
     data: Utils.HEX.encode(encryptedData.encryptedBytes),
-    N: keyCrypter.scryptParameters.N,
-    r: keyCrypter.scryptParameters.r,
-    p: keyCrypter.scryptParameters.p,
+    N: scryptParams.N,
+    r: scryptParams.r,
+    p: scryptParams.p,
   };
 
   return JSON.stringify(output, null, 2);
@@ -144,10 +147,10 @@ export async function loadWallet(
   const tmpkey = await keyCrypter.deriveKey(_password);
 
   // Reconstruct the EncryptedData object
-  const encryptedData = {
-    initialisationVector: Utils.HEX.decode(encrypted.iv),
-    encryptedBytes: Utils.HEX.decode(encrypted.data),
-  };
+  const encryptedData = new EncryptedData(
+    Utils.HEX.decode(encrypted.iv),
+    Utils.HEX.decode(encrypted.data),
+  );
 
   // Decrypt the data
   const decryptedBytes = await keyCrypter.decrypt(encryptedData, tmpkey);

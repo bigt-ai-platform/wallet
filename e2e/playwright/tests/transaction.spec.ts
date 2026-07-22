@@ -10,7 +10,7 @@ test.describe('Transaction Screen', () => {
 
   test('shows unlock prompt when wallet is locked', async ({ page }) => {
     await waitForApp(page);
-    await expect(page.getByText('Please unlock your wallet')).toBeAttached({ timeout: 10000 });
+    await expect(page.getByText('Wallet Locked')).toBeAttached({ timeout: 10000 });
   });
 
   test('shows unlock button when wallet is locked', async ({ page }) => {

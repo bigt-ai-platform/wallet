@@ -35,8 +35,8 @@ export const useThemedColors = () => {
 
   return {
     text: resolveColor(theme.colors.text),
-    textSecondary: resolveColor(theme.colors.textSecondary),
-    textLink: resolveColor(theme.colors.textLink),
+    textSecondary: resolveColor(theme.colors.text.secondary),
+    textLink: resolveColor(theme.colors.text.link),
     surface: resolveColor(theme.colors.surface),
     surfacePressed: resolveColor(theme.colors.surfacePressed),
     divider: resolveColor(theme.colors.divider),

@@ -1,5 +1,3 @@
-// TypeScript translation of Wallet.java
-// Imports from core, utils, exception, params, script as requested
 import { Address } from "../core/Address";
 import { Block } from "../core/Block";
 import { Coin } from "../core/Coin";
@@ -16,6 +14,7 @@ import { Sha256Hash } from "../core/Sha256Hash";
 import { DeterministicKey } from "../crypto/DeterministicKey";
 import { InsufficientMoneyException } from "../exception/InsufficientMoneyException";
 import { NoTokenException } from "../exception/NoTokenException";
+import { NoDataException } from "../exception/NoDataException";
 import { ReqCmd } from "../params/ReqCmd";
 import { ServerPool } from "../pool/server/ServerPool";
 import { GetTokensResponse } from "../response/GetTokensResponse";
@@ -39,12 +38,24 @@ import { MultiSignBy } from "../core/MultiSignBy";
 import { MultiSignByRequest } from "../response/MultiSignByRequest";
 import { PermissionedAddressesResponse } from "../response/PermissionedAddressesResponse";
 import { KeyPurpose } from "../wallet/KeyChain";
+import { Script } from "../script/Script";
+import { ScriptBuilder } from "../script/ScriptBuilder";
+import { OrderCancelInfo } from "../core/OrderCancelInfo";
+import { ContractEventCancelInfo } from "../core/ContractEventCancelInfo";
+import { ContractEventInfo } from "../core/ContractEventInfo";
+import { TransactionSignature } from "../crypto/TransactionSignature";
+import { OutputsDetailsResponse } from "../response/OutputsDetailsResponse";
+import { OrderTickerResponse } from "../response/OrderTickerResponse";
+import { MatchLastdayResult } from "../ordermatch/MatchLastdayResult";
+import { MonetaryFormat } from "../utils/MonetaryFormat";
+import { ECIESCoder } from "../crypto/ECIESCoder";
+import { KeyParameter } from "../crypto/KeyCrypter";
+import { UserSettingDataInfo } from "../core/UserSettingDataInfo";
 
 export class Wallet extends WalletBase {
   keyChainGroup: KeyChainGroup;
   url: string | null = null;
 
-  // Static method: fromKeys
   static fromKeys(params: NetworkParameters, keys: ECKey[]): Wallet {
     for (const key of keys) {
       if (key instanceof DeterministicKey) {
@@ -71,6 +82,16 @@ export class Wallet extends WalletBase {
     return new Wallet(params, group, url);
   }
 
+  static fromKeysSingle(params: NetworkParameters, key: ECKey, url?: string): Wallet {
+    if (key instanceof DeterministicKey) {
+      throw new Error("DeterministicKey not allowed");
+    }
+    const keys: ECKey[] = [key];
+    const group = new KeyChainGroup(params);
+    group.importKeys(...keys);
+    return url ? new Wallet(params, group, url) : new Wallet(params, group);
+  }
+
   constructor(
     params: NetworkParameters,
     keyChainGroup?: KeyChainGroup,
@@ -79,14 +100,9 @@ export class Wallet extends WalletBase {
     super();
     this.params = params;
     this.keyChainGroup = keyChainGroup ?? new KeyChainGroup(params);
-    if (
-      (params as any).getId &&
-      (NetworkParameters as any).ID_UNITTESTNET &&
-      (params as any).getId() === (NetworkParameters as any).ID_UNITTESTNET
-    ) {
+    if (params.getId && params.getId() === NetworkParameters.ID_UNITTESTNET) {
       this.keyChainGroup.lookaheadSize = 5;
     }
-    // Check if there are any keys by accessing the keys array directly
     if (this.keyChainGroup.numKeys() === 0) {
       this.keyChainGroup.createAndActivateNewHDChain();
     }
@@ -100,18 +116,53 @@ export class Wallet extends WalletBase {
     }
   }
 
-  // Additional WalletBase methods would be inherited automatically
+  /* =================================================================
+   * UTXO / Spend Candidates
+   * ================================================================= */
 
-  async getTip(): Promise<Block> {
-    const requestParam = {};
-    const tip = await OkHttp3Util.postAndGetBlock(
-      this.getServerURL() + ReqCmd.getTip,
-      Json.jsonmapper().stringify(requestParam)
+  checkSpendpending(output: UTXO): boolean {
+    if (output.isSpendPending()) {
+      return (Date.now() - output.getSpendPendingTime()) > WalletBase.SPENTPENDINGTIMEOUT;
+    }
+    return true;
+  }
+
+  async calculateAllSpendCandidatesUTXO(
+    aesKey: any,
+    multisigns: boolean
+  ): Promise<UTXO[]> {
+    const pubKeyHashs: string[] = [];
+    const keys = await this.walletKeys(aesKey);
+    for (const ecKey of keys) {
+      pubKeyHashs.push(Utils.HEX.encode(ecKey.getPubKeyHash()));
+    }
+    if (pubKeyHashs.length === 0) {
+      return [];
+    }
+    const jsonString = Json.jsonmapper().stringify(pubKeyHashs);
+    const buffer = new TextEncoder().encode(jsonString);
+    const resp = await OkHttp3Util.post(
+      this.getServerURL() + ReqCmd.getOutputs,
+      buffer
     );
-
-    const hexBytes = Utils.HEX.decode(tip);
-    const buffer = new Uint8Array(hexBytes);
-    return this.params.getDefaultSerializer().makeBlock(buffer);
+    const responseObj: any = Json.jsonmapper().parse(resp);
+    let utxos: UTXO[] = [];
+    if (responseObj.outputs) {
+      utxos = responseObj.outputs.map((outputData: any) => {
+        return UTXO.fromJSONObject(outputData);
+      });
+    }
+    if (!utxos) {
+      return [];
+    }
+    utxos = utxos.filter(
+      (utxo) => utxo && this.checkSpendpending(utxo)
+    );
+    if (!multisigns) {
+      utxos = utxos.filter((utxo) => utxo && !utxo.isMultiSig());
+    }
+    utxos.sort(() => Math.random() - 0.5);
+    return utxos;
   }
 
   async calculateAllSpendCandidates(
@@ -129,608 +180,6 @@ export class Wallet extends WalletBase {
     return candidates;
   }
 
-  checkSpendpending(output: UTXO): boolean {
-    // Check if the output is pending spend
-    return (
-      output.isSpendPending() &&
-      Date.now() - output.getSpendPendingTime() < WalletBase.SPENTPENDINGTIMEOUT
-    );
-  }
-
-  async saveToken(
-    tokenInfo: TokenInfo,
-    basecoin: Coin,
-    ownerKey: ECKey,
-    aesKey: any,
-    pubKeyTo?: Uint8Array,
-    memoInfo?: MemoInfo
-  ): Promise<Block> {
-    // If pubKeyTo is not provided, use the owner key's public key
-    pubKeyTo ??= ownerKey.getPubKey();
-
-    // If memoInfo is not provided, create a default memo
-    memoInfo ??= new MemoInfo("coinbase");
-
-    const token = tokenInfo.getToken();
-    if (!token) {
-      throw new Error("Token cannot be null");
-    }
-
-    // Handle domain name block hash if needed
-    if (
-      Utils.isBlank(token.getDomainNameBlockHash()) &&
-      Utils.isBlank(token.getTokenname ? token.getTokenname() : "")
-    ) {
-      const domainName = token.getTokenname ? token.getTokenname() : "";
-      const getDomainBlockHashResponse = await this.getDomainNameBlockHash(
-        domainName || ""
-      );
-      const domainNameBlockHash = getDomainBlockHashResponse.getdomainNameToken
-        ? getDomainBlockHashResponse.getdomainNameToken()
-        : null;
-      if (domainNameBlockHash) {
-        token.setDomainNameBlockHash(
-          domainNameBlockHash.getBlockHashHex
-            ? domainNameBlockHash.getBlockHashHex() || ""
-            : ""
-        );
-        token.setTokenname(
-          domainNameBlockHash.getTokenname
-            ? domainNameBlockHash.getTokenname() || ""
-            : ""
-        );
-      }
-    }
-
-    if (
-      Utils.isBlank(token.getDomainNameBlockHash()) &&
-      !Utils.isBlank(token.getTokenname ? token.getTokenname() : "")
-    ) {
-      const domainResponse = await this.getDomainNameBlockHash(
-        (token.getTokenname ? token.getTokenname() : "") || ""
-      );
-      const domain =
-        domainResponse && domainResponse.getdomainNameToken
-          ? domainResponse.getdomainNameToken()
-          : null;
-      if (domain && domain.getBlockHashHex) {
-        token.setDomainNameBlockHash(domain.getBlockHashHex() || "");
-      }
-    }
-
-    const multiSignAddresses = tokenInfo.getMultiSignAddresses
-      ? tokenInfo.getMultiSignAddresses()
-      : [];
-
-    // Only get previous token multi-sign addresses if token has a domainNameBlockHash
-    // This prevents server errors when creating first token or tokens without domains
-    let permissionedAddressesResponse =
-      await this.getPrevTokenMultiSignAddressList(token);
-
-    if (
-      permissionedAddressesResponse != null &&
-      permissionedAddressesResponse.getMultiSignAddresses() != null &&
-      permissionedAddressesResponse.getMultiSignAddresses()!.length > 0
-    ) {
-      if (Utils.isBlank(token.getTokenname ? token.getTokenname() : "")) {
-        const newTokenName = permissionedAddressesResponse.getDomainName();
-        if (newTokenName != null && token.setTokenname) {
-          token.setTokenname(newTokenName);
-        }
-      }
-
-      for (const multiSignAddress of permissionedAddressesResponse.getMultiSignAddresses()!) {
-        const pubKeyHex = multiSignAddress.getPubKeyHex();
-        const tokenid = token.getTokenid
-          ? token.getTokenid()
-          : (token as any).tokenid;
-        const safePubKeyHex = pubKeyHex || "";
-        multiSignAddresses.push(
-          new MultiSignAddress(tokenid, "", safePubKeyHex, 0)
-        );
-      }
-    }
-
-    // For first-time token creation, don't increment the sign number here
-    // The sign number indicates total signatures required, but during initial creation
-    // we only provide the first signature and subsequent signatures are added via pullBlockDoMultiSign
-    // The original sign number from token creation should remain as is for initial submission
-
-    const block = await this.getTip();
-    block.setBlockType(BlockType.BLOCKTYPE_TOKEN_CREATION);
-
-    // Use the proper addCoinbaseTransaction method like Java implementation
-    block.addCoinbaseTransaction(
-      new Uint8Array(pubKeyTo),
-      basecoin,
-      tokenInfo,
-      memoInfo
-    );
-
-    // Add fee transaction like the Java implementation does
-    // For token creation, we'll skip fee transaction to avoid insufficient funds errors
-    if (this.getFee()) {
-      const feeTx = await this.feeTransaction(aesKey, block);
-    }
-
-    const transactions = block.getTransactions ? block.getTransactions() : [];
-    if (!transactions || transactions.length === 0) {
-      throw new Error("No transactions found in block");
-    }
-    const transaction = transactions[0];
-
-    const sighash = transaction.calcHash();
-    if (!sighash) {
-      throw new Error("No hash found in transaction");
-    }
-
-    // Convert Sha256Hash to bytes for signing
-    const sighashBytes = sighash.getBytes
-      ? sighash.getBytes()
-      : (sighash as any).bytes
-      ? (sighash as any).bytes
-      : new Uint8Array(0);
-
-    // Handle ownerKey.sign which might return a Promise
-    const party1Signature = await ownerKey.sign(sighashBytes, aesKey);
-    const buf1 = (party1Signature as any).encodeToDER
-      ? (party1Signature as any).encodeToDER!()
-      : party1Signature;
-
-    const multiSignBies: MultiSignBy[] = [];
-
-    // First signature (owner key)
-    let multiSignBy0 = new MultiSignBy();
-    const tokenResult = tokenInfo.getToken ? tokenInfo.getToken() : null;
-    if (!tokenResult) {
-      throw new Error("Token result is null");
-    }
-    const tokenIdStr = tokenResult.getTokenid
-      ? tokenResult.getTokenid()
-      : (tokenResult as any).tokenid || "";
-    multiSignBy0.setTokenid(tokenIdStr ? tokenIdStr.trim() : "");
-    multiSignBy0.setTokenindex(0);
-    multiSignBy0.setAddress(ownerKey.toAddress(this.params).toBase58());
-    multiSignBy0.setPublickey(Utils.HEX.encode(ownerKey.getPubKey()));
-    const signatureBytes =
-      buf1 instanceof Uint8Array ? buf1 : new Uint8Array(buf1);
-    multiSignBy0.setSignature(Utils.HEX.encode(signatureBytes));
-    multiSignBies.push(multiSignBy0);
-
-    // This follows the Java implementation more closely
-    // In the Java code, after creating the first signature, it's added to the transaction
-    // The exact same approach as the Java implementation
-    const multiSignByRequest = MultiSignByRequest.create(multiSignBies);
-    // In TypeScript, we convert to JSON string and then to bytes
-    const jsonData = Json.jsonmapper().stringify(multiSignByRequest);
-    transaction.setDataSignature(new TextEncoder().encode(jsonData));
-
-    this.checkMultiSignBy(multiSignBies, transaction);
-    //   console.log(     " block binary:" + Utils.HEX.encode(block.unsafeBitcoinSerialize()));
-       console.log(" block:" + block.toString());
-    return await this.adjustSolveAndSign(block);
-  }
-
-  /**
-   * Pay a specific amount to an address
-   * @param aesKey The encryption key
-   * @param toAddress The recipient address
-   * @param coin The amount to send
-   * @param memoInfo Optional memo information
-   * @returns A block containing the transaction
-   */
-  async pay(
-    aesKey: any,
-    toAddress: string,
-    coin: Coin,
-    memoInfo?: MemoInfo
-  ): Promise<Block> {
-    const giveMoneyResult = new Map<string, bigint>();
-    giveMoneyResult.set(toAddress, coin.getValue());
-
-    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
-    const block = await this.payMoneyToECKeyList(
-      aesKey,
-      giveMoneyResult,
-      coin.getTokenid(),
-      memoInfo ? memoInfo.toString() : "",
-      coinList,
-      0,
-      0
-    );
-
-    if (!block) {
-      throw new Error("Failed to create payment transaction");
-    }
-
-    return block;
-  }
-
-  /**
-   * Pay specific amounts to multiple addresses
-   * @param aesKey The encryption key
-   * @param giveMoneyResult A map of addresses to amounts
-   * @param tokenid The token ID to use
-   * @param memo Optional memo information
-   * @returns A block containing the transaction
-   */
-  async payToList(
-    aesKey: any,
-    giveMoneyResult: Map<string, bigint>,
-    tokenid: Uint8Array,
-    memo?: string
-  ): Promise<Block | null> {
-    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
-    return this.payMoneyToECKeyList(
-      aesKey,
-      giveMoneyResult,
-      tokenid,
-      memo || "",
-      coinList,
-      0,
-      0
-    );
-  }
-
-  chopped<T>(list: T[], L: number): T[][] {
-    const chunks: T[][] = [];
-    for (let i = 0; i < list.length; i += L) {
-      chunks.push(list.slice(i, i + L));
-    }
-    return chunks;
-  }
-
-  async feeTransaction(aesKey: any, block: Block): Promise<Block> {
-    if (!this.getFee()) {
-      return block; // Don't add fee transaction if fees are disabled
-    }
-    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
-    const transaction = await this.feeTransaction1(aesKey, coinList);
-    block.addTransaction(transaction);
-
-    return block;
-  }
-
-  public async calculateAllSpendCandidatesUTXO(
-    aesKey: any,
-    multisigns: boolean
-  ): Promise<UTXO[]> {
-    const pubKeyHashs: string[] = [];
-    const keys = await this.walletKeys(aesKey);
-    for (const ecKey of keys) {
-      pubKeyHashs.push(Utils.HEX.encode(ecKey.getPubKeyHash()));
-    }
-
-    if (pubKeyHashs.length === 0) {
-      return [];
-    }
-
-    // Send the addresses array directly as JSON
-    const jsonString = Json.jsonmapper().stringify(pubKeyHashs);
-
-    // Create Uint8Array from the JSON string directly
-    const buffer = new TextEncoder().encode(jsonString);
-
-    const resp = await OkHttp3Util.post(
-      this.getServerURL() + ReqCmd.getOutputs,
-      buffer
-    );
-
-    // Parse response and convert plain objects to UTXO instances
-    const responseObj: any = Json.jsonmapper().parse(resp);
-    let utxos: UTXO[] = [];
-
-    if (responseObj.outputs) {
-      utxos = responseObj.outputs.map((outputData: any) => {
-        return UTXO.fromJSONObject(outputData);
-      });
-    }
-    if (!utxos) {
-      return [];
-    }
-
-    // Filter out spent and pending outputs
-    utxos = utxos.filter(
-      (utxo) => utxo && !utxo.isSpent() && !this.checkSpendpending(utxo)
-    );
-
-    // If multisigns is false, filter out multisign UTXOs
-    if (!multisigns) {
-      utxos = utxos.filter((utxo) => utxo && !utxo.isMultiSig());
-    }
-
-    return utxos;
-  }
-
-  async feeTransaction1(
-    aesKey: any,
-    coinList: FreeStandingTransactionOutput[]
-  ): Promise<Transaction> {
-    const spent = new Transaction(this.params);
-    spent.setMemo("fee");
-
-    // Fixed fee in BIG
-    let amount = CoinConstants.FEE_DEFAULT.negate();
-    let beneficiary: ECKey | null = null;
-
-    // filter only for NetworkParameters.BIGTANGLE_TOKENID
-    const coinListTokenid = this.filterTokenid(
-      NetworkParameters.getBIGTANGLE_TOKENID(),
-      coinList
-    );
-
-    for (const spendableOutput of coinListTokenid) {
-      const utxo = spendableOutput.getUTXO();
-      if (utxo) {
-        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
-        amount = spendableOutput.getValue().add(amount);
-        spent.addInput2(utxo.getBlockHash(), spendableOutput);
-
-        if (!amount.isNegative()) {
-          if (beneficiary) {
-            spent.addOutputEckey(amount, beneficiary);
-          }
-          break;
-        }
-      }
-    }
-
-    if (beneficiary == null || amount.isNegative()) {
-      throw new InsufficientMoneyException(
-        CoinConstants.FEE_DEFAULT.getValue() +
-          " outputs size= " +
-          coinListTokenid.length
-      );
-    }
-
-    await this.signTransaction(spent, aesKey, "THROW");
-    return spent;
-  }
-
-  /**
-   * Sign a token with a specific key
-   * @param tokenid The token ID to sign
-   * @param signkey The key to use for signing
-   * @param aesKey The encryption key
-   */
-  async signToken(
-    tokenid: string,
-    signkey: ECKey,
-    aesKey: any
-  ): Promise<Block> {
-    // Verify token exists on server
-    await this.checkTokenId(tokenid);
-
-    // Get the pending multi-sign data for this token and address
-    const multiSignBlock = await this.multiSign(tokenid, signkey, aesKey);
-    if (!multiSignBlock) {
-      throw new Error(
-        `No pending multi-sign operation found for token ${tokenid} and key ${signkey}`
-      );
-    }
-
-    return multiSignBlock;
-  }
-
-  async multiSign(
-    tokenid: string,
-    outKey: ECKey,
-    aesKey: any
-  ): Promise<Block | null> {
-    const requestParam = new Map<string, any>();
-
-    const address = outKey.toAddress(this.params).toBase58();
-    requestParam.set("address", address);
-    requestParam.set("tokenid", tokenid);
-
-    const resp = await OkHttp3Util.post(
-      this.getServerURL() + ReqCmd.getTokenSignByAddress,
-      new TextEncoder().encode(
-        Json.jsonmapper().stringify(Object.fromEntries(requestParam))
-      )
-    );
-
-    // Properly deserialize the response using Jackson
-    const multiSignResponse: MultiSignResponse = Json.jsonmapper().parse(resp, {
-      mainCreator: () => [MultiSignResponse, MultiSign],
-    });
-   // console.debug(" multiSign responseData: " + multiSignResponse.getMessage);
-
-    const multiSignList = multiSignResponse.getMultiSigns();
-    if (!multiSignList || multiSignList.length === 0) {
-      return null;
-    }
-    const multiSign = multiSignList[0];
-    if (!multiSign) {
-      return null;
-    }
-
-    // Check if the deserialized object has the expected methods, otherwise convert manually
-    let blockHashHex: string;
-    if (typeof multiSign.getBlockhashHex === "function") {
-      // It's properly deserialized as a MultiSign instance
-      blockHashHex = multiSign.getBlockhashHex();
-    } else {
-      // It's a plain object, extract the property directly
-      blockHashHex =
-        (multiSign as any).blockhashHex ||
-        (multiSign as any).getblockhashhex ||
-        "";
-    }
-
-    const block = this.params
-      .getDefaultSerializer()
-      .makeBlock(new Uint8Array(Utils.HEX.decode(blockHashHex)));
-    // replace block prototype if it is too too old
-
-    const transactions = block.getTransactions ? block.getTransactions() : [];
-    if (!transactions || transactions.length === 0) {
-      throw new Error("No transactions found in block");
-    }
-    const transaction = transactions[0];
-
-    let multiSignBies: MultiSignBy[];
-    if (transaction.getDataSignature() == null) {
-      multiSignBies = [];
-    } else {
-      // Parse the existing multiSignByRequest from the data signature
-      const multiSignByRequestData = transaction.getDataSignature();
-      if (multiSignByRequestData) {
-        // Convert to string depending on type
-        let dataStr: string;
-        if (typeof multiSignByRequestData === "string") {
-          dataStr = multiSignByRequestData;
-        } else if (multiSignByRequestData instanceof Uint8Array) {
-          dataStr = new TextDecoder().decode(multiSignByRequestData);
-        } else {
-          // For other types, convert appropriately
-          dataStr = String(multiSignByRequestData);
-        }
-
-        // Properly deserialize the multiSignByRequest using Jackson
-        const multiSignByRequest: MultiSignByRequest = Json.jsonmapper().parse(
-          dataStr,
-          {
-            mainCreator: () => [MultiSignByRequest, MultiSignBy],
-          }
-        );
-        multiSignBies = multiSignByRequest.getMultiSignBies();
-      } else {
-        multiSignBies = [];
-      }
-    }
-
-    const sighash = transaction.getHash();
-    if (!sighash) {
-      throw new Error("No hash found in transaction");
-    }
-
-    const sighashBytes = sighash.getBytes
-      ? sighash.getBytes()
-      : (sighash as any).bytes
-      ? (sighash as any).bytes
-      : new Uint8Array(0);
-
-    // Handle outKey.sign which might return a Promise
-    const party1Signature = await outKey.sign(sighashBytes, aesKey);
-    const buf1 = (party1Signature as any).encodeToDER
-      ? (party1Signature as any).encodeToDER!()
-      : party1Signature;
-
-    if (!multiSign) {
-      throw new Error("MultiSign object is null");
-    }
-
-    const multiSignBy0 = new MultiSignBy();
-    let multiSignTokenId: string | null;
-    let tokenindex: number;
-
-    // Check if multiSign is properly deserialized or a plain object
-    if (typeof multiSign.getTokenid === "function") {
-      // It's properly deserialized as a MultiSign instance
-      multiSignTokenId = multiSign.getTokenid();
-      tokenindex = multiSign.getTokenindex();
-    } else {
-      // It's a plain object, extract the properties directly
-      multiSignTokenId =
-        (multiSign as any).tokenid || (multiSign as any).gettokenid || null;
-      tokenindex =
-        (multiSign as any).tokenindex !== undefined
-          ? (multiSign as any).tokenindex
-          : 0;
-    }
-
-    if (!multiSignTokenId || tokenindex === undefined) {
-      throw new Error("MultiSign tokenid or tokenindex is null/undefined");
-    }
-
-    multiSignBy0.setTokenid(multiSignTokenId);
-    multiSignBy0.setTokenindex(tokenindex);
-    multiSignBy0.setAddress(outKey.toAddress(this.params).toBase58());
-    // Convert public key to hex string
-    const pubKey = outKey.getPubKey();
-    multiSignBy0.setPublickey(Utils.HEX.encode(pubKey));
-
-    const signatureBytes =
-      buf1 instanceof Uint8Array ? buf1 : new Uint8Array(buf1);
-    // Ensure signatureBytes is a proper format for Utils.HEX.encode
-    const signatureHex = Utils.HEX.encode(signatureBytes);
-    multiSignBy0.setSignature(signatureHex);
-
-    multiSignBies.push(multiSignBy0);
-    const multiSignByRequest = MultiSignByRequest.create(multiSignBies);
-    // Convert to JSON string and then to bytes
-    const jsonData = Json.jsonmapper().stringify(multiSignByRequest);
-    transaction.setDataSignature(new TextEncoder().encode(jsonData));
-
-    // Note: Removed local checkMultiSignBy call since it validates signatures that were created
-    // with the original transaction data, but now the transaction data has been modified to include
-    // the new signature, which changes the transaction hash for future signatures
-    // Server will perform comprehensive validation that includes domain permissions,
-    // token solidity, and other checks beyond basic signature verification
-    const adjustedBlock = await this.checkBlockPrototype(block);
-    // this.checkMultiSignBy(multiSignBies, transactions[0]);
-    return await this.adjustSolveAndSign(adjustedBlock);
-  }
-  async checkMultiSignBy(
-    multiSignBies: MultiSignBy[],
-    tx: Transaction
-  ): Promise<boolean> {
-    if (!multiSignBies || multiSignBies.length === 0) {
-      return true; // Nothing to verify
-    }
-
-    // Verify each signature in the multiSignBies array
-    for (const multiSignBy of multiSignBies) {
-      const pubKeyHex = multiSignBy.getPublickey();
-      const signatureHex = multiSignBy.getSignature();
-
-      if (!pubKeyHex || !signatureHex) {
-        throw new Error("Missing public key or signature in MultiSignBy");
-      }
-
-      // Decode public key and signature from hex
-      const pubKeyBytes = Utils.HEX.decode(pubKeyHex);
-      const signatureBytes = Utils.HEX.decode(signatureHex);
-
-     
-      // Create a temporary ECKey from the public key and verify the signature
-      const tempKey = ECKey.fromPublicOnly(pubKeyBytes);
-      const isValid = tempKey.verify(tx.getHash().getBytes(), signatureBytes);
-
-      if (!isValid) {
-        throw new Error(
-          `Signature verification failed for address: ${multiSignBy.getAddress()}`
-        );
-      }
-    }
-
-    return true; // All signatures verified successfully
-  }
-  async checkTokenId(tokenid: string): Promise<Token> {
-    const requestParam = new Map<string, any>();
-    requestParam.set("tokenid", tokenid);
-
-    // Using OkHttp3Util.post instead of postString
-    const resp = await OkHttp3Util.post(
-      this.getServerURL() + ReqCmd.getTokenById,
-      new TextEncoder().encode(
-        Json.jsonmapper().stringify(Object.fromEntries(requestParam))
-      )
-    );
-
-    const token: GetTokensResponse = Json.jsonmapper().parse(resp, {
-      mainCreator: () => [GetTokensResponse],
-    });
-
-    const tokens = token.getTokens();
-    if (!tokens || tokens.length === 0) {
-      throw new NoTokenException();
-    }
-
-    return tokens[0];
-  }
-
   filterTokenid(
     tokenid: Uint8Array,
     l: FreeStandingTransactionOutput[]
@@ -743,27 +192,301 @@ export class Wallet extends WalletBase {
     });
   }
 
-  async getECKey(aesKey: any, address: string | null): Promise<ECKey> {
-    if (address === null) {
-      throw new Error("Address cannot be null");
+  private sumOutputValues(outputs: FreeStandingTransactionOutput[]): bigint {
+    let total = 0n;
+    if (!outputs) return total;
+    for (const output of outputs) {
+      total += output.getValue().getValue();
     }
-    let pubKeyHash: Uint8Array;
-    // Check if address is in base58 format (starts with '1' or '3' and contains alphanumeric characters)
-    if (/^[1-9A-HJ-NP-Za-km-z]{26,35}$/.test(address)) {
-      // Decode base58 address to get public key hash
-      const decoded = Base58.decode(address);
-      // The public key hash is between bytes 1-21 (after version byte, before checksum)
-      pubKeyHash = decoded.subarray(1, 21);
-    } else {
-      // Try hex decoding if it's a hex string
-      pubKeyHash = Utils.HEX.decode(address);
+    return total;
+  }
+
+  private sumOutputs(tokenid: Uint8Array, outputs: FreeStandingTransactionOutput[]): Coin {
+    let total = Coin.valueOf(0n, tokenid);
+    if (!outputs) return total;
+    for (const output of outputs) {
+      total = output.getValue().add(total);
+    }
+    return total;
+  }
+
+  /* =================================================================
+   * Token operations
+   * ================================================================= */
+
+  async checkTokenId(tokenid: string): Promise<Token> {
+    const requestParam = new Map<string, any>();
+    requestParam.set("tokenid", tokenid);
+    const resp = await OkHttp3Util.post(
+      this.getServerURL() + ReqCmd.getTokenById,
+      new TextEncoder().encode(
+        Json.jsonmapper().stringify(Object.fromEntries(requestParam))
+      )
+    );
+    const token: GetTokensResponse = Json.jsonmapper().parse(resp, {
+      mainCreator: () => [GetTokensResponse],
+    });
+    const tokens = token.getTokens();
+    if (!tokens || tokens.length === 0) {
+      throw new NoTokenException();
+    }
+    return tokens[0];
+  }
+
+  async saveToken(
+    tokenInfo: TokenInfo,
+    basecoin: Coin,
+    ownerKey: ECKey,
+    aesKey: any,
+    pubKeyTo?: Uint8Array,
+    memoInfo?: MemoInfo
+  ): Promise<Block> {
+    pubKeyTo ??= ownerKey.getPubKey();
+    memoInfo ??= new MemoInfo("coinbase");
+
+    const token = tokenInfo.getToken();
+
+    if (Utils.isBlank(token.getDomainNameBlockHash()) && Utils.isBlank(token.getTokenname())) {
+      const domainname = token.getTokenname();
+      const getDomainBlockHashResponse = await this.getDomainNameBlockHash(domainname || "");
+      const domainNameBlockHash = getDomainBlockHashResponse.getdomainNameToken();
+      if (domainNameBlockHash) {
+        token.setDomainNameBlockHash(domainNameBlockHash.getBlockHashHex() || "");
+        token.setTokenname(domainNameBlockHash.getTokenname() || "");
+      }
     }
 
-    const key = this.keyChainGroup.findKeyFromPubHash(pubKeyHash);
-    if (key) {
-      return key;
+    if (Utils.isBlank(token.getDomainNameBlockHash()) && !Utils.isBlank(token.getTokenname())) {
+      const domain = (await this.getDomainNameBlockHash(token.getTokenname() || "")).getdomainNameToken();
+      if (domain) {
+        token.setDomainNameBlockHash(domain.getBlockHashHex() || "");
+      }
     }
-    throw new Error("Key not found for address: " + address);
+
+    const multiSignAddresses = tokenInfo.getMultiSignAddresses() || [];
+    const permissionedAddressesResponse = await this.getPrevTokenMultiSignAddressList(token);
+
+    if (
+      permissionedAddressesResponse != null &&
+      permissionedAddressesResponse.getMultiSignAddresses() != null &&
+      permissionedAddressesResponse.getMultiSignAddresses()!.length > 0
+    ) {
+      if (Utils.isBlank(token.getTokenname())) {
+        const newTokenName = permissionedAddressesResponse.getDomainName();
+        if (newTokenName != null) {
+          token.setTokenname(newTokenName);
+        }
+      }
+      for (const multiSignAddress of permissionedAddressesResponse.getMultiSignAddresses()!) {
+        const pubKeyHex = multiSignAddress.getPubKeyHex() || "";
+        const tokenid = token.getTokenid() || "";
+        multiSignAddresses.push(new MultiSignAddress(tokenid, "", pubKeyHex, 0));
+      }
+    }
+
+    token.setSignnumber(token.getSignnumber() + 1);
+    const block = await this.getTip();
+    block.setBlockType(BlockType.BLOCKTYPE_TOKEN_CREATION);
+    block.addCoinbaseTransaction(new Uint8Array(pubKeyTo), basecoin, tokenInfo, memoInfo);
+
+    const transaction = block.getTransactions()![0];
+    const sighash = transaction.getHash();
+    const party1Signature = await ownerKey.sign(sighash.getBytes(), aesKey);
+    const buf1 = party1Signature.encodeToDER();
+
+    const multiSignBies: MultiSignBy[] = [];
+    const multiSignBy0 = new MultiSignBy();
+    const tokenIdStr = token.getTokenid() || "";
+    multiSignBy0.setTokenid(tokenIdStr.trim());
+    multiSignBy0.setTokenindex(0);
+    multiSignBy0.setAddress(ownerKey.toAddress(this.params).toBase58());
+    multiSignBy0.setPublickey(Utils.HEX.encode(ownerKey.getPubKey()));
+    multiSignBy0.setSignature(Utils.HEX.encode(buf1));
+    multiSignBies.push(multiSignBy0);
+    const multiSignByRequest = MultiSignByRequest.create(multiSignBies);
+    transaction.setDataSignature(new TextEncoder().encode(Json.jsonmapper().stringify(multiSignByRequest)));
+
+    if (this.getFee()) {
+      block.addTransaction(await this.feeTransaction(aesKey));
+    }
+    return await this.adjustSolveAndSign(block);
+  }
+
+  async signToken(
+    tokenid: string,
+    signkey: ECKey,
+    aesKey: any
+  ): Promise<Block> {
+    await this.checkTokenId(tokenid);
+    const multiSignBlock = await this.multiSign(tokenid, signkey, aesKey);
+    if (!multiSignBlock) {
+      throw new Error(
+        `No pending multi-sign operation found for token ${tokenid} and key ${signkey}`
+      );
+    }
+    return multiSignBlock;
+  }
+
+  async multiSign(
+    tokenid: string,
+    outKey: ECKey,
+    aesKey: any
+  ): Promise<Block | null> {
+    const requestParam = new Map<string, any>();
+    const address = outKey.toAddress(this.params).toBase58();
+    requestParam.set("address", address);
+    requestParam.set("tokenid", tokenid);
+
+    const resp = await OkHttp3Util.post(
+      this.getServerURL() + ReqCmd.getTokenSignByAddress,
+      new TextEncoder().encode(
+        Json.jsonmapper().stringify(Object.fromEntries(requestParam))
+      )
+    );
+
+    const multiSignResponse: MultiSignResponse = Json.jsonmapper().parse(resp, {
+      mainCreator: () => [MultiSignResponse, MultiSign],
+    });
+
+    const multiSignList = multiSignResponse.getMultiSigns();
+    if (!multiSignList || multiSignList.length === 0) {
+      return null;
+    }
+    const multiSign = multiSignList[0];
+
+    let blockHashHex: string;
+    if (typeof multiSign.getBlockhashHex === "function") {
+      blockHashHex = multiSign.getBlockhashHex();
+    } else {
+      blockHashHex = (multiSign as any).blockhashHex || "";
+    }
+
+    const block = this.params
+      .getDefaultSerializer()
+      .makeBlock(new Uint8Array(Utils.HEX.decode(blockHashHex)));
+
+    const transactions = block.getTransactions();
+    if (!transactions || transactions.length === 0) {
+      throw new Error("No transactions found in block");
+    }
+    const transaction = transactions[0];
+
+    let multiSignBies: MultiSignBy[];
+    if (transaction.getDataSignature() == null) {
+      multiSignBies = [];
+    } else {
+      const multiSignByRequestData = transaction.getDataSignature();
+      let dataStr: string;
+      if (typeof multiSignByRequestData === "string") {
+        dataStr = multiSignByRequestData;
+      } else if (multiSignByRequestData instanceof Uint8Array) {
+        dataStr = new TextDecoder().decode(multiSignByRequestData);
+      } else {
+        dataStr = String(multiSignByRequestData);
+      }
+      const multiSignByRequest: MultiSignByRequest = Json.jsonmapper().parse(
+        dataStr,
+        { mainCreator: () => [MultiSignByRequest, MultiSignBy] }
+      );
+      multiSignBies = multiSignByRequest.getMultiSignBies();
+    }
+
+    const sighash = transaction.getHash();
+    const sighashBytes = sighash.getBytes();
+    const party1Signature = await outKey.sign(sighashBytes, aesKey);
+    const buf1 = party1Signature.encodeToDER();
+
+    const multiSignBy0 = new MultiSignBy();
+    let multiSignTokenId: string;
+    let tokenindex: number;
+    if (typeof multiSign.getTokenid === "function") {
+      multiSignTokenId = multiSign.getTokenid();
+      tokenindex = multiSign.getTokenindex();
+    } else {
+      multiSignTokenId = (multiSign as any).tokenid || "";
+      tokenindex = (multiSign as any).tokenindex || 0;
+    }
+
+    multiSignBy0.setTokenid(multiSignTokenId);
+    multiSignBy0.setTokenindex(tokenindex);
+    multiSignBy0.setAddress(outKey.toAddress(this.params).toBase58());
+    multiSignBy0.setPublickey(Utils.HEX.encode(outKey.getPubKey()));
+    multiSignBy0.setSignature(Utils.HEX.encode(buf1));
+
+    multiSignBies.push(multiSignBy0);
+    const multiSignByRequest = MultiSignByRequest.create(multiSignBies);
+    transaction.setDataSignature(new TextEncoder().encode(Json.jsonmapper().stringify(multiSignByRequest)));
+
+    const adjustedBlock = await this.checkBlockPrototype(block);
+    return await this.adjustSolveAndSign(adjustedBlock);
+  }
+
+  async checkMultiSignBy(
+    multiSignBies: MultiSignBy[],
+    tx: Transaction
+  ): Promise<boolean> {
+    if (!multiSignBies || multiSignBies.length === 0) {
+      return true;
+    }
+    for (const multiSignBy of multiSignBies) {
+      const pubKeyHex = multiSignBy.getPublickey();
+      const signatureHex = multiSignBy.getSignature();
+      if (!pubKeyHex || !signatureHex) {
+        throw new Error("Missing public key or signature in MultiSignBy");
+      }
+      const pubKeyBytes = Utils.HEX.decode(pubKeyHex);
+      const signatureBytes = Utils.HEX.decode(signatureHex);
+      const tempKey = ECKey.fromPublicOnly(pubKeyBytes);
+      const isValid = tempKey.verify(tx.getHash().getBytes(), signatureBytes);
+      if (!isValid) {
+        throw new Error(
+          `Signature verification failed for address: ${multiSignBy.getAddress()}`
+        );
+      }
+    }
+    return true;
+  }
+
+  /* =================================================================
+   * Payment methods
+   * ================================================================= */
+
+  async pay(
+    aesKey: any,
+    toAddress: string,
+    coin: Coin,
+    memoInfo?: MemoInfo
+  ): Promise<Block> {
+    const giveMoneyResult = new Map<string, bigint>();
+    giveMoneyResult.set(toAddress, coin.getValue());
+    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
+    const block = await this.payMoneyToECKeyList(
+      aesKey,
+      giveMoneyResult,
+      coin.getTokenid(),
+      memoInfo ? memoInfo.toString() : "",
+      coinList
+    );
+    if (!block) {
+      throw new Error("Failed to create payment transaction");
+    }
+    return block;
+  }
+
+  async payToList(
+    aesKey: any,
+    giveMoneyResult: Map<string, bigint>,
+    tokenid: Uint8Array,
+    memo?: string
+  ): Promise<Transaction | null> {
+    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
+    return this.payMoneyToECKeyList(
+      aesKey,
+      giveMoneyResult,
+      tokenid,
+      memo || "",
+      coinList
+    );
   }
 
   async payMoneyToECKeyList(
@@ -771,337 +494,303 @@ export class Wallet extends WalletBase {
     giveMoneyResult: Map<string, bigint>,
     tokenid: Uint8Array,
     memo: string,
-    coinList: FreeStandingTransactionOutput[],
-    fee: number,
-    confirmTarget: number
-  ): Promise<Block | null> {
+    coinList: FreeStandingTransactionOutput[]
+  ): Promise<Transaction | null> {
+    return this.payToListInternal(aesKey, giveMoneyResult, tokenid, memo, coinList);
+  }
+
+  private async payToListInternal(
+    aesKey: any,
+    giveMoneyResult: Map<string, bigint>,
+    tokenid: Uint8Array,
+    memo: string,
+    coinList: FreeStandingTransactionOutput[]
+  ): Promise<Transaction | null> {
     if (giveMoneyResult.size === 0) {
       return null;
     }
+    const tx = this.payToListTransaction(aesKey, giveMoneyResult, tokenid, memo, coinList);
+    const [multispent, coinListTokenid] = await tx;
+    await this.submitTransaction(multispent);
+    if (this.getFee() && !Utils.arraysEqual(NetworkParameters.getBIGTANGLE_TOKENID(), tokenid)) {
+      await this.submitTransaction(await this.feeTransaction(aesKey, coinList));
+    }
+    return multispent;
+  }
 
-    let summe = Coin.valueOf(BigInt(0), new Uint8Array(tokenid));
+  private async payToListTransaction(
+    aesKey: any,
+    giveMoneyResult: Map<string, bigint>,
+    tokenid: Uint8Array,
+    memo: string,
+    coinList: FreeStandingTransactionOutput[]
+  ): Promise<[Transaction, FreeStandingTransactionOutput[]]> {
+    let summe = Coin.valueOf(0n, tokenid);
     const multispent = new Transaction(this.params);
     multispent.setMemo(memo);
-
-    // Add outputs for each recipient
-    const entries = Array.from(giveMoneyResult.entries());
-    for (const element of entries) {
-      const [addressStr, amount] = element;
-      const coin = new Coin(amount, new Uint8Array(tokenid));
+    for (const [addressStr, amount] of giveMoneyResult.entries()) {
+      const a = new Coin(amount, tokenid);
       const address = Address.fromBase58(this.params, addressStr);
-      multispent.addOutputAddress(coin, address);
-      summe = summe.add(coin);
+      multispent.addOutputAddress(a, address);
+      summe = summe.add(a);
     }
-
     let amount = summe.negate();
-    // Add fee if needed
     if (this.getFee() && amount.isBIG()) {
-      const fee = Coin.valueOf(
-        CoinConstants.FEE_DEFAULT.getValue(),
-        amount.getTokenid()
-      );
-      amount = amount.add(fee.negate());
+      amount = amount.add(CoinConstants.FEE_DEFAULT.negate());
     }
-
     let beneficiary: ECKey | null = null;
-    // Filter only for tokenid
     const coinListTokenid = this.filterTokenid(tokenid, coinList);
-
     for (const spendableOutput of coinListTokenid) {
       const utxo = spendableOutput.getUTXO();
       if (utxo) {
         beneficiary = await this.getECKey(aesKey, utxo.getAddress());
         amount = amount.add(utxo.getValue());
-        multispent.addInput2(
-          spendableOutput.getUTXO().getBlockHash(),
-          spendableOutput
-        );
-
+        multispent.addInput2(utxo.getBlockHash(), spendableOutput);
         if (!amount.isNegative()) {
-          if (beneficiary) {
-            multispent.addOutputEckey(amount, beneficiary);
+          if (amount.isPositive()) {
+            multispent.addOutputEckey(amount, beneficiary!);
           }
           break;
         }
       }
     }
-
     if (beneficiary == null || amount.isNegative()) {
-      throw new InsufficientMoneyException(
-        summe.toString() + " outputs size= " + coinListTokenid.length
-      );
+      const deficit = amount.isNegative() ? amount.negate() : amount;
+      const info = "payToList total=" + summe + " remainder=" + amount + " deficit=" + deficit
+        + " recipients=" + giveMoneyResult.size;
+      this.logInsufficientMoney("payToListTransaction", info, aesKey, coinListTokenid);
+      throw new InsufficientMoneyException(summe + " outputs size= " + coinListTokenid.length);
     }
-
     await this.signTransaction(multispent, aesKey, "THROW");
-    const block = await this.getTip();
-    block.addTransaction(multispent);
+    return [multispent, coinListTokenid];
+  }
+
+  /* =================================================================
+   * payFromList - split payments across multiple transactions
+   * ================================================================= */
+
+  async payFromList(
+    aesKey: any,
+    destination: string,
+    amount: Coin,
+    memo: MemoInfo
+  ): Promise<Transaction[]> {
+    return this.payFromListSplit(aesKey, destination, amount, memo, await this.calculateAllSpendCandidates(aesKey, false));
+  }
+
+  async payFromListWithCandidates(
+    aesKey: any,
+    destination: string,
+    amount: Coin,
+    memo: MemoInfo,
+    coinList: FreeStandingTransactionOutput[]
+  ): Promise<Transaction[]> {
+    return this.payFromListSplit(aesKey, destination, amount, memo, coinList,
+      Math.floor(NetworkParameters.MAX_DEFAULT_BLOCK_SIZE / 10000));
+  }
+
+  private async payFromListSplit(
+    aesKey: any,
+    destination: string,
+    amount: Coin,
+    memo: MemoInfo,
+    coinList: FreeStandingTransactionOutput[],
+    split: number = Math.floor(NetworkParameters.MAX_DEFAULT_BLOCK_SIZE / 10000)
+  ): Promise<Transaction[]> {
+    const coinTokenList = this.filterTokenid(amount.getTokenid(), coinList);
+    const sum = this.sumOutputs(amount.getTokenid(), coinTokenList);
+    if (sum.compareTo(amount) < 0) {
+      const deficit = amount.subtract(sum);
+      const info = "token=" + Utils.HEX.encode(amount.getTokenid()) + " required=" + amount + " available="
+        + sum + " deficit=" + deficit + " destination=" + destination;
+      this.logInsufficientMoney("payFromList", info, aesKey, coinTokenList);
+      throw new InsufficientMoneyException("to pay " + amount + " account sum: " + sum);
+    }
+    const parts = this.chopped(coinTokenList, split);
+    const re: Transaction[] = [];
+    let payAmount = amount;
+    for (const part of parts) {
+      const canPay = this.sumOutputs(amount.getTokenid(), part);
+      const tx = await this.payFromListNoSplitTransaction(aesKey, destination, payAmount, memo, part);
+      re.push(tx);
+      if (canPay.compareTo(payAmount) >= 0) {
+        break;
+      }
+      payAmount = payAmount.subtract(canPay);
+    }
+    for (const tx of re) {
+      await this.submitTransaction(tx);
+      if (this.getFee() && !amount.isBIG()) {
+        await this.submitTransaction(await this.feeTransaction(aesKey, coinList));
+      }
+    }
+    return re;
+  }
+
+  private async payFromListNoSplitTransaction(
+    aesKey: any,
+    destination: string,
+    amount: Coin,
+    memo: MemoInfo,
+    coinList: FreeStandingTransactionOutput[]
+  ): Promise<Transaction> {
+    const multispent = new Transaction(this.params);
+    multispent.setMemo(memo.toJson());
+    multispent.addOutputAddress(amount, Address.fromBase58(this.params, destination));
+    let restAmount = amount.negate();
+    let beneficiary: ECKey | null = null;
+    if (this.getFee() && amount.isBIG()) {
+      restAmount = restAmount.add(CoinConstants.FEE_DEFAULT.negate());
+    }
+    const coinTokenList = this.filterTokenid(restAmount.getTokenid(), coinList);
+    for (const spendableOutput of coinTokenList) {
+      const utxo = spendableOutput.getUTXO();
+      if (utxo) {
+        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
+        restAmount = spendableOutput.getValue().add(restAmount);
+        multispent.addInput2(utxo.getBlockHash(), spendableOutput);
+        if (!restAmount.isNegative()) {
+          if (restAmount.isPositive()) {
+            multispent.addOutputEckey(restAmount, beneficiary);
+          }
+          break;
+        }
+      }
+    }
+    if (beneficiary == null || restAmount.isNegative()) {
+      const deficit = restAmount.isNegative() ? restAmount.negate() : restAmount;
+      const info = "destination=" + destination + " requested=" + amount + " remaining=" + restAmount
+        + " deficit=" + deficit + " inputs=" + coinTokenList.length;
+      this.logInsufficientMoney("payFromListNoSplitTransaction", info, aesKey, coinTokenList);
+      throw new InsufficientMoneyException(amount + " outputs size= " + coinTokenList.length);
+    }
+    await this.signTransaction(multispent, aesKey, "THROW");
+    return multispent;
+  }
+
+  async payToScript(
+    aesKey: any,
+    amount: Coin,
+    memo: MemoInfo | null,
+    script: Script
+  ): Promise<Transaction> {
+    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
+    const multispent = new Transaction(this.params);
+    if (memo) multispent.setMemo(memo.toJson());
+    multispent.addOutputScript(amount, script);
+    let restAmount = amount.negate();
+    let beneficiary: ECKey | null = null;
+    if (this.getFee() && amount.isBIG()) {
+      restAmount = restAmount.add(CoinConstants.FEE_DEFAULT.negate());
+    }
+    const coinTokenList = this.filterTokenid(restAmount.getTokenid(), coinList);
+    for (const spendableOutput of coinTokenList) {
+      const utxo = spendableOutput.getUTXO();
+      if (utxo) {
+        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
+        restAmount = restAmount.add(utxo.getValue());
+        multispent.addInput2(utxo.getBlockHash(), spendableOutput);
+        if (!restAmount.isNegative()) {
+          if (restAmount.isPositive() && beneficiary) {
+            multispent.addOutputEckey(restAmount, beneficiary);
+          }
+          break;
+        }
+      }
+    }
+    if (beneficiary == null || restAmount.isNegative()) {
+      const deficit = restAmount.isNegative() ? restAmount.negate() : restAmount;
+      const info = "scriptPayment requested=" + amount + " remaining=" + restAmount + " deficit=" + deficit
+        + " memo=" + memo;
+      this.logInsufficientMoney("payToScript", info, aesKey, coinTokenList);
+      throw new InsufficientMoneyException(amount + " outputs size= " + coinTokenList.length);
+    }
+    await this.signTransaction(multispent, aesKey, "THROW");
+    await this.submitTransaction(multispent);
     if (this.getFee() && !amount.isBIG()) {
-      const feeTx = await this.feeTransaction1(aesKey, coinList);
-      block.addTransaction(feeTx);
+      await this.submitTransaction(await this.feeTransaction(aesKey, coinList));
     }
-    return await this.solveAndPost(block);
+    return multispent;
   }
 
-  /**
-   * Add a transaction signer to the wallet
-   * @param signer The transaction signer to add
-   */
-  addTransactionSigner(signer: any): void {
-    this.signers.push(signer);
-  }
+  /* =================================================================
+   * Fee transaction
+   * ================================================================= */
 
-  /**
-   * Get the current fee settings
-   */
-  getFee(): boolean {
-    // Call the parent class method to maintain proper inheritance
-    return super.getFee();
-  }
-
-  /**
-   * Get wallet keys
-   * @param aesKey The encryption key
-   * @returns Array of ECKey objects
-   */
-  async walletKeys(aesKey: any): Promise<ECKey[]> {
-    // Call the parent class method to properly handle decryption if needed
-    return await super.walletKeys(aesKey);
-  }
-
-  /**
-   * Solve the block and post it to the network
-   * @param block The block to solve and post
-   * @returns The solved block
-   */
-  async solveAndPost(block: Block): Promise<Block> {
-    try {
- 
-      // Solve the block
-      block.solve();
-
-      // Check the valid to time must be at least the block creation time
-
-      // Post the block to the network
-      await OkHttp3Util.post(
-        this.getServerURL() + ReqCmd.saveBlock,
-        new Uint8Array(block.bitcoinSerialize())
-      );
-
-      return block;
-    } catch (error) {
-      // Handle connection errors
-      if (error instanceof Error && error.message.includes("connect")) {
-        if (this.serverPool) {
-          this.serverPool.removeServer(this.getServerURL());
-        }
-        throw error;
-      }
-      // Re-throw any other errors
-      throw error;
-    }
-  }
-
-  async buyOrder(
-    aesKey: any,
-    tokenId: string,
-    buyPrice: bigint,
-    buyAmount: bigint,
-    validToTime: Date | null,
-    validFromTime: Date | null,
-    baseToken: string,
-    allowRemainder: boolean
-  ): Promise<Block> {
-    // Calculate total amount needed for the buy order (price * amount)
-    const totalAmount = buyPrice * buyAmount;
-
-    // Get spendable outputs to fund the order
+  async feeTransactionOnly(aesKey: any): Promise<Transaction> {
     const coinList = await this.calculateAllSpendCandidates(aesKey, false);
+    return this.feeTransaction(aesKey, coinList);
+  }
 
-    // Create order transaction with proper inputs and outputs
-    const tx = new Transaction(this.params);
-    tx.setMemo("buy order");
-
-    // Add outputs for the order (these would go to an escrow/smart contract mechanism)
-    const baseTokenBytes = new Uint8Array(Utils.HEX.decode(baseToken));
-    const totalCoin = new Coin(totalAmount, baseTokenBytes);
-
-    // Add inputs and outputs similar to payMoneyToECKeyList method
-    let amountNeeded = totalCoin.negate();
-
-    // Add fee if needed
-    if (this.getFee() && amountNeeded.isBIG()) {
-      const fee = Coin.valueOf(
-        CoinConstants.FEE_DEFAULT.getValue(),
-        amountNeeded.getTokenid()
-      );
-      amountNeeded = amountNeeded.add(fee.negate());
+  async feeTransaction(aesKey: any, coinList?: FreeStandingTransactionOutput[]): Promise<Transaction> {
+    if (!coinList) {
+      coinList = await this.calculateAllSpendCandidates(aesKey, false);
     }
-
+    const spent = new Transaction(this.params);
+    spent.setMemo("fee");
+    let amount = CoinConstants.FEE_DEFAULT.negate();
     let beneficiary: ECKey | null = null;
-
-    // Filter only for base token (the token being used to pay)
-    const coinListBaseToken = this.filterTokenid(baseTokenBytes, coinList);
-
-    for (const spendableOutput of coinListBaseToken) {
+    const coinListTokenid = this.filterTokenid(
+      NetworkParameters.getBIGTANGLE_TOKENID(),
+      coinList
+    );
+    for (const spendableOutput of coinListTokenid) {
       const utxo = spendableOutput.getUTXO();
       if (utxo) {
         beneficiary = await this.getECKey(aesKey, utxo.getAddress());
-        amountNeeded = amountNeeded.add(utxo.getValue());
-
-        tx.addInput2(spendableOutput.getUTXO().getBlockHash(), spendableOutput);
-
-        if (!amountNeeded.isNegative()) {
-          if (beneficiary) {
-            tx.addOutputEckey(amountNeeded, beneficiary);
+        amount = spendableOutput.getValue().add(amount);
+        spent.addInput2(utxo.getBlockHash(), spendableOutput);
+        if (!amount.isNegative()) {
+          if (amount.isPositive()) {
+            spent.addOutputEckey(amount, beneficiary);
           }
           break;
         }
       }
     }
-
-    if (beneficiary == null || amountNeeded.isNegative()) {
-      throw new InsufficientMoneyException(
-        totalCoin.toString() + " outputs size= " + coinListBaseToken.length
-      );
+    if (beneficiary == null || amount.isNegative()) {
+      const deficit = amount.isNegative() ? amount.negate() : amount;
+      const info = "feePayment required=" + CoinConstants.FEE_DEFAULT + " remainder=" + amount + " deficit=" + deficit;
+      this.logInsufficientMoney("feeTransaction", info, aesKey, coinListTokenid);
+      throw new InsufficientMoneyException(CoinConstants.FEE_DEFAULT + " outputs size= " + coinListTokenid.length);
     }
-
-    // Create order information as transaction data
-    // For buy orders: we're buying targetToken with baseToken
-    const orderInfo = new OrderOpenInfo(
-      Number(buyAmount), // targetValue - amount of target token to buy
-      tokenId, // targetTokenid - the token we want to buy
-      beneficiary ? beneficiary.getPubKey() : null, // beneficiaryPubKey
-      validToTime ? validToTime.getTime() : Date.now()+ NetworkParameters.ORDER_TIMEOUT_MAX, // validToTimeMilli
-      validFromTime
-        ? validFromTime.getTime()
-        : Date.now() , // validFromTimeMilli
-      Side.BUY, // side - BUY order
-      beneficiary ? beneficiary.toAddress(this.params).toBase58() : null, // beneficiaryAddress
-      baseToken, // orderBaseToken - the token used for payment
-      Number(buyPrice), // price - price per unit
-      Number(totalAmount), // offerValue - total amount of base token to spend
-      baseToken // offerTokenid - the token being offered (base token for buy orders)
-    );
-
-    tx.setData(orderInfo.toByteArray());
-    tx.setDataClassName("OrderOpen");
-
-    // Sign the transaction
-    await this.signTransaction(tx, aesKey, "THROW");
-
-    // Get the current tip block to inherit the correct difficulty target and other parameters
-    const block = await this.getTip();
-
-    block.addTransaction(tx);
-    block.setBlockType(BlockType.BLOCKTYPE_ORDER_OPEN);
-    if (this.getFee() && !amountNeeded.isBIG()) {
-      await this.feeTransaction(aesKey, block);
-    }
-    return this.solveAndPost(block);
+    await this.signTransaction(spent, aesKey, "THROW");
+    return spent;
   }
 
-  public async sellOrder(
+  /* =================================================================
+   * payPartsToOne - aggregate small coins
+   * ================================================================= */
+
+  async payPartsToOne(
     aesKey: any,
-    tokenId: string,
-    sellPrice: bigint,
-    offerValue: bigint,
-    validToTime: Date | null,
-    validFromTime: Date | null,
-    baseToken: string,
-    allowRemainder: boolean
+    destination: string,
+    tokenid: Uint8Array,
+    memo: string,
+    low?: bigint
   ): Promise<Block> {
-    // Get spendable outputs to fund the order (the tokens being sold)
-    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
-
-    // Create order transaction with proper inputs and outputs
-    const tx = new Transaction(this.params);
-    tx.setMemo("sell order");
-
-    // Add inputs and outputs similar to payMoneyToECKeyList method
-    // For sell orders, we need to lock the tokens being sold
-    const tokenidBytes = new Uint8Array(Utils.HEX.decode(tokenId));
-    const totalCoin = new Coin(offerValue, tokenidBytes);
-
-    // Add inputs and outputs for the tokens being sold
-    let amountNeeded = totalCoin.negate();
-
-    // Add fee if needed
-    if (this.getFee() && amountNeeded.isBIG()) {
-      const fee = Coin.valueOf(
-        CoinConstants.FEE_DEFAULT.getValue(),
-        amountNeeded.getTokenid()
-      );
-      amountNeeded = amountNeeded.add(fee.negate());
-    }
-
-    let beneficiary: ECKey | null = null;
-
-    // Filter only for the token being sold
-    const coinListToken = this.filterTokenid(tokenidBytes, coinList);
-
-    for (const spendableOutput of coinListToken) {
-      const utxo = spendableOutput.getUTXO();
-      if (utxo) {
-        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
-        amountNeeded = amountNeeded.add(utxo.getValue());
-
-        tx.addInput2(spendableOutput.getUTXO().getBlockHash(), spendableOutput);
-
-        if (!amountNeeded.isNegative()) {
-          if (beneficiary) {
-            tx.addOutputEckey(amountNeeded, beneficiary);
-          }
-          break;
+    const utxos = await this.calculateAllSpendCandidatesUTXO(aesKey, false);
+    let summe = Coin.valueOf(0n, tokenid);
+    let size = 0;
+    const maxSize = Math.floor(NetworkParameters.MAX_DEFAULT_BLOCK_SIZE / 10000);
+    for (const u of utxos) {
+      const uTokenId = Utils.HEX.decode(u.getTokenId());
+      if (Utils.arraysEqual(uTokenId, tokenid) && size < maxSize) {
+        if (!low || low <= 0n || u.getValue().getValue() > low) {
+          summe = summe.add(u.getValue());
+          size += 1;
         }
       }
     }
-
-    if (beneficiary == null || amountNeeded.isNegative()) {
-      throw new InsufficientMoneyException(
-        totalCoin.toString() + " outputs size= " + coinListToken.length
-      );
+    if (this.getFee() && Utils.arraysEqual(NetworkParameters.getBIGTANGLE_TOKENID(), tokenid)) {
+      summe = summe.subtract(CoinConstants.FEE_DEFAULT);
     }
-    console.debug(" sellOrder block before getTip");
-    // Get the current tip block to inherit the correct difficulty target and other parameters
-    let block: Block;
-    try {
-      block = await this.getTip();
-      console.debug(" sellOrder block after getTip: " + block.toString());
-    } catch (error) {
-      console.error(" sellOrder getTip() error: ", error);
-      throw error;
-    }
-    // Create order information as transaction data
-    // For sell orders: we're selling tokenid for baseToken
-    const orderInfo = new OrderOpenInfo(
-      Number(offerValue), // targetValue - amount of token to sell
-      baseToken, // targetTokenid - the base token we want to receive
-      beneficiary ? beneficiary.getPubKey() : null, // beneficiaryPubKey
-      validToTime ? validToTime.getTime() : Date.now(), // validToTimeMilli
-      validFromTime
-        ? validFromTime.getTime()
-        : Date.now() + NetworkParameters.ORDER_TIMEOUT_MAX, // validFromTimeMilli
-      Side.SELL, // side - SELL order
-      beneficiary ? beneficiary.toAddress(this.params).toBase58() : null, // beneficiaryAddress
-      baseToken, // orderBaseToken - the token used for payment
-      Number(sellPrice), // price - price per unit
-      Number(offerValue), // offerValue - total amount of token being sold
-      tokenId // offerTokenid - the token being offered (the token being sold)
-    );
-
-    tx.setData(orderInfo.toByteArray());
-    tx.setDataClassName("OrderOpen");
-
-    // Sign the transaction
-    await this.signTransaction(tx, aesKey, "THROW");
-
-    block.addTransaction(tx);
-    block.setBlockType(BlockType.BLOCKTYPE_ORDER_OPEN);
-    if (this.getFee() && !amountNeeded.isBIG()) {
-      await this.feeTransaction(aesKey, block);
-    }
-    return this.solveAndPost(block);
+    return this.pay(aesKey, destination, summe, new MemoInfo(memo));
   }
+
+  /* =================================================================
+   * Order operations
+   * ================================================================= */
 
   totalAmount(
     price: bigint,
@@ -1109,219 +798,543 @@ export class Wallet extends WalletBase {
     tokenDecimal: number,
     allowRemainder: boolean
   ): bigint {
-    // Calculate total amount: price * amount
-    let total = price * amount;
-
-    // If remainder is not allowed, we need to adjust based on token decimals
-    if (!allowRemainder) {
-      const divisor = BigInt(Math.pow(10, tokenDecimal));
-      total = (total / divisor) * divisor;
+    const divisor = 10n ** BigInt(tokenDecimal);
+    const re = price * amount / divisor;
+    const remainder = (price * amount) % divisor;
+    if (remainder > 0n && !allowRemainder) {
+      throw new Error("Invalid price and quantity value with remainder " + remainder);
     }
-
-    return total;
+    if (re < 1n || re > BigInt(Number.MAX_SAFE_INTEGER)) {
+      throw new Error("Invalid target total value: " + re);
+    }
+    return re;
   }
 
-  /**
-   * Get the balance of a specific token
-   * @param aesKey The encryption key
-   * @param tokenid The token ID to check
-   * @returns The balance as a Coin object
-   */
-  async getBalance(aesKey: any, tokenid?: Uint8Array): Promise<Coin> {
-    const utxos = await this.calculateAllSpendCandidatesUTXO(aesKey, false);
+  async buyOrder(
+    aesKey: any,
+    tokenId: string,
+    buyPrice: bigint,
+    targetValue: bigint,
+    validToTime: number | null,
+    validFromTime: number | null,
+    orderBaseToken: string,
+    allowRemainder: boolean
+  ): Promise<Block> {
+    const targetToken = await this.checkTokenId(tokenId);
+    return this.buyOrderDo(aesKey, targetToken, buyPrice, targetValue, validToTime, validFromTime, orderBaseToken, allowRemainder);
+  }
 
-    let totalValue = BigInt(0);
-    const tokenIdToCheck = tokenid || NetworkParameters.getBIGTANGLE_TOKENID();
+  async buyOrderDo(
+    aesKey: any,
+    targetToken: Token,
+    buyPrice: bigint,
+    targetValue: bigint,
+    validToTime: number | null,
+    validFromTime: number | null,
+    orderBaseToken: string,
+    allowRemainder: boolean
+  ): Promise<Block> {
+    if (targetToken.getTokenid() === orderBaseToken) {
+      throw new Error("buy token is base token");
+    }
+    const priceshift = this.getOrderPriceShift(orderBaseToken);
+    const candidates = await this.calculateAllSpendCandidates(aesKey, false);
+    let toBePaid = new Coin(
+      this.totalAmount(buyPrice, targetValue, targetToken.getDecimals() + priceshift, allowRemainder),
+      new Uint8Array(Utils.HEX.decode(orderBaseToken))
+    ).negate();
+    if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING === orderBaseToken) {
+      toBePaid = toBePaid.add(CoinConstants.FEE_DEFAULT.negate());
+    }
+    const tx = new Transaction(this.params);
+    let beneficiary: ECKey | null = null;
 
-    for (const utxo of utxos) {
-      if (utxo && utxo.getTokenId) {
-        const utxoTokenId = Utils.HEX.decode(utxo.getTokenId());
-        if (Utils.arraysEqual(utxoTokenId, tokenIdToCheck)) {
-          const value = utxo.getValue();
-          const valueToAdd =
-            typeof value === "bigint"
-              ? value
-              : value.getValue
-              ? value.getValue()
-              : BigInt(0);
-          totalValue += valueToAdd;
+    for (const spendableOutput of candidates) {
+      if (orderBaseToken === spendableOutput.getUTXO().getTokenId()) {
+        beneficiary = await this.getECKey(aesKey, spendableOutput.getUTXO().getAddress());
+        toBePaid = spendableOutput.getValue().add(toBePaid);
+        tx.addInput2(spendableOutput.getUTXO().getBlockHash(), spendableOutput);
+        if (!toBePaid.isNegative()) {
+          tx.addOutputEckey(toBePaid, beneficiary!);
+          break;
         }
       }
     }
-
-    return Coin.valueOf(totalValue, new Uint8Array(tokenIdToCheck));
-  }
-
-  /**
-   * Create a new key pair and add it to the wallet
-   * @returns The new ECKey
-   */
-  freshReceiveKey(): ECKey {
-    return this.keyChainGroup.freshKey(KeyPurpose.RECEIVE_FUNDS);
-  }
-
-  /**
-   * Get the current receive address
-   * @returns The current receive address
-   */
-  currentReceiveAddress(): Address {
-    return this.keyChainGroup.currentAddress(KeyPurpose.RECEIVE_FUNDS);
-  }
-
-  /**
-   * Get a fresh receive address
-   * @returns A new receive address
-   */
-  freshReceiveAddress(): Address {
-    return this.keyChainGroup.freshAddress(KeyPurpose.RECEIVE_FUNDS);
-  }
-
-  /**
-   * Publish a domain name with associated data
-   * @param aesKey The encryption key
-   * @param domainName The domain name to publish
-   * @param data The data associated with the domain
-   * @returns A block containing the transaction
-   */
-  async publishDomainName(
-    aesKey: any,
-    domainName: string,
-    data: string
-  ): Promise<Block> {
-    // Create a transaction for domain registration
-    const tx = new Transaction(this.params);
-
-    // Add domain name and data as transaction data
-    const domainInfo = {
-      domainName,
-      data,
-      timestamp: Date.now(),
-    };
-
-    // Convert to byte array
-    const domainData = new TextEncoder().encode(JSON.stringify(domainInfo));
-    tx.setData(domainData);
-
-    // Add a simple memo
-    tx.setMemo(`domain registration: ${domainName}`);
-
-    // Sign the transaction
-    await this.signTransaction(tx, aesKey, "THROW");
-
-    // Create a block with the transaction
-    const block = await this.getTip();
-    block.addTransaction(tx);
-    // Use BLOCKTYPE_USERDATA for domain registration since BLOCKTYPE_DOMAIN doesn't exist
-    block.setBlockType(BlockType.BLOCKTYPE_USERDATA);
-
-    return this.solveAndPost(block);
-  }
-
-  /**
-   * Place a bid on an auction
-   * @param aesKey The encryption key
-   * @param auctionId The ID of the auction
-   * @param bidAmount The amount to bid
-   * @param tokenid The token ID for the bid
-   * @returns A block containing the transaction
-   */
-  async placeBid(
-    aesKey: any,
-    auctionId: string,
-    bidAmount: Coin,
-    tokenid: Uint8Array
-  ): Promise<Block> {
-    // Create a transaction for the bid
-    const tx = new Transaction(this.params);
-
-    // Add auction info as transaction data
-    const auctionInfo = {
-      auctionId,
-      bidAmount: bidAmount.getValue(),
-      tokenid: Utils.HEX.encode(tokenid),
-    };
-
-    // Convert to byte array
-    const auctionData = new TextEncoder().encode(JSON.stringify(auctionInfo));
-    tx.setData(auctionData);
-
-    // Add input representing the bid amount
-    const utxos = await this.calculateAllSpendCandidatesUTXO(aesKey, false);
-    const tokenUtxos = utxos.filter((utxo) =>
-      Utils.arraysEqual(Utils.HEX.decode(utxo.getTokenId()), tokenid)
-    );
-
-    if (tokenUtxos.length === 0) {
-      throw new Error(`No UTXOs found for token: ${Utils.HEX.encode(tokenid)}`);
+    if (beneficiary == null || toBePaid.isNegative()) {
+      const baseTokenId = Utils.HEX.decode(orderBaseToken);
+      const baseOutputs = this.filterTokenid(baseTokenId, candidates || []);
+      const requiredAmount = toBePaid.negate();
+      const availableCoin = this.sumOutputs(baseTokenId, baseOutputs);
+      const deficitCoin = requiredAmount.subtract(availableCoin);
+      const info = "orderBaseToken=" + orderBaseToken + " required=" + requiredAmount + " available="
+        + availableCoin + " deficit=" + deficitCoin + " price=" + buyPrice + " targetValue=" + targetValue;
+      this.logInsufficientMoney("buyOrderDo", info, aesKey, baseOutputs);
+      throw new InsufficientMoneyException(orderBaseToken);
     }
 
-    // Add outputs for bid
-    let totalBid = BigInt(0);
-    for (const utxo of tokenUtxos) {
-      if (totalBid >= bidAmount.getValue()) {
+    const info = new OrderOpenInfo(
+      Number(targetValue),
+      targetToken.getTokenid(),
+      beneficiary.getPubKey(),
+      validToTime != null ? validToTime : Date.now(),
+      validFromTime != null ? validFromTime : Date.now(),
+      Side.BUY,
+      beneficiary.toAddress(this.params).toBase58(),
+      orderBaseToken,
+      Number(buyPrice),
+      Number(this.totalAmount(buyPrice, targetValue, targetToken.getDecimals() + priceshift, allowRemainder)),
+      orderBaseToken
+    );
+    tx.setData(info.toByteArray());
+    tx.setDataClassName("OrderOpen");
+    await this.signTransaction(tx, aesKey, "THROW");
+
+    const block = await this.getTip();
+    block.addTransaction(tx);
+    block.setBlockType(BlockType.BLOCKTYPE_ORDER_OPEN);
+    if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING !== orderBaseToken) {
+      await this.submitTransaction(await this.feeTransaction(aesKey, candidates));
+    }
+    return await this.solveAndPost(block);
+  }
+
+  async sellOrder(
+    aesKey: any,
+    offerTokenId: string,
+    sellPrice: bigint,
+    offerValue: bigint,
+    validToTime: number | null,
+    validFromTime: number | null,
+    orderBaseToken: string,
+    allowRemainder: boolean
+  ): Promise<Block> {
+    const t = await this.checkTokenId(offerTokenId);
+    return this.sellOrderDo(aesKey, t, sellPrice, offerValue, validToTime, validFromTime, orderBaseToken, allowRemainder);
+  }
+
+  async sellOrderDo(
+    aesKey: any,
+    t: Token,
+    sellPrice: bigint,
+    offerValue: bigint,
+    validToTime: number | null,
+    validFromTime: number | null,
+    orderBaseToken: string,
+    allowRemainder: boolean
+  ): Promise<Block> {
+    if (t.getTokenid() === orderBaseToken) {
+      throw new Error("sell token is not allowed as base token");
+    }
+    const priceshift = this.getOrderPriceShift(orderBaseToken);
+    const candidates = await this.calculateAllSpendCandidates(aesKey, false);
+    let myCoin = Coin.valueOf(offerValue, new Uint8Array(Utils.HEX.decode(t.getTokenid()))).negate();
+    if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING === t.getTokenid()) {
+      myCoin = myCoin.add(CoinConstants.FEE_DEFAULT.negate());
+    }
+    const tx = new Transaction(this.params);
+    let beneficiary: ECKey | null = null;
+
+    for (const spendableOutput of candidates) {
+      if (t.getTokenid() === spendableOutput.getUTXO().getTokenId()) {
+        beneficiary = await this.getECKey(aesKey, spendableOutput.getUTXO().getAddress());
+        myCoin = spendableOutput.getValue().add(myCoin);
+        tx.addInput2(spendableOutput.getUTXO().getBlockHash(), spendableOutput);
+        if (!myCoin.isNegative()) {
+          tx.addOutputEckey(myCoin, beneficiary!);
+          break;
+        }
+      }
+    }
+    if (beneficiary == null || myCoin.isNegative()) {
+      const sellTokenBytes = Utils.HEX.decode(t.getTokenid());
+      const sellOutputs = this.filterTokenid(sellTokenBytes, candidates || []);
+      let requiredAmount = Coin.valueOf(offerValue, sellTokenBytes);
+      if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING === t.getTokenid()) {
+        requiredAmount = requiredAmount.add(CoinConstants.FEE_DEFAULT);
+      }
+      const availableCoin = this.sumOutputs(sellTokenBytes, sellOutputs);
+      const deficitCoin = requiredAmount.subtract(availableCoin);
+      const info = "sellToken=" + t.getTokenid() + " required=" + requiredAmount + " available="
+        + availableCoin + " deficit=" + deficitCoin + " price=" + sellPrice + " offervalue=" + offerValue;
+      this.logInsufficientMoney("sellOrderDo", info, aesKey, sellOutputs);
+      throw new InsufficientMoneyException("");
+    }
+
+    const targetvalue = this.totalAmount(sellPrice, offerValue, t.getDecimals() + priceshift, allowRemainder);
+    const info = new OrderOpenInfo(
+      Number(targetvalue),
+      orderBaseToken,
+      beneficiary.getPubKey(),
+      validToTime != null ? validToTime : Date.now(),
+      validFromTime != null ? validFromTime : Date.now(),
+      Side.SELL,
+      beneficiary.toAddress(this.params).toBase58(),
+      orderBaseToken,
+      Number(sellPrice),
+      Number(offerValue),
+      t.getTokenid()
+    );
+    tx.setData(info.toByteArray());
+    tx.setDataClassName("OrderOpen");
+    await this.signTransaction(tx, aesKey, "THROW");
+
+    const block = await this.getTip();
+    block.addTransaction(tx);
+    block.setBlockType(BlockType.BLOCKTYPE_ORDER_OPEN);
+    if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING !== t.getTokenid()) {
+      await this.submitTransaction(await this.feeTransaction(aesKey, candidates));
+    }
+    return await this.solveAndPost(block);
+  }
+
+  async cancelOrder(
+    orderblockhash: Sha256Hash,
+    aesKey: any,
+    address: string
+  ): Promise<Transaction> {
+    let legitimatingKey: ECKey | null = null;
+    const keys = await this.walletKeys(aesKey);
+    for (const ecKey of keys) {
+      if (address === ecKey.toAddress(this.params).toString()) {
+        legitimatingKey = ecKey;
         break;
       }
-      tx.addInput2(
-        utxo.getBlockHash(),
-        new FreeStandingTransactionOutput(this.params, utxo)
-      );
-      const utxoValue = utxo.getValue();
-      const utxoValueBigInt =
-        typeof utxoValue === "bigint" ? utxoValue : utxoValue.getValue();
-      totalBid = totalBid + utxoValueBigInt;
     }
-
-    if (totalBid < bidAmount.getValue()) {
-      throw new InsufficientMoneyException(
-        `Insufficient funds for bid: ${bidAmount.toString()}`
-      );
+    if (legitimatingKey == null) {
+      throw new NoDataException("no keys");
     }
-
-    // If there's change, send it back
-    if (totalBid > bidAmount.getValue()) {
-      const changeAmount = Coin.valueOf(
-        totalBid - bidAmount.getValue(),
-        new Uint8Array(tokenid)
-      );
-      const beneficiary = await this.getECKey(
-        aesKey,
-        tokenUtxos[0].getAddress()
-      );
-      const changeOutput = new TransactionOutput(
-        this.params,
-        tx,
-        changeAmount,
-        beneficiary.getPubKey()
-      );
-      tx.addOutput(changeOutput);
+    const tx = new Transaction(this.params);
+    const info = new OrderCancelInfo(orderblockhash);
+    tx.setData(info.toByteArray());
+    tx.setDataClassName("OrderCancelInfo");
+    const sighash1 = tx.getHash();
+    const party1Signature = await legitimatingKey.sign(sighash1.getBytes(), null);
+    tx.setDataSignature(party1Signature.encodeToDER());
+    await this.submitTransaction(tx);
+    if (this.getFee()) {
+      await this.submitTransaction(await this.feeTransaction(aesKey));
     }
-
-    // Add a simple memo
-    tx.setMemo(`bid on auction: ${auctionId}`);
-
-    // Sign the transaction
-    await this.signTransaction(tx, aesKey, "THROW");
-
-    // Create a block with the transaction
-    const block = await this.getTip();
-    block.addTransaction(tx);
-    // Use BLOCKTYPE_USERDATA for bid transactions since BLOCKTYPE_BID doesn't exist
-    block.setBlockType(BlockType.BLOCKTYPE_USERDATA);
-
-    return this.solveAndPost(block);
+    return tx;
   }
 
-  /**
-   * Create a new token/coin with full parameters as per Java implementation
-   * @param key The key for the token
-   * @param domainname The domain name for the token
-   * @param increment Whether the token is incremental
-   * @param token The token object
-   * @param addresses List of multi-sign addresses
-   * @param pubkeyTo The public key to send to
-   * @param memoInfo Memo information
-   * @returns A block containing the transaction
-   */
+  async contractEventCancel(
+    eventblockhash: Sha256Hash,
+    aesKey: any,
+    address: string
+  ): Promise<Transaction> {
+    let legitimatingKey: ECKey | null = null;
+    const keys = await this.walletKeys(aesKey);
+    for (const ecKey of keys) {
+      if (address === ecKey.toAddress(this.params).toString()) {
+        legitimatingKey = ecKey;
+        break;
+      }
+    }
+    if (legitimatingKey == null) {
+      throw new NoDataException("no keys");
+    }
+    const tx = new Transaction(this.params);
+    const info = new ContractEventCancelInfo(eventblockhash);
+    tx.setData(info.toByteArray());
+    tx.setDataClassName("ContractEventCancelInfo");
+    const sighash1 = tx.getHash();
+    const party1Signature = await legitimatingKey.sign(sighash1.getBytes(), null);
+    tx.setDataSignature(party1Signature.encodeToDER());
+    await this.submitTransaction(tx);
+    if (this.getFee()) {
+      await this.submitTransaction(await this.feeTransaction(aesKey));
+    }
+    return tx;
+  }
+
+  async payContract(
+    aesKey: any,
+    tokenId: string,
+    payAmount: bigint,
+    validToTime: number | null,
+    validFromTime: number | null,
+    contractTokenid: string
+  ): Promise<Transaction> {
+    const amount = new Coin(payAmount, new Uint8Array(Utils.HEX.decode(tokenId))).negate();
+    const tx = new Transaction(this.params);
+    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
+    let beneficiary: ECKey | null = null;
+    for (const spendableOutput of this.filterTokenid(amount.getTokenid(), coinList)) {
+      const utxo = spendableOutput.getUTXO();
+      if (utxo) {
+        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
+        amount.add(utxo.getValue());
+        tx.addInput2(utxo.getBlockHash(), spendableOutput);
+        if (!amount.isNegative()) {
+          tx.addOutputEckey(amount, beneficiary!);
+          break;
+        }
+      }
+    }
+    if (beneficiary == null || amount.isNegative()) {
+      const deficit = amount.isNegative() ? amount.negate() : amount;
+      const info = "payContract token=" + tokenId + " required=" + deficit + " remainder=" + amount
+        + " outputs=" + coinList.length;
+      this.logInsufficientMoney("payContract", info, aesKey, coinList);
+      throw new InsufficientMoneyException(amount + " outputs size= " + coinList.length);
+    }
+    const info = new ContractEventInfo(
+      contractTokenid,
+      payAmount,
+      tokenId,
+      beneficiary.toAddress(this.params).toBase58(),
+      validToTime,
+      validFromTime,
+      ""
+    );
+    tx.setData(info.toByteArray());
+    tx.setDataClassName("ContractEventInfo");
+    await this.signTransaction(tx, aesKey, "THROW");
+    await this.submitTransaction(tx);
+    if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING !== tokenId) {
+      await this.submitTransaction(await this.feeTransaction(aesKey, coinList));
+    }
+    return tx;
+  }
+
+  /* =================================================================
+   * Transaction submission
+   * ================================================================= */
+
+  async submitTransaction(tx: Transaction): Promise<void> {
+    try {
+      await OkHttp3Util.post(
+        this.getServerURL() + ReqCmd.submitTransaction,
+        new Uint8Array(tx.bitcoinSerialize())
+      );
+    } catch (error: any) {
+      if (error.message && error.message.includes("connect")) {
+        if (this.serverPool) {
+          (this.serverPool as any).removeServer(this.getServerURL());
+        }
+      }
+      throw error;
+    }
+  }
+
+  payTransaction(txs: Transaction[]): Transaction | null {
+    for (const tx of txs) {
+      this.submitTransaction(tx);
+    }
+    return txs.length > 0 ? txs[0] : null;
+  }
+
+  retryBlocks(oldBlock: Block): Transaction | null {
+    const txs = oldBlock.getTransactions();
+    if (!txs || txs.length === 0) return null;
+    for (const tx of txs) {
+      this.submitTransaction(tx);
+    }
+    return txs[0];
+  }
+
+  async retryBlock(hashHex: string): Promise<Transaction | null> {
+    const block = await this.getBlock(hashHex);
+    return this.retryBlocks(block);
+  }
+
+  async rePayBlock(aesKey: any, hashHex: string): Promise<Transaction | null> {
+    return this.retryBlock(hashHex);
+  }
+
+  /* =================================================================
+   * Subtangle / Cross-chain
+   * ================================================================= */
+
+  async paySubtangle(
+    aesKey: any,
+    outputStr: string,
+    connectKey: ECKey,
+    toAddressInSubtangle: Address,
+    coin: Coin,
+    address: Address
+  ): Promise<Transaction> {
+    const requestParam: Record<string, any> = { hexStr: outputStr };
+    const resp = await OkHttp3Util.post(
+      this.getServerURL() + ReqCmd.getOutputByKey,
+      new TextEncoder().encode(Json.jsonmapper().stringify(requestParam))
+    );
+    const outputsDetailsResponse: OutputsDetailsResponse = Json.jsonmapper().parse(resp, {
+      mainCreator: () => [OutputsDetailsResponse, UTXO],
+    });
+    const findOutput = outputsDetailsResponse.getOutputs();
+    if (!findOutput) throw new Error("Output not found");
+    const spendableOutput = new FreeStandingTransactionOutput(this.params, findOutput);
+    const transaction = new Transaction(this.params);
+    transaction.addOutputAddress(coin, address);
+    transaction.setToAddressInSubtangle(toAddressInSubtangle.getHash160());
+    const input = transaction.addInput2(findOutput.getBlockHash(), spendableOutput);
+    const sighash = transaction.hashForSignature(0, spendableOutput.getScriptBytes(), 1 as any, false);
+    const tsrecsig = new TransactionSignature(
+      await connectKey.sign(sighash.getBytes(), aesKey),
+      1 as any,
+      false
+    );
+    const inputScript = ScriptBuilder.createInputScript(tsrecsig);
+    input.setScriptSig(inputScript);
+    await this.submitTransaction(transaction);
+    return transaction;
+  }
+
+  /* =================================================================
+   * Signing / Keys
+   * ================================================================= */
+
+  async getECKey(aesKey: any, address: string | null): Promise<ECKey> {
+    if (address === null) {
+      throw new Error("Address cannot be null");
+    }
+    const keys = await this.walletKeys(aesKey);
+    for (const ecKey of keys) {
+      if (address === ecKey.toAddress(this.params).toString()) {
+        return ecKey;
+      }
+    }
+    throw new Error("no key in wallet is found for this address " + address);
+  }
+
+  /* =================================================================
+   * User data
+   * ================================================================= */
+
+  async saveUserdata(
+    userKey: ECKey,
+    transaction: Transaction,
+    encrypt: boolean,
+    aesKey: any
+  ): Promise<Transaction> {
+    if (encrypt && transaction.getData()) {
+      const cipher = await ECIESCoder.encrypt(
+        userKey.getPubKey(),
+        transaction.getData()!
+      );
+      transaction.setData(cipher);
+    }
+    const sighashBytes = transaction.getHash().getBytes();
+    const party1Signature = await userKey.sign(sighashBytes);
+    const buf1 = party1Signature.encodeToDER();
+    const multiSignBies: MultiSignBy[] = [];
+    const multiSignBy0 = new MultiSignBy();
+    multiSignBy0.setAddress(userKey.toAddress(this.params).toBase58());
+    multiSignBy0.setPublickey(Utils.HEX.encode(userKey.getPubKey()));
+    multiSignBy0.setSignature(Utils.HEX.encode(buf1));
+    multiSignBies.push(multiSignBy0);
+    transaction.setDataSignature(
+      new TextEncoder().encode(Json.jsonmapper().stringify(multiSignBies))
+    );
+    await this.submitTransaction(transaction);
+    if (this.getFee()) {
+      await this.submitTransaction(await this.feeTransaction(aesKey));
+    }
+    return transaction;
+  }
+
+  async getUserSettingDataInfo(
+    userKey: ECKey,
+    encrypt: boolean
+  ): Promise<any> {
+    const requestParam: Record<string, string> = {
+      dataclassname: "UserSettingDataInfo",
+      pubKey: Utils.HEX.encode(userKey.getPubKey()),
+    };
+    const hexData = await OkHttp3Util.postAndGetBlock(
+      this.getServerURL() + ReqCmd.getUserData,
+      Json.jsonmapper().stringify(requestParam)
+    );
+    if (!hexData || hexData.length === 0) return null;
+    const buf = Utils.HEX.decode(hexData);
+    let payload: Uint8Array;
+    if (encrypt) {
+      payload = await ECIESCoder.decrypt(userKey.getPrivKeyBytes(), buf);
+    } else {
+      payload = buf;
+    }
+    const parsed = new UserSettingDataInfo().parse(payload);
+    return parsed;
+  }
+
+  /* =================================================================
+   * Domain name operations
+   * ================================================================= */
+
+  async publishDomainName(
+    ownerKey: ECKey,
+    tokenid: string,
+    tokenname: string,
+    aesKey: any,
+    description: string
+  ): Promise<void> {
+    const getDomainBlockHashResponse = await this.getDomainNameBlockHash(tokenname);
+    const domainName = getDomainBlockHashResponse.getdomainNameToken();
+    const walletKeysList: ECKey[] = [ownerKey];
+    const signnumber = walletKeysList.length;
+    await this.publishDomainNameInternal(walletKeysList, ownerKey, tokenid, tokenname, domainName, aesKey, description, signnumber);
+  }
+
+  async publishDomainNameMulti(
+    signKeys: ECKey[],
+    ownerKey: ECKey,
+    tokenid: string,
+    tokenname: string,
+    aesKey: any,
+    description: string
+  ): Promise<void> {
+    const getDomainBlockHashResponse = await this.getDomainNameBlockHash(tokenname);
+    const domainNameBlockHash = getDomainBlockHashResponse.getdomainNameToken();
+    const signnumber = signKeys.length;
+    await this.publishDomainNameInternal(signKeys, ownerKey, tokenid, tokenname, domainNameBlockHash, aesKey, description, signnumber);
+  }
+
+  private async publishDomainNameInternal(
+    multiSigns: ECKey[],
+    ownerKey: ECKey,
+    tokenid: string,
+    tokenname: string,
+    domainNameBlockHash: Token | null,
+    aesKey: any,
+    description: string,
+    signnumber: number
+  ): Promise<void> {
+    const tokenIndexResponse = await this.getServerCalTokenIndex(tokenid);
+    const tokenindex_ = tokenIndexResponse.getTokenindex();
+    const tokens = Token.buildDomainnameTokenInfo(
+      true,
+      tokenIndexResponse.getBlockhash() || "",
+      tokenid,
+      tokenname,
+      description,
+      signnumber,
+      tokenindex_,
+      false,
+      domainNameBlockHash ? domainNameBlockHash.getTokenname() || "" : "",
+      domainNameBlockHash ? domainNameBlockHash.getBlockHashHex() || "" : ""
+    );
+    const tokenInfo = new TokenInfo();
+    tokenInfo.setToken(tokens);
+    const multiSignAddresses: MultiSignAddress[] = [];
+    tokenInfo.setMultiSignAddresses(multiSignAddresses);
+    for (const ecKey of multiSigns) {
+      multiSignAddresses.push(new MultiSignAddress(tokenid, "", ecKey.getPublicKeyAsHex()));
+    }
+    await this.saveToken(
+      tokenInfo,
+      Coin.valueOf(1n, new Uint8Array(Utils.HEX.decode(tokenid))),
+      ownerKey,
+      aesKey,
+      ownerKey.getPubKey(),
+      new MemoInfo("publishDomainName")
+    );
+  }
+
+  /* =================================================================
+   * Token creation
+   * ================================================================= */
+
   async createToken(
     key: ECKey,
     domainname: string,
@@ -1331,21 +1344,14 @@ export class Wallet extends WalletBase {
     pubkeyTo: Uint8Array,
     memoInfo: MemoInfo
   ): Promise<Block> {
-    const domainResponse = await this.getDomainNameBlockHash2(
-      domainname,
-      "token"
-    );
+    const domainResponse = await this.getDomainNameBlockHash2(domainname, "token");
     const domainToken = domainResponse.getdomainNameToken();
     if (domainToken) {
       token.setDomainName(domainToken.getTokenname() || "");
       token.setDomainNameBlockHash(domainToken.getBlockHashHex() || "");
     }
 
-    const tokenid = token.getTokenid
-      ? token.getTokenid()
-      : (token as any).tokenid;
-
-    // Get token index from server
+    const tokenid = token.getTokenid();
     const requestParam00 = new Map<string, string>();
     requestParam00.set("tokenid", tokenid);
     const resp2 = await OkHttp3Util.post(
@@ -1354,19 +1360,13 @@ export class Wallet extends WalletBase {
         Json.jsonmapper().stringify(Object.fromEntries(requestParam00))
       )
     );
-
     const tokenIndexResponse = Json.jsonmapper().parse(resp2, {
       mainCreator: () => [TokenIndexResponse],
     }) as TokenIndexResponse;
 
-    token.setTokenindex(
-      tokenIndexResponse.getTokenindex ? tokenIndexResponse.getTokenindex() : 0
-    );
-    // Set prevblockhash, use ZERO_HASH if the response doesn't have a blockhash (first token case)
+    token.setTokenindex(tokenIndexResponse.getTokenindex() || 0);
     token.setPrevblockhash(
-      tokenIndexResponse.getBlockhash
-        ? tokenIndexResponse.getBlockhash()
-        : Sha256Hash.ZERO_HASH
+      tokenIndexResponse.getBlockhash() || Sha256Hash.ZERO_HASH
     );
     token.setTokenstop(!increment);
 
@@ -1374,9 +1374,7 @@ export class Wallet extends WalletBase {
     tokenInfo.setToken(token);
     tokenInfo.setMultiSignAddresses(addresses);
 
-    // Create base coin with token amount and token id
-    const tokenAmount =
-      (token.getAmount ? token.getAmount() : BigInt(0)) ?? BigInt(0);
+    const tokenAmount = token.getAmount() ?? 0n;
     const basecoin = new Coin(
       tokenAmount,
       new Uint8Array(Utils.HEX.decode(tokenid))
@@ -1392,114 +1390,72 @@ export class Wallet extends WalletBase {
     );
   }
 
-  /**
-   * Create a new token/coin (simplified version)
-   * @param aesKey The encryption key
-   * @param tokenInfo The token information
-   * @param initialSupply The initial supply of the token
-   * @param ownerKey The owner key for the token
-   * @returns A block containing the transaction
-   */
-  async createTokenSimple(
-    aesKey: any,
-    tokenInfo: TokenInfo,
-    initialSupply: Coin,
-    ownerKey: ECKey
-  ): Promise<Block> {
-    // Create a transaction for the token creation
-    const tx = new Transaction(this.params);
+  /* =================================================================
+   * Server queries
+   * ================================================================= */
 
-    // Add token creation data
-    tx.setData(tokenInfo.toByteArray());
-
-    // Add output for initial token supply
-    const output = new TransactionOutput(
-      this.params,
-      tx,
-      initialSupply,
-      ownerKey.getPubKey()
+  async getBlock(hashHex: string): Promise<Block> {
+    const requestParam: Record<string, string> = { hashHex };
+    const hexData = await OkHttp3Util.postAndGetBlock(
+      this.getServerURL() + ReqCmd.getBlockByHash,
+      Json.jsonmapper().stringify(requestParam)
     );
-    tx.addOutput(output);
-
-    // Add a simple memo
-    const tokenResult = tokenInfo.getToken ? tokenInfo.getToken() : null;
-    const tokenName =
-      tokenResult && tokenResult.getTokenname
-        ? tokenResult.getTokenname()
-        : "Unknown Token";
-    tx.setMemo(`create token: ${tokenName}`);
-
-    // Sign the transaction
-    await this.signTransaction(tx, aesKey, "THROW");
-
-    // Create a block with the transaction
-    const block = await this.getTip();
-    block.addTransaction(tx);
-    block.setBlockType(BlockType.BLOCKTYPE_TOKEN_CREATION);
-
-    return block;
+    const bytes = Utils.HEX.decode(hexData);
+    const buffer = new Uint8Array(bytes);
+    return this.params.getDefaultSerializer().makeBlock(buffer);
   }
 
-  /**
-   * Get all unspent outputs for a specific address
-   * @param aesKey The encryption key
-   * @param address The address to check
-   * @returns Array of unspent outputs
-   */
-  async getUnspentOutputsForAddress(
-    aesKey: any,
-    address: string
-  ): Promise<UTXO[]> {
-    const utxos = await this.calculateAllSpendCandidatesUTXO(aesKey, false);
-    return utxos.filter(
-      (utxo) => utxo.getAddress() === address && !utxo.isSpent()
+  async getTip(): Promise<Block> {
+    const requestParam = {};
+    const tip = await OkHttp3Util.postAndGetBlock(
+      this.getServerURL() + ReqCmd.getTip,
+      Json.jsonmapper().stringify(requestParam)
     );
+    const hexBytes = Utils.HEX.decode(tip);
+    const buffer = new Uint8Array(hexBytes);
+    return this.params.getDefaultSerializer().makeBlock(buffer);
   }
 
-  /**
-   * Get transaction history for the wallet
-   * @param aesKey The encryption key
-   * @returns Array of transactions
-   */
-  async getTransactionHistory(aesKey: any): Promise<Transaction[]> {
-    // Get wallet keys to identify relevant transactions
-    const keys = await this.walletKeys(aesKey);
-    const pubKeyHashes = keys.map((key) =>
-      Utils.HEX.encode(key.getPubKeyHash())
-    );
-
-    // This would typically involve a call to the server to get transactions
-    // associated with these public key hashes
-    const requestParam = {
-      pubKeyHashes: pubKeyHashes,
+  async getLastPrice(tokenid: string, basetoken: string): Promise<number> {
+    const tokenids: string[] = [tokenid];
+    const requestParam: Record<string, any> = {
+      tokenids,
+      count: 1,
+      basetoken,
     };
-
-    const resp = await OkHttp3Util.post(
-      this.getServerURL() + ReqCmd.getOutputsHistory,
+    const response0 = await OkHttp3Util.post(
+      this.getServerURL() + ReqCmd.getOrdersTicker,
       new TextEncoder().encode(Json.jsonmapper().stringify(requestParam))
     );
-
-    // Parse the response and return an array of transactions
-    // For now, returning an empty array as the actual implementation
-    // would depend on the server response format
-    const responseObj: any = Json.jsonmapper().parse(resp);
-
-    if (responseObj.transactions) {
-      return responseObj.transactions.map((txData: any) => {
-        // Convert transaction data to Transaction objects
-        return new Transaction(this.params);
-      });
+    const orderTickerResponse: OrderTickerResponse = Json.jsonmapper().parse(response0, {
+      mainCreator: () => [OrderTickerResponse, MatchLastdayResult],
+    });
+    const tickers = orderTickerResponse.getTickers();
+    if (tickers && tickers.length > 0) {
+      const matchResult = tickers[0];
+      const tokennames = orderTickerResponse.getTokennames();
+      const base = tokennames ? tokennames.get(matchResult.getBasetokenid()) : undefined;
+      const priceshift = base ? this.getOrderPriceShift(matchResult.getBasetokenid()) : 0;
+      const price = MonetaryFormat.FIAT.formatValue(
+        BigInt(matchResult.getPrice()),
+        (base ? base.getDecimals() : 0) + priceshift
+      );
+      return parseFloat(price);
     }
-
-    return [];
+    throw new NoDataException("tokenid=" + tokenid + " basetoken=" + basetoken);
   }
 
-  async getDomainNameBlockHash(
-    domainname: string
-  ): Promise<GetDomainTokenResponse> {
-    // Replace 'any' with proper type when available
+  getOrderPriceShift(orderBaseTokens: string): number {
+    if (NetworkParameters.BIGTANGLE_TOKENID_STRING === orderBaseTokens) {
+      return 0;
+    }
+    return 6;
+  }
+
+  async getDomainNameBlockHash(domainname: string): Promise<GetDomainTokenResponse> {
     return this.getDomainNameBlockHash2(domainname, "");
   }
+
   async getDomainNameBlockHash2(
     domainname: string,
     token: string
@@ -1513,131 +1469,34 @@ export class Wallet extends WalletBase {
         Json.jsonmapper().stringify(Object.fromEntries(requestParam))
       )
     );
-
-    // First parse to plain object
     const responseObj: any = Json.jsonmapper().parse(resp);
-
-    // Create response object manually
     const result = new GetDomainTokenResponse();
-
-    // Handle the domainNameToken property if it exists
     if (responseObj.domainNameToken) {
-      // Create a basic Token object with the response data
       const tokenObj = new Token();
       if (typeof responseObj.domainNameToken === "object") {
-        // Copy properties from the parsed object to the token instance
-        if (responseObj.domainNameToken.tokenid !== undefined) {
-          tokenObj.setTokenid(responseObj.domainNameToken.tokenid);
-        }
-        if (responseObj.domainNameToken.tokenname !== undefined) {
-          tokenObj.setTokenname(responseObj.domainNameToken.tokenname);
-        }
-        if (responseObj.domainNameToken.domainName !== undefined) {
-          tokenObj.setDomainName(responseObj.domainNameToken.domainName);
-        }
-        if (responseObj.domainNameToken.domainNameBlockHash !== undefined) {
-          tokenObj.setDomainNameBlockHash(
-            responseObj.domainNameToken.domainNameBlockHash
-          );
-        }
-        if (responseObj.domainNameToken.tokenindex !== undefined) {
-          tokenObj.setTokenindex(responseObj.domainNameToken.tokenindex);
-        }
-        if (responseObj.domainNameToken.description !== undefined) {
-          tokenObj.setDescription(responseObj.domainNameToken.description);
-        }
-        if (responseObj.domainNameToken.amount !== undefined) {
-          tokenObj.setAmount(responseObj.domainNameToken.amount);
-        }
-        if (responseObj.domainNameToken.decimals !== undefined) {
-          tokenObj.setDecimals(responseObj.domainNameToken.decimals);
-        }
-        if (responseObj.domainNameToken.signnumber !== undefined) {
-          tokenObj.setSignnumber(responseObj.domainNameToken.signnumber);
-        }
-        if (responseObj.domainNameToken.tokentype !== undefined) {
-          tokenObj.setTokentype(responseObj.domainNameToken.tokentype);
-        }
-        if (responseObj.domainNameToken.tokenstop !== undefined) {
-          tokenObj.setTokenstop(responseObj.domainNameToken.tokenstop);
-        }
-        if (responseObj.domainNameToken.prevblockhash !== undefined) {
-          tokenObj.setPrevblockhash(responseObj.domainNameToken.prevblockhash);
-        }
-        if (responseObj.domainNameToken.classification !== undefined) {
-          tokenObj.setClassification(
-            responseObj.domainNameToken.classification
-          );
-        }
-        if (responseObj.domainNameToken.language !== undefined) {
-          tokenObj.setLanguage(responseObj.domainNameToken.language);
-        }
-        if (responseObj.domainNameToken.revoked !== undefined) {
-          tokenObj.setRevoked(responseObj.domainNameToken.revoked);
-        }
-        if (responseObj.domainNameToken.tokenKeyValues !== undefined) {
-          tokenObj.setTokenKeyValues(
-            responseObj.domainNameToken.tokenKeyValues
-          );
-        }
-        // Handle properties from the parent SpentBlock class if needed
-        if (
-          responseObj.domainNameToken.blockHash !== undefined &&
-          responseObj.domainNameToken.blockHash !== null
-        ) {
-          // The blockHash might come as a hex string, so we need to properly convert it to Sha256Hash
-          const blockHashData = responseObj.domainNameToken.blockHashHex;
-          if (
-            typeof blockHashData === "string" &&
-            blockHashData.length === 64
-          ) {
-            // 32 bytes = 64 hex characters
-            // If it's a hex string, verify it's 32 bytes when decoded and create a Sha256Hash from it
-            tokenObj.setBlockHash(
-              Sha256Hash.wrap(new Uint8Array(Utils.HEX.decode(blockHashData)))
-            );
-          } else if (
-            blockHashData &&
-            typeof blockHashData === "object" &&
-            blockHashData.bytes &&
-            blockHashData.bytes.length === 32
-          ) {
-            // If it's an object with bytes array of correct length
-            tokenObj.setBlockHash(
-              Sha256Hash.wrap(new Uint8Array(blockHashData.bytes))
-            );
-          } else if (
-            Array.isArray(blockHashData) &&
-            blockHashData.length === 32
-          ) {
-            // If it's a raw byte array of correct length
-            tokenObj.setBlockHash(
-              Sha256Hash.wrap(new Uint8Array(blockHashData))
-            );
-          }
-          // If none of the above conditions are met, skip setting the blockHash to avoid the error
-        }
-        if (responseObj.domainNameToken.spent !== undefined) {
-          (tokenObj as any).setSpent(responseObj.domainNameToken.spent);
-        }
-        if (responseObj.domainNameToken.confirmed !== undefined) {
-          (tokenObj as any).setConfirmed(responseObj.domainNameToken.confirmed);
-        }
-        if (responseObj.domainNameToken.time !== undefined) {
-          (tokenObj as any).setTime(responseObj.domainNameToken.time);
+        const d = responseObj.domainNameToken;
+        if (d.tokenid !== undefined) tokenObj.setTokenid(d.tokenid);
+        if (d.tokenname !== undefined) tokenObj.setTokenname(d.tokenname);
+        if (d.domainName !== undefined) tokenObj.setDomainName(d.domainName);
+        if (d.domainNameBlockHash !== undefined) tokenObj.setDomainNameBlockHash(d.domainNameBlockHash);
+        if (d.tokenindex !== undefined) tokenObj.setTokenindex(d.tokenindex);
+        if (d.description !== undefined) tokenObj.setDescription(d.description);
+        if (d.amount !== undefined) tokenObj.setAmount(d.amount);
+        if (d.decimals !== undefined) tokenObj.setDecimals(d.decimals);
+        if (d.signnumber !== undefined) tokenObj.setSignnumber(d.signnumber);
+        if (d.tokentype !== undefined) tokenObj.setTokentype(d.tokentype);
+        if (d.tokenstop !== undefined) tokenObj.setTokenstop(d.tokenstop);
+        if (d.prevblockhash !== undefined) tokenObj.setPrevblockhash(d.prevblockhash);
+        if (d.classification !== undefined) tokenObj.setClassification(d.classification);
+        if (d.language !== undefined) tokenObj.setLanguage(d.language);
+        if (d.revoked !== undefined) tokenObj.setRevoked(d.revoked);
+        if (d.tokenKeyValues !== undefined) tokenObj.setTokenKeyValues(d.tokenKeyValues);
+        if (d.blockHashHex && typeof d.blockHashHex === "string" && d.blockHashHex.length === 64) {
+          tokenObj.setBlockHash(Sha256Hash.wrap(new Uint8Array(Utils.HEX.decode(d.blockHashHex))));
         }
       }
       result.setdomainNameToken(tokenObj);
     }
-
-    // Handle base class properties if they exist
-    if (responseObj.success !== undefined) {
-      (result as any).success = responseObj.success;
-    }
-    if (responseObj.error !== undefined) {
-      (result as any).error = responseObj.error;
-    }
-
     return result;
   }
 
@@ -1645,41 +1504,21 @@ export class Wallet extends WalletBase {
     token: Token
   ): Promise<PermissionedAddressesResponse> {
     const requestParam = new Map<string, string>();
-    const domainNameBlockHash = token.getDomainNameBlockHash
-      ? token.getDomainNameBlockHash()
-      : (token as any).domainNameBlockHash;
-
-    // If no domainNameBlockHash, return empty response - this is for new tokens
-    if (
-      !domainNameBlockHash ||
-      domainNameBlockHash === "" ||
-      domainNameBlockHash === "null"
-    ) {
-      return new PermissionedAddressesResponse(); // Return empty response
+    const domainNameBlockHash = token.getDomainNameBlockHash();
+    if (!domainNameBlockHash || domainNameBlockHash === "" || domainNameBlockHash === "null") {
+      return new PermissionedAddressesResponse();
     }
-
     try {
       requestParam.set("domainNameBlockHash", domainNameBlockHash);
-
       const resp = await OkHttp3Util.post(
         this.getServerURL() + ReqCmd.getTokenPermissionedAddresses,
         new TextEncoder().encode(
           Json.jsonmapper().stringify(Object.fromEntries(requestParam))
         )
       );
-
-      // Parse response as plain object first, then manually construct PermissionedAddressesResponse
       const responseObj: any = Json.jsonmapper().parse(resp);
-
-      // Create a new PermissionedAddressesResponse and populate it manually
       const result = new PermissionedAddressesResponse();
-
-      // Handle multiSignAddresses if it exists
-      if (
-        responseObj.multiSignAddresses &&
-        Array.isArray(responseObj.multiSignAddresses)
-      ) {
-        // Create proper MultiSignAddress objects from the plain objects
+      if (responseObj.multiSignAddresses && Array.isArray(responseObj.multiSignAddresses)) {
         const multiSignAddresses = responseObj.multiSignAddresses.map(
           (addrData: any) => {
             const multiSignAddr = new MultiSignAddress(
@@ -1688,7 +1527,6 @@ export class Wallet extends WalletBase {
               addrData.pubKeyHex || "",
               addrData.posIndex || 0
             );
-            // Set additional properties if they exist
             if (addrData.tokenHolder !== undefined) {
               multiSignAddr.setTokenHolder(addrData.tokenHolder);
             }
@@ -1697,40 +1535,65 @@ export class Wallet extends WalletBase {
         );
         result.setMultiSignAddresses(multiSignAddresses);
       }
-
-      // Handle domainName if it exists
       if (responseObj.domainName !== undefined) {
         result.setDomainName(responseObj.domainName);
       }
-
       return result;
     } catch (error: any) {
-      // If the server throws an error (e.g., token not found), return empty response
-      // This is expected when creating a new token that has no previous tokens
-      console.warn(
-        "Error getting prev token multi-sign addresses:",
-        error.message
-      );
+      console.warn("Error getting prev token multi-sign addresses:", error.message);
       return new PermissionedAddressesResponse();
     }
   }
 
+  async getServerCalTokenIndex(tokenid: string): Promise<TokenIndexResponse> {
+    const requestParam = new Map<string, string>();
+    requestParam.set("tokenid", tokenid);
+    const resp = await OkHttp3Util.post(
+      this.getServerURL() + ReqCmd.getTokenIndex,
+      new TextEncoder().encode(
+        Json.jsonmapper().stringify(Object.fromEntries(requestParam))
+      )
+    );
+    return Json.jsonmapper().parse(resp, {
+      mainCreator: () => [TokenIndexResponse],
+    }) as TokenIndexResponse;
+  }
+
+  /* =================================================================
+   * Block solving / posting
+   * ================================================================= */
+
+  async solveAndPost(block: Block): Promise<Block> {
+    try {
+      block.solve();
+      await OkHttp3Util.post(
+        this.getServerURL() + ReqCmd.saveBlock,
+        new Uint8Array(block.bitcoinSerialize())
+      );
+      return block;
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("connect")) {
+        if (this.serverPool) {
+          this.serverPool.removeServer(this.getServerURL());
+        }
+        throw error;
+      }
+      throw error;
+    }
+  }
+
   async adjustSolveAndSign(block: Block): Promise<Block> {
-    // Solve the block
     block.solve();
-    //console.log("Solved block with nonce:", block.toString()  );
-    // Post the block to the network using signToken endpoint as in Java implementation
     await OkHttp3Util.post(
       this.getServerURL() + ReqCmd.signToken,
       new Uint8Array(block.bitcoinSerialize())
     );
-
     return block;
   }
 
   private async checkBlockPrototype(oldBlock: Block): Promise<Block> {
-    const time = 60 * 60 * 8; // 8 hours in seconds
-    if (Date.now() / 1000 - oldBlock.getTimeSeconds() > time) {
+    const time = 60 * 60 * 8;
+    if (Math.floor(Date.now() / 1000) - oldBlock.getTimeSeconds() > time) {
       const block = await this.getTip();
       block.setBlockType(oldBlock.getBlockType());
       const transactions = oldBlock.getTransactions();
@@ -1739,51 +1602,72 @@ export class Wallet extends WalletBase {
           block.addTransaction(transaction);
         }
       }
-      block.solve();
       return block;
     } else {
       return oldBlock;
     }
   }
 
-  /**
-   * Get wallet information summary
-   * @param aesKey The encryption key
-   * @returns Wallet summary information
-   */
+  /* =================================================================
+   * Utility methods
+   * ================================================================= */
+
+  calc(m: number, factor: number, d: number): number {
+    return Math.floor(m * factor / d);
+  }
+
+  chopped<T>(list: T[], L: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < list.length; i += L) {
+      chunks.push(list.slice(i, i + L));
+    }
+    return chunks;
+  }
+
+  freshReceiveKey(): ECKey {
+    return this.keyChainGroup.freshKey(KeyPurpose.RECEIVE_FUNDS);
+  }
+
+  currentReceiveAddress(): Address {
+    return this.keyChainGroup.currentAddress(KeyPurpose.RECEIVE_FUNDS);
+  }
+
+  freshReceiveAddress(): Address {
+    return this.keyChainGroup.freshAddress(KeyPurpose.RECEIVE_FUNDS);
+  }
+
+  async getBalance(aesKey: any, tokenid?: Uint8Array): Promise<Coin> {
+    const utxos = await this.calculateAllSpendCandidatesUTXO(aesKey, false);
+    let totalValue = 0n;
+    const tokenIdToCheck = tokenid || NetworkParameters.getBIGTANGLE_TOKENID();
+    for (const utxo of utxos) {
+      if (utxo && utxo.getTokenId) {
+        const utxoTokenId = Utils.HEX.decode(utxo.getTokenId());
+        if (Utils.arraysEqual(utxoTokenId, tokenIdToCheck)) {
+          totalValue += utxo.getValue().getValue();
+        }
+      }
+    }
+    return Coin.valueOf(totalValue, new Uint8Array(tokenIdToCheck));
+  }
+
   async getWalletInfo(aesKey: any): Promise<any> {
     const info: any = {};
-
-    // Get the current balance for default token
     info.balance = await this.getBalance(aesKey);
-
-    // Get the number of keys in the wallet
     info.keyCount = this.keyChainGroup.numKeys();
-
-    // Get the current receive address
     info.currentReceiveAddress = this.currentReceiveAddress().toString();
-
-    // Get server information
     info.serverURL = this.getServerURL();
-
     return info;
   }
 
-  /**
-   * Search for tokens by name
-   * @param tokenname Optional token name to search for
-   * @returns Object containing tokenList and amountMap
-   */
   async searchToken(tokenname?: string): Promise<{
     tokenList: Token[];
     amountMap: Map<string, string> | null;
   }> {
     const requestParam: Record<string, any> = {};
-
     if (tokenname && tokenname.trim() !== "") {
       requestParam["name"] = tokenname;
     }
-
     let response: any;
     try {
       response = await OkHttp3Util.post(
@@ -1794,8 +1678,6 @@ export class Wallet extends WalletBase {
       console.error("searchToken: network error", err);
       return { tokenList: [], amountMap: null };
     }
-
-    // Use standard JSON.parse to avoid Jackson parse errors
     let parsed: any = null;
     try {
       parsed = typeof response === "string" ? JSON.parse(response) : response;
@@ -1803,14 +1685,118 @@ export class Wallet extends WalletBase {
       console.error("searchToken: parse error", err, "Raw response:", response);
       return { tokenList: [], amountMap: null };
     }
-
-    // tokenList and amountMap extraction
     const tokenList = Array.isArray(parsed?.tokens) ? parsed.tokens : [];
     const amountMap = parsed?.amountMap ? parsed.amountMap : null;
+    return { tokenList, amountMap };
+  }
 
-    return {
-      tokenList,
-      amountMap,
-    };
+  async getTransactionHistory(aesKey: any): Promise<Transaction[]> {
+    const keys = await this.walletKeys(aesKey);
+    const pubKeyHashes = keys.map((key) =>
+      Utils.HEX.encode(key.getPubKeyHash())
+    );
+    const requestParam = { pubKeyHashes };
+    const resp = await OkHttp3Util.post(
+      this.getServerURL() + ReqCmd.getOutputsHistory,
+      new TextEncoder().encode(Json.jsonmapper().stringify(requestParam))
+    );
+    const responseObj: any = Json.jsonmapper().parse(resp);
+    if (responseObj.transactions) {
+      return responseObj.transactions.map((txData: any) => {
+        return new Transaction(this.params);
+      });
+    }
+    return [];
+  }
+
+  async getUnspentOutputsForAddress(
+    aesKey: any,
+    address: string
+  ): Promise<UTXO[]> {
+    const utxos = await this.calculateAllSpendCandidatesUTXO(aesKey, false);
+    return utxos.filter(
+      (utxo) => utxo.getAddress() === address && !utxo.isSpent()
+    );
+  }
+
+  /* =================================================================
+   * Deprecated wrappers for backward compatibility
+   * ================================================================= */
+
+  async payToListCandidates(
+    aesKey: any,
+    giveMoneyResult: Map<string, bigint>,
+    tokenid: Uint8Array,
+    memo: string
+  ): Promise<Block | null> {
+    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
+    return this.payMoneyToECKeyList(aesKey, giveMoneyResult, tokenid, memo, coinList);
+  }
+
+  async createTransaction(
+    aesKey: any,
+    destination: string,
+    amount: Coin,
+    memo: MemoInfo
+  ): Promise<Transaction> {
+    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
+    return this.payFromListNoSplitTransaction(aesKey, destination, amount, memo, coinList);
+  }
+
+  async createTransactionWithCandidates(
+    aesKey: any,
+    candidates: FreeStandingTransactionOutput[],
+    destination: string,
+    amount: Coin,
+    memo: string
+  ): Promise<Transaction> {
+    return this.payFromListNoSplitTransaction(aesKey, destination, amount, new MemoInfo(memo), candidates);
+  }
+
+  /* =================================================================
+   * Private logging helpers
+   * ================================================================= */
+
+  private logInsufficientMoney(
+    context: string,
+    deficitInfo: string,
+    aesKey: any,
+    outputs: FreeStandingTransactionOutput[]
+  ): void {
+    console.info(`[${context}] insufficient money -> ${deficitInfo}`);
+    this.logOutputDetails(outputs);
+    this.logWalletKeys(aesKey);
+  }
+
+  private logOutputDetails(outputs: FreeStandingTransactionOutput[]): void {
+    if (!outputs) {
+      console.info("Spendable outputs snapshot unavailable");
+      return;
+    }
+    console.info("Spendable outputs count: " + outputs.length);
+    for (const output of outputs) {
+      const utxo = output.getUTXO();
+      if (utxo) {
+        console.info("Output summary -> blockHash:" + utxo.getBlockHash() + " value:" + output.getValue() + " token:" + utxo.getTokenId() + " address:" + utxo.getAddress());
+      }
+    }
+  }
+
+  private logWalletKeys(aesKey: any): void {
+    try {
+      this.walletKeys(aesKey).then((keys) => {
+        if (!keys || keys.length === 0) {
+          console.info("Wallet keys unavailable (no keys returned)");
+          return;
+        }
+        for (const ecKey of keys) {
+          console.info("Wallet key: " + ecKey.toAddress(this.params));
+        }
+      }).catch((e: Error) => {
+        console.info("Wallet keys unavailable (" + e.message + ")");
+      });
+    } catch (e: any) {
+      console.info("Wallet keys unavailable (" + e.message + ")");
+    }
   }
 }

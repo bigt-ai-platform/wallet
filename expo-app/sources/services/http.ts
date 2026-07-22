@@ -82,7 +82,7 @@ export class HttpService {
   /**
    * Make HTTP request
    */
-  private async request<T>(
+  async request<T>(
     endpoint: string,
     method: 'GET' | 'POST' = 'POST',
     body?: any,
@@ -241,6 +241,33 @@ export class HttpService {
       success: false,
       error: response.error || 'Failed to get market prices',
     } as ApiResponse<MarketPrice[]>;
+  }
+
+  /**
+   * Get orders for given token IDs
+   */
+  async getOrders(tokenids: string[], baseToken?: string): Promise<ApiResponse<any>> {
+    const response = await this.request<any>('getOrders', 'POST', { tokenids, basetoken: baseToken || '' });
+    if (response.success && response.data) return { success: true, data: response.data };
+    return { success: false, error: response.error || 'Failed to get orders' } as ApiResponse<any>;
+  }
+
+  /**
+   * Get order tickers
+   */
+  async getOrdersTicker(tokenids: string[], baseToken: string): Promise<ApiResponse<any>> {
+    const response = await this.request<any>('getOrdersTicker', 'POST', { tokenids, count: 50, basetoken: baseToken });
+    if (response.success && response.data) return { success: true, data: response.data };
+    return { success: false, error: response.error || 'Failed to get tickers' } as ApiResponse<any>;
+  }
+
+  /**
+   * Submit an order transaction (raw hex)
+   */
+  async submitOrderTransaction(txHex: string): Promise<ApiResponse<string>> {
+    const response = await this.request<string>('submitTransaction', 'POST', { txhex: txHex });
+    if (response.success) return { success: true, data: 'ok' };
+    return { success: false, error: response.error || 'Failed to submit order' };
   }
 
   /**

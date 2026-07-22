@@ -1,265 +1,120 @@
-/**
- * Settings Screen
- *
- * App configuration and settings
- */
-
 import * as React from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  ScrollView,
-  Switch,
-  Alert,
-} from 'react-native';
+import { View, Text, TextInput, Switch, ScrollView, TouchableOpacity, Alert } from 'react-native';
+import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
-import { device } from '@/storage';
 
 export default function SettingsScreen() {
-  
+  const { t } = useTranslation();
+  const [useTestnet, setUseTestnet] = React.useState(() => {
+    const stored = (httpService as any).getServerUrl?.();
+    return stored?.includes('test') ?? false;
+  });
+  const [serverUrl, setServerUrl] = React.useState(httpService.getServerUrl());
+  const appVersion = '1.2.0';
 
-  const [serverUrl, setServerUrl] = React.useState('');
-  const [useTestnet, setUseTestnet] = React.useState(false);
-  const [hasChanges, setHasChanges] = React.useState(false);
-
-  React.useEffect(() => {
-    loadSettings();
-  }, []);
-
-  const loadSettings = () => {
-    const url = httpService.getServerUrl();
-    const testnet = device.get(['settings', 'useTestnet']) === 'true';
-    setServerUrl(url);
-    setUseTestnet(testnet);
+  const toggleTestnet = (val: boolean) => {
+    setUseTestnet(val);
+    httpService.setTestnet(val);
+    if (val) setServerUrl('https://testp.bigtangle.org:8088/');
+    else setServerUrl('https://p.bigtangle.org:8088/');
   };
 
-  const handleServerUrlChange = (text: string) => {
-    setServerUrl(text);
-    setHasChanges(true);
+  const saveServer = () => {
+    if (!serverUrl.trim()) { Alert.alert('Error', t('settings.urlEmpty')); return; }
+    httpService.setServerUrl(serverUrl.trim());
+    Alert.alert(t('settings.saved'), t('settings.serverUpdated'));
   };
 
-  const handleTestnetToggle = (value: boolean) => {
-    setUseTestnet(value);
-    setHasChanges(true);
-  };
-
-  const handleSave = () => {
-    try {
-      if (serverUrl.trim()) {
-        httpService.setServerUrl(serverUrl.trim());
-      }
-      httpService.setTestnet(useTestnet);
-      setHasChanges(false);
-      Alert.alert('Success', 'Settings saved successfully');
-    } catch (error) {
-      console.error('Error saving settings:', error);
-      Alert.alert('Error', 'Failed to save settings');
-    }
-  };
-
-  const handleReset = () => {
-    Alert.alert(
-      'Reset Settings',
-      'Are you sure you want to reset to default settings?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: () => {
-            device.remove(['settings', 'serverUrl']);
-            device.remove(['settings', 'useTestnet']);
-            loadSettings();
-            setHasChanges(false);
-            Alert.alert('Success', 'Settings reset to defaults');
-          },
-        },
-      ]
-    );
+  const resetDefaults = () => {
+    setUseTestnet(false);
+    setServerUrl('https://p.bigtangle.org:8088/');
+    httpService.setTestnet(false);
+    httpService.setServerUrl('https://p.bigtangle.org:8088/');
+    Alert.alert(t('settings.reset'), t('settings.resetDone'));
   };
 
   return (
-    <ScrollView style={stylesheet.container} contentContainerStyle={stylesheet.content} testID="settings-screen">
-      <Text style={stylesheet.title}>Settings</Text>
+    <ScrollView style={s.container} contentContainerStyle={s.content} testID="settings-screen">
+      <Text style={s.pageTitle}>{t('settings.title')}</Text>
 
-      {/* Network Settings */}
-      <View style={stylesheet.section}>
-        <Text style={stylesheet.sectionTitle}>Network</Text>
-
-        <View style={stylesheet.settingRow}>
-          <View style={stylesheet.settingLeft}>
-            <Text style={stylesheet.settingLabel}>Use Testnet</Text>
-            <Text style={stylesheet.settingDescription}>
-              Connect to test network instead of mainnet
-            </Text>
+      <View style={s.card}>
+        <View style={s.settingRow}>
+          <View style={s.settingLeft}>
+            <Text style={s.settingLabel}>{t('settings.testnet')}</Text>
+            <Text style={s.settingDesc}>{t('settings.testnetDesc')}</Text>
           </View>
-          <Switch
-            value={useTestnet}
-            onValueChange={handleTestnetToggle}
-            trackColor={{ false: '#767577', true: stylesheet.switchTrack.color }}
-            thumbColor={useTestnet ? '#fff' : '#f4f3f4'}
-            testID="testnet-toggle"
-          />
-        </View>
-
-        <View style={stylesheet.settingColumn}>
-          <Text style={stylesheet.settingLabel}>Server URL</Text>
-          <Text style={stylesheet.settingDescription}>
-            Custom server endpoint (leave empty for default)
-          </Text>
-          <TextInput
-            style={stylesheet.input}
-            value={serverUrl}
-            onChangeText={handleServerUrlChange}
-            placeholder="https://p.bigtangle.org:8088/"
-            placeholderTextColor={stylesheet.placeholder.color}
-            autoCapitalize="none"
-            autoCorrect={false}
-            testID="server-url-input"
-          />
+          <Switch value={useTestnet} onValueChange={toggleTestnet}
+            trackColor={{ false: s.switchOff.color, true: s.switchOn.color }}
+            thumbColor={useTestnet ? s.switchThumb.color : '#f4f3f4'} testID="testnet-toggle" />
         </View>
       </View>
 
-      {/* About */}
-      <View style={stylesheet.section}>
-        <Text style={stylesheet.sectionTitle}>About</Text>
-        <View style={stylesheet.infoCard}>
-          <Text style={stylesheet.infoLabel}>App Version</Text>
-          <Text style={stylesheet.infoValue}>1.0.0</Text>
-        </View>
-        <View style={stylesheet.infoCard}>
-          <Text style={stylesheet.infoLabel}>Platform</Text>
-          <Text style={stylesheet.infoValue}>React Native (Expo)</Text>
-        </View>
-      </View>
-
-      {/* Actions */}
-      <View style={stylesheet.actions}>
-        {hasChanges && (
-          <TouchableOpacity style={[stylesheet.button, stylesheet.primaryButton]} onPress={handleSave} testID="save-settings-button">
-            <Text style={stylesheet.buttonText}>Save Changes</Text>
-          </TouchableOpacity>
-        )}
-        <TouchableOpacity style={stylesheet.button} onPress={handleReset}>
-          <Text style={[stylesheet.buttonText, stylesheet.resetButtonText]}>Reset to Defaults</Text>
+      <View style={s.card}>
+        <Text style={s.cardLabel}>{t('settings.serverUrl')}</Text>
+        <TextInput style={s.input} value={serverUrl} onChangeText={setServerUrl}
+          placeholder="https://..." placeholderTextColor={s.placeholder.color}
+          autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="server-url-input" />
+        <TouchableOpacity style={s.saveBtn} onPress={saveServer}>
+          <Text style={s.saveBtnText}>{t('settings.save')}</Text>
         </TouchableOpacity>
       </View>
+
+      <View style={s.card}>
+        <Text style={s.cardLabel}>{t('settings.about')}</Text>
+        <View style={s.aboutRow}>
+          <Text style={s.aboutLabel}>{t('settings.appVersion')}</Text>
+          <Text style={s.aboutValue}>{appVersion}</Text>
+        </View>
+        <View style={s.aboutRow}>
+          <Text style={s.aboutLabel}>{t('settings.network')}</Text>
+          <Text style={s.aboutValue}>{useTestnet ? t('settings.testnet_') : t('settings.mainnet')}</Text>
+        </View>
+      </View>
+
+      <TouchableOpacity style={s.resetBtn} onPress={resetDefaults} testID="reset-settings-button">
+        <Text style={s.resetBtnText}>{t('settings.reset')}</Text>
+      </TouchableOpacity>
+
+      <Text style={s.footer}>Bapp v{appVersion}</Text>
     </ScrollView>
   );
 }
 
-const stylesheet = StyleSheet.create((theme) => ({
-  container: {
-    flex: 1,
-    backgroundColor: theme.colors.groupped.background,
+const s = StyleSheet.create((theme) => ({
+  container: { flex: 1, backgroundColor: theme.colors.groupped.background },
+  content: { padding: 16, paddingBottom: 40 },
+  pageTitle: { fontSize: 22, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 16 },
+  card: {
+    backgroundColor: theme.colors.card.background, borderRadius: 12,
+    borderWidth: 1, borderColor: theme.colors.card.border, padding: 16, marginBottom: 12,
   },
-  content: {
-    padding: 16,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: theme.colors.text.primary,
-    marginBottom: 24,
-  },
-  section: {
-    marginBottom: 24,
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: theme.colors.text.primary,
-    marginBottom: 16,
-  },
-  settingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: theme.colors.groupped.surface,
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-  },
-  settingColumn: {
-    backgroundColor: theme.colors.groupped.surface,
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-  },
-  settingLeft: {
-    flex: 1,
-    marginRight: 16,
-  },
-  settingLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: theme.colors.text.primary,
-    marginBottom: 4,
-  },
-  settingDescription: {
-    fontSize: 12,
-    color: theme.colors.text.secondary,
-  },
-  switchTrack: {
-    color: theme.colors.primary,
-  },
+  cardLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
+  settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  settingLeft: { flex: 1, marginRight: 12 },
+  settingLabel: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
+  settingDesc: { fontSize: 12, color: theme.colors.text.secondary },
+  switchOff: { color: theme.colors.border },
+  switchOn: { color: theme.colors.primary },
+  switchThumb: { color: '#FFFFFF' },
   input: {
-    backgroundColor: theme.colors.groupped.background,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 14,
-    color: theme.colors.text.primary,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    marginTop: 8,
-    fontFamily: 'monospace',
+    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8,
+    backgroundColor: theme.colors.groupped.background, color: theme.colors.text.primary,
+    padding: 12, fontSize: 13, fontFamily: 'monospace',
   },
-  placeholder: {
-    color: theme.colors.text.secondary,
+  placeholder: { color: theme.colors.text.secondary },
+  saveBtn: {
+    backgroundColor: theme.colors.primary, borderRadius: 8,
+    paddingVertical: 10, alignItems: 'center', marginTop: 10,
   },
-  infoCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: theme.colors.groupped.surface,
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 8,
+  saveBtnText: { fontSize: 14, fontWeight: '600', color: '#FFFFFF' },
+  aboutRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 },
+  aboutLabel: { fontSize: 14, color: theme.colors.text.secondary },
+  aboutValue: { fontSize: 14, fontWeight: '600', color: theme.colors.text.primary },
+  resetBtn: {
+    borderRadius: 10, borderWidth: 1, borderColor: theme.colors.accent.red,
+    paddingVertical: 13, alignItems: 'center', marginTop: 8,
   },
-  infoLabel: {
-    fontSize: 14,
-    color: theme.colors.text.secondary,
-  },
-  infoValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: theme.colors.text.primary,
-  },
-  actions: {
-    marginTop: 16,
-  },
-  button: {
-    backgroundColor: theme.colors.groupped.surface,
-    borderRadius: 8,
-    padding: 16,
-    alignItems: 'center',
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  primaryButton: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
-  },
-  buttonText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#fff',
-  },
-  resetButtonText: {
-    color: theme.colors.text.primary,
-  },
+  resetBtnText: { fontSize: 14, fontWeight: '600', color: theme.colors.accent.red },
+  footer: { fontSize: 12, color: theme.colors.text.secondary, textAlign: 'center', marginTop: 20 },
 }));

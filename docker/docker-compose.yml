@@ -1,0 +1,166 @@
+networks:
+  l0-test-net:
+    driver: bridge
+
+services:
+  # ── Layer 0 ──────────────────────────────────────────────────────
+  postgres-l0:
+    image: postgres:16
+    container_name: l0-pg
+    networks: [l0-test-net]
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: test1234
+      POSTGRES_DB: layer0
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d layer0"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  l0-server:
+    build:
+      context: /home/jcui/git/blockchain
+      dockerfile: /home/jcui/git/bapp/docker/Dockerfile
+    image: bigtangle-l0:dev
+    container_name: l0-svr
+    networks: [l0-test-net]
+    ports:
+      - "8088:8088"
+    environment:
+      APP_MODULE: layer0-server
+      SERVER_PORT: 8088
+      SERVER_NET: Test
+      DB_HOSTNAME: postgres-l0
+      DB_PORT: 5432
+      DB_NAME: layer0
+      DB_USERNAME: root
+      DB_PASSWORD: test1234
+      DBTYPE: postgresql
+      CREATETABLE: "true"
+      SERVICE_SYNC: "true"
+      SERVICE_INITSYNC: "true"
+      SYNCBLOCKS: 1000
+    depends_on:
+      postgres-l0:
+        condition: service_healthy
+    restart: unless-stopped
+
+  l0-mcmc:
+    build:
+      context: /home/jcui/git/blockchain
+      dockerfile: /home/jcui/git/bapp/docker/Dockerfile
+    image: bigtangle-l0:dev
+    container_name: l0-mcmc
+    networks: [l0-test-net]
+    ports:
+      - "8084:8084"
+    environment:
+      APP_MODULE: layer0-mcmc
+      SERVER_PORT: 8084
+      SERVER_NET: Test
+      REQUESTER: http://l0-svr:8088
+      DB_HOSTNAME: postgres-l0
+      DB_PORT: 5432
+      DB_NAME: layer0
+      DB_USERNAME: root
+      DB_PASSWORD: test1234
+      DBTYPE: postgresql
+      SERVICE_MINING: "true"
+      SERVICE_MINING_RATE: 500
+      SERVICE_MCMC: "true"
+      SERVICE_MCMC_RATE: 500
+      SERVICE_INITSYNC: "false"
+      SERVICE_SYNC: "true"
+      SYNCBLOCKS: 1000
+      CREATETABLE: "false"
+    depends_on:
+      l0-server:
+        condition: service_started
+      postgres-l0:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Layer 1 Order Match ───────────────────────────────────────────
+  postgres-l1-order:
+    image: postgres:16
+    container_name: l1-order-pg
+    networks: [l0-test-net]
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: test1234
+      POSTGRES_DB: ordermatch
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d ordermatch"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  l1-order-server:
+    build:
+      context: /home/jcui/git/blockchain
+      dockerfile: /home/jcui/git/bapp/docker/Dockerfile
+    image: bigtangle-l0:dev
+    container_name: l1-order-svr
+    networks: [l0-test-net]
+    ports:
+      - "8086:8086"
+    environment:
+      APP_MODULE: l1-order-server
+      SERVER_PORT: 8086
+      SERVER_NET: Test
+      DB_HOSTNAME: postgres-l1-order
+      DB_PORT: 5432
+      DB_NAME: ordermatch
+      DB_USERNAME: root
+      DB_PASSWORD: test1234
+      DBTYPE: postgresql
+      CREATETABLE: "true"
+      SERVICE_SYNC: "true"
+      SERVICE_INITSYNC: "true"
+      SYNCBLOCKS: 1000
+    depends_on:
+      postgres-l1-order:
+        condition: service_healthy
+    restart: unless-stopped
+
+  l1-order-mcmc:
+    build:
+      context: /home/jcui/git/blockchain
+      dockerfile: /home/jcui/git/bapp/docker/Dockerfile
+    image: bigtangle-l0:dev
+    container_name: l1-order-mcmc
+    networks: [l0-test-net]
+    ports:
+      - "8087:8087"
+    environment:
+      APP_MODULE: l1-order-mcmc
+      SERVER_PORT: 8087
+      SERVER_NET: Test
+      REQUESTER: http://l1-order-svr:8086
+      DB_HOSTNAME: postgres-l1-order
+      DB_PORT: 5432
+      DB_NAME: ordermatch
+      DB_USERNAME: root
+      DB_PASSWORD: test1234
+      DBTYPE: postgresql
+      SERVICE_MINING: "true"
+      SERVICE_MINING_RATE: 500
+      SERVICE_MCMC: "true"
+      SERVICE_MCMC_RATE: 500
+      SERVICE_INITSYNC: "false"
+      SERVICE_SYNC: "true"
+      SYNCBLOCKS: 1000
+      CREATETABLE: "false"
+    depends_on:
+      l1-order-server:
+        condition: service_started
+      postgres-l1-order:
+        condition: service_healthy
+    restart: unless-stopped

@@ -4,7 +4,7 @@
  * Handles transaction creation, signing, and broadcasting
  */
 
-import { ECKey, TestParams, Utils } from 'bigtangle-ts';
+import { ECKey, TestParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder } from 'bigtangle-ts';
 // @ts-ignore
 import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
 // @ts-ignore
@@ -12,15 +12,9 @@ import { TransactionInput } from 'bigtangle-ts/dist/net/bigtangle/core/Transacti
 // @ts-ignore
 import { TransactionOutput } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutput';
 // @ts-ignore
-import { Coin } from 'bigtangle-ts/dist/net/bigtangle/core/Coin';
-// @ts-ignore
-import { Address } from 'bigtangle-ts/dist/net/bigtangle/core/Address';
-// @ts-ignore
-import { Script } from 'bigtangle-ts/dist/net/bigtangle/script/Script';
-// @ts-ignore
 import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutPoint';
 // @ts-ignore
-import { Sha256Hash } from 'bigtangle-ts/dist/net/bigtangle/core/Sha256Hash';
+import { TransactionSignature } from 'bigtangle-ts/dist/net/bigtangle/crypto/TransactionSignature';
 
 import { httpService } from './http';
 import type { UTXO, ApiResponse } from '@/types/api';
@@ -170,7 +164,8 @@ export async function createAndSignTransaction(
     }
 
     // Create ECKey from private key
-    const ecKey = ECKey.fromPrivate(hexToBytes(privateKeyHex));
+    const bigintVal = BigInt('0x' + privateKeyHex);
+    const ecKey = ECKey.fromPrivate(bigintVal);
 
     // Create transaction
     const tx = new Transaction(testParams);
@@ -180,31 +175,27 @@ export async function createAndSignTransaction(
 
     // Add inputs from selected UTXOs
     for (const utxo of selected.utxos) {
-      const outPoint = new TransactionOutPoint(
-        testParams,
-        BigInt(utxo.index),
-        Sha256Hash.wrap(hexToBytes(utxo.txhash))
-      );
+      const hash = Sha256Hash.wrap(hexToBytes(utxo.txhash));
+      const outPoint = TransactionOutPoint.fromTransactionOutPoint4(testParams, utxo.index, Sha256Hash.ZERO_HASH, hash);
 
-      // Create script from the UTXO (P2PKH)
       const scriptBytes = utxo.script ? hexToBytes(utxo.script) : new Uint8Array(0);
-      const input = new TransactionInput(testParams, null, scriptBytes, outPoint);
+      const input = TransactionInput.fromScriptBytes(testParams, tx, scriptBytes);
       tx.addInput(input);
     }
 
     // Add output to recipient
     const toAddr = Address.fromBase58(testParams, toAddress);
     const recipientCoin = new Coin(amountValue, tokenIdBytes);
-    const recipientScript = Script.createOutputScript(toAddr);
-    const recipientOutput = new TransactionOutput(testParams, null, recipientCoin, recipientScript);
+    const recipientScript = ScriptBuilder.createOutputScript(toAddr);
+    const recipientOutput = new TransactionOutput(testParams, tx, recipientCoin, recipientScript.getProgram());
     tx.addOutput(recipientOutput);
 
     // Add change output if needed
     if (selected.change > BigInt(0)) {
       const fromAddr = Address.fromBase58(testParams, fromAddress);
       const changeCoin = new Coin(selected.change, tokenIdBytes);
-      const changeScript = Script.createOutputScript(fromAddr);
-      const changeOutput = new TransactionOutput(testParams, null, changeCoin, changeScript);
+      const changeScript = ScriptBuilder.createOutputScript(fromAddr);
+      const changeOutput = new TransactionOutput(testParams, tx, changeCoin, changeScript.getProgram());
       tx.addOutput(changeOutput);
     }
 
@@ -219,21 +210,16 @@ export async function createAndSignTransaction(
       const input = tx.getInput(i);
       const connectedOutput = selected.utxos[i];
 
-      // Get the script from the output being spent
       const scriptBytes = connectedOutput.script
         ? hexToBytes(connectedOutput.script)
         : new Uint8Array(0);
-      const scriptPubKey = new Script(scriptBytes);
 
-      // Calculate signature hash
-      const sigHash = tx.hashForSignatureScript(i, scriptPubKey, 1, false); // SigHash.ALL = 1
+      const sigHashBytes = tx.hashForSignatureScript(i, new Script(scriptBytes), 1 as any, false);
 
-      // Sign with private key
-      const signature = ecKey.sign(sigHash);
-
-      // Create signature script (scriptSig)
-      const scriptSig = Script.createInputScript(signature, ecKey);
-      input.setScriptSig(scriptSig);
+      const ecdsaSignature = await ecKey.sign(sigHashBytes.getBytes());
+      const txSig = new TransactionSignature(ecdsaSignature, 1 as any, false);
+      const scriptSig = ScriptBuilder.createInputScript(txSig, ecKey);
+      input.setScriptSig(scriptSig!);
     }
 
     // Serialize transaction

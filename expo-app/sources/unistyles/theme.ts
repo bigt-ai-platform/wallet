@@ -1,52 +1,51 @@
 import { Platform } from 'react-native';
 
-// Shared spacing, sizing constants
 const sharedSpacing = {
     margins: {
-        xs: 4,
-        sm: 8,
-        md: 12,
-        lg: 16,
-        xl: 20,
-        xxl: 24,
+        xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24,
     },
     borderRadius: {
-        sm: 4,
-        md: 8,
-        lg: 10,
-        xl: 12,
-        xxl: 16,
+        sm: 4, md: 8, lg: 10, xl: 12, xxl: 16,
     },
     iconSize: {
-        small: 12,
-        medium: 16,
-        large: 20,
-        xlarge: 24,
+        small: 12, medium: 16, large: 20, xlarge: 24,
     },
 } as const;
 
 export const lightTheme = {
     dark: false,
     colors: {
-        primary: '#2BACCC',
+        primary: '#10A37F',
         text: {
             primary: '#000000',
-            secondary: Platform.select({ ios: '#8E8E93', default: '#49454F' }),
-            link: '#2BACCC',
+            secondary: '#565869',
+            link: '#10A37F',
         },
-        textSecondary: Platform.select({ ios: '#8E8E93', default: '#49454F' }),
-        textLink: '#2BACCC',
-        surface: '#ffffff',
-        surfacePressed: '#f0f0f2',
-        divider: '#eaeaea',
-        border: '#d1d1d6',
+        success: '#10A37F',
+        warning: '#f59e0b',
+        error: '#ef4444',
+        surface: '#FFFFFF',
+        surfacePressed: '#F7F7F8',
+        divider: '#E5E5E5',
+        border: '#E5E5E5',
         groupped: {
-            background: Platform.select({ ios: '#F2F2F7', default: '#F5F5F5' }),
-            surface: '#ffffff',
+            background: '#F7F7F8',
+            surface: '#FFFFFF',
         },
         header: {
-            background: '#ffffff',
-            tint: '#18171C'
+            background: '#FFFFFF',
+            tint: '#000000',
+        },
+        accent: {
+            blue: '#3B82F6',
+            purple: '#8B5CF6',
+            amber: '#F59E0B',
+            emerald: '#10B981',
+            red: '#EF4444',
+        },
+        card: {
+            background: '#FFFFFF',
+            border: '#E5E5E5',
         },
     },
     ...sharedSpacing,
@@ -55,25 +54,37 @@ export const lightTheme = {
 export const darkTheme = {
     dark: true,
     colors: {
-        primary: '#2BACCC',
+        primary: '#10A37F',
         text: {
-            primary: '#FFFFFF',
-            secondary: Platform.select({ ios: '#8E8E93', default: '#CAC4D0' }),
-            link: '#2BACCC',
+            primary: '#ECECF1',
+            secondary: '#C5C5D2',
+            link: '#10A37F',
         },
-        textSecondary: Platform.select({ ios: '#8E8E93', default: '#CAC4D0' }),
-        textLink: '#2BACCC',
-        surface: '#1C1C1E',
-        surfacePressed: '#2C2C2E',
-        divider: '#38383A',
-        border: '#38383A',
+        success: '#10A37F',
+        warning: '#f59e0b',
+        error: '#ef4444',
+        surface: '#444654',
+        surfacePressed: '#343541',
+        divider: '#4E4F60',
+        border: '#4E4F60',
         groupped: {
-            background: Platform.select({ ios: '#000000', default: '#121212' }),
-            surface: '#1C1C1E',
+            background: '#343541',
+            surface: '#444654',
         },
         header: {
-            background: '#1C1C1E',
-            tint: '#FFFFFF'
+            background: '#202123',
+            tint: '#ECECF1',
+        },
+        accent: {
+            blue: '#3B82F6',
+            purple: '#8B5CF6',
+            amber: '#F59E0B',
+            emerald: '#10B981',
+            red: '#EF4444',
+        },
+        card: {
+            background: '#444654',
+            border: '#4E4F60',
         },
     },
     ...sharedSpacing,
@@ -82,9 +93,5 @@ export const darkTheme = {
 export type AppTheme = typeof lightTheme;
 
 export const breakpoints = {
-    xs: 0,
-    sm: 576,
-    md: 768,
-    lg: 992,
-    xl: 1200,
+    xs: 0, sm: 576, md: 768, lg: 992, xl: 1200,
 } as const;

@@ -5,12 +5,8 @@ import type {
   AxiosResponse,
   InternalAxiosRequestConfig,
 } from "axios";
-import * as zlib from "zlib";
-import { promisify } from "util";
 import * as https from "https";
 import { ObjectMapper } from "jackson-js";
-const gzip = promisify(zlib.gzip);
-const gunzip = promisify(zlib.gunzip);
 
 export class OkHttp3Util {
   private static readonly logger = console;
@@ -36,30 +32,12 @@ export class OkHttp3Util {
         },
       });
 
-      // Add request interceptor for headers and compression
+      // Add request interceptor for headers
       this.instance.interceptors.request.use(
         async (config: InternalAxiosRequestConfig) => {
-          // Add authentication headers
           if (this.pubkey) config.headers["pubkey"] = this.pubkey;
           if (this.signHex) config.headers["signHex"] = this.signHex;
           if (this.contentHex) config.headers["contentHex"] = this.contentHex;
-
-          // Compress request body if needed
-          if (config.data && !config.headers["Content-Encoding"]) {
-            // Only compress if data is not empty
-            if (config.data && config.data.length > 0) {
-              config.data = await gzip(config.data);
-              config.headers["Content-Encoding"] = "gzip";
-            } else if (
-              typeof config.data === "string" &&
-              config.data.length > 0
-            ) {
-              config.data = await gzip(new TextEncoder().encode(config.data));
-              config.headers["Content-Encoding"] = "gzip";
-            }
-            // For empty data, we send it as-is without compression
-          }
-
           return config;
         }
       );
@@ -67,16 +45,6 @@ export class OkHttp3Util {
       // Add response interceptor for decompression
       this.instance.interceptors.response.use(
         async (response: AxiosResponse<Uint8Array>) => {
-          if (response.headers["content-encoding"] === "gzip") {
-            // Convert to Buffer for browserify-zlib compatibility
-            let data = response.data;
-            if (data instanceof ArrayBuffer) {
-              data = Buffer.from(data);
-            } else if (data instanceof Uint8Array && !(data instanceof Buffer)) {
-              data = Buffer.from(data);
-            }
-            response.data = await gunzip(data);
-          }
           return response;
         }
       );
@@ -137,27 +105,22 @@ export class OkHttp3Util {
     url: string,
     data: Uint8Array
   ): Promise<string> {
-    // Change return type to string
     this.logger.debug(`POST to ${url}`);
 
-    // Handle empty data case
     let requestData = data;
     if (data && data.length === 0) {
-      // For empty data, we need to ensure it's properly handled
       requestData = new Uint8Array(0);
     }
 
     const response = await this.getAxiosInstance().post(url, requestData);
     let responseBuffer = response.data;
-    // Convert to Buffer for browserify-zlib compatibility
     if (responseBuffer instanceof ArrayBuffer) {
       responseBuffer = Buffer.from(responseBuffer);
     } else if (responseBuffer instanceof Uint8Array && !(responseBuffer instanceof Buffer)) {
       responseBuffer = Buffer.from(responseBuffer);
     }
-    responseBuffer = await gunzip(responseBuffer);
     this.checkResponse(responseBuffer, url, response.status);
-    return responseBuffer.toString("utf8"); // Convert to string here
+    return responseBuffer.toString("utf8");
   }
 
   private static checkResponse(

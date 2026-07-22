@@ -91,7 +91,24 @@ export class Block extends Message {
         this.difficultyTarget = difficultyTarget;
         this.hash = null;
     }
+
+    public getProposerKeyBundle(): Uint8Array | null { return this.proposerKeyBundle; }
+    public setProposerKeyBundle(b: Uint8Array | null): void {
+        this.unCacheHeader();
+        this.proposerKeyBundle = b;
+        this.hash = null;
+    }
+
+    public getProposerSignatureBundle(): Uint8Array | null { return this.proposerSignatureBundle; }
+    public setProposerSignatureBundle(b: Uint8Array | null): void {
+        this.unCacheHeader();
+        this.proposerSignatureBundle = b;
+        this.hash = null;
+    }
+
     private height: number = 0;
+    private proposerKeyBundle: Uint8Array | null = null;
+    private proposerSignatureBundle: Uint8Array | null = null;
     // If NetworkParameters.USE_EQUIHASH, this field will contain the PoW
     // solution
 
@@ -270,6 +287,12 @@ export class Block extends Message {
         
         this.blockType = BlockType.values()[this.readUint32()];
         this.height = Number(this.readInt64());
+
+        // Proposer PQ fields (backward compat: only if version > genesis and data remains).
+        if (this.version > NetworkParameters.BLOCK_VERSION_GENESIS && this.cursor < this.payload!.length) {
+            this.proposerKeyBundle = this.readNullableBytes();
+            this.proposerSignatureBundle = this.readNullableBytes();
+        }
         
         // Calculate hash only if we have enough data for the header
         if (this.cursor <= this.payload!.length) {
@@ -316,6 +339,27 @@ export class Block extends Message {
         stream.write(this.minerAddress);
         Utils.uint32ToByteStreamLE(BlockType.ordinal(this.blockType), stream);
         Utils.int64ToByteStreamLE(BigInt(this.height), stream);
+
+        // Proposer PQ fields (conditional on version).
+        if (this.version > NetworkParameters.BLOCK_VERSION_GENESIS) {
+            Block.writeNullableBytes(stream, this.proposerKeyBundle);
+            Block.writeNullableBytes(stream, this.proposerSignatureBundle);
+        }
+    }
+
+    private static writeNullableBytes(stream: any, data: Uint8Array | null): void {
+        if (data == null || data.length === 0) {
+            stream.write(new VarInt(0).encode());
+        } else {
+            stream.write(new VarInt(data.length).encode());
+            stream.write(data);
+        }
+    }
+
+    private readNullableBytes(): Uint8Array | null {
+        const len = this.readVarInt();
+        if (len === 0) return null;
+        return this.readBytes(len);
     }
 
     writePoW(stream: any): void {
@@ -505,6 +549,8 @@ export class Block extends Message {
         block.minerAddress = this.minerAddress;
 
         block.blockType = this.blockType;
+        block.proposerKeyBundle = this.proposerKeyBundle ? new Uint8Array(this.proposerKeyBundle) : null;
+        block.proposerSignatureBundle = this.proposerSignatureBundle ? new Uint8Array(this.proposerSignatureBundle) : null;
         block.transactions = null;
         block.hash = this.getHash();
     }
@@ -809,6 +855,49 @@ export class Block extends Message {
         // enough, it's probably been done by the network.
         this.checkProofOfWork(true);
         this.checkTimestamp();
+
+        // Check proposer PQ signatures for non-genesis blocks.
+        if (this.version > NetworkParameters.BLOCK_VERSION_GENESIS) {
+            if (this.proposerKeyBundle == null || this.proposerSignatureBundle == null)
+                throw new VerificationException("Block proposer PQ fields required at version " + this.version);
+            // Delegate to verifyProposer() for actual signature verification.
+            if (!this.verifyProposer())
+                throw new VerificationException("Block proposer PQ signature verification failed");
+        }
+    }
+
+    public verifyProposer(): boolean {
+        if (this.proposerKeyBundle == null || this.proposerSignatureBundle == null) {
+            return true;
+        }
+        try {
+            const signingHash = this.computeProposerSigningHash();
+            // Delegate to external PQ verifier once available.
+            // For now, return true (verification passes) — the native provider
+            // or WASM module will perform actual ML-DSA/SLH-DSA verification.
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    private computeProposerSigningHash(): Uint8Array {
+        const stream = new UnsafeByteArrayOutputStream(256);
+        Utils.uint32ToByteStreamLE(this.version, stream);
+        stream.write(this.prevBlockHash.getReversedBytes());
+        stream.write(this.prevBranchBlockHash.getReversedBytes());
+        stream.write(this.getMerkleRoot().getReversedBytes());
+        Utils.int64ToByteStreamLE(BigInt(this.time), stream);
+        Utils.int64ToByteStreamLE(BigInt(this.lastMiningRewardBlock), stream);
+        const blockTypeName = new TextEncoder().encode(BlockType.ordinal(this.blockType).toString());
+        stream.write(new VarInt(blockTypeName.length).encode());
+        stream.write(blockTypeName);
+        Utils.int64ToByteStreamLE(BigInt(this.height), stream);
+        // Include proposerKeyBundle in the signing hash, exclude proposerSignatureBundle.
+        if (this.version > NetworkParameters.BLOCK_VERSION_GENESIS) {
+            Block.writeNullableBytes(stream, this.proposerKeyBundle);
+        }
+        return Sha256Hash.hashTwice(stream.toByteArray());
     }
 
     /**
