@@ -101,8 +101,9 @@ jobs:
         run: yarn install --frozen-lockfile
 
       - name: Install CocoaPods dependencies
+        working-directory: ./expo-app
         run: |
-          yes | npx expo prebuild --platform ios --no-install 2>&1
+          npx expo prebuild --platform ios --no-install 2>&1
           cd ios && pod install 2>&1
 
       - name: Setup iOS Simulator
@@ -169,8 +170,9 @@ jobs:
         run: yes | sdkmanager --licenses || true
 
       - name: Build Android app for Detox
+        working-directory: ./expo-app
         run: |
-          yes | npx expo prebuild --platform android 2>&1
+          npx expo prebuild --platform android --no-install 2>&1
           yarn e2e:build:android 2>&1
 
       - name: Run E2E tests
