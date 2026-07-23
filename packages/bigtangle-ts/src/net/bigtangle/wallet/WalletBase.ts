@@ -1,7 +1,7 @@
 import { KeyChainGroup } from './KeyChainGroup';
 import { NetworkParameters } from '../params/NetworkParameters';
 import { ServerPool } from '../pool/server/ServerPool';
-import { ECKey } from '../core/ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { KeyCrypter, KeyParameter } from '../crypto/KeyCrypter';
 import { KeyCrypterScrypt } from '../crypto/KeyCrypterScrypt';
 import { TransactionSigner } from '../signers/TransactionSigner';
@@ -55,7 +55,7 @@ export abstract class WalletBase implements KeyBag {
     }
 
   
-  public removeImportedKey(key: ECKey): boolean {
+  public removeImportedKey(key: PQKey): boolean {
     this.keyChainGroupLock.lock();
     try {
       return this.keyChainGroup.removeImportedKey(key);
@@ -64,7 +64,7 @@ export abstract class WalletBase implements KeyBag {
     }
   }
 
-    public getImportedKeys(): ECKey[] {
+    public getImportedKeys(): PQKey[] {
         this.keyChainGroupLock.lock();
         try {
             return this.keyChainGroup.getImportedKeys();
@@ -73,11 +73,11 @@ export abstract class WalletBase implements KeyBag {
         }
     }
 
-    public importKey(key: ECKey): boolean {
+    public importKey(key: PQKey): boolean {
         return this.importKeys([key]) === 1;
     }
 
-    public importKeys(keys: ECKey[]): number {
+    public importKeys(keys: PQKey[]): number {
         this.keyChainGroupLock.lock();
         let result: number;
         try {
@@ -89,7 +89,7 @@ export abstract class WalletBase implements KeyBag {
         return result;
     }
 
-    private checkNoDeterministicKeys(keys: ECKey[]): void {
+    private checkNoDeterministicKeys(keys: PQKey[]): void {
         for (const key of keys) {
             if (key instanceof DeterministicKey) {
                 throw new Error("Cannot import HD keys back into the wallet");
@@ -97,7 +97,7 @@ export abstract class WalletBase implements KeyBag {
         }
     }
 
-    public async importKeysAndEncrypt(keys: ECKey[], password: string): Promise<number> {
+    public async importKeysAndEncrypt(keys: PQKey[], password: string): Promise<number> {
         await this.keyChainGroupLock.lock();
         try {
             const crypter = this.getKeyCrypter();
@@ -111,7 +111,7 @@ export abstract class WalletBase implements KeyBag {
         }
     }
 
-    public importKeysAndEncryptWithAesKey(keys: ECKey[], aesKey: KeyParameter): number {
+    public importKeysAndEncryptWithAesKey(keys: PQKey[], aesKey: KeyParameter): number {
         this.keyChainGroupLock.lock();
         try {
             this.checkNoDeterministicKeys(keys);
@@ -121,7 +121,7 @@ export abstract class WalletBase implements KeyBag {
         }
     }
 
-    public async findKeyFromPubHash(pubkeyHash: Uint8Array): Promise<ECKey | null> {
+    public async findKeyFromPubHash(pubkeyHash: Uint8Array): Promise<PQKey | null> {
         await this.keyChainGroupLock.lock();
         try {
             return this.keyChainGroup.findKeyFromPubHash(pubkeyHash);
@@ -130,7 +130,7 @@ export abstract class WalletBase implements KeyBag {
         }
     }
 
-    public async findKeyFromPubKey(pubkey: Uint8Array): Promise<ECKey | null> {
+    public async findKeyFromPubKey(pubkey: Uint8Array): Promise<PQKey | null> {
         await this.keyChainGroupLock.lock();
         try {
             return this.keyChainGroup.findKeyFromPubKey(pubkey);
@@ -284,9 +284,9 @@ export abstract class WalletBase implements KeyBag {
         await this.signTransaction(tx, aesKey, 'THROW');
     }
 
-    public async walletKeys(aesKey: KeyParameter | null): Promise<ECKey[]> {
+    public async walletKeys(aesKey: KeyParameter | null): Promise<PQKey[]> {
         const maybeDecryptingKeyBag = new DecryptingKeyBag(this, aesKey);
-        const walletKeys: ECKey[] = [];
+        const walletKeys: PQKey[] = [];
         for (const key of this.getImportedKeys()) {
             const ecKey = await maybeDecryptingKeyBag.maybeDecrypt(key);
             if (ecKey) {
@@ -297,7 +297,7 @@ export abstract class WalletBase implements KeyBag {
         return walletKeys;
     }
 
-    public async walletKeysWithoutAesKey(): Promise<ECKey[]> {
+    public async walletKeysWithoutAesKey(): Promise<PQKey[]> {
         return await this.walletKeys(null);
     }
 

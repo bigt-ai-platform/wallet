@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
 import { Sha256Hash } from '../../src/net/bigtangle/core/Sha256Hash';
 import { TransactionSignature } from '../../src/net/bigtangle/crypto/TransactionSignature';
 import { Utils } from '../../src/net/bigtangle/utils/Utils';
@@ -46,25 +46,12 @@ describe('Signature Test', () => {
       throw e;
     }
     
-    // Create ECKey from public key
-    const pubKey = ECKey.fromPublic(pubKeyBytes);
-    console.log('Public key created successfully');
-    
-    // Verify the signature
-    const hashBytes = Utils.HEX.decode(hashHex);
-    const hash = Sha256Hash.wrap(Buffer.from(hashBytes));
-    
-    try {
-      // Fix the type issue by converting Uint8Array to Buffer properly
-      const sigBytesBuffer = Buffer.from(sigBytes);
-      const isValid = pubKey.verify(hash.getBytes(), sigBytesBuffer);
-      console.log('Signature verification result:', isValid);
-      // Note: The verification result being false might be expected depending on the test data
-      // The important thing is that the signature parsing and verification process works without throwing errors
-      expect(true).toBe(true); // Test passes if we get here without exceptions
-    } catch (e) {
-      console.error('Signature verification failed:', e);
-      throw e;
-    }
+    const key = PQKey.createNew();
+    expect(key).toBeDefined();
+    expect(key.hasPrivateKey()).toBe(true);
+    const pubBytes = key.getPublicKeyBytes();
+    const pubKey = PQKey.fromPublicOnly(pubBytes);
+    expect(pubKey).toBeDefined();
+    expect(pubKey.hasPrivateKey()).toBe(false);
   });
 });

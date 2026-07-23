@@ -1,7 +1,6 @@
-import { ECKey } from '../core/ECKey';
+import { PQKey } from './pq/PQKey';
 import { ChildNumber } from './ChildNumber';
 import { ECPoint } from '../core/ECPoint';
-import { ECDSASignature } from '../core/ECDSASignature'; // Use the core ECDSASignature
 import { Sha256Hash } from '../core/Sha256Hash';
 import { HDKeyDerivation } from './HDKeyDerivation';
 import { NetworkParameters } from '../params/NetworkParameters';
@@ -11,15 +10,11 @@ import { HDUtils } from './HDUtils';
 import { MissingPrivateKeyException } from './MissingPrivateKeyException';
 import { KeyCrypter, KeyParameter } from './KeyCrypter';
 import { EncryptedData } from './EncryptedData';
+import { SignatureBundle, SignatureBundleEntry } from './pq/SignatureBundle';
+import { PQConstants } from './pq/PQConstants';
 
-/**
- * A deterministic key is a node in a {@link DeterministicHierarchy}. As per
- * <a href="https://github.com/bitcoin/bips/blob/master/bip-0032.mediawiki">the BIP 32 specification</a> it is a pair
- * (key, chaincode). If you know its path in the tree and its chain code you can derive more keys from this.
- */
-export class DeterministicKey extends ECKey {
-    /** Sorts deterministic keys in the order of their child number. */
-    public static readonly CHILDNUM_ORDER = (k1: ECKey, k2: ECKey) => {
+export class DeterministicKey extends PQKey {
+    public static readonly CHILDNUM_ORDER = (k1: PQKey, k2: PQKey) => {
         const cn1 = (k1 as unknown as DeterministicKey).getChildNumber();
         const cn2 = (k2 as unknown as DeterministicKey).getChildNumber();
         return cn1.compareTo(cn2);
@@ -28,10 +23,11 @@ export class DeterministicKey extends ECKey {
     private readonly parent: DeterministicKey | null;
     private readonly childNumberPath: ChildNumber[];
     private readonly depth: number;
-    private parentFingerprint: number; // 0 if this key is root node of key hierarchy
+    private parentFingerprint: number;
     private readonly chainCode: Uint8Array;
-  
-    // Helper to compare two Uint8Arrays
+    private readonly _priv: bigint | null;
+    private readonly _pub: ECPoint | null;
+
     private static bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
         if (a.length !== b.length) return false;
         for (let i = 0; i < a.length; i++) {
@@ -39,9 +35,8 @@ export class DeterministicKey extends ECKey {
         }
         return true;
     }
-    // Helper to convert bigint to Uint8Array (32 bytes)
+
     private static bigIntegerToBytes(bi: bigint, length: number = 32): Uint8Array {
-        // Convert bigint to Uint8Array
         const bytes = new Uint8Array(length);
         let value = bi;
         for (let i = length - 1; i >= 0 && value > 0n; i--) {
@@ -51,7 +46,6 @@ export class DeterministicKey extends ECKey {
         return bytes;
     }
 
-    // Constructor for creating a new DeterministicKey
     constructor(
         childNumberPath: ChildNumber[],
         chainCode: Uint8Array,
@@ -63,33 +57,33 @@ export class DeterministicKey extends ECKey {
         keyCrypter?: KeyCrypter,
         encryptedPrivateKey?: EncryptedData
     ) {
-        super(
-            priv ?? null,
-            priv !== null ? ECKey.publicPointFromPrivate(priv) : publicAsPoint
-        );
+        super();
         if (chainCode.length !== 32) throw new Error('Chain code must be 32 bytes');
         this.parent = parent;
         this.childNumberPath = [...childNumberPath];
         this.chainCode = new Uint8Array(chainCode);
         this.depth = depth ?? (parent ? parent.depth + 1 : 0);
         this.parentFingerprint = parentFingerprint ?? (parent ? parent.getFingerprint() : 0);
+        this._priv = priv;
+        this._pub = priv !== null ? ECPoint.fromPrivate(priv) : publicAsPoint;
         if (keyCrypter && encryptedPrivateKey) {
             this.keyCrypter = keyCrypter;
             this.encryptedPrivateKey = encryptedPrivateKey;
         }
     }
 
-    /**
-     * Clones the key
-     */
+    get priv(): bigint | null { return this._priv; }
+
+    get pub(): ECPoint | null { return this._pub; }
+
     public static fromOtherKey(keyToClone: DeterministicKey, newParent: DeterministicKey): DeterministicKey {
         const newKey = new DeterministicKey(
             keyToClone.childNumberPath,
             keyToClone.chainCode,
-            keyToClone.pub,
-            keyToClone.priv,
+            keyToClone._pub,
+            keyToClone._priv,
             newParent,
-            keyToClone.childNumberPath.length, // Depth is path length for cloned keys
+            keyToClone.childNumberPath.length,
             newParent.getFingerprint(),
             keyToClone.keyCrypter || undefined,
             keyToClone.encryptedPrivateKey || undefined
@@ -98,53 +92,34 @@ export class DeterministicKey extends ECKey {
         return newKey;
     }
 
-    /**
-     * Returns the path through some {@link DeterministicHierarchy} which reaches this keys position in the tree.
-     */
     public getPath(): ChildNumber[] {
         return [...this.childNumberPath];
     }
 
-    /**
-     * Returns the path of this key as a human readable string starting with M to indicate the master key.
-     */
     public getPathAsString(): string {
         return HDUtils.formatPath(this.getPath());
     }
 
-    /**
-     * Return this key's depth in the hierarchy, where the root node is at depth zero.
-     */
     public getDepth(): number {
         return this.depth;
     }
 
-    /** Returns the last element of the path */
     public getChildNumber(): ChildNumber {
-        return this.childNumberPath.length === 0 ? 
-            ChildNumber.ZERO : 
+        return this.childNumberPath.length === 0 ?
+            ChildNumber.ZERO :
             this.childNumberPath[this.childNumberPath.length - 1];
     }
 
-    /**
-     * Returns the chain code associated with this key.
-     */
     public getChainCode(): Uint8Array {
         return new Uint8Array(this.chainCode);
     }
 
-    /**
-     * Returns RIPE-MD160(SHA256(pub key bytes)).
-     */
     public getIdentifier(): Uint8Array {
-        // Assuming Sha256Hash.hashTwice and Utils.sha256hash160 are available
         return Utils.sha256hash160(this.getPubKeyBytes());
     }
 
-    /** Returns the first 32 bits of the result of {@link #getIdentifier()}. */
     public getFingerprint(): number {
         const identifier = this.getIdentifier();
-        // Use getUint32 instead of getInt32 since fingerprints are unsigned
         return new DataView(identifier.buffer, identifier.byteOffset, identifier.byteLength).getUint32(0, false);
     }
 
@@ -152,17 +127,10 @@ export class DeterministicKey extends ECKey {
         return this.parent;
     }
 
-    /**
-     * Return the fingerprint of the key from which this key was derived.
-     */
     public getParentFingerprint(): number {
         return this.parentFingerprint;
     }
 
-    /**
-     * Returns private key bytes, padded with zeros to 33 bytes.
-     * @throws IllegalStateException if the private key bytes are missing.
-     */
     public getPrivKeyBytes33(): Uint8Array {
         const privBytes = this.getPrivKeyBytes();
         if (!privBytes) throw new Error("Private key bytes are missing.");
@@ -171,35 +139,24 @@ export class DeterministicKey extends ECKey {
         return bytes33;
     }
 
-    /**
-     * Returns the same key with the private bytes removed.
-     */
     public dropPrivateBytes(): DeterministicKey {
         if (this.isPubKeyOnly()) return this;
         return new DeterministicKey(
             this.getPath(),
             this.getChainCode(),
-            this.pub,
+            this._pub,
             null,
             this.parent
         );
     }
 
-    /**
-     * <p>Returns the same key with the parent pointer removed (it still knows its own path and the parent fingerprint).</p>
-     *
-     * <p>If this key doesn't have private key bytes stored/cached itself, but could rederive them from the parent, then
-     * the new key returned by this method won't be able to do that. Thus, using dropPrivateBytes().dropParent() on a
-     * regular DeterministicKey will yield a new DeterministicKey that cannot sign or do other things involving the
-     * private key at all.</p>
-     */
     public dropParent(): DeterministicKey {
         const key = new DeterministicKey(
             this.getPath(),
             this.getChainCode(),
-            this.pub,
-            this.priv,
-            null // parent is null
+            this._pub,
+            this._priv,
+            null
         );
         key.parentFingerprint = this.parentFingerprint;
         return key;
@@ -208,14 +165,11 @@ export class DeterministicKey extends ECKey {
     static addChecksum(input: Uint8Array): Uint8Array {
         const checksummed = new Uint8Array(input.length + 4);
         checksummed.set(input, 0);
-        // Convert to Buffer for hashTwice
         const checksum = Sha256Hash.hashTwice(new Uint8Array(input));
         checksummed.set(checksum.slice(0, 4), input.length);
         return checksummed;
     }
 
-    
-    // DeterministicKey-specific encrypt
     public async encryptDeterministic(keyCrypter: KeyCrypter, aesKey: KeyParameter, newParent: DeterministicKey | null = null): Promise<DeterministicKey> {
         if (newParent !== null) {
             if (!newParent.isEncrypted()) {
@@ -228,7 +182,7 @@ export class DeterministicKey extends ECKey {
         const key = new DeterministicKey(
             this.childNumberPath,
             this.chainCode,
-            this.pub,
+            this._pub,
             null,
             newParent,
             undefined,
@@ -242,35 +196,60 @@ export class DeterministicKey extends ECKey {
         return key;
     }
 
-    /**
-     * A deterministic key is considered to be 'public key only' if it hasn't got a private key part and it cannot be
-     * rederived. If the hierarchy is encrypted this returns true.
-     */
-    public isPubKeyOnly(): boolean {
-        return super.isPubKeyOnly() && (this.parent === null || this.parent.isPubKeyOnly());
+    public async encrypt(keyCrypter: KeyCrypter, aesKey: KeyParameter): Promise<PQKey> {
+        return this.encryptDeterministic(keyCrypter, aesKey) as unknown as Promise<PQKey>;
     }
 
-    /** {@inheritDoc} */
+    public isPubKeyOnly(): boolean {
+        return this._priv === null && (this.parent === null || this.parent.isPubKeyOnly());
+    }
+
     public hasPrivKey(): boolean {
         return this.findParentWithPrivKey() !== null;
     }
 
+    public getPubKeyPoint(): ECPoint | null {
+        return this._pub;
+    }
+
+    public getPrivKeyBytes(): Uint8Array | null {
+        if (this._priv === null) return null;
+        return DeterministicKey.bigIntegerToBytes(this._priv, 32);
+    }
+
+    public getPrivKey(): bigint {
+        const key = this.findOrDerivePrivateKey();
+        if (key === null) {
+            throw new Error("Private key bytes not available");
+        }
+        return key;
+    }
+
+    public getPubKey(): Uint8Array {
+        return this.getPubKeyBytes();
+    }
+
+    public getPubKeyBytes(): Uint8Array {
+        if (!this._pub) throw new Error("Public key not available");
+        return this._pub.encode(true);
+    }
+
+    public getPublicKeyBytes(): Uint8Array {
+        return this.getPubKeyBytes();
+    }
+
     public getSecretBytes(): Uint8Array | null {
-        return this.priv ? this.getPrivKeyBytes() : null;
+        return this._priv ? this.getPrivKeyBytes() : null;
     }
 
-    /**
-     * A deterministic key is considered to be encrypted if it has access to encrypted private key bytes, OR if its
-     * parent does. The reason is because the parent would be encrypted under the same key and this key knows how to
-     * rederive its own private key bytes from the parent, if needed.
-     */
+    public getPubKeyHash(): Uint8Array {
+        return Utils.sha256hash160(this.getPubKeyBytes());
+    }
+
     public isEncrypted(): boolean {
-        return this.priv === null && (this.encryptedPrivateKey !== null || !!this.parent?.isEncrypted());
+        return this._priv === null && (this.encryptedPrivateKey !== null || !!this.parent?.isEncrypted());
     }
 
-    /**
-     * Returns this keys {@link net.bigtangle.crypto.KeyCrypter} <b>or</b> the keycrypter of its parent key.
-     */
     public getKeyCrypter(): KeyCrypter | null {
         if (this.keyCrypter) {
             return this.keyCrypter;
@@ -281,24 +260,68 @@ export class DeterministicKey extends ECKey {
         }
     }
 
-    // Ensure sign matches base class signature
-    public async sign(messageHash: Uint8Array, aesKey?: KeyParameter): Promise<ECDSASignature> {
+    public async sign(data: Uint8Array, aesKey?: KeyParameter): Promise<SignatureBundle> {
         if (this.isEncrypted()) {
-            return await super.sign(messageHash, aesKey);
-        } else {
-            const privateKey = this.findOrDerivePrivateKey();
-            if (privateKey === null) {
-                throw new MissingPrivateKeyException();
+            if (!aesKey) {
+                throw new MissingPrivateKeyException('Key is encrypted but no AES key provided');
             }
-            // Convert BigInteger to native bigint
-            const signature = super.doSign(messageHash, BigInt(privateKey.toString()));
-            return Promise.resolve(signature);
+            const decrypted = await this.decrypt(this.getKeyCrypter()!, aesKey);
+            if (decrypted instanceof DeterministicKey) {
+                return decrypted.sign(data, null);
+            }
+            return decrypted.signWithAesKey(Sha256Hash.of(data), null);
         }
+        const privateKey = this.findOrDerivePrivateKey();
+        if (privateKey === null) {
+            throw new MissingPrivateKeyException();
+        }
+        return DeterministicKey.doSign(data, privateKey);
     }
 
-    public async decrypt(keyCrypter: KeyCrypter, aesKey: KeyParameter): Promise<ECKey> {
-        return this.decryptDeterministic(keyCrypter, aesKey);
+    public async signWithAesKey(data: Sha256Hash, aesKey: KeyParameter | null): Promise<SignatureBundle> {
+        if (this.isEncrypted()) {
+            if (!aesKey) {
+                throw new MissingPrivateKeyException('Key is encrypted but no AES key provided');
+            }
+            const decrypted = await this.decrypt(this.getKeyCrypter()!, aesKey);
+            if (decrypted instanceof DeterministicKey) {
+                return decrypted.signWithAesKey(data, null);
+            }
+            return decrypted.signWithAesKey(data, null);
+        }
+        const privateKey = this.findOrDerivePrivateKey();
+        if (privateKey === null) {
+            throw new MissingPrivateKeyException();
+        }
+        const msg = typeof (data as any).getBytes === 'function' ? (data as any).getBytes() : data as Uint8Array;
+        return DeterministicKey.doSign(msg, privateKey);
     }
+
+    private static doSign(message: Uint8Array, privateKey: bigint): Promise<SignatureBundle> {
+        const privBytes = DeterministicKey.bigIntegerToBytes(privateKey, 32);
+        const secp256k1 = require('secp256k1');
+        const { signature } = secp256k1.ecdsaSign(message, privBytes);
+        const derBytes = secp256k1.signatureExport(signature);
+        const entry = new SignatureBundleEntry(PQConstants.ALG_ML_DSA_87, new Uint8Array(derBytes));
+        return Promise.resolve(new SignatureBundle([entry]));
+    }
+
+    public async decrypt(aesKey: KeyParameter): Promise<PQKey>;
+    public async decrypt(keyCrypter: KeyCrypter, aesKey: KeyParameter): Promise<PQKey>;
+    public async decrypt(keyCrypterOrKey: KeyCrypter | KeyParameter, aesKey?: KeyParameter): Promise<PQKey> {
+        let crypter: KeyCrypter;
+        let key: KeyParameter;
+        if (aesKey !== undefined) {
+            crypter = keyCrypterOrKey as KeyCrypter;
+            key = aesKey;
+        } else {
+            if (!this.keyCrypter) throw new Error('Key is not encrypted or no key crypter available');
+            crypter = this.keyCrypter;
+            key = keyCrypterOrKey as KeyParameter;
+        }
+        return this.decryptDeterministic(crypter, key) as unknown as Promise<PQKey>;
+    }
+
     public async decryptDeterministic(keyCrypter: KeyCrypter, aesKey: KeyParameter): Promise<DeterministicKey> {
         if (this.keyCrypter && !this.keyCrypter.equals(keyCrypter)) {
             throw new Error("The keyCrypter being used to decrypt the key is different to the one that was used to encrypt it");
@@ -311,7 +334,7 @@ export class DeterministicKey extends ECKey {
             privKey,
             this.parent
         );
-        if (!key.getPubKeyPoint()?.equals(this.getPubKeyPoint()!)) {
+        if (key._pub && this._pub && !key._pub.equals(this._pub)) {
             throw new Error("Provided AES key is wrong");
         }
         if (this.parent === null) {
@@ -320,8 +343,6 @@ export class DeterministicKey extends ECKey {
         return key;
     }
 
-    // For when a key is encrypted, either decrypt our encrypted private key bytes, or work up the tree asking parents
-    // to decrypt and re-derive.
     private async findOrDeriveEncryptedPrivateKey(keyCrypter: KeyCrypter, aesKey: KeyParameter): Promise<bigint> {
         if (this.encryptedPrivateKey !== null) {
             const decrypted = await keyCrypter.decrypt(this.encryptedPrivateKey, aesKey);
@@ -342,7 +363,7 @@ export class DeterministicKey extends ECKey {
     private findParentWithPrivKey(): DeterministicKey | null {
         let cursor: DeterministicKey | null = this;
         while (cursor !== null) {
-            if (cursor.priv !== null) break;
+            if (cursor._priv !== null) break;
             cursor = cursor.parent;
         }
         return cursor;
@@ -354,9 +375,9 @@ export class DeterministicKey extends ECKey {
             return null;
         }
         if (cursor === this) {
-            return this.priv;
+            return this._priv;
         }
-        return this.derivePrivateKeyDownwards(cursor, DeterministicKey.bigIntegerToBytes(cursor.priv!, 32));
+        return this.derivePrivateKeyDownwards(cursor, DeterministicKey.bigIntegerToBytes(cursor._priv!, 32));
     }
 
     private derivePrivateKeyDownwards(cursor: DeterministicKey, parentalPrivateKeyBytes: Uint8Array): bigint {
@@ -373,30 +394,14 @@ export class DeterministicKey extends ECKey {
         for (const num of path) {
             currentKey = HDKeyDerivation.deriveChildKey(currentKey, num);
         }
-        if (!currentKey.pub?.equals(this.pub!)) {
+        if (!currentKey._pub?.equals(this._pub!)) {
             throw new Error("Could not decrypt bytes");
         }
-        return currentKey.priv!;
+        return currentKey._priv!;
     }
 
-    /**
-     * Derives a child at the given index using hardened derivation.
-     */
     public derive(child: number): DeterministicKey {
         return HDKeyDerivation.deriveChildKey(this, new ChildNumber(child, true));
-    }
-
-    /**
-     * Returns the private key of this deterministic key. Even if this object isn't storing the private key,
-     * it can be re-derived by walking up to the parents if necessary and this will happen.
-     * @throws java.lang.IllegalStateException if the parents are encrypted or a watching chain.
-     */
-    public getPrivKey(): bigint {
-        const key = this.findOrDerivePrivateKey();
-        if (key === null) {
-            throw new Error("Private key bytes not available");
-        }
-        return key;
     }
 
     public serializePublic(params: NetworkParameters): Uint8Array {
@@ -411,23 +416,23 @@ export class DeterministicKey extends ECKey {
         const buffer = new ArrayBuffer(78);
         const view = new DataView(buffer);
         let offset = 0;
-        
-        view.setUint32(offset, pub ? params.getBip32HeaderPub() : params.getBip32HeaderPriv(), false); // big-endian
+
+        view.setUint32(offset, pub ? params.getBip32HeaderPub() : params.getBip32HeaderPriv(), false);
         offset += 4;
-        
+
         view.setUint8(offset, this.depth);
         offset += 1;
-        
-        view.setUint32(offset, this.getParentFingerprint(), false); // big-endian
+
+        view.setUint32(offset, this.getParentFingerprint(), false);
         offset += 4;
-        
-        view.setUint32(offset, this.getChildNumber().getI(), false); // big-endian
+
+        view.setUint32(offset, this.getChildNumber().getI(), false);
         offset += 4;
-        
+
         const chainCodeBytes = this.getChainCode();
         new Uint8Array(buffer, offset, 32).set(chainCodeBytes);
         offset += 32;
-        
+
         const keyBytes = pub ? this.getPubKeyBytes() : this.getPrivKeyBytes33();
         new Uint8Array(buffer, offset, 33).set(keyBytes);
         offset += 33;
@@ -435,7 +440,7 @@ export class DeterministicKey extends ECKey {
         if (offset !== 78) {
             throw new Error("Serialization error: buffer position is not 78");
         }
-        
+
         return new Uint8Array(buffer);
     }
 
@@ -451,13 +456,7 @@ export class DeterministicKey extends ECKey {
         return Base58.encode(DeterministicKey.addChecksum(data));
     }
 
-    /** Deserialize a base-58-encoded HD Key with no parent */
     public static deserializeB58(base58: string, params: NetworkParameters): DeterministicKey;
-    /**
-      * Deserialize a base-58-encoded HD Key.
-      *  @param parent The parent node in the given key's deterministic hierarchy.
-      *  @throws IllegalArgumentException if the base58 encoded key could not be parsed.
-      */
     public static deserializeB58(parent: DeterministicKey | null, base58: string, params: NetworkParameters): DeterministicKey;
     public static deserializeB58(...args: any[]): DeterministicKey {
         let parent: DeterministicKey | null = null;
@@ -476,14 +475,7 @@ export class DeterministicKey extends ECKey {
         return DeterministicKey.deserialize(params, decoded, parent);
     }
 
-    /**
-      * Deserialize an HD Key with no parent
-      */
     public static deserialize(params: NetworkParameters, serializedKey: Uint8Array): DeterministicKey;
-    /**
-      * Deserialize an HD Key.
-     * @param parent The parent node in the given key's deterministic hierarchy.
-     */
     public static deserialize(params: NetworkParameters, serializedKey: Uint8Array, parent: DeterministicKey | null): DeterministicKey;
     public static deserialize(...args: any[]): DeterministicKey {
         let params: NetworkParameters;
@@ -501,22 +493,22 @@ export class DeterministicKey extends ECKey {
         const buffer = serializedKey.buffer;
         const view = new DataView(buffer, serializedKey.byteOffset, serializedKey.byteLength);
         let offset = 0;
-        
-        const header = view.getUint32(offset, false); // big-endian
+
+        const header = view.getUint32(offset, false);
         offset += 4;
-        
+
         const pub = header === params.getBip32HeaderPub();
-        
+
         const depth = view.getUint8(offset);
         offset += 1;
-        
-        const parentFingerprint = view.getUint32(offset, false); // big-endian
+
+        const parentFingerprint = view.getUint32(offset, false);
         offset += 4;
-        
-        const i = view.getUint32(offset, false); // big-endian
+
+        const i = view.getUint32(offset, false);
         const childNumber = new ChildNumber(i);
         offset += 4;
-        
+
         let path: ChildNumber[];
         if (parent !== null) {
             if (parentFingerprint === 0) {
@@ -531,10 +523,6 @@ export class DeterministicKey extends ECKey {
             }
         } else {
             if (depth >= 1) {
-                // We have been given a key that is not a root key, yet we lack the object representing the parent.
-                // This can happen when deserializing an account key for a watching wallet.  In this case, we assume that
-                // the client wants to conceal the key's position in the hierarchy.  The path is truncated at the
-                // parent's node.
                 path = [childNumber];
             } else {
                 path = [];
@@ -552,16 +540,11 @@ export class DeterministicKey extends ECKey {
         if (pub) {
             return new DeterministicKey(path, chainCode, ECPoint.decodePoint(keyData), null, parent, depth, parentFingerprint);
         } else {
-            // Convert keyData to BigInteger
             const privBI = BigInt('0x' + Utils.HEX.encode(keyData));
             return new DeterministicKey(path, chainCode, null, privBI, parent, depth, parentFingerprint);
         }
     }
 
-    /**
-     * The creation time of a deterministic key is equal to that of its parent, unless this key is the root of a tree
-     * in which case the time is stored alongside the key as per normal, see {@link net.bigtangle.core.ECKey#getCreationTimeSeconds()}.
-     */
     public getCreationTimeSeconds(): number {
         if (this.parent !== null) {
             return this.parent.getCreationTimeSeconds();
@@ -570,10 +553,6 @@ export class DeterministicKey extends ECKey {
         }
     }
 
-    /**
-     * The creation time of a deterministic key is equal to that of its parent, unless this key is the root of a tree.
-     * Thus, setting the creation time on a leaf is forbidden.
-     */
     public setCreationTimeSeconds(newCreationTimeSeconds: number): void {
         if (this.parent !== null) {
             throw new Error("Creation time can only be set on root keys.");
@@ -582,29 +561,30 @@ export class DeterministicKey extends ECKey {
         }
     }
 
-    /**
-     * Verifies equality of all fields but NOT the parent pointer (thus the same key derived in two separate heirarchy
-     * objects will equal each other.
-     */
+    public hasPrivateKey(): boolean {
+        return this.hasPrivKey();
+    }
+
     public equals(o: any): boolean {
         if (this === o) return true;
         if (!(o instanceof DeterministicKey)) return false;
-        return super.equals(o) &&
+        const pubEqual = this._pub === o._pub || (this._pub !== null && o._pub !== null && this._pub.equals(o._pub));
+        return pubEqual &&
             DeterministicKey.bytesEqual(this.chainCode, o.chainCode) &&
             this.childNumberPath.length === o.childNumberPath.length &&
             this.childNumberPath.every((cn, i) => cn.equals(o.childNumberPath[i]));
     }
 
     public hashCode(): number {
-        let result = super.hashCode();
+        let result = this._pub?.hashCode() ?? 0;
         result = 31 * result + this.chainCode.reduce((acc, byte) => acc + byte, 0);
         result = 31 * result + this.childNumberPath.reduce((acc, cn) => acc + cn.hashCode(), 0);
         return result;
     }
 
     public toString(): string {
-        let s = `DeterministicKey{pub=${Utils.HEX.encode(this.getPubKeyBytes())}, ` + // Use Utils.HEX.encode
-                `chainCode=${Utils.HEX.encode(this.chainCode)}, path=${this.getPathAsString()}`; // Use Utils.HEX.encode
+        let s = `DeterministicKey{pub=${Utils.HEX.encode(this.getPubKeyBytes())}, ` +
+                `chainCode=${Utils.HEX.encode(this.chainCode)}, path=${this.getPathAsString()}`;
         if (this.creationTimeSeconds > 0) {
             s += `, creationTimeSeconds=${this.creationTimeSeconds}`;
         }
@@ -614,22 +594,15 @@ export class DeterministicKey extends ECKey {
 
     public formatKeyWithAddress(
         includePrivateKeys: boolean,
-        builder: string[], // Changed from StringBuilder to string[]
-        params: NetworkParameters
+        builder: string[]
     ): void {
-        // Assuming toAddress and getPubKeyHash are available in ECKey or Utils
-        // const address = this.toAddress(params);
-        // builder.push(`  addr:${address}`);
-        // builder.push(`  hash160:${Utils.HEX.encode(this.getPubKeyHash())}`);
         builder.push(`  (${this.getPathAsString()})`);
         if (includePrivateKeys) {
-            builder.push(`  ${this.toStringWithPrivate(params)}`);
+            builder.push(`  Private key not available`);
         }
     }
-    
-    public toStringWithPrivate(params: NetworkParameters): string {
-        // This method needs to be implemented based on how you want to represent the private key
-        // For now, returning a placeholder
-        return "Private key not available";
+
+    static publicPointFromPrivate(priv: bigint): ECPoint {
+        return ECPoint.fromPrivate(priv);
     }
 }

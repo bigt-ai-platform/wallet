@@ -24,6 +24,18 @@ export class ECPoint {
         return new ECPoint(encoded);
     }
 
+    public static fromPrivate(priv: bigint, compressed: boolean = true): ECPoint {
+        const privBytes = new Uint8Array(32);
+        let value = priv;
+        for (let i = 31; i >= 0 && value > 0n; i--) {
+            privBytes[i] = Number(value & 0xFFn);
+            value = value >> 8n;
+        }
+        const secp256k1 = require('secp256k1');
+        const pubKey = secp256k1.publicKeyCreate(privBytes, compressed);
+        return new ECPoint(pubKey);
+    }
+
     public encode(compressed?: boolean): Uint8Array {
         const shouldCompress = compressed ?? this.compressed;
 

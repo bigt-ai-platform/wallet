@@ -4,7 +4,8 @@ import {
   Address,
   Block,
   Coin,
-  ECKey,
+  PQKey,
+  PQAddress,
   Token,
   MultiSignAddress,
   CoinConstants,
@@ -34,11 +35,11 @@ class RemoteFromAddressTests extends RemoteTest {
 
   yuanWallet: Wallet | undefined;
   tokenid: string = "";
-  userkeys: ECKey[] = [];
+  userkeys: PQKey[] = [];
 
   public async testUserpay() {
-    this.tokenid = ECKey.fromPrivateString(
-      RemoteFromAddressTests.yuanTokenPriv,
+    this.tokenid = PQKey.fromPrivateKey(
+      Utils.HEX.decode(RemoteFromAddressTests.yuanTokenPriv),
     ).getPublicKeyAsHex();
 
     // Use test wallet seeds instead of hardcoded keys
@@ -47,15 +48,15 @@ class RemoteFromAddressTests extends RemoteTest {
 
     console.log("Test wallets initialized:");
     console.log(
-      `  User 1: ${this.userkeys[0].toAddress(networkParams).toString()}`,
+      `  User 1: ${this.userkeys[0].toAddressWithParams(networkParams).toString()}`,
     );
     console.log(
-      `  User 2: ${this.userkeys[1].toAddress(networkParams).toString()}`,
+      `  User 2: ${this.userkeys[1].toAddressWithParams(networkParams).toString()}`,
     );
 
     await this.payBigTo(
       [
-        ECKey.fromPrivateString(RemoteFromAddressTests.yuanTokenPriv),
+        PQKey.fromPrivateKey(Utils.HEX.decode(RemoteFromAddressTests.yuanTokenPriv)),
         ...this.userkeys,
       ],
       CoinConstants.FEE_DEFAULT.getValue() * BigInt(1000) * BigInt(10000),
@@ -67,11 +68,11 @@ class RemoteFromAddressTests extends RemoteTest {
     // Now create yuanWallet after token creation so it can access the created tokens
     this.yuanWallet = await Wallet.fromKeysURL(
       this.networkParameters,
-      [ECKey.fromPrivateString(RemoteFromAddressTests.yuanTokenPriv)],
+      [PQKey.fromPrivateKey(Utils.HEX.decode(RemoteFromAddressTests.yuanTokenPriv))],
       this.contextRoot,
     );
     this.checkBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
-      ECKey.fromPrivateString(RemoteFromAddressTests.yuanTokenPriv),
+      PQKey.fromPrivateKey(Utils.HEX.decode(RemoteFromAddressTests.yuanTokenPriv)),
     ]);
     this.checkBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
       this.userkeys[0],
@@ -144,7 +145,7 @@ class RemoteFromAddressTests extends RemoteTest {
   /*
    * pay money to the key and use the key to buy yuan tokens
    */
-  public async buy(keys: ECKey[]) {
+  public async buy(keys: PQKey[]) {
     const w = await Wallet.fromKeysURL(
       this.networkParameters,
       keys,
@@ -173,7 +174,7 @@ class RemoteFromAddressTests extends RemoteTest {
     const giveMoneyResultBig = new Map<string, bigint>();
 
     for (const key of this.userkeys) {
-      const addr = Address.fromKey(this.networkParameters, key).toString();
+      const addr = key.toAddressWithParams(this.networkParameters).toString();
       giveMoneyResult.set(addr, BigInt(10)); // Further reduced from 100 to 10
       giveMoneyResultBig.set(addr, BigInt(10000)); // Further reduced from 100,000,000 to 10,000
     }
@@ -192,8 +193,8 @@ class RemoteFromAddressTests extends RemoteTest {
 
   public async testTokens() {
     const domain = "";
-    const fromPrivate = ECKey.fromPrivateString(
-      RemoteFromAddressTests.yuanTokenPriv,
+    const fromPrivate = PQKey.fromPrivateKey(
+      Utils.HEX.decode(RemoteFromAddressTests.yuanTokenPriv),
     );
 
     await this.testCreateMultiSigToken(
@@ -243,15 +244,15 @@ class RemoteFromAddressTests extends RemoteTest {
     }
   }
 
-  public getAddress(): Address {
-    return ECKey.fromPrivateString(
-      RemoteFromAddressTests.yuanTokenPriv,
-    ).toAddress(this.networkParameters);
+  public getAddress(): PQAddress {
+    return PQKey.fromPrivateKey(
+      Utils.HEX.decode(RemoteFromAddressTests.yuanTokenPriv),
+    ).toAddressWithParams(this.networkParameters);
   }
 
   // create a token with multi sign
   protected async testCreateMultiSigToken(
-    key: ECKey,
+    key: PQKey,
     tokenname: string,
     decimals: number,
     domainname: string,
@@ -274,14 +275,14 @@ class RemoteFromAddressTests extends RemoteTest {
         TokenType.currency,
         this.tokenid,
       );
-      const signkey = ECKey.fromPrivateString(RemoteTest.testPriv);
+      const signkey = PQKey.fromPrivateKey(Utils.HEX.decode(RemoteTest.testPriv));
       await this.wallet.multiSign(this.tokenid, signkey, null);
     }
   }
 
   // Create a token with multi-signature support
   protected async createToken(
-    key: ECKey,
+    key: PQKey,
     tokenname: string,
     decimals: number,
     domainname: string,
@@ -334,7 +335,7 @@ class RemoteFromAddressTests extends RemoteTest {
 
   // Create token wallet method
   protected async createTokenWallet(
-    key: ECKey,
+    key: PQKey,
     domainname: string,
     increment: boolean,
     token: Token,
@@ -350,12 +351,12 @@ class RemoteFromAddressTests extends RemoteTest {
       increment,
       token,
       addresses,
-      Buffer.from(key.getPubKey()),
+      Buffer.from(key.getPublicKeyBytes()),
       new MemoInfo("coinbase"),
     );
   }
 
-  protected async checkBalance1(tokenid: string, keys: ECKey[]): Promise<UTXO> {
+  protected async checkBalance1(tokenid: string, keys: PQKey[]): Promise<UTXO> {
     // Get the UTXOs for the provided keys
     const utxos = await this.getBalanceByKeys(false, keys);
     let targetUtxo: UTXO | null = null;
@@ -372,7 +373,7 @@ class RemoteFromAddressTests extends RemoteTest {
     return targetUtxo;
   }
 
-  protected async checkBalance(tokenid: string, keys: ECKey[]): Promise<void> {
+  protected async checkBalance(tokenid: string, keys: PQKey[]): Promise<void> {
     // Get the UTXOs for the provided keys
     const utxos = await this.getBalanceByKeys(false, keys);
     let targetUtxo: UTXO | null = null;
@@ -391,7 +392,7 @@ class RemoteFromAddressTests extends RemoteTest {
 
   protected async waitForBalance(
     tokenid: string,
-    keys: ECKey[],
+    keys: PQKey[],
     maxWaitMs: number = 30000,
   ): Promise<void> {
     const startTime = Date.now();
@@ -420,7 +421,7 @@ class RemoteFromAddressTests extends RemoteTest {
     );
   }
 
-  protected async sell(keys: ECKey[]): Promise<void> {
+  protected async sell(keys: PQKey[]): Promise<void> {
     const w = await Wallet.fromKeysURL(
       this.networkParameters,
       keys,

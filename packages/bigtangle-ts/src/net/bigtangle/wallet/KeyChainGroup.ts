@@ -8,7 +8,7 @@ import { EncryptedData } from '../crypto/EncryptedData';
 import { KeyParameter } from "../utils/KeyParameter"; // Assuming this is where KeyParameter is defined
 import { Address } from "../core/Address";
 import { BloomFilter } from "../core/BloomFilter";
-import { ECKey } from "../core/ECKey";
+import { PQKey } from "../crypto/pq/PQKey";
 import { RedeemData } from "./RedeemData";
 
 // Correctly import the 'Key' message interface and alias it to avoid name clashes.
@@ -30,7 +30,7 @@ export class KeyChainGroup implements KeyBag {
   protected readonly lock = {}; // Simplified lock
 
   protected readonly chains: DeterministicKeyChain[] = [];
-  protected readonly keys: ECKey[] = [];
+  protected readonly keys: PQKey[] = [];
   protected currentKeys = new Map<KeyPurpose, DeterministicKey>();
   protected currentAddresses = new Map<KeyPurpose, Address>();
   public keyCrypter: KeyCrypter | null = null;
@@ -64,7 +64,7 @@ export class KeyChainGroup implements KeyBag {
     return this.lookaheadThreshold;
   }
 
-  public importKeys(...keys: ECKey[]): number {
+  public importKeys(...keys: PQKey[]): number {
     let count = 0;
     for (const key of keys) {
       if (!this.hasKey(key)) {
@@ -75,7 +75,7 @@ export class KeyChainGroup implements KeyBag {
     return count;
   }
 
-  public removeImportedKey(key: ECKey): boolean {
+  public removeImportedKey(key: PQKey): boolean {
     const index = this.keys.findIndex(k => k.equals(key));
     if (index > -1) {
       this.keys.splice(index, 1);
@@ -84,9 +84,9 @@ export class KeyChainGroup implements KeyBag {
     return false;
   }
 
-  public findKeyFromPubKey(pubkey: Uint8Array): ECKey | null {
+  public findKeyFromPubKey(pubkey: Uint8Array): PQKey | null {
     for (const key of this.keys) {
-      // Ensure key is an ECKey instance and has the getPubKey method
+      // Ensure key is an PQKey instance and has the getPubKey method
       if (key && typeof key.getPubKey === 'function') {
         if (key.getPubKey().every((v, i) => v === pubkey[i])) {
           return key;
@@ -96,7 +96,7 @@ export class KeyChainGroup implements KeyBag {
     return null;
   }
 
-  public currentKey(purpose: KeyPurpose): ECKey {
+  public currentKey(purpose: KeyPurpose): PQKey {
     if (this.keys.length > 0) {
       return this.keys[this.keys.length - 1];
     }
@@ -108,8 +108,8 @@ export class KeyChainGroup implements KeyBag {
     return key ? Address.fromKey(this.params, key) : null!;
   }
   
-  public freshKey(purpose: KeyPurpose): ECKey {
-    const key = ECKey.createNewKey();
+  public freshKey(purpose: KeyPurpose): PQKey {
+    const key = PQKey.createNewKey();
     this.importKeys(key);
     return key;
   }
@@ -121,7 +121,7 @@ export class KeyChainGroup implements KeyBag {
 
   public async encrypt(keyCrypter: KeyCrypter, aesKey: KeyParameter): Promise<void> {
     this.keyCrypter = keyCrypter;
-    const newKeys: ECKey[] = [];
+    const newKeys: PQKey[] = [];
     for (const key of this.keys) {
       newKeys.push(await key.encrypt(keyCrypter, aesKey));
     }
@@ -133,7 +133,7 @@ export class KeyChainGroup implements KeyBag {
     if (!this.keyCrypter) {
       return;
     }
-    const newKeys: ECKey[] = [];
+    const newKeys: PQKey[] = [];
     for (const key of this.keys) {
       newKeys.push(await key.decrypt(this.keyCrypter, aesKey));
     }
@@ -146,7 +146,7 @@ export class KeyChainGroup implements KeyBag {
     return this.keyCrypter !== null;
   }
   
-  public getImportedKeys(): ECKey[] {
+  public getImportedKeys(): PQKey[] {
     return this.keys;
   }
 
@@ -160,7 +160,7 @@ export class KeyChainGroup implements KeyBag {
   public checkAESKey(aesKey: KeyParameter): boolean {
     return false;
   }
-  public importKeysAndEncrypt(keys: ECKey[], aesKey: KeyParameter): number {
+  public importKeysAndEncrypt(keys: PQKey[], aesKey: KeyParameter): number {
     return 0;
   }
   public findRedeemDataFromScriptHash(
@@ -171,9 +171,9 @@ export class KeyChainGroup implements KeyBag {
   public markP2SHAddressAsUsed(address: Address): void {
     /* TODO: Implement */
   }
-  public findKeyFromPubHash(pubkeyHash: Uint8Array): ECKey | null {
+  public findKeyFromPubHash(pubkeyHash: Uint8Array): PQKey | null {
     for (const key of this.keys) {
-      // Ensure key is an ECKey instance and has the getPubKeyHash method
+      // Ensure key is an PQKey instance and has the getPubKeyHash method
       if (key && typeof key.getPubKeyHash === 'function') {
         if (key.getPubKeyHash().every((v, i) => v === pubkeyHash[i])) {
           return key;
@@ -185,7 +185,7 @@ export class KeyChainGroup implements KeyBag {
   public markPubKeyHashAsUsed(pubkeyHash: Uint8Array): void {
     /* TODO: Implement */
   }
-  public hasKey(key: ECKey): boolean {
+  public hasKey(key: PQKey): boolean {
     return this.keys.some(k => k.equals(key));
   }
   public markPubKeyAsUsed(pubkey: Uint8Array): void {
@@ -211,16 +211,17 @@ export class KeyChainGroup implements KeyBag {
         keyProto.creation_timestamp = key.getCreationTimeSeconds() * 1000;
         keyProto.public_key = key.getPubKey();
         if (key.isEncrypted()) {
+            const enc = key.getEncryptedData()!;
             keyProto.encrypted_data = {
-                initialisation_vector: key.encryptedPrivateKey!.initialisationVector,
-                encrypted_private_key: key.encryptedPrivateKey!.encryptedBytes
+                initialisation_vector: enc.initialisationVector,
+                encrypted_private_key: enc.encryptedBytes
             };
             keyProto.type = KeyType.ENCRYPTED_SCRYPT_AES;
-        } else if (key.priv) {
-            keyProto.secret_bytes = key.getPrivKeyBytes();
+        } else if (key.hasPrivateKey()) {
+            keyProto.secret_bytes = key.getSecretBytes();
             keyProto.type = KeyType.ORIGINAL;
         } else {
-            keyProto.type = KeyType.ORIGINAL; // Should be PUB_ONLY, but that's not in the enum
+            keyProto.type = KeyType.ORIGINAL;
         }
         protoKeys.push(keyProto);
     }
@@ -235,21 +236,7 @@ export class KeyChainGroup implements KeyBag {
     keys: ProtoKey[],
     factory: KeyChainFactory
   ): KeyChainGroup {
-    const group = new KeyChainGroup(params);
-    for (const keyProto of keys) {
-        let key: ECKey;
-        if (keyProto.secret_bytes) {
-            // Reconstruct BigInteger from Uint8Array
-            const hex = Array.from(new Uint8Array(keyProto.secret_bytes)).map(b => b.toString(16).padStart(2, '0')).join('');
-            const privKeyBigInt = BigInt('0x' + hex);
-            key = ECKey.fromPrivate(privKeyBigInt);
-        } else {
-            key = ECKey.fromPublic(keyProto.public_key!);
-        }
-        key.setCreationTimeSeconds(Math.floor(keyProto.creation_timestamp! / 1000));
-        group.importKeys(key);
-    }
-    return group;
+    throw new Error("Protobuf deserialization removed");
   }
 
   /**
@@ -261,17 +248,7 @@ export class KeyChainGroup implements KeyBag {
     crypter: KeyCrypter,
     factory: KeyChainFactory
   ): KeyChainGroup {
-    const group = new KeyChainGroup(params);
-    group.keyCrypter = crypter;
-    for (const keyProto of keys) {
-        const encryptedData = new EncryptedData(keyProto.encrypted_data!.initialisation_vector, keyProto.encrypted_data!.encrypted_private_key);
-        const key = ECKey.fromPublic(keyProto.public_key!);
-        key.encryptedPrivateKey = encryptedData;
-        key.keyCrypter = crypter;
-        key.setCreationTimeSeconds(Math.floor(keyProto.creation_timestamp! / 1000));
-        group.importKeys(key);
-    }
-    return group;
+    throw new Error("Protobuf deserialization removed");
   }
 
   public isDeterministicUpgradeRequired(): boolean { return false; }

@@ -37,7 +37,7 @@ import { TokenInfo } from './TokenInfo';
 import { ContractExecutionResult } from './ContractExecutionResult';
 import { OrderExecutionResult } from './OrderExecutionResult';
 import { ScriptBuilder } from '../script/ScriptBuilder';
-import { ECKey } from './ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { TransactionInput } from './TransactionInput';
 import { TransactionOutput } from './TransactionOutput';
 import { TransactionOutPoint } from './TransactionOutPoint';
@@ -1128,8 +1128,8 @@ export class Block extends Message {
         coinbase.addInput1(input);
 
         // Create output to specified public key - ensure the correct token ID and value are used
-        const ecKey = ECKey.fromPublic(pubKeyTo);
-        const scriptPubKey = ScriptBuilder.createOutputScript(ecKey);
+        const pqKey = PQKey.fromPublicOnly(pubKeyTo);
+        const scriptPubKey = ScriptBuilder.createOutputScript(pqKey);
         // Create output with the value that contains the correct token ID and amount
         // Ensure the value object is properly constructed to avoid serialization issues
         const output = new TransactionOutput(this.params!, coinbase, value, scriptPubKey.getProgram());

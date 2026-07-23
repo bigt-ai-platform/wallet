@@ -3,7 +3,7 @@ import { DeterministicSeed } from './DeterministicSeed'; // Corrected import
 import { DeterministicKey } from '../crypto/DeterministicKey';
 import { KeyCrypter } from '../crypto/KeyCrypter';
 import { BloomFilter } from '../core/BloomFilter';
-import { ECKey } from '../core/ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { Utils } from '../utils/Utils';
 import { NetworkParameters } from '../params/NetworkParameters';
 import { Script } from '../script/Script';
@@ -56,23 +56,23 @@ export class MarriedKeyChain extends DeterministicKeyChain {
     /** Create a new married key and return the matching output script */
     public freshOutputScript(purpose: KeyPurpose): Script {
         const followedKey = this.getKey(purpose);
-        const keys: ECKey[] = [followedKey as unknown as ECKey]; // Cast to ECKey
+        const keys: PQKey[] = [followedKey as unknown as PQKey]; // Cast to PQKey
         for (const keyChain of this.followingKeyChains) {
             const followingKey = keyChain.getKey(purpose);
             Preconditions.checkState(followedKey.getChildNumber().equals(followingKey.getChildNumber()), "Following keychains should be in sync");
-            keys.push(followingKey as unknown as ECKey); // Cast to ECKey
+            keys.push(followingKey as unknown as PQKey); // Cast to PQKey
         }
         const redeemScript = ScriptBuilder.createRedeemScript(this.sigsRequiredToSpend, keys);
         return ScriptBuilder.createP2SHOutputScript(redeemScript.getProgram());
     }
 
-    private getMarriedKeysWithFollowed(followedKey: DeterministicKey): ECKey[] {
-        const keys: ECKey[] = [];
+    private getMarriedKeysWithFollowed(followedKey: DeterministicKey): PQKey[] {
+        const keys: PQKey[] = [];
         for (const keyChain of this.followingKeyChains) {
             keyChain.maybeLookAhead();
-            keys.push(keyChain.getKeyByPath(followedKey.getPath()) as unknown as ECKey); // Cast to ECKey
+            keys.push(keyChain.getKeyByPath(followedKey.getPath()) as unknown as PQKey); // Cast to PQKey
         }
-        keys.push(followedKey as unknown as ECKey); // Cast to ECKey
+        keys.push(followedKey as unknown as PQKey); // Cast to PQKey
         return keys;
     }
 

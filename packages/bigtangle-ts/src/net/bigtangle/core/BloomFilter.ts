@@ -1,4 +1,4 @@
-import { ECKey } from './ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { NetworkParameters } from '../params/NetworkParameters';
 import { Message } from './Message';
 
@@ -305,9 +305,9 @@ export class BloomFilter extends Message {
         this.data[byteIndex] |= (1 << bit);
     }
 
-    insertKey(key: ECKey) {
-        // These methods don't exist on ECKey, need to implement differently
-        // Placeholder until we fix ECKey implementation
+    insertKey(key: PQKey) {
+        // These methods don't exist on PQKey, need to implement differently
+        // Placeholder until we fix PQKey implementation
         throw new Error("insertKey not implemented yet");
     }
 

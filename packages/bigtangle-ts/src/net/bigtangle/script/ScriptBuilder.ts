@@ -2,9 +2,10 @@ import { ScriptChunk } from './ScriptChunk';
 // Type-only import to avoid circular dependency during module initialization
 import type { Script } from './Script';
 import { Address } from '../core/Address';
-import { ECKey } from '../core/ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { Utils } from '../utils/Utils';
 import { TransactionSignature } from '../crypto/TransactionSignature';
+import { SignatureBundle } from '../crypto/pq/SignatureBundle';
 import * as ScriptOpCodes from './ScriptOpCodes';
 import { encodeToOpN } from './ScriptOpCodes';
 
@@ -150,7 +151,7 @@ export class ScriptBuilder {
         return new ScriptClass(this.chunks);
     }
 
-    static createOutputScript(to: Address | ECKey): Script {
+    static createOutputScript(to: Address | PQKey): Script {
         if (to instanceof Address) {
             if (to.isP2SHAddress()) {
                 return new ScriptBuilder()
@@ -167,14 +168,16 @@ export class ScriptBuilder {
                     .op(ScriptOpCodes.OP_CHECKSIG)
                     .build();
             }
-        } else if (to instanceof ECKey) {
+        } else if (to instanceof PQKey) {
             return new ScriptBuilder().data(to.getPubKey()).op(ScriptOpCodes.OP_CHECKSIG).build();
         }
         throw new Error("Invalid type for createOutputScript");
     }
 
-    static createInputScript(signature: TransactionSignature | null, pubKey?: ECKey): Script {
-        const sigBytes = signature !== null ? signature.encodeToBitcoin() : new Uint8Array();
+    static createInputScript(signature: TransactionSignature | SignatureBundle | null, pubKey?: PQKey): Script {
+        const sigBytes = signature !== null
+            ? (signature instanceof SignatureBundle ? signature.encodeToBitcoin() : signature.encodeToBitcoin())
+            : new Uint8Array();
         const builder = new ScriptBuilder().data(sigBytes);
         if (pubKey) {
             builder.data(pubKey.getPubKey());
@@ -182,7 +185,7 @@ export class ScriptBuilder {
         return builder.build();
     }
 
-    static createMultiSigOutputScript(threshold: number, pubkeys: ECKey[]): Script {
+    static createMultiSigOutputScript(threshold: number, pubkeys: PQKey[]): Script {
         if (threshold <= 0 || threshold > pubkeys.length || pubkeys.length > 16) {
             throw new Error("Invalid threshold or number of public keys for multisig.");
         }
@@ -307,12 +310,12 @@ export class ScriptBuilder {
         return ScriptBuilder.createP2SHOutputScript(hash);
     }
 
-    static createP2SHOutputScriptWithKeys(threshold: number, pubkeys: ECKey[]): Script {
+    static createP2SHOutputScriptWithKeys(threshold: number, pubkeys: PQKey[]): Script {
         const redeemScript = ScriptBuilder.createRedeemScript(threshold, pubkeys);
         return ScriptBuilder.createP2SHOutputScriptFromScript(redeemScript);
     }
 
-    static createRedeemScript(threshold: number, pubkeys: ECKey[]): Script {
+    static createRedeemScript(threshold: number, pubkeys: PQKey[]): Script {
         const sortedPubkeys = [...pubkeys].sort((a, b) => {
             const pubA = a.getPubKey();
             const pubB = b.getPubKey();
@@ -333,7 +336,7 @@ export class ScriptBuilder {
         return new ScriptBuilder().op(ScriptOpCodes.OP_RETURN).data(data).build();
     }
 
-    static createCLTVPaymentChannelOutput(time: bigint, from: ECKey, to: ECKey): Script {
+    static createCLTVPaymentChannelOutput(time: bigint, from: PQKey, to: PQKey): Script {
         const timeBytes = Utils.encodeMPI(time, false);
         if (timeBytes.length > 5) {
             throw new Error("Time too large to encode as 5-byte int");

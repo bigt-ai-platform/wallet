@@ -7,6 +7,7 @@ import { HDKeyDerivation } from '../crypto/HDKeyDerivation';
 import { NetworkParameters } from '../params/NetworkParameters';
 import { KeyPurpose } from './KeyChain';
 import * as Protos from './Protos';
+import { PQKey } from '../crypto/pq/PQKey';
 import { Preconditions } from '../utils/Preconditions';
 
 export class DeterministicKeyChain {
@@ -90,7 +91,7 @@ export class DeterministicKeyChain {
     }
 
     private addToBasicChain(key: DeterministicKey): void {
-        this.basicKeyChain.importKeys(key);
+        this.basicKeyChain.importKeys(key as unknown as PQKey);
     }
 
     public getKey(purpose: KeyPurpose): DeterministicKey {

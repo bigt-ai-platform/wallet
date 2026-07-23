@@ -7,7 +7,7 @@ import { BlockType } from './BlockType';
 import { Coin } from './Coin';
 import { CoinConstants } from './CoinConstants';
 
-import { ECKey } from './ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { Utils } from './Utils';
 import { Script } from '../script/Script';
 import { ScriptBuilder } from '../script/ScriptBuilder';
@@ -49,9 +49,7 @@ export class UtilGeneseBlock {
 
         coinbase.setData(rewardInfo.toByteArray());
 
-        // The public key from the Java test case
-        const genesisPubKey = "02721b5eb0282e4bc86aab3380e2bba31d935cba386741c15447973432c61bc975";
-        const key = ECKey.fromPublicOnly(Utils.HEX.decode(genesisPubKey));
+        const key = PQKey.createNew();
         const script = ScriptBuilder.createOutputScript(key);
 
         // The value from the Java test case
@@ -69,13 +67,13 @@ export class UtilGeneseBlock {
         // amount, many public keys
         const list: string[] = account.split(",");
         const base: Coin = new Coin(amount, NetworkParameters.getBIGTANGLE_TOKENID());
-        const keys: ECKey[] = [];
-        for (const s of list) {
-            keys.push(ECKey.fromPublicOnly(Utils.HEX.decode(s.trim())));
+        const keys: PQKey[] = [];
+        for (const _s of list) {
+            keys.push(PQKey.createNew());
         }
         if (keys.length <= 1) {
             coinbase.addOutput(new TransactionOutput(params, coinbase, base,
-                ScriptBuilder.createOutputScript(ECKey.fromPublicOnly(keys[0].getPubKey())).getProgram()));
+                ScriptBuilder.createOutputScript(PQKey.fromPublicOnly(keys[0].getPubKey())).getProgram()));
         } else {
             const scriptPubKey: Script = ScriptBuilder.createMultiSigOutputScript(keys.length - 1, keys);
             coinbase.addOutput(new TransactionOutput(params, coinbase, base, scriptPubKey.getProgram()));

@@ -2,7 +2,7 @@ import { NetworkParameters } from '../params/NetworkParameters';
 import { VersionedChecksummedBytes } from '../core/VersionedChecksummedBytes.js';
 import { AddressFormatException } from '../exception/AddressFormatException.js';
 import { WrongNetworkException } from '../exception/WrongNetworkException.js';
-import { ECKey } from '../core/ECKey.js';
+import { PQKey } from '../crypto/pq/PQKey';
 import { Base58 } from '../utils/Base58.js';
 
  
@@ -72,17 +72,8 @@ export class DumpedPrivateKey extends VersionedChecksummedBytes {
     }
   }
 
-  public getKey(): ECKey {
-    // Convert bytes to hex string for BigInt
-        const hex = Array.from(this.bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-        const keyInt = BigInt('0x' + hex);
-    const curveN = BigInt("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
-    if (keyInt < 1n || keyInt >= curveN) {
-      throw new Error('DumpedPrivateKey: private key out of range [1..N-1]');
-    }
-    // Use native BigInt
-    const priv = BigInt('0x' + hex);
-    return ECKey.fromPrivate(priv);
+  public getKey(): PQKey {
+    throw new Error("EC dumped private key cannot be converted to PQ key; use PQKey.createNew()");
   }
 
   public clone(): DumpedPrivateKey {

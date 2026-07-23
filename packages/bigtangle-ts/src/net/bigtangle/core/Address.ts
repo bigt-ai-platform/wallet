@@ -4,7 +4,7 @@ import { NetworkParameters } from '../params/NetworkParameters';
 import { Sha256Hash } from './Sha256Hash.js';
 import { AddressFormatException } from '../exception/AddressFormatException';
 import { WrongNetworkException } from '../exception/WrongNetworkException';
-import { ECKey } from './ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { Script } from '../script/Script';
 
 export class Address {
@@ -12,7 +12,7 @@ export class Address {
     private readonly version: number;
     private readonly hash160: Uint8Array;
 
-    public static fromKey(params: NetworkParameters, key: ECKey): Address {
+    public static fromKey(params: NetworkParameters, key: PQKey): Address {
         return Address.fromP2PKH(params, new Uint8Array(key.getPubKeyHash()));
     }
 

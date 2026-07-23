@@ -1,14 +1,14 @@
 import { NetworkParameters } from "../params/NetworkParameters";
-import { ECKey } from "../core/ECKey";
+import { PQKey } from "../crypto/pq/PQKey";
 import { BloomFilter, BloomUpdate } from "../core/BloomFilter";
 import { Utils } from "../core/Utils";
 
 export class BasicKeyChain {
-    private keys: Map<string, ECKey> = new Map();
+    private keys: Map<string, PQKey> = new Map();
 
     constructor(private params: NetworkParameters) {}
 
-    public importKeys(...keys: ECKey[]): number {
+    public importKeys(...keys: PQKey[]): number {
         let count = 0;
         for (const key of keys) {
             const keyHex = Array.from(new Uint8Array(key.getPubKey())).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -20,16 +20,16 @@ export class BasicKeyChain {
         return count;
     }
 
-    public getKeys(): ECKey[] {
+    public getKeys(): PQKey[] {
         return Array.from(this.keys.values());
     }
 
-    public removeKey(key: ECKey): boolean {
+    public removeKey(key: PQKey): boolean {
         const keyHex = Array.from(new Uint8Array(key.getPubKey())).map(b => b.toString(16).padStart(2, '0')).join('');
         return this.keys.delete(keyHex);
     }
 
-    public findKeyFromPubHash(pubKeyHash: Uint8Array): ECKey | null {
+    public findKeyFromPubHash(pubKeyHash: Uint8Array): PQKey | null {
         for (const key of this.keys.values()) {
             if (Utils.arraysEqual(new Uint8Array(key.getPubKeyHash()), new Uint8Array(pubKeyHash))) {
                 return key;
@@ -38,7 +38,7 @@ export class BasicKeyChain {
         return null;
     }
 
-    public findKeyFromPubKey(pubkey: Uint8Array): ECKey | null {
+    public findKeyFromPubKey(pubkey: Uint8Array): PQKey | null {
         const keyHex = Array.from(new Uint8Array(pubkey)).map(b => b.toString(16).padStart(2, '0')).join('');
         return this.keys.get(keyHex) || null;
     }
@@ -47,7 +47,7 @@ export class BasicKeyChain {
         return this.keys.size;
     }
 
-    public hasKey(key: ECKey): boolean {
+    public hasKey(key: PQKey): boolean {
         const keyHex = Array.from(new Uint8Array(key.getPubKey())).map(b => b.toString(16).padStart(2, '0')).join('');
         return this.keys.has(keyHex);
     }
@@ -74,8 +74,8 @@ export class BasicKeyChain {
         return filter;
     }
 
-    public findKeysBefore(timestamp: number): ECKey[] {
-        const result: ECKey[] = [];
+    public findKeysBefore(timestamp: number): PQKey[] {
+        const result: PQKey[] = [];
         for (const key of this.keys.values()) {
             if (key.getCreationTimeSeconds() < timestamp) {
                 result.push(key);
@@ -84,8 +84,8 @@ export class BasicKeyChain {
         return result;
     }
 
-    public findOldestKeyAfter(timestamp: number): ECKey | null {
-        let oldestKey: ECKey | null = null;
+    public findOldestKeyAfter(timestamp: number): PQKey | null {
+        let oldestKey: PQKey | null = null;
         for (const key of this.keys.values()) {
             if (key.getCreationTimeSeconds() >= timestamp) {
                 if (!oldestKey || key.getCreationTimeSeconds() < oldestKey.getCreationTimeSeconds()) {

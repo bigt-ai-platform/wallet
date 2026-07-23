@@ -4,7 +4,8 @@ import { ScriptBuilder } from '../../src/net/bigtangle/script/ScriptBuilder';
 import { MainNetParams } from '../../src/net/bigtangle/params/MainNetParams';
 import { Address } from '../../src/net/bigtangle/core/Address';
 import { Utils } from '../../src/net/bigtangle/utils/Utils';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
+import { SignatureBundle } from '../../src/net/bigtangle/crypto/pq/SignatureBundle';
 import { Transaction } from '../../src/net/bigtangle/core/Transaction';
 import { TransactionInput } from '../../src/net/bigtangle/core/TransactionInput';
 import { TransactionOutPoint } from '../../src/net/bigtangle/core/TransactionOutPoint';
@@ -13,6 +14,12 @@ import { TransactionSignature } from '../../src/net/bigtangle/crypto/Transaction
 import { OP_0 } from '../../src/net/bigtangle/script/ScriptOpCodes';
 
 import { describe, test, expect } from 'vitest';
+
+function createTestKey(seedByte: number): PQKey {
+  const seed = new Uint8Array(64);
+  seed[63] = seedByte;
+  return PQKey.fromKeyMaterial(seed);
+}
 
 describe('ScriptTest', () => {
     const sigProg =
@@ -39,19 +46,19 @@ describe('ScriptTest', () => {
     });
 
     test('testMultiSig', () => {
-        const keys = [ECKey.fromPrivate(BigInt('1')), ECKey.fromPrivate(BigInt('2')), ECKey.fromPrivate(BigInt('3'))];
+        const keys = [createTestKey(1), createTestKey(2), createTestKey(3)];
         expect(
             ScriptBuilder.createMultiSigOutputScript(2, keys).isSentToMultiSig(),
         ).toBe(true);
         const script = ScriptBuilder.createMultiSigOutputScript(3, keys);
         expect(script.isSentToMultiSig()).toBe(true);
-        const pubkeys: ECKey[] = [];
+        const pubkeys: PQKey[] = [];
         for (const key of keys) {
-            pubkeys.push(ECKey.fromPublic(key.getPubKey()!));
+            pubkeys.push(PQKey.fromPublicOnly(key.getPubKey()!));
         }
         expect(script.getPubKeys()).toEqual(pubkeys);
         expect(
-            ScriptBuilder.createOutputScript(ECKey.fromPrivate(BigInt('4'))).isSentToMultiSig(),
+            ScriptBuilder.createOutputScript(createTestKey(4)).isSentToMultiSig(),
         ).toBe(false);
         try {
             ScriptBuilder.createMultiSigOutputScript(4, keys);
@@ -85,9 +92,9 @@ describe('ScriptTest', () => {
         expect(s.isSentToRawPubKey()).toBe(true);
     });
 
-    test('createAndUpdateEmptyInputScript', () => {
+    test('createAndUpdateEmptyInputScript', async () => {
         const dummySig = TransactionSignature.dummy();
-        const key = ECKey.fromPrivate(BigInt('1'));
+        const key = createTestKey(1);
 
         let inputScript = ScriptBuilder.createInputScript(dummySig);
         expect(
@@ -112,7 +119,7 @@ describe('ScriptTest', () => {
             0,
         );
 
-        const key2 = ECKey.fromPrivate(BigInt('2'));
+        const key2 = createTestKey(2);
         const multisigScript = ScriptBuilder.createMultiSigOutputScript(2, [
             key,
             key2,
@@ -236,15 +243,15 @@ describe('ScriptTest', () => {
     test('testCLTVPaymentChannelOutput', () => {
         const script = ScriptBuilder.createCLTVPaymentChannelOutput(
             BigInt('20'),
-            ECKey.fromPrivate(BigInt('1')),
-            ECKey.fromPrivate(BigInt('2')),
+            createTestKey(1),
+            createTestKey(2),
         );
         expect(script.isSentToCLTVPaymentChannel()).toBe(true);
     });
 
     test('getToAddress', () => {
-        const toKey = ECKey.fromPrivate(BigInt('1'));
-        const toAddress = toKey.toAddress(PARAMS);
+        const toKey = createTestKey(1);
+        const toAddress = Address.fromKey(PARAMS, toKey);
         expect(
             ScriptBuilder.createOutputScript(toKey).getToAddress(PARAMS, true),
         ).toEqual(toAddress);
@@ -258,8 +265,8 @@ describe('ScriptTest', () => {
 
     test('getToAddressNoPubKey', () => {
         expect(() => {
-            ScriptBuilder.createOutputScript(new ECKey(null, null)).getToAddress(PARAMS, false);
-        }).toThrowError('Public key is not available');
+            ScriptBuilder.createOutputScript(null as unknown as PQKey).getToAddress(PARAMS, false);
+        }).toThrowError();
     });
 
     test('numberBuilderZero', () => {

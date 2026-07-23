@@ -5,7 +5,7 @@
  * These complement UI tests by ensuring the underlying logic is correct.
  */
 
-import { ECKey, Address, Wallet, NetworkParameters, TestParams, UTXO } from 'bigtangle-ts';
+import { PQKey, Address, Wallet, NetworkParameters, TestParams, UTXO, Utils } from 'bigtangle-ts';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
@@ -38,11 +38,11 @@ export async function verifyWalletCryptography(): Promise<{
     }
 
     // Verify key can be loaded
-    const key = ECKey.fromPrivateString(walletData.privateKey);
+    const key = PQKey.fromPrivateKey(Utils.HEX.decode(walletData.privateKey));
 
     // Derive address
     const networkParams = TestParams.get();
-    const address = key.toAddress(networkParams);
+    const address = key.toAddressWithParams(networkParams);
 
     // Verify public key matches
     const publicKey = key.getPublicKeyAsHex();
@@ -79,13 +79,13 @@ export async function verifyKeyPair(privateKey: string): Promise<{
   error?: string;
 }> {
   try {
-    const key = ECKey.fromPrivateString(privateKey);
+    const key = PQKey.fromPrivateKey(Utils.HEX.decode(privateKey));
     const publicKey = key.getPublicKeyAsHex();
     const networkParams = TestParams.get();
-    const address = key.toAddress(networkParams).toString();
+    const address = key.toAddressWithParams(networkParams).toString();
 
-    // Verify public key is 66 characters (compressed format)
-    const isValidPubKey = publicKey.length === 66 && publicKey.startsWith('02') || publicKey.startsWith('03');
+    // Verify public key is valid
+    const isValidPubKey = publicKey.length > 0;
 
     return {
       isValid: isValidPubKey,

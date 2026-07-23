@@ -155,14 +155,14 @@ export function exportTestWalletInfo(
   walletKey: keyof typeof TEST_WALLETS,
 ): void {
   const wallet = TEST_WALLETS[walletKey];
-  const ecKey = createECKeyFromTestWallet(wallet);
+  const pqKey = createECKeyFromTestWallet(wallet);
   const networkParams = new TestParams();
 
   console.log("=".repeat(60));
   console.log(`Test Wallet: ${wallet.label}`);
   console.log("=".repeat(60));
-  console.log(`Address:     ${ecKey.toAddress(networkParams).toString()}`);
-  console.log(`Public Key:  ${ecKey.getPublicKeyAsHex()}`);
+  console.log(`Address:     ${pqKey.toAddressWithParams(networkParams).toString()}`);
+  console.log(`Public Key:  ${pqKey.getPublicKeyAsHex()}`);
   console.log(`Private Key: ${wallet.privateKey}`);
   console.log(`Password:    ${wallet.password}`);
   console.log("=".repeat(60));

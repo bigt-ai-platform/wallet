@@ -1,7 +1,8 @@
 import { MainNetParams } from '../../src/net/bigtangle/params/MainNetParams';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
 import { Transaction } from '../../src/net/bigtangle/core/Transaction';
+import { Address } from '../../src/net/bigtangle/core/Address';
 import { FakeTxBuilder } from './FakeTxBuilder';
+import { UtilBase } from './UtilBase';
 import { Coin } from '../../src/net/bigtangle/core/Coin';
 import { CoinConstants } from '../../src/net/bigtangle/core/CoinConstants';
 import { Message } from '../../src/net/bigtangle/core/Message';
@@ -20,7 +21,7 @@ import { describe, beforeEach, test, expect } from 'vitest';
 
 describe('TransactionTest', () => {
     const PARAMS = MainNetParams.get();
-    const ADDRESS = ECKey.fromPrivate(BigInt('1')).toAddress(PARAMS);
+    const ADDRESS = Address.fromKey(PARAMS, UtilBase.createTestKeyFromBigInt(1n));
 
     let tx: Transaction;
 

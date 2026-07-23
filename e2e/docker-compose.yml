@@ -72,6 +72,37 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  bigtangle-l1:
+    image: ghcr.io/bigtangle/server:latest
+    container_name: e2e-bigtangle-l1
+    networks:
+      - e2e-network
+    ports:
+      - "8089:8089"
+    environment:
+      DB_PASSWORD: test1234
+      DB_USER: root
+      DB_PORT: 5432
+      DB_NAME: info
+      DB_HOSTNAME: postgres
+      SERVER_PORT: 8089
+      SERVER_NET: Test
+      SSL: "false"
+      SERVICE_MINING: "true"
+      SERVICE_MCMC: "true"
+      SERVICE_MCMC_RATE: 1000
+      SERVER_MINERADDRESS: 1LLtbSLJJn1D2churfWG55aDYqQQTu4eqH
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadminpassword
+      JAVA_OPTS: "-Ddebug -Xmx5028m --add-exports java.base/sun.nio.ch=ALL-UNNAMED -Dminio.url=http://minio:9000 -Dminio.access-key=minioadmin -Dminio.secret-key=minioadminpassword"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    restart: unless-stopped
+
   app:
     build:
       context: ..

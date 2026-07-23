@@ -1,4 +1,4 @@
-import { ECKey } from '../core/ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { Base58 } from '../utils/Base58';
 import { Utils } from '../utils/Utils';
 import { sha256 } from '@noble/hashes/sha256';
@@ -63,12 +63,22 @@ export interface DidVerificationMethod {
 
 export class DidKey {
   /**
-   * Creates a did:key identifier from an ECKey's public key.
+   * Creates a did:key identifier from a PQKey's public key.
    * Uses secp256k1 multicodec (0xe7) and multibase base58btc.
    */
-  public static fromECKey(key: ECKey): string {
+  public static fromPQKey(key: PQKey): string {
     const pubKeyBytes = key.getPubKey();
     return DidKey.fromPublicKeyBytes(pubKeyBytes);
+  }
+
+  /** @deprecated Use fromPQKey */
+  public static fromECKey(key: PQKey): string {
+    return DidKey.fromPQKey(key);
+  }
+
+  /** @deprecated Use toPQKey */
+  public static toECKey(did: string): PQKey {
+    return DidKey.toPQKey(did);
   }
 
   /**
@@ -111,11 +121,11 @@ export class DidKey {
   }
 
   /**
-   * Creates an ECKey (public-only) from a did:key string.
+   * Creates a PQKey (public-only) from a did:key string.
    */
-  public static toECKey(did: string): ECKey {
+  public static toPQKey(did: string): PQKey {
     const pubKeyBytes = DidKey.getPublicKeyBytes(did);
-    return ECKey.fromPublic(pubKeyBytes, true);
+    return PQKey.fromPublicOnly(pubKeyBytes);
   }
 
   /**
@@ -183,10 +193,12 @@ export class DidKey {
   }
 
   /**
-   * Creates a did:key from private key bytes (32 bytes).
+   * Creates a did:key from private key seed material (64 bytes).
    */
   public static fromPrivateKeyBytes(privKeyBytes: Uint8Array): string {
-    const key = ECKey.fromPrivateByte(privKeyBytes);
-    return DidKey.fromECKey(key);
+    const seed = new Uint8Array(64);
+    seed.set(privKeyBytes.slice(0, Math.min(privKeyBytes.length, 64)), 0);
+    const key = PQKey.fromKeyMaterial(seed);
+    return DidKey.fromPQKey(key);
   }
 }

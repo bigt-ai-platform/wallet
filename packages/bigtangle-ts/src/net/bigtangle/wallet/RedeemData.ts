@@ -1,4 +1,4 @@
-import { ECKey } from '../core/ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { Script } from '../script/Script';
 
 /**
@@ -11,13 +11,13 @@ import { Script } from '../script/Script';
  */
 export class RedeemData {
     public readonly redeemScript: Script;
-    public readonly keys: ECKey[];
+    public readonly keys: PQKey[];
 
-    private constructor(keys: ECKey[], redeemScript: Script) {
+    private constructor(keys: PQKey[], redeemScript: Script) {
         this.redeemScript = redeemScript;
-        // Assuming ECKey.PUBKEY_COMPARATOR exists and sorts correctly
+        // Assuming PQKey.PUBKEY_COMPARATOR exists and sorts correctly
         const sortedKeys = [...keys].sort((a, b) => {
-            // Implement ECKey.PUBKEY_COMPARATOR logic here
+            // Implement PQKey.PUBKEY_COMPARATOR logic here
             // For now, a simple comparison based on public key bytes
             const pubA = a.getPubKeyBytes();
             const pubB = b.getPubKeyBytes();
@@ -31,14 +31,14 @@ export class RedeemData {
         this.keys = sortedKeys;
     }
 
-    public static of(keys: ECKey[], redeemScript: Script): RedeemData;
-    public static of(key: ECKey | null, program: Script): RedeemData | null;
+    public static of(keys: PQKey[], redeemScript: Script): RedeemData;
+    public static of(key: PQKey | null, program: Script): RedeemData | null;
     public static of(...args: any[]): RedeemData | null {
         if (Array.isArray(args[0])) {
-            // of(keys: ECKey[], redeemScript: Script)
+            // of(keys: PQKey[], redeemScript: Script)
             return new RedeemData(args[0], args[1]);
         } else if (args.length === 2) {
-            // of(key: ECKey | null, program: Script)
+            // of(key: PQKey | null, program: Script)
             const key = args[0];
             const program = args[1];
             if (!program.isSentToAddress() && !program.isSentToRawPubKey()) {
@@ -52,9 +52,9 @@ export class RedeemData {
     /**
      * Returns the first key that has private bytes
      */
-    public getFullKey(): ECKey | null {
+    public getFullKey(): PQKey | null {
         for (const key of this.keys) {
-            // Check if the key is an instance of ECKey and has the method
+            // Check if the key is an instance of PQKey and has the method
             if (key && typeof key.getPrivKeyBytes === 'function') {
                 try {
                     // Try to call the method
@@ -67,7 +67,7 @@ export class RedeemData {
                     console.warn('Error getting private key bytes from key:', e);
                 }
             } else {
-                console.warn('Key does not have getPrivKeyBytes method or is not an ECKey instance:', key);
+                console.warn('Key does not have getPrivKeyBytes method or is not an PQKey instance:', key);
             }
         }
         return null;

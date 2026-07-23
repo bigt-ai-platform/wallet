@@ -10,6 +10,7 @@ export { Address } from './net/bigtangle/core/Address';
 export { Block } from './net/bigtangle/core/Block';
 export { Coin } from './net/bigtangle/core/Coin';
 export { CoinConstants } from './net/bigtangle/core/CoinConstants';
+/** @deprecated Use PQKey instead */
 export { ECKey } from './net/bigtangle/core/ECKey';
 export { ECPoint } from './net/bigtangle/core/ECPoint';
 export { Sha256Hash } from './net/bigtangle/core/Sha256Hash';
@@ -25,6 +26,7 @@ export { PartialMerkleTree } from './net/bigtangle/core/PartialMerkleTree';
 export { VarInt } from './net/bigtangle/core/VarInt';
 export { Utils } from './net/bigtangle/core/Utils';
 export { BigIntegerConverter } from './net/bigtangle/core/BigIntegerConverter';
+/** @deprecated Use SignatureBundle instead */
 export { ECDSASignature } from './net/bigtangle/core/ECDSASignature';
 export { SigHash } from './net/bigtangle/core/SigHash';
 export { VersionedChecksummedBytes } from './net/bigtangle/core/VersionedChecksummedBytes';
@@ -81,6 +83,7 @@ export { KeyCrypterScrypt } from './net/bigtangle/crypto/KeyCrypterScrypt';
 
 // Post-quantum cryptography
 export { PQConstants } from './net/bigtangle/crypto/pq/PQConstants';
+export { PQKey } from './net/bigtangle/crypto/pq/PQKey';
 export { KeyBundle, KeyBundleEntry } from './net/bigtangle/crypto/pq/KeyBundle';
 export { SignatureBundle, SignatureBundleEntry } from './net/bigtangle/crypto/pq/SignatureBundle';
 export { PQAddress } from './net/bigtangle/crypto/pq/PQAddress';

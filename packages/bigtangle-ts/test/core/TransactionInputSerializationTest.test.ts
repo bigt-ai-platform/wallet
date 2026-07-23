@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from 'vitest';
 import { expect } from 'chai';
 import { Transaction } from '../../src/net/bigtangle/core/Transaction';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
 import { Address } from '../../src/net/bigtangle/core/Address';
 import { TransactionOutput } from '../../src/net/bigtangle/core/TransactionOutput';
 import { NetworkParameters } from '../../src/net/bigtangle/params/NetworkParameters';
@@ -15,13 +15,13 @@ import { UtilBase } from './UtilBase';
 describe('TransactionInputSerialization', () => {
     const PARAMS = MainNetParams.get();
     let transaction: Transaction;
-    let key: ECKey;
+    let key: PQKey;
     let address: Address;
 
     beforeEach(() => {
         transaction = new Transaction(PARAMS);
         key = UtilBase.createTestKey();
-        address = key.toAddress(PARAMS);
+        address = Address.fromKey(PARAMS, key);
     });
 
     it('testTransactionInputSerializationWithCoin', () => {

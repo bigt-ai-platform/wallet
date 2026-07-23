@@ -30,8 +30,9 @@ import { Block } from "./Block";
 import { Coin } from "./Coin";
 import { CoinConstants } from "./CoinConstants";
 import { Address } from "./Address";
-import { ECKey } from "./ECKey";
-import { ECDSASignature } from "./ECDSASignature";
+import { PQKey } from "../crypto/pq/PQKey";
+import { SignatureBundle } from "../crypto/pq/SignatureBundle";
+
 import { Script } from "../script/Script";
 import * as ScriptOpCodes from "../script/ScriptOpCodes";
 import { TransactionBag } from "./TransactionBag";
@@ -327,9 +328,9 @@ export class Transaction extends ChildMessage {
   ): Transaction {
     const transaction = new Transaction(params);
     
-    // Create ECKey from public key bytes, then use ScriptBuilder to create output script
-    const ecKey = ECKey.fromPublic(to);
-    const script = ScriptBuilder.createOutputScript(ecKey);
+    // Create PQKey from public key bytes, then use ScriptBuilder to create output script
+    const pqKey = PQKey.fromPublicOnly(to);
+    const script = ScriptBuilder.createOutputScript(pqKey);
     const output = new TransactionOutput(params, transaction, value, script.getProgram());
     
     // Create the coinbase input using the proper factory method
@@ -888,7 +889,7 @@ export class Transaction extends ChildMessage {
   public async addSignedInput(
     prevOut: TransactionOutPoint,
     scriptPubKey: Script,
-    sigKey: ECKey,
+    sigKey: PQKey,
     sigHash: SigHash,
     anyoneCanPay: boolean
   ): Promise<TransactionInput> {
@@ -899,7 +900,7 @@ export class Transaction extends ChildMessage {
   public async signInputs(
     prevOut: TransactionOutPoint,
     scriptPubKey: Script,
-    sigKey: ECKey
+    sigKey: PQKey
   ): Promise<void> {
     // TODO: Implement this method properly
     throw new Error("signInputs not implemented");
@@ -914,7 +915,7 @@ export class Transaction extends ChildMessage {
   public async addSignedInputDefault(
     prevOut: TransactionOutPoint,
     scriptPubKey: Script,
-    sigKey: ECKey
+    sigKey: PQKey
   ): Promise<TransactionInput> {
     // TODO: Implement this method properly
     throw new Error("addSignedInputDefault not implemented");
@@ -950,7 +951,7 @@ export class Transaction extends ChildMessage {
    * Creates an output that pays to the given pubkey directly (no address) with
    * the given value, adds it to this transaction, and returns the new output.
    */
-  public addOutputEckey(value: Coin, pubkey: ECKey): TransactionOutput {
+  public addOutputEckey(value: Coin, pubkey: PQKey): TransactionOutput {
     if (this.params == null) {
       throw new ProtocolException("Network parameters not set");
     }
@@ -987,11 +988,10 @@ export class Transaction extends ChildMessage {
 
   /**
    * Calculates a signature that is valid for being inserted into the input at the
-   * given position. This is simply a wrapper around calling
+   *    given position. This is simply a wrapper around calling
    * {@link Transaction#hashForSignature(int, byte[], net.bigtangle.core.Transaction.SigHash, boolean)}
-   * followed by {@link ECKey#sign(Sha256Hash)} and then returning a new
-   * {@link TransactionSignature}. The key must be usable for signing as-is: if
-   * the key is encrypted it must be decrypted first external to this method.
+   * followed by {@link PQKey#sign(Sha256Hash)} and then returning a
+   * SignatureBundle.
    *
    * @param inputIndex   Which input to calculate the signature for, as an index.
    * @param key          The private key used to calculate the signature.
@@ -999,26 +999,22 @@ export class Transaction extends ChildMessage {
    *                     satisified, or the P2SH redeem script.
    * @param hashType     Signing mode, see the enum for documentation.
    * @param anyoneCanPay Signing mode, see the SigHash enum for documentation.
-   * @return A newly calculated signature object that wraps the r, s and sighash
-   *         components.
+   * @return A SignatureBundle.
    */
   public async calculateSignature(
     inputIndex: number,
-    key: ECKey,
+    key: PQKey,
     redeemScript: Uint8Array,
     hashType: SigHash,
     anyoneCanPay: boolean
-  ): Promise<TransactionSignature> {
+  ): Promise<SignatureBundle> {
     const hash = this.hashForSignature(
       inputIndex,
       redeemScript,
       hashType,
       anyoneCanPay
     );
-    const signature: ECDSASignature = await key.sign(hash.getBytes());
-    // Ensure signature is canonical (S value is low) to follow Bitcoin standard
-    const canonicalSignature = signature.toCanonicalised();
-    return new TransactionSignature(canonicalSignature, hashType, anyoneCanPay);
+    return await key.signWithAesKey(hash, null);
   }
 
  

@@ -26,14 +26,15 @@ import {
  */
 const DEFAULT_MAINNET_URL = 'https://p.bigtangle.org:8088/';
 const DEFAULT_TESTNET_URL = 'https://testp.bigtangle.org:8088/';
-const DEFAULT_MOBILE_URL = 'https://m.bigtangle.org';
-const DEFAULT_MOBILE_TEST_URL = 'https://testm.bigtangle.org';
+const DEFAULT_L1_MAINNET_URL = 'https://m.bigtangle.org';
+const DEFAULT_L1_TESTNET_URL = 'https://testm.bigtangle.org';
 
 /**
  * Storage keys
  */
 const STORAGE_KEYS = {
   SERVER_URL: ['settings', 'serverUrl'],
+  L1_URL: ['settings', 'l1Url'],
   USE_TESTNET: ['settings', 'useTestnet'],
 };
 
@@ -73,7 +74,26 @@ export class HttpService {
   }
 
   /**
-   * Set testnet mode
+   * Get the L1 (Order Match) server URL
+   */
+  getL1Url(): string {
+    const savedUrl = device.get(STORAGE_KEYS.L1_URL);
+    if (savedUrl) {
+      return savedUrl;
+    }
+    const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
+    return useTestnet ? DEFAULT_L1_TESTNET_URL : DEFAULT_L1_MAINNET_URL;
+  }
+
+  /**
+   * Set the L1 (Order Match) server URL
+   */
+  setL1Url(url: string): void {
+    device.set(STORAGE_KEYS.L1_URL, url);
+  }
+
+  /**
+   * Set testnet mode — resets both L0 and L1 URLs to defaults
    */
   setTestnet(useTestnet: boolean): void {
     device.set(STORAGE_KEYS.USE_TESTNET, useTestnet.toString());
@@ -244,37 +264,48 @@ export class HttpService {
   }
 
   /**
-   * Get orders for given token IDs
+   * Make HTTP request to the L1 (Order Match) server
+   */
+  async requestL1<T>(
+    endpoint: string,
+    method: 'GET' | 'POST' = 'POST',
+    body?: any,
+  ): Promise<ApiResponse<T>> {
+    return this.request(endpoint, method, body, this.getL1Url());
+  }
+
+  /**
+   * Get orders for given token IDs (L1)
    */
   async getOrders(tokenids: string[], baseToken?: string): Promise<ApiResponse<any>> {
-    const response = await this.request<any>('getOrders', 'POST', { tokenids, basetoken: baseToken || '' });
+    const response = await this.requestL1<any>('getOrders', 'POST', { tokenids, basetoken: baseToken || '' });
     if (response.success && response.data) return { success: true, data: response.data };
     return { success: false, error: response.error || 'Failed to get orders' } as ApiResponse<any>;
   }
 
   /**
-   * Get order tickers
+   * Get order tickers (L1)
    */
   async getOrdersTicker(tokenids: string[], baseToken: string): Promise<ApiResponse<any>> {
-    const response = await this.request<any>('getOrdersTicker', 'POST', { tokenids, count: 50, basetoken: baseToken });
+    const response = await this.requestL1<any>('getOrdersTicker', 'POST', { tokenids, count: 50, basetoken: baseToken });
     if (response.success && response.data) return { success: true, data: response.data };
     return { success: false, error: response.error || 'Failed to get tickers' } as ApiResponse<any>;
   }
 
   /**
-   * Submit an order transaction (raw hex)
+   * Submit an order transaction (raw hex) (L1)
    */
   async submitOrderTransaction(txHex: string): Promise<ApiResponse<string>> {
-    const response = await this.request<string>('submitTransaction', 'POST', { txhex: txHex });
+    const response = await this.requestL1<string>('submitTransaction', 'POST', { txhex: txHex });
     if (response.success) return { success: true, data: 'ok' };
     return { success: false, error: response.error || 'Failed to submit order' };
   }
 
   /**
-   * Search exchange tokens
+   * Search exchange tokens (L1)
    */
   async searchExchangeTokens(keyword?: string): Promise<ApiResponse<TokenItem[]>> {
-    const response = await this.request<GetTokensResponse>(
+    const response = await this.requestL1<GetTokensResponse>(
       ReqCmd.SearchExchangeTokens,
       'POST',
       { keyword }

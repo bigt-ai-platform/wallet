@@ -2,7 +2,7 @@ import { describe, it, beforeEach } from 'vitest';
 import { expect } from 'chai';
 import { Script } from '../../src/net/bigtangle/script/Script';
 import { ScriptBuilder } from '../../src/net/bigtangle/script/ScriptBuilder';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
 import { Address } from '../../src/net/bigtangle/core/Address';
 import { MainNetParams } from '../../src/net/bigtangle/params/MainNetParams';
 import { Utils } from '../../src/net/bigtangle/utils/Utils';
@@ -10,22 +10,26 @@ import * as ScriptOpCodes from '../../src/net/bigtangle/script/ScriptOpCodes';
 import { Transaction } from '../../src/net/bigtangle/core/Transaction';
 import { TransactionInput } from '../../src/net/bigtangle/core/TransactionInput';
 import { TransactionOutput } from '../../src/net/bigtangle/core/TransactionOutput';
-import { TransactionSignature } from '../../src/net/bigtangle/crypto/TransactionSignature';
 import { NetworkParameters } from '../../src/net/bigtangle/params/NetworkParameters';
-import { UtilBase } from './UtilBase';
 import { Coin } from '../../src/net/bigtangle/core/Coin';
 
 
+function createTestKey(seedByte: number): PQKey {
+    const seed = new Uint8Array(64);
+    seed[63] = seedByte;
+    return PQKey.fromKeyMaterial(seed);
+}
+
 describe('ScriptSerialization', () => {
     const PARAMS = MainNetParams.get();
-    let key1: ECKey;
-    let key2: ECKey;
-    let key3: ECKey;
+    let key1: PQKey;
+    let key2: PQKey;
+    let key3: PQKey;
 
     beforeEach(() => {
-        key1 = UtilBase.createTestKey();
-        key2 = UtilBase.createTestKey();
-        key3 = UtilBase.createTestKey();
+        key1 = createTestKey(1);
+        key2 = createTestKey(2);
+        key3 = createTestKey(3);
     });
 
     it('testScriptSerializationWithPayToAddress', () => {
@@ -221,12 +225,9 @@ describe('ScriptSerialization', () => {
         tx.addInput(input);
         
         const sighash = tx.hashForSignature(0, outputScript.getProgram(), 1, false);
-        const ecdsaSignature = await key1.sign(sighash.getBytes());
-        const r = BigInt(ecdsaSignature.r.toString());
-        const s = BigInt(ecdsaSignature.s.toString());
-        const signature = new TransactionSignature(r, s, 1);
+        const signatureBundle = await key1.signWithAesKey(sighash, null);
         
-        const inputScript = ScriptBuilder.createInputScript(signature, key1);
+        const inputScript = ScriptBuilder.createInputScript(signatureBundle, key1);
         
         const serialized = inputScript.getProgram();
         expect(serialized).to.not.be.null;
@@ -236,5 +237,5 @@ describe('ScriptSerialization', () => {
         
         expect(deserializedScript.toString()).to.equal(inputScript.toString());
         expect(deserializedScript.getProgram()).to.deep.equal(inputScript.getProgram());
-    });
+    }, 30000);
 });

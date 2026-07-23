@@ -20,7 +20,6 @@
 
 import { ChildNumber } from './ChildNumber';
 import { DeterministicKey } from './DeterministicKey';
-import { ECKey } from '../core/ECKey';
 import { ECPoint } from '../core/ECPoint';
 import { HDDerivationException } from './HDDerivationException';
 import { HDUtils } from './HDUtils';
@@ -269,13 +268,13 @@ export class HDKeyDerivation {
         if (!parentPubPoint) throw new Error('Parent public key is missing');
         switch (mode) {
             case PublicDeriveMode.NORMAL:
-                Ki = ECKey.publicPointFromPrivate(ilIntModN).add(parentPubPoint);
+                Ki = ECPoint.fromPrivate(ilIntModN).add(parentPubPoint);
                 break;
             case PublicDeriveMode.WITH_INVERSION: {
-                const randIntBig = BigInt(HDKeyDerivation.RAND_INT.toString()); // Keep as bigint for modulo with N (which is bigint)
-                const Ki1 = ECKey.publicPointFromPrivate((ilIntModN + randIntBig) % N);
+                const randIntBig = BigInt(HDKeyDerivation.RAND_INT.toString());
+                const Ki1 = ECPoint.fromPrivate((ilIntModN + randIntBig) % N);
                 const additiveInverse = (N - (randIntBig % N)) % N;
-                const Ki2 = Ki1.add(ECKey.publicPointFromPrivate(additiveInverse));
+                const Ki2 = Ki1.add(ECPoint.fromPrivate(additiveInverse));
                 Ki = Ki2.add(parentPubPoint);
                 break;
             }

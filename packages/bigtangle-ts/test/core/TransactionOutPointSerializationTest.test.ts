@@ -1,6 +1,7 @@
 import { describe, it } from 'vitest';
 import { expect } from 'chai';
 import { TransactionOutPoint } from '../../src/net/bigtangle/core/TransactionOutPoint';
+import { Address } from '../../src/net/bigtangle/core/Address';
 import { MainNetParams } from '../../src/net/bigtangle/params/MainNetParams';
 import { Sha256Hash } from '../../src/net/bigtangle/core/Sha256Hash';
 import { Transaction } from '../../src/net/bigtangle/core/Transaction';
@@ -84,7 +85,7 @@ describe('TransactionOutPointSerialization', () => {
         
         const transaction = new Transaction(PARAMS);
         const key = UtilBase.createTestKey();
-        const address = key.toAddress(PARAMS);
+        const address = Address.fromKey(PARAMS, key);
         const coinValue = Coin.valueOf(100000n, NetworkParameters.getBIGTANGLE_TOKENID());
         const connectedOutput = TransactionOutput.fromAddress(PARAMS, transaction, coinValue, address);
         
@@ -124,7 +125,7 @@ describe('TransactionOutPointSerialization', () => {
         
         const transaction = new Transaction(PARAMS);
         const key = UtilBase.createTestKey();
-        const address = key.toAddress(PARAMS);
+        const address = Address.fromKey(PARAMS, key);
         const coinValue = Coin.valueOf(50000n, NetworkParameters.getBIGTANGLE_TOKENID());
         const connectedOutput = TransactionOutput.fromAddress(PARAMS, transaction, coinValue, address);
         

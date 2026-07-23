@@ -1,5 +1,5 @@
 import { Utils } from '../utils/Utils';
-import { ECKey } from './ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 
 export class PermissionDomainname {
     private pubKeyHex: string | null = null;
@@ -34,9 +34,9 @@ export class PermissionDomainname {
         return this.pubKeyHex ? Utils.HEX.decode(this.pubKeyHex) : new Uint8Array();
     }
 
-    public getOutKey(): ECKey {
+    public getOutKey(): PQKey {
         const pubKey = this.getPubKeyBuf();
-        const outKey = ECKey.fromPublic(pubKey);
+        const outKey = PQKey.fromPublicOnly(pubKey);
         return outKey;
     }
 }

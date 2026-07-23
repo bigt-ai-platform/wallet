@@ -7,22 +7,22 @@ import { useRouter, usePathname } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   WalletIcon, MarketIcon, TokensIcon, SettingsIcon, CloseIcon,
+  ChartIcon, OrderIcon, DataIcon,
 } from './Icons';
 import LanguageSwitcher from './LanguageSwitcher';
+import { useTranslation } from 'react-i18next';
 
 interface NavItem {
   label: string;
+  key: string;
   icon: React.FC<{ size?: number; color?: string }>;
   route: string;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { label: 'Transaction', icon: WalletIcon, route: '/' },
-  { label: 'Wallet', icon: WalletIcon, route: '/wallet' },
-  { label: 'Market', icon: MarketIcon, route: '/market' },
-  { label: 'Tokens', icon: TokensIcon, route: '/tokens' },
-  { label: 'Settings', icon: SettingsIcon, route: '/settings' },
-];
+interface NavSection {
+  titleKey: string;
+  items: NavItem[];
+}
 
 interface SidebarProps {
   visible: boolean;
@@ -32,34 +32,131 @@ interface SidebarProps {
 
 const SIDEBAR_WIDTH = 260;
 
+function NavItemRow({ item, onPress, isActive }: { item: NavItem; onPress: () => void; isActive: boolean }) {
+  const { theme } = useUnistyles();
+  const Icon = item.icon;
+  return (
+    <TouchableOpacity
+      style={[s.navItem, isActive && { backgroundColor: theme.colors.primary + '15' }]}
+      onPress={onPress}
+      activeOpacity={0.6}
+    >
+      {isActive && <View style={[s.activeDot, { backgroundColor: theme.colors.primary }]} />}
+      <Icon size={18} color={isActive ? theme.colors.primary : theme.colors.text.secondary} />
+      <Text style={[s.navLabel, { color: isActive ? theme.colors.primary : theme.colors.text.secondary }, isActive && { fontWeight: '600' }]}>
+        {item.label}
+      </Text>
+    </TouchableOpacity>
+  );
+}
+
 export default function Sidebar({ visible, onClose, persistent }: SidebarProps) {
   const { theme } = useUnistyles();
   const router = useRouter();
   const pathname = usePathname();
+  const { t } = useTranslation();
+
+  const navSections: NavSection[] = [
+    {
+      titleKey: 'sidebar.trade',
+      items: [
+        { label: t('sidebar.exchange'), key: 'exchange', icon: MarketIcon, route: '/market' },
+        { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/market' },
+      ],
+    },
+    {
+      titleKey: 'sidebar.orders',
+      items: [
+        { label: t('sidebar.order'), key: 'order', icon: OrderIcon, route: '/market' },
+      ],
+    },
+    {
+      titleKey: 'sidebar.market',
+      items: [
+        { label: t('sidebar.marketData'), key: 'marketData', icon: DataIcon, route: '/market' },
+      ],
+    },
+    {
+      titleKey: 'sidebar.portfolio',
+      items: [
+        { label: t('sidebar.wallet'), key: 'wallet', icon: WalletIcon, route: '/wallet' },
+        { label: t('sidebar.tokens'), key: 'tokens', icon: TokensIcon, route: '/tokens' },
+      ],
+    },
+  ];
+
+  const isActive = (route: string) => {
+    if (route === '/') return pathname === '/';
+    return pathname?.startsWith(route) ?? false;
+  };
+
+  const navigate = (route: string) => {
+    router.push(route as any);
+    if (!persistent) onClose();
+  };
+
+  const renderContent = () => (
+    <>
+      <View style={[s.sidebarHeader, { borderBottomColor: theme.colors.border }]}>
+        <Text style={[s.logoText, { color: theme.colors.text.primary }]}>{t('sidebar.bigt')}</Text>
+        {!persistent && (
+          <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+            <CloseIcon size={20} color={theme.colors.text.secondary} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      <ScrollView style={s.navScroll} showsVerticalScrollIndicator={false}>
+        {navSections.map((section) => (
+          <View key={section.titleKey} style={s.section}>
+            <Text style={[s.sectionTitle, { color: theme.colors.text.secondary }]}>{t(section.titleKey)}</Text>
+            {section.items.map((item) => (
+              <NavItemRow
+                key={item.key}
+                item={item}
+                isActive={isActive(item.route)}
+                onPress={() => navigate(item.route)}
+              />
+            ))}
+          </View>
+        ))}
+      </ScrollView>
+
+      <View style={[s.quickActions, { borderTopColor: theme.colors.border }]}>
+        <TouchableOpacity
+          style={[s.buyBtn, { backgroundColor: theme.colors.accent?.emerald || '#0ECB81' }]}
+          onPress={() => navigate('/market')}
+          activeOpacity={0.8}
+        >
+          <Text style={s.actionBtnText}>{t('sidebar.buy')}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[s.sellBtn, { backgroundColor: theme.colors.accent?.red || '#F6465D' }]}
+          onPress={() => navigate('/market')}
+          activeOpacity={0.8}
+        >
+          <Text style={s.actionBtnText}>{t('sidebar.sell')}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={[s.footer, { borderTopColor: theme.colors.border }]}>
+        <View style={s.langRow}><LanguageSwitcher /></View>
+        <TouchableOpacity
+          style={s.settingsRow}
+          onPress={() => navigate('/settings')}
+          activeOpacity={0.6}
+        >
+          <SettingsIcon size={16} color={theme.colors.text.secondary} />
+          <Text style={[s.settingsText, { color: theme.colors.text.secondary }]}>{t('sidebar.settings')}</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
 
   if (persistent) {
     return (
       <View style={[s.persistent, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border }]}>
-        <View style={[s.sidebarHeader, { borderBottomColor: theme.colors.border }]}>
-          <Text style={[s.logoText, { color: theme.colors.text.primary }]}>bigT</Text>
-        </View>
-        <View style={s.langRow}><LanguageSwitcher /></View>
-        <ScrollView style={s.navScroll}>
-          {NAV_ITEMS.map((item) => {
-            const active = isActive(item.route, pathname);
-            const Icon = item.icon;
-            return (
-              <TouchableOpacity key={item.route} style={[s.navItem, active && { backgroundColor: theme.colors.groupped.background }]}
-                onPress={() => { router.push(item.route as any); }} activeOpacity={0.7}>
-                <Icon size={20} color={active ? theme.colors.primary : theme.colors.text.secondary} />
-                <Text style={[s.navLabel, { color: active ? theme.colors.text.primary : theme.colors.text.secondary }, active && { fontWeight: '600' }]}>{item.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
-        <View style={[s.footer, { borderTopColor: theme.colors.border }]}>
-          <Text style={[s.footerText, { color: theme.colors.text.secondary }]}>bigT Wallet</Text>
-        </View>
+        {renderContent()}
       </View>
     );
   }
@@ -68,34 +165,14 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
 
   return (
     <>
-      <View style={s.overlay}><TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} /></View>
+      <View style={s.overlay}>
+        <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
+      </View>
       <View style={[s.overlaySidebar, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border }]}>
-        <View style={[s.sidebarHeader, { borderBottomColor: theme.colors.border }]}>
-          <Text style={[s.logoText, { color: theme.colors.text.primary }]}>bigT</Text>
-          <TouchableOpacity onPress={onClose} style={s.closeBtn}><CloseIcon size={20} color={theme.colors.text.secondary} /></TouchableOpacity>
-        </View>
-        <View style={s.langRow}><LanguageSwitcher /></View>
-        <ScrollView style={s.navScroll}>
-          {NAV_ITEMS.map((item) => {
-            const active = isActive(item.route, pathname);
-            const Icon = item.icon;
-            return (
-              <TouchableOpacity key={item.route} style={[s.navItem, active && { backgroundColor: theme.colors.groupped.background }]}
-                onPress={() => { onClose(); router.push(item.route as any); }} activeOpacity={0.7}>
-                <Icon size={20} color={active ? theme.colors.primary : theme.colors.text.secondary} />
-                <Text style={[s.navLabel, { color: active ? theme.colors.text.primary : theme.colors.text.secondary }, active && { fontWeight: '600' }]}>{item.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
+        {renderContent()}
       </View>
     </>
   );
-}
-
-function isActive(route: string, pathname: string | null): boolean {
-  if (route === '/') return pathname === '/';
-  return pathname?.startsWith(route) ?? false;
 }
 
 const s = StyleSheet.create({
@@ -110,17 +187,44 @@ const s = StyleSheet.create({
   },
   sidebarHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingHorizontal: 16, paddingVertical: 14, borderBottomWidth: 1,
+    paddingHorizontal: 20, paddingVertical: 14, borderBottomWidth: 1,
   },
-  logoText: { fontSize: 20, fontWeight: '700' },
+  logoText: { fontSize: 22, fontWeight: '800', letterSpacing: -0.5 },
   closeBtn: { padding: 6 },
-  langRow: { alignItems: 'flex-end', paddingHorizontal: 16, paddingVertical: 8 },
-  navScroll: { flex: 1, paddingVertical: 4 },
+  navScroll: { flex: 1, paddingVertical: 8 },
+  section: { marginBottom: 4 },
+  sectionTitle: {
+    fontSize: 11, fontWeight: '700', letterSpacing: 0.8,
+    paddingHorizontal: 20, paddingVertical: 10, paddingTop: 14,
+    textTransform: 'uppercase',
+  },
   navItem: {
-    flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 11,
-    marginHorizontal: 8, marginVertical: 1, borderRadius: 10, gap: 12,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 20, paddingVertical: 10, marginHorizontal: 8,
+    marginVertical: 1, borderRadius: 8, gap: 12, overflow: 'hidden',
+  },
+  activeDot: {
+    position: 'absolute', left: 0, top: 4, bottom: 4, width: 3,
+    borderTopRightRadius: 2, borderBottomRightRadius: 2,
   },
   navLabel: { fontSize: 14, fontWeight: '500' },
-  footer: { borderTopWidth: 1, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center' },
-  footerText: { fontSize: 11, fontWeight: '500' },
+  quickActions: {
+    flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1,
+  },
+  buyBtn: {
+    flex: 1, borderRadius: 6, paddingVertical: 10, alignItems: 'center',
+  },
+  sellBtn: {
+    flex: 1, borderRadius: 6, paddingVertical: 10, alignItems: 'center',
+  },
+  actionBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  footer: {
+    borderTopWidth: 1, paddingVertical: 10, paddingHorizontal: 16,
+  },
+  langRow: { marginBottom: 6 },
+  settingsRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingVertical: 6, paddingHorizontal: 4,
+  },
+  settingsText: { fontSize: 13, fontWeight: '500' },
 });

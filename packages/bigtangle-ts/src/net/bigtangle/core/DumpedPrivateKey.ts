@@ -1,6 +1,6 @@
 import { NetworkParameters } from '../params/NetworkParameters';
 import { VersionedChecksummedBytes } from './VersionedChecksummedBytes';
-import { ECKey } from './ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 
 export class DumpedPrivateKey extends VersionedChecksummedBytes {
     private compressed: boolean;
@@ -50,28 +50,10 @@ export class DumpedPrivateKey extends VersionedChecksummedBytes {
     }
 
     /**
-     * Returns an ECKey created from this private key.
+     * Returns a PQKey created from this private key.
      */
-    public toECKey(): ECKey {
-        const privKeyBytes = this.getBytes();
-        let keyBytes: Uint8Array;
-        let compressed = this.compressed;
-        
-        if (privKeyBytes.length === 33 && privKeyBytes[32] === 1) {
-            // Compressed private key with marker byte
-            keyBytes = privKeyBytes.slice(0, 32);
-            compressed = true;
-        } else if (privKeyBytes.length === 32) {
-            // Uncompressed private key
-            keyBytes = privKeyBytes;
-            compressed = false;
-        } else {
-            throw new Error(`Invalid private key format: length=${privKeyBytes.length}`);
-        }
-        
-        const hex = Array.from(new Uint8Array(keyBytes)).map(b => b.toString(16).padStart(2, '0')).join('');
-        const privKey = BigInt('0x' + hex);
-        return ECKey.fromPrivate(privKey, compressed);
+    public toPQKey(): PQKey {
+        throw new Error("EC dumped private key cannot be converted to PQ key; use PQKey.createNew()");
     }
 
     public toString(): string {

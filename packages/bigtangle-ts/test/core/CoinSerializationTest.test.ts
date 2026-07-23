@@ -4,20 +4,30 @@ import { Coin } from '../../src/net/bigtangle/core/Coin';
 import { CoinConstants } from '../../src/net/bigtangle/core/CoinConstants';
 import { Transaction } from '../../src/net/bigtangle/core/Transaction';
 import { TransactionOutput } from '../../src/net/bigtangle/core/TransactionOutput';
+import { Address } from '../../src/net/bigtangle/core/Address';
 import { NetworkParameters } from '../../src/net/bigtangle/params/NetworkParameters';
 import { MainNetParams } from '../../src/net/bigtangle/params/MainNetParams';
 import { UtilBase } from './UtilBase';
 
+
+let cachedAddress: Address | null = null;
+
+function getTestAddress(): Address {
+    if (!cachedAddress) {
+        cachedAddress = Address.fromKey(MainNetParams.get(), UtilBase.createTestKey());
+    }
+    return cachedAddress;
+}
+
 describe('CoinSerialization', () => {
     it('testCoinSerializationWithStandardValues', () => {
         const values = [0n, 1n, 1000n, 1000000n, CoinConstants.COIN.value, BigInt(Number.MAX_SAFE_INTEGER)];
+        const address = getTestAddress();
         
         for (const value of values) {
             const coin = Coin.valueOf(value, NetworkParameters.getBIGTANGLE_TOKENID());
             
             const transaction = new Transaction(MainNetParams.get());
-            const key = UtilBase.createTestKey();
-            const address = key.toAddress(MainNetParams.get());
             const output = TransactionOutput.fromAddress(MainNetParams.get(), transaction, coin, address);
             
             const serialized = output.bitcoinSerialize();
@@ -49,8 +59,7 @@ describe('CoinSerialization', () => {
             const coin = Coin.valueOf(value, tokenId);
             
             const transaction = new Transaction(MainNetParams.get());
-            const key = UtilBase.createTestKey();
-            const address = key.toAddress(MainNetParams.get());
+            const address = getTestAddress();
             const output = TransactionOutput.fromAddress(MainNetParams.get(), transaction, coin, address);
             
             const serialized = output.bitcoinSerialize();
@@ -80,8 +89,7 @@ describe('CoinSerialization', () => {
             const coin = new Coin(value, NetworkParameters.getBIGTANGLE_TOKENID());
             
             const transaction = new Transaction(MainNetParams.get());
-            const key = UtilBase.createTestKey();
-            const address = key.toAddress(MainNetParams.get());
+            const address = getTestAddress();
             const output = TransactionOutput.fromAddress(MainNetParams.get(), transaction, coin, address);
             
             const serialized = output.bitcoinSerialize();
@@ -106,8 +114,7 @@ describe('CoinSerialization', () => {
         const coin = new Coin(value, tokenId);
         
         const transaction = new Transaction(MainNetParams.get());
-        const key = UtilBase.createTestKey();
-        const address = key.toAddress(MainNetParams.get());
+        const address = getTestAddress();
         const output = TransactionOutput.fromAddress(MainNetParams.get(), transaction, coin, address);
         
         const serialized = output.bitcoinSerialize();
@@ -130,12 +137,11 @@ describe('CoinSerialization', () => {
 
     it('testCoinSerializationWithZeroTokenId', () => {
         const value = 555555n;
-        const tokenId = Buffer.alloc(32); // All zeros
+        const tokenId = Buffer.alloc(32);
         const coin = new Coin(value, tokenId);
         
         const transaction = new Transaction(MainNetParams.get());
-        const key = UtilBase.createTestKey();
-        const address = key.toAddress(MainNetParams.get());
+        const address = getTestAddress();
         const output = TransactionOutput.fromAddress(MainNetParams.get(), transaction, coin, address);
         
         const serialized = output.bitcoinSerialize();
@@ -162,8 +168,7 @@ describe('CoinSerialization', () => {
         expect(coin1).to.deep.equal(coin2);
         
         const transaction = new Transaction(MainNetParams.get());
-        const key = UtilBase.createTestKey();
-        const address = key.toAddress(MainNetParams.get());
+        const address = getTestAddress();
         const output = TransactionOutput.fromAddress(MainNetParams.get(), transaction, coin1, address);
         
         const serialized = output.bitcoinSerialize();
@@ -191,8 +196,7 @@ describe('CoinSerialization', () => {
         
         for (const coin of specialCoins) {
             const transaction = new Transaction(MainNetParams.get());
-            const key = UtilBase.createTestKey();
-            const address = key.toAddress(MainNetParams.get());
+            const address = getTestAddress();
             const output = TransactionOutput.fromAddress(MainNetParams.get(), transaction, coin, address);
             
             const serialized = output.bitcoinSerialize();

@@ -1,11 +1,11 @@
-import { ECKey } from '../core/ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { KeyParameter } from '../crypto/KeyCrypter';
 import { KeyBag } from './KeyBag';
 import { RedeemData } from './RedeemData';
 
 /**
  * A DecryptingKeyBag filters a pre-existing key bag, decrypting keys as they are requested using the provided
- * AES key. If the keys are encrypted and no AES key provided, {@link net.bigtangle.core.ECKey.KeyIsEncryptedException}
+ * AES key. If the keys are encrypted and no AES key provided, {@link net.bigtangle.core.PQKey.KeyIsEncryptedException}
  * will be thrown.
  */
 export class DecryptingKeyBag implements KeyBag {
@@ -17,7 +17,7 @@ export class DecryptingKeyBag implements KeyBag {
         this.aesKey = aesKey;
     }
 
-    public async maybeDecrypt(key: ECKey | null): Promise<ECKey | null> {
+    public async maybeDecrypt(key: PQKey | null): Promise<PQKey | null> {
         if (key === null) {
             return null;
         } else if (key.isEncrypted()) {
@@ -34,23 +34,23 @@ export class DecryptingKeyBag implements KeyBag {
 
     private async maybeDecryptRedeemData(redeemData: RedeemData | null): Promise<RedeemData | null> {
         if (redeemData === null) return null;
-        const decryptedKeys: ECKey[] = [];
+        const decryptedKeys: PQKey[] = [];
         for (const key of redeemData.keys) {
             const decryptedKey = await this.maybeDecrypt(key);
             if (decryptedKey) {
                 decryptedKeys.push(decryptedKey);
             }
         }
-        // Assuming RedeemData.of can take an array of ECKey and a Script
+        // Assuming RedeemData.of can take an array of PQKey and a Script
         return RedeemData.of(decryptedKeys, redeemData.redeemScript);
     }
 
-    public async findKeyFromPubHash(pubkeyHash: Uint8Array): Promise<ECKey | null> {
+    public async findKeyFromPubHash(pubkeyHash: Uint8Array): Promise<PQKey | null> {
         const key = await this.target.findKeyFromPubHash(pubkeyHash);
         return await this.maybeDecrypt(key);
     }
 
-    public async findKeyFromPubKey(pubkey: Uint8Array): Promise<ECKey | null> {
+    public async findKeyFromPubKey(pubkey: Uint8Array): Promise<PQKey | null> {
         const key = await this.target.findKeyFromPubKey(pubkey);
         return await this.maybeDecrypt(key);
     }

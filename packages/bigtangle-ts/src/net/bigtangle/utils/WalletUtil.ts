@@ -1,7 +1,7 @@
 import { OrderdataResponse } from '../response/OrderdataResponse';
 import { MarketOrderItemImpl } from '../ordermatch/MarketOrderItem';
 import { NetworkParameters } from '../params/NetworkParameters';
-import { ECKey } from '../core/ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { TokenType } from '../core/TokenType';
 import { UTXO } from '../core/UTXO';
 import { Token } from '../core/Token';
@@ -121,7 +121,7 @@ export class WalletUtil {
      * return all decrypted SignedData list of the given keys and token type
      */
     public static async signedTokenList(
-        userKeys: ECKey[],
+        userKeys: PQKey[],
         tokenType: TokenType,
         serverurl: string
     ): Promise<SignedDataWithTokenImpl[]> {
@@ -180,7 +180,7 @@ export class WalletUtil {
 
     private static async signedTokenListAdd(
         utxo: UTXO,
-        userkeys: ECKey[],
+        userkeys: PQKey[],
         token: Token,
         signedTokenList: SignedDataWithTokenImpl[]
     ): Promise<void> {
@@ -208,7 +208,7 @@ export class WalletUtil {
         }
     }
 
-    private static getSignedKey(userkeys: ECKey[], pubKey: string): ECKey | null {
+    private static getSignedKey(userkeys: PQKey[], pubKey: string): PQKey | null {
         for (const userkey of userkeys) {
             if (userkey.getPublicKeyAsHex() === pubKey) {
                 return userkey;
@@ -247,7 +247,7 @@ export class WalletUtil {
             if (isMine) {
                 const walletKeys = await wallet.walletKeys(aesKey);
                 for (const ecKey of walletKeys) {
-                    address.push(ecKey.toAddress(wallet.params).toString());
+                    address.push(ecKey.toAddressWithParams(wallet.params).toString());
                 }
             }
 
@@ -347,7 +347,7 @@ export class WalletUtil {
         try {
             const keys = await wallet.walletKeys(aesKey);
             for (const ecKey of keys) {
-                if (address === ecKey.toAddress(wallet.params).toString()) {
+                if (address === ecKey.toAddressWithParams(wallet.params).toString()) {
                     return true;
                 }
             }
@@ -376,19 +376,17 @@ export class WalletUtil {
         try {
             wallet.setServerURL(serverUrl);
             const hash = Sha256Hash.wrap(Utils.HEX.decode(initialBlockHashHex));
-            let legitimatingKey: ECKey | null = null;
+            let legitimatingKey: PQKey | null = null;
 
-            // Get the wallet keys to find the one that matches the address
             const keys = await wallet.walletKeys(aesKey);
             for (const ecKey of keys) {
-                if (address === ecKey.toAddress(wallet.params).toString()) {
+                if (address === ecKey.toAddressWithParams(wallet.params).toString()) {
                     legitimatingKey = ecKey;
                     break;
                 }
             }
 
             if (legitimatingKey) {
-                // Create the order cancel info
                 const orderCancelInfo = new OrderCancelInfo(hash);
 
                 // Create a transaction to cancel the order

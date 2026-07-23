@@ -2,12 +2,11 @@ import { StatelessTransactionSigner } from './StatelessTransactionSigner';
 import { Sha256Hash } from '../core/Sha256Hash';
 import { Transaction } from '../core/Transaction';
 import { Script } from '../script/Script';
-import { ECKey } from '../core/ECKey';
-import { TransactionSignature } from '../crypto/TransactionSignature';
+import { PQKey } from '../crypto/pq/PQKey';
 import { KeyBag } from '../wallet/KeyBag'; // Placeholder
 // Placeholder
 import { ChildNumber } from '../crypto/ChildNumber';
-import { ECDSASignature } from '../core/ECDSASignature';
+import { SignatureBundle } from '../crypto/pq/SignatureBundle';
 import { SigHash } from '../core/SigHash';
 
 /**
@@ -64,9 +63,8 @@ export abstract class CustomTransactionSigner extends StatelessTransactionSigner
                 throw new Error(`Hash for signature is null for input ${i}`);
             }
             const sigKey = this.getSignature(sighash, propTx.keyPaths.get(scriptPubKey));
-            const txSig = new TransactionSignature(sigKey.sig.r, sigKey.sig.s, SigHash.ALL);
             const sigIndex = inputScript.getSigInsertionIndex(sighash, sigKey.pubKey);
-            inputScript = scriptPubKey.getScriptSigWithSignature(inputScript, txSig.encodeToBitcoin(), sigIndex);
+            inputScript = scriptPubKey.getScriptSigWithSignature(inputScript, sigKey.sig.encodeToBitcoin(), sigIndex);
             txIn.setScriptSig(inputScript);
         }
         return true;
@@ -78,10 +76,10 @@ export abstract class CustomTransactionSigner extends StatelessTransactionSigner
 
 export namespace CustomTransactionSigner {
     export class SignatureAndKey {
-        public readonly sig: ECDSASignature;
-        public readonly pubKey: ECKey;
+        public readonly sig: SignatureBundle;
+        public readonly pubKey: PQKey;
 
-        constructor(sig: ECDSASignature, pubKey: ECKey) {
+        constructor(sig: SignatureBundle, pubKey: PQKey) {
             this.sig = sig;
             this.pubKey = pubKey;
         }

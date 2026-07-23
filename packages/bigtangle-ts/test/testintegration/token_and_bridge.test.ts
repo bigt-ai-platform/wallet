@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from "vitest";
 import { Wallet } from "../../src/net/bigtangle/wallet/Wallet";
-import { ECKey } from "../../src/net/bigtangle/core/ECKey";
+import { PQKey } from "../../src/net/bigtangle/crypto/pq/PQKey";
 import { TestParams } from "../../src/net/bigtangle/params/TestParams";
 import { Utils } from "../../src/net/bigtangle/core/Utils";
 import { NetworkParameters } from "../../src/net/bigtangle/params/NetworkParameters";
@@ -9,6 +9,16 @@ import { Coin } from "../../src/net/bigtangle/core/Coin";
 import { ReqCmd } from "../../src/net/bigtangle/params/ReqCmd";
 import { OkHttp3Util } from "../../src/net/bigtangle/utils/OkHttp3Util";
 import { Json } from "../../src/net/bigtangle/utils/Json";
+import { Address } from "../../src/net/bigtangle/core/Address";
+import { Sha256Hash } from "../../src/net/bigtangle/core/Sha256Hash";
+
+function createKeyFromHex(hex: string): PQKey {
+    const bytes = new Uint8Array(Utils.HEX.decode(hex));
+    if (bytes.length >= 64) return PQKey.fromKeyMaterial(bytes);
+    const padded = new Uint8Array(64);
+    padded.set(bytes, 0);
+    return PQKey.fromKeyMaterial(padded);
+}
 
 const L0_URL = process.env.TEST_CONTEXT_ROOT || "http://localhost:8088/";
 const L1_URL = process.env.L1_ORDER_URL || "http://localhost:8086/";
@@ -17,12 +27,12 @@ const TEST_PUB = "02721b5eb0282e4bc86aab3380e2bba31d935cba386741c15447973432c61b
 
 describe("Token creation and bridge transfer", () => {
   let wallet: Wallet;
-  let testKey: ECKey;
-  let secondKey: ECKey;
+  let testKey: PQKey;
+  let secondKey: PQKey;
 
   beforeEach(() => {
-    testKey = ECKey.fromPrivateString(TEST_PRIV);
-    secondKey = ECKey.fromPrivateString("8db6bd17fa4a827619e165bfd4b0f551705ef2d549a799e7f07115e5c3abad55");
+    testKey = createKeyFromHex(TEST_PRIV);
+    secondKey = createKeyFromHex("8db6bd17fa4a827619e165bfd4b0f551705ef2d549a799e7f07115e5c3abad55");
     wallet = Wallet.fromKeysURL(TestParams.get(), [testKey, secondKey], L0_URL);
   });
 
@@ -58,8 +68,8 @@ describe("Token creation and bridge transfer", () => {
     token.setTokenname(tokenName);
     token.setDescription("Created by e2e test");
     token.setDecimals(4);
-    token.setAmount(BigInt(1000000 * 10000)); // 1M with 4 decimals
-    token.setTokentype(4); // currency
+    token.setAmount(BigInt(1000000 * 10000));
+    token.setTokentype(4);
     token.setTokenstop(true);
     token.setSignnumber(1);
     token.setDomainName("");
@@ -78,7 +88,6 @@ describe("Token creation and bridge transfer", () => {
       expect(block.getTransactions()!.length).toBeGreaterThan(0);
       console.log(`Token created in block: ${block.getHashAsString()}`);
     } catch (e: any) {
-      // If token already exists or insufficient funds, that's expected in re-runs
       console.log(`Token creation note: ${e.message}`);
     }
   });
@@ -100,10 +109,9 @@ describe("Token creation and bridge transfer", () => {
 
   test("register subtangle permission for bridge", async () => {
     const pubkeyHex = Utils.HEX.encode(testKey.getPubKey());
-    // Sign a zero hash as required by regSubtangle
-    const zeroHash = new Uint8Array(32);
-    const signature = await testKey.sign(zeroHash);
-    const signHex = Utils.HEX.encode(signature.encodeToDER());
+    const zeroHash = Sha256Hash.of(new Uint8Array(32));
+    const signature = testKey.sign(zeroHash);
+    const signHex = Utils.HEX.encode(signature.serialize());
 
     const payload = { pubkey: pubkeyHex, signHex };
     const res = await OkHttp3Util.post(L0_URL + ReqCmd.regSubtangle,
@@ -120,14 +128,12 @@ describe("Token creation and bridge transfer", () => {
   });
 
   test("L1 order server getTip responds", async () => {
-    // Use fetch directly to avoid OkHttp3Util's error throwing
     const resp = await fetch(L1_URL + ReqCmd.getTip, {
       method: 'POST', headers: { 'Content-Type': 'application/octet-stream' },
       body: new TextEncoder().encode(JSON.stringify({})),
     });
     const text = await resp.text();
     console.log(`L1 getTip status=${resp.status} response=${text.slice(0, 80)}`);
-    // L1 may not have blocks yet — just verify server responds
     expect(resp.ok || resp.status === 404).toBe(true);
   });
 
@@ -142,10 +148,10 @@ describe("Token creation and bridge transfer", () => {
 
 describe("Cross-chain bridge and order match", () => {
   let wallet: Wallet;
-  let testKey: ECKey;
+  let testKey: PQKey;
 
   beforeEach(() => {
-    testKey = ECKey.fromPrivateString(TEST_PRIV);
+    testKey = createKeyFromHex(TEST_PRIV);
     wallet = Wallet.fromKeysURL(TestParams.get(), [testKey], L0_URL);
   });
 
@@ -175,8 +181,6 @@ describe("Cross-chain bridge and order match", () => {
     console.log(`L0 balances for test key: ${(parsed.outputs || []).length} UTXOs`);
   });
 
-  // ── L1 Order Match Endpoints ──────────────────────────────────────
-
   test("L1 searchTokens endpoint responds", async () => {
     const resp = await fetch(L1_URL + ReqCmd.searchTokens, {
       method: 'POST', headers: { 'Content-Type': 'application/octet-stream' },
@@ -184,7 +188,6 @@ describe("Cross-chain bridge and order match", () => {
     });
     const text = await resp.text();
     console.log(`L1 searchTokens: status=${resp.status}, response length=${text.length}`);
-    // L1 may not have searchTokens implemented — just check server responds
     expect(resp.status === 200).toBe(true);
   });
 
@@ -208,8 +211,6 @@ describe("Cross-chain bridge and order match", () => {
     expect(resp.ok || resp.status === 404 || resp.status === 500).toBe(true);
   });
 
-  // ── Cross-chain Transfer Attempt ──────────────────────────────────
-
   test("cross-chain transfer - create CROSSTANGLE transaction", async () => {
     const candidates = await wallet.calculateAllSpendCandidates(null, false);
     if (candidates.length === 0) {
@@ -217,9 +218,8 @@ describe("Cross-chain bridge and order match", () => {
       return;
     }
 
-    // Verify we have the wallet and L1 address format
-    const l1DestAddress = testKey.toAddress(TestParams.get()).toString();
-    console.log(`L0 source address: ${testKey.toAddress(TestParams.get()).toString()}`);
+    const l1DestAddress = Address.fromKey(TestParams.get(), testKey).toString();
+    console.log(`L0 source address: ${Address.fromKey(TestParams.get(), testKey).toString()}`);
     console.log(`L1 destination address (same key): ${l1DestAddress}`);
     console.log(`UTXOs available for bridge: ${candidates.length}`);
     expect(l1DestAddress.startsWith('m') || l1DestAddress.startsWith('n')).toBe(true);
@@ -235,7 +235,6 @@ describe("Cross-chain bridge and order match", () => {
   });
 
   test("L0 server health endpoints all respond", async () => {
-    // Test multiple L0 endpoints respond correctly
     const endpoints = [ReqCmd.getTip, ReqCmd.getChainNumber, ReqCmd.getBlockByHash];
     for (const ep of endpoints) {
       const resp = await fetch(L0_URL + ep, {

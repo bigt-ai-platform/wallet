@@ -4,7 +4,8 @@ import { Buffer } from "buffer";
 import { Address } from "../../src/net/bigtangle/core/Address";
 import { Block } from "../../src/net/bigtangle/core/Block";
 import { Coin } from "../../src/net/bigtangle/core/Coin";
-import { ECKey } from "../../src/net/bigtangle/core/ECKey";
+import { CoinConstants } from "../../src/net/bigtangle/core/CoinConstants";
+import { PQKey } from "../../src/net/bigtangle/crypto/pq/PQKey";
 import { Sha256Hash } from "../../src/net/bigtangle/core/Sha256Hash";
 import { UTXO } from "../../src/net/bigtangle/core/UTXO";
 import { Utils } from "../../src/net/bigtangle/core/Utils";
@@ -18,13 +19,19 @@ import { OkHttp3Util } from "../../src/net/bigtangle/utils/OkHttp3Util";
 import { Wallet } from "../../src/net/bigtangle/wallet/Wallet";
 import { Json } from "../../src/net/bigtangle/utils/Json";
 import { WalletUtil } from "../../src/net/bigtangle/utils/WalletUtil";
+
+export function createKeyFromHex(hex: string): PQKey {
+    const bytes = new Uint8Array(Utils.HEX.decode(hex));
+    if (bytes.length >= 64) return PQKey.fromKeyMaterial(bytes);
+    const padded = new Uint8Array(64);
+    padded.set(bytes, 0);
+    return PQKey.fromKeyMaterial(padded);
+}
+
 export abstract class RemoteTest {
   public objectMapper = new ObjectMapper();
   public contextRoot = process.env.TEST_CONTEXT_ROOT || "http://localhost:18089/";
 
-  /*
-   * default wallet which has key testpriv and yuanTokenPriv
-   */
   public wallet!: Wallet;
 
   protected readonly aesKey: any = null;
@@ -55,14 +62,14 @@ export abstract class RemoteTest {
   public setUp() {
     this.wallet = Wallet.fromKeysURL(
       this.networkParameters,
-      [ECKey.fromPrivateString(RemoteTest.testPriv)],
+      [createKeyFromHex(RemoteTest.testPriv)],
       this.contextRoot
     );
   }
 
   protected async payTestTokenTo(
-    beneficiary: ECKey,
-    testKey: ECKey,
+    beneficiary: PQKey,
+    testKey: PQKey,
     amount: bigint,
     addedBlocks: Block[] = []
   ) {
@@ -70,18 +77,17 @@ export abstract class RemoteTest {
   }
 
   protected async payBigTo(
-    beneficiary: ECKey[],
+    beneficiary: PQKey[],
     amount: bigint,
     addedBlocks: Block[]
   ): Promise<Block> {
     const giveMoneyResult = new Map<string, bigint>();
     for (const b of beneficiary) {
     giveMoneyResult.set(
-      b.toAddress(this.networkParameters).toString(),
+      Address.fromKey(this.networkParameters, b).toString(),
       amount
     );
   }
-    // Convert token ID to Uint8Array
     const tokenIdBytes = Buffer.from(Utils.HEX.decode(NetworkParameters.BIGTANGLE_TOKENID_STRING));
     return this.payList(addedBlocks, giveMoneyResult, tokenIdBytes);
   }
@@ -102,7 +108,6 @@ export abstract class RemoteTest {
       0,
       0
     );
-    // log.debug("block " + (b == null ? "block is null" : b.toString()));
     if (addedBlocks !== null) {
       addedBlocks.push(b!);
     }
@@ -111,18 +116,17 @@ export abstract class RemoteTest {
   }
 
   protected async payTestTokenToAmount(
-    beneficiary: ECKey,
-    testKey: ECKey,
+    beneficiary: PQKey,
+    testKey: PQKey,
     amount: bigint,
     addedBlocks: Block[]
   ) {
-    // Use fee as bigint - no conversion needed
     await this.payBigTo(testKey, CoinConstants.FEE_DEFAULT.getValue(), addedBlocks);
 
     const giveMoneyTestToken = new Map<string, bigint>();
 
     giveMoneyTestToken.set(
-      beneficiary.toAddress(this.networkParameters).toString(),
+      Address.fromKey(this.networkParameters, beneficiary).toString(),
       amount
     );
     const w = await Wallet.fromKeysURL(
@@ -138,15 +142,11 @@ export abstract class RemoteTest {
       tokenidBytes,
       ""
     );
-    // log.debug("block " + (b == null ? "block is null" : b.toString()));
-
     addedBlocks.push(b!);
-
-    // Open sell order for test tokens
   }
 
 
-  protected async sell( walletKeys: ECKey[]): Promise<void> {
+  protected async sell( walletKeys: PQKey[]): Promise<void> {
     const utxos= await this.getBalanceByKeys(false, walletKeys);
     for (const utxo of utxos) {
       if (utxo.getValue() &&
@@ -167,7 +167,6 @@ export abstract class RemoteTest {
           this.blocksAddedAll.push(sellOrder);
         } catch (e) {
           // ignore InsufficientMoneyException and other exceptions
-          // console.error(e);
         }
       }
     }
@@ -176,7 +175,7 @@ export abstract class RemoteTest {
 
 
   async makeBuyOrder(
-    beneficiary: ECKey,
+    beneficiary: PQKey,
     tokenId: string,
     buyPrice: number,
     buyAmount: number,
@@ -189,7 +188,6 @@ export abstract class RemoteTest {
       this.contextRoot
     );
     w.setServerURL(this.contextRoot);
-    // Use fee as bigint
     await this.payBigTo(beneficiary, CoinConstants.FEE_DEFAULT.getValue(), addedBlocks);
     const block = await w.buyOrder(
       null, // aesKey
@@ -207,11 +205,10 @@ export abstract class RemoteTest {
   }
 
   protected async assertHasAvailableToken(
-    testKey: ECKey,
+    testKey: PQKey,
     tokenId_: string,
     amount: bigint
   ) {
-    // Asserts that the given ECKey possesses the given amount of tokens
     const balance = await this.getBalanceByKey(false, testKey);
     const hashMap = new Map<string, bigint>();
     for (const o of balance) {
@@ -237,7 +234,6 @@ export abstract class RemoteTest {
   }
 
   public async adjustSolve(block: Block): Promise<Block> {
-    // save block
     const resp = await OkHttp3Util.post(
       this.contextRoot + ReqCmd.adjustHeight,
       Buffer.from(block.bitcoinSerialize())
@@ -259,13 +255,12 @@ export abstract class RemoteTest {
 
   public async getBalanceByKey(
     withZero: boolean,
-    ecKey: ECKey
+    key: PQKey
   ): Promise<UTXO[]> {
-    return this.getBalanceByKeys(withZero, [ecKey]);
+    return this.getBalanceByKeys(withZero, [key]);
   }
 
   protected getLargeUTXO(outputs: UTXO[]): UTXO {
-    // Filter out UTXOs with null values
     const validOutputs = outputs.filter((output) => output.getValue() !== null);
 
     if (validOutputs.length === 0) {
@@ -274,7 +269,6 @@ export abstract class RemoteTest {
 
     let a = validOutputs[0];
     for (const b of validOutputs) {
-      // Use non-null assertion since we filtered nulls
       if (b.getValue()!.isGreaterThan(a.getValue()!)) {
         a = b;
       }
@@ -282,26 +276,21 @@ export abstract class RemoteTest {
     return a;
   }
 
-  // get balance for the walletKeys
-  // This method is now defined only once
   protected async getBalanceByKeys(
     withZero: boolean,
-    keys: ECKey[]
+    keys: PQKey[]
   ): Promise<UTXO[]> {
     console.debug(`Getting balances for ${keys.length} keys`);
 
     const keyStrHex000 = new Array<string>();
 
-    for (const ecKey of keys) {
-      const pubKeyHash = ecKey.getPubKeyHash();
+    for (const key of keys) {
+      const pubKeyHash = key.getPubKeyHash();
       const hex = Utils.toHexString(Buffer.from(pubKeyHash));
       keyStrHex000.push(hex);
-    //  console.debug(`Key hash: ${hex}`);
     }
     const jsonString = Json.jsonmapper().stringify(keyStrHex000);
-   // console.debug(`Request JSON: ${jsonString}`);
 
-      // Create Buffer from the JSON string directly
       const buffer = Buffer.from(jsonString, 'utf8');
 
       console.debug(`Making request to: ${this.contextRoot + ReqCmd.getBalances}`);
@@ -310,14 +299,11 @@ export abstract class RemoteTest {
         buffer
       );
 
-   //   console.debug(`Received response (first 200 chars): ${resp.substring(0, 200)}...`);
-
       if (!resp || resp.trim().length === 0) {
         console.error('Received empty response from server');
         return [];
       }
 
-      // Check if response contains an error
       if (resp.includes('"errorcode"')) {
         console.error(`Server returned error: ${resp}`);
         return [];
@@ -327,7 +313,6 @@ export abstract class RemoteTest {
   }
 
   protected   getUTXOs( resp: string):  UTXO[]  { 
-      // Parse response and convert plain objects to UTXO instances
       const responseObj: any = Json.jsonmapper().parse(resp);
       let utxos: UTXO[] = [];
       
@@ -340,7 +325,6 @@ export abstract class RemoteTest {
         return [];
       }
       
-      // Filter out spent and pending outputs
       utxos = utxos.filter(utxo =>  
         utxo &&  
         !utxo.isSpent()  && 
@@ -363,7 +347,7 @@ export abstract class RemoteTest {
   protected async getBalanceByToken(
     tokenid: string,
     withZero: boolean,
-    keys: ECKey[]
+    keys: PQKey[]
   ): Promise<UTXO | null> {
     const ulist = await this.getBalanceByKeys(withZero, keys);
 
@@ -376,11 +360,10 @@ export abstract class RemoteTest {
     return null;
   }
   
-  // Translated from Java: protected UTXO getBalance(String tokenid, boolean withZero, List<ECKey> keys)
   protected async getBalanceForToken(
     tokenid: string,
     withZero: boolean,
-    keys: ECKey[]
+    keys: PQKey[]
   ): Promise<UTXO> {
     const ulist = await this.getBalanceByKeys(withZero, keys);
 
@@ -395,7 +378,7 @@ export abstract class RemoteTest {
 
   protected async getBalanceAccount(
     withZero: boolean,
-    keys: ECKey[]
+    keys: PQKey[]
   ): Promise<UTXO[]> {
      
     return this.getBalanceByKeys(withZero, keys) ;
@@ -411,14 +394,10 @@ export abstract class RemoteTest {
     }
   }
 
- 
-  
-  // Proxy method to access wallet's checkSpendpending
   checkSpendpending(utxo: UTXO): boolean {
     return this.wallet.checkSpendpending(utxo);
   }
   
-  // get balance for the walletKeys
   protected async getBalanceByAddress(address: string): Promise<UTXO[]> {
     const listUTXO = new Array<UTXO>();
     const keyStrHex000 = new Array<string>();
@@ -443,14 +422,13 @@ export abstract class RemoteTest {
 
   protected async getBalanceByECKey(
     withZero: boolean,
-    ecKey: ECKey
+    ecKey: PQKey
   ): Promise<UTXO[]> {
-    const keys: ECKey[] = [];
+    const keys: PQKey[] = [];
     keys.push(ecKey);
     return this.getBalanceByKeys(withZero, keys);
   }
    
- 
 
   protected checkResponse(resp: Uint8Array, code: number = 0) {
     this.checkResponseWithCode(resp, code);
@@ -463,13 +441,13 @@ export abstract class RemoteTest {
   }
 
  
-  protected async checkBalanceSumWithKey(coin: Coin, a: ECKey) {
-    const keys: ECKey[] = [];
+  protected async checkBalanceSumWithKey(coin: Coin, a: PQKey) {
+    const keys: PQKey[] = [];
     keys.push(a);
     await this.checkBalanceSum(coin, keys);
   }
 
-  protected async checkBalanceSum(coin: Coin, a: ECKey[]) {
+  protected async checkBalanceSum(coin: Coin, a: PQKey[]) {
     const ulist = await this.getBalanceByKeys(false, a);
 
     let sum = new Coin(BigInt(0), coin.getTokenid());
@@ -498,13 +476,9 @@ export abstract class RemoteTest {
     }) as TokenIndexResponse;
   }
 
-
-
-
-
   public async post<T>(
     reqCmd: string,
-    params: any, // Changed type to any to accommodate Map and Array
+    params: any,
     responseClass: any
   ): Promise<T> {
     return OkHttp3Util.postClass(
@@ -515,7 +489,6 @@ export abstract class RemoteTest {
   }
  
   public async testSearchOrder() { 
-
       const ordersWithAddress = await WalletUtil.searchOrder(
         this.wallet,
         null,
@@ -528,4 +501,6 @@ export abstract class RemoteTest {
       console.log("Orders with address found:", ordersWithAddress.length);
     }
   }
- 
+  
+
+

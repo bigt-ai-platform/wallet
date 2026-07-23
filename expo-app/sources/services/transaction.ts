@@ -4,7 +4,7 @@
  * Handles transaction creation, signing, and broadcasting
  */
 
-import { ECKey, TestParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder } from 'bigtangle-ts';
+import { PQKey, TestParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder } from 'bigtangle-ts';
 // @ts-ignore
 import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
 // @ts-ignore
@@ -13,9 +13,6 @@ import { TransactionInput } from 'bigtangle-ts/dist/net/bigtangle/core/Transacti
 import { TransactionOutput } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutput';
 // @ts-ignore
 import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutPoint';
-// @ts-ignore
-import { TransactionSignature } from 'bigtangle-ts/dist/net/bigtangle/crypto/TransactionSignature';
-
 import { httpService } from './http';
 import type { UTXO, ApiResponse } from '@/types/api';
 
@@ -163,9 +160,9 @@ export async function createAndSignTransaction(
       };
     }
 
-    // Create ECKey from private key
-    const bigintVal = BigInt('0x' + privateKeyHex);
-    const ecKey = ECKey.fromPrivate(bigintVal);
+    // Create PQKey from private key
+    const rawKey = hexToBytes(privateKeyHex);
+    const pqKey = PQKey.fromPrivateKey(rawKey);
 
     // Create transaction
     const tx = new Transaction(testParams);
@@ -216,9 +213,8 @@ export async function createAndSignTransaction(
 
       const sigHashBytes = tx.hashForSignatureScript(i, new Script(scriptBytes), 1 as any, false);
 
-      const ecdsaSignature = await ecKey.sign(sigHashBytes.getBytes());
-      const txSig = new TransactionSignature(ecdsaSignature, 1 as any, false);
-      const scriptSig = ScriptBuilder.createInputScript(txSig, ecKey);
+      const signatureBundle = await pqKey.signWithAesKey(sigHashBytes, null);
+      const scriptSig = ScriptBuilder.createInputScript(signatureBundle, pqKey);
       input.setScriptSig(scriptSig!);
     }
 

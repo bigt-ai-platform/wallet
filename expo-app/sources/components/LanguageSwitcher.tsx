@@ -6,7 +6,7 @@ import { GlobeIcon, CloseIcon } from './Icons';
 import { supportedLanguages } from '@/lib/i18n';
 
 export default function LanguageSwitcher() {
-  const { i18n } = useTranslation();
+  const { i18n, t } = useTranslation();
   const { theme } = useUnistyles();
   const [visible, setVisible] = React.useState(false);
 
@@ -31,7 +31,7 @@ export default function LanguageSwitcher() {
             width: 260, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border,
           }}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }}>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text.primary }}>Language</Text>
+              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text.primary }}>{t('common.language')}</Text>
               <TouchableOpacity onPress={() => setVisible(false)}>
                 <CloseIcon size={18} color={theme.colors.text.secondary} />
               </TouchableOpacity>

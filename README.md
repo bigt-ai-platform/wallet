@@ -38,7 +38,7 @@ bapp/
 │   │   ├── constants/     # App constants
 │   │   ├── types/         # TypeScript type definitions
 │   │   ├── unistyles/     # Theme configuration
-│   │   └── text/          # Internationalization (i18n)
+│   │   ├── lib/           # Internationalization (i18n via i18next + react-i18next)
 │   ├── app.config.js      # Expo configuration
 │   ├── babel.config.js    # Babel configuration
 │   ├── metro.config.js    # Metro bundler configuration
@@ -213,15 +213,27 @@ const styles = StyleSheet.create((theme) => ({
 
 ### Internationalization
 
-All user-facing strings use the `t()` function from `@/text`:
+Uses **i18next** with **react-i18next**. Translations are defined inline in `sources/lib/i18n.ts` with 6 supported languages:
+
+| Language | Code |
+|----------|------|
+| English | `en` |
+| Chinese | `zh` |
+| German | `de` |
+| French | `fr` |
+| Spanish | `es` |
+| Japanese | `ja` |
+
+Usage in components:
 
 ```typescript
-import { t } from '@/text';
+import { useTranslation } from 'react-i18next';
 
-const title = t('home.title');
+const { t } = useTranslation();
+const title = t('wallet.manageKeys');
 ```
 
-Add new translations in `sources/text/translations/`.
+Add new translation keys in `sources/lib/i18n.ts` under each language's `translation` object.
 
 ## Path Aliases
 
@@ -296,7 +308,7 @@ Singleton API service at `sources/services/http.ts` with endpoints for balances,
 
 ### Internationalization
 
-All user-facing strings use the `t()` function from `@/text`. Translations are in `sources/text/translations/`. Currently supports English (`en.ts`) with an extensible system for additional languages.
+All user-facing strings use `useTranslation()` from `react-i18next`. Translations are defined in `sources/lib/i18n.ts` supporting 6 languages (en, zh, de, fr, es, ja).
 
 ## License
 

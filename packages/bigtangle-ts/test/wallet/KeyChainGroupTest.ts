@@ -1,22 +1,26 @@
 import { KeyChainGroup } from '../../src/net/bigtangle/wallet/KeyChainGroup';
 import { MainNetParams } from '../../src/net/bigtangle/params/MainNetParams';
 import { KeyPurpose } from '../../src/net/bigtangle/wallet/KeyChain';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
 import { KeyCrypterScrypt } from '../../src/net/bigtangle/crypto/KeyCrypterScrypt';
 import { DeterministicKey } from '../../src/net/bigtangle/crypto/DeterministicKey';
 import { describe, beforeEach, test, expect } from 'vitest';
+
+function createTestKey(n: number): PQKey {
+    const seed = new Uint8Array(64);
+    seed[63] = n;
+    return PQKey.fromKeyMaterial(seed);
+}
 
 describe('KeyChainGroupTest', () => {
     const LOOKAHEAD_SIZE = 5;
     const NETWORK_PARAMS = MainNetParams.get();
     let group: KeyChainGroup;
 
-    // Valid private key (1 < key < N-1)
-    const VALID_PRIVATE_KEY = BigInt('1234567890123456789012345678901234567890');
+    const TEST_KEY = createTestKey(1);
 
     beforeEach(() => {
         group = new KeyChainGroup(NETWORK_PARAMS);
-        // Set lookahead size directly since setLookaheadSize() doesn't exist
         group.lookaheadSize = LOOKAHEAD_SIZE;
     });
 
@@ -28,7 +32,7 @@ describe('KeyChainGroupTest', () => {
     });
 
     test('createBasic', () => {
-        const key = ECKey.fromPrivate(VALID_PRIVATE_KEY);
+        const key = createTestKey(1);
         group.importKeys(key);
         group.importKeys(key);
         group.importKeys(key);
@@ -36,14 +40,14 @@ describe('KeyChainGroupTest', () => {
     });
 
     test('currentKeys', () => {
-        const key = ECKey.fromPrivate(VALID_PRIVATE_KEY);
+        const key = createTestKey(1);
         group.importKeys(key);
         expect(group.currentKey(KeyPurpose.RECEIVE_FUNDS)).toEqual(key);
         expect(group.currentKey(KeyPurpose.CHANGE)).toEqual(key);
     });
 
     test('freshKeys', () => {
-        const key = ECKey.fromPrivate(VALID_PRIVATE_KEY);
+        const key = createTestKey(1);
         group.importKeys(key);
         group.importKeys(key);
         const key2 = group.freshKey(KeyPurpose.RECEIVE_FUNDS);
@@ -52,28 +56,28 @@ describe('KeyChainGroupTest', () => {
     });
 
     test('freshAddresses', () => {
-        const key = ECKey.fromPrivate(VALID_PRIVATE_KEY);
+        const key = createTestKey(1);
         group.importKeys(key);
         const addr = group.freshAddress(KeyPurpose.RECEIVE_FUNDS);
         expect(group.currentAddress(KeyPurpose.RECEIVE_FUNDS)).toEqual(addr);
     });
 
     test('importKeys', () => {
-        const key = ECKey.fromPrivate(VALID_PRIVATE_KEY);
+        const key = createTestKey(1);
         const num = group.importKeys(key);
         expect(num).toBe(1);
         expect(group.findKeyFromPubKey(key.getPubKey())).toEqual(key);
     });
 
     test('importKeysDuplicate', () => {
-        const key = ECKey.fromPrivate(VALID_PRIVATE_KEY);
+        const key = createTestKey(1);
         group.importKeys(key);
         const num = group.importKeys(key);
         expect(num).toBe(0);
     });
 
     test('encryption', async () => {
-        const key = ECKey.fromPrivate(VALID_PRIVATE_KEY);
+        const key = createTestKey(1);
         group.importKeys(key);
 
         const scrypt = new KeyCrypterScrypt({ N: 2 });
@@ -90,11 +94,11 @@ describe('KeyChainGroupTest', () => {
         expect(group.isEncrypted()).toBe(false);
         const decryptedKey = group.getImportedKeys()[0];
         expect(decryptedKey.isEncrypted()).toBe(false);
-        expect(decryptedKey.getPrivKey()).toEqual(key.getPrivKey());
+        expect(decryptedKey.getPrivateKeyBytes()).toEqual(key.getPrivateKeyBytes());
     });
 
     test('encryptionDecryptionFail', async () => {
-        const key = ECKey.fromPrivate(VALID_PRIVATE_KEY);
+        const key = createTestKey(1);
         group.importKeys(key);
 
         const scrypt = new KeyCrypterScrypt({ N: 2 });
@@ -107,7 +111,7 @@ describe('KeyChainGroupTest', () => {
     });
 
     test('removeImportedKey', () => {
-        const key = ECKey.fromPrivate(VALID_PRIVATE_KEY);
+        const key = createTestKey(1);
         group.importKeys(key);
         expect(group.removeImportedKey(key)).toBe(true);
         expect(group.removeImportedKey(key)).toBe(false);
@@ -123,7 +127,7 @@ describe('KeyChainGroupTest', () => {
     });
 
     test('findKeyFromPubKey', () => {
-        const key = group.freshKey(KeyPurpose.RECEIVE_FUNDS) as ECKey;
+        const key = group.freshKey(KeyPurpose.RECEIVE_FUNDS) as PQKey;
         expect(group.findKeyFromPubKey(key.getPubKey())).toEqual(key);
     });
 

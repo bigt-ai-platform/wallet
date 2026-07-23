@@ -1,6 +1,7 @@
-import { ECKey } from '../core/ECKey';
-import { ECDSASignature } from '../core/ECDSASignature';
-import { sha256 } from '@noble/hashes/sha256';
+import { PQKey } from '../crypto/pq/PQKey';
+import { SignatureBundle } from '../crypto/pq/SignatureBundle';
+import { Sha256Hash } from '../core/Sha256Hash';
+import { Utils } from '../utils/Utils';
 import { DidKey } from './DidKey';
 
 const DEFAULT_CHALLENGE_EXPIRY_MS = 5 * 60 * 1000;
@@ -41,18 +42,18 @@ export class ChallengeAuth {
   }
 
   /**
-   * Signs a challenge nonce with the given ECKey.
+   * Signs a challenge nonce with the given PQKey.
    * The message signed is SHA-256(nonce).
-   * Returns the signature as a hex-encoded DER string.
+   * Returns the signature as a hex-encoded serialized SignatureBundle.
    */
   public static async signChallenge(
     nonce: string,
-    key: ECKey
+    key: PQKey
   ): Promise<string> {
     const nonceBytes = hexToBytes(nonce);
-    const messageHash = sha256(nonceBytes);
-    const signature = await key.sign(messageHash);
-    return signature.toHexDER();
+    const messageHash = Sha256Hash.of(nonceBytes);
+    const signature = key.sign(messageHash);
+    return Utils.HEX.encode(signature.serialize());
   }
 
   /**
@@ -63,7 +64,7 @@ export class ChallengeAuth {
     nonce: string,
     signatureHex: string
   ): boolean {
-    const pubKey = DidKey.toECKey(did);
+    const pubKey = DidKey.toPQKey(did);
     return ChallengeAuth.verifyChallengeWithPublicKey(nonce, signatureHex, pubKey);
   }
 
@@ -73,14 +74,13 @@ export class ChallengeAuth {
   public static verifyChallengeWithPublicKey(
     nonce: string,
     signatureHex: string,
-    pubKey: ECKey
+    pubKey: PQKey
   ): boolean {
     const nonceBytes = hexToBytes(nonce);
-    const messageHash = sha256(nonceBytes);
-
-    const signatureBytes = hexToBytes(signatureHex);
-
-    return pubKey.verify(messageHash, signatureBytes);
+    const messageHash = Sha256Hash.of(nonceBytes);
+    const sigBytes = Utils.HEX.decode(signatureHex);
+    const sigBundle = SignatureBundle.deserialize(sigBytes);
+    return PQKey.verify(messageHash, sigBundle, pubKey.getPublicKeyBytes());
   }
 
   /**
@@ -89,7 +89,7 @@ export class ChallengeAuth {
   public static async createResponse(
     did: string,
     nonce: string,
-    key: ECKey
+    key: PQKey
   ): Promise<ChallengeResponse> {
     const signature = await ChallengeAuth.signChallenge(nonce, key);
     return { did, nonce, signature };

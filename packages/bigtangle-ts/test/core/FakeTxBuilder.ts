@@ -3,7 +3,7 @@ import { NetworkParameters } from '../../src/net/bigtangle/params/NetworkParamet
 import { Transaction } from '../../src/net/bigtangle/core/Transaction';
 import { Coin } from '../../src/net/bigtangle/core/Coin';
 import { CoinConstants } from '../../src/net/bigtangle/core/CoinConstants';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
 import { Address } from '../../src/net/bigtangle/core/Address';
 import { TransactionOutput } from '../../src/net/bigtangle/core/TransactionOutput';
 import { Sha256Hash } from '../../src/net/bigtangle/core/Sha256Hash';
@@ -12,7 +12,7 @@ import { TransactionInput } from '../../src/net/bigtangle/core/TransactionInput'
 import { ScriptBuilder } from '../../src/net/bigtangle/script/ScriptBuilder';
 import { TransactionSignature } from '../../src/net/bigtangle/crypto/TransactionSignature';
 import { Block } from '../../src/net/bigtangle/core/Block';
-// Removed UtilsTest import
+import { UtilBase } from './UtilBase';
 
 
 export class FakeTxBuilder {
@@ -21,7 +21,7 @@ export class FakeTxBuilder {
         return FakeTxBuilder.createFakeTxWithoutChangeAddress(
             params,
              CoinConstants.COIN,
-            ECKey.fromPrivate(BigInt('1')).toAddress(params),
+            Address.fromKey(params, UtilBase.createTestKeyFromBigInt(1n)),
         );
     }
 
@@ -33,7 +33,7 @@ export class FakeTxBuilder {
         const prevTx = FakeTxBuilder.createFakeTx(
             params,
              CoinConstants.COIN,
-            ECKey.fromPrivate(BigInt('1')).toAddress(params),
+            Address.fromKey(params, UtilBase.createTestKeyFromBigInt(1n)),
         );
         const tx = new Transaction(params);
         tx.addOutput(output);
@@ -61,7 +61,7 @@ export class FakeTxBuilder {
             params,
             tx,
             Coin.valueOf( CoinConstants.COIN.getValue() * 50n, NetworkParameters.getBIGTANGLE_TOKENID()),
-            ECKey.fromPrivate(BigInt('1')).toAddress(params),
+            Address.fromKey(params, UtilBase.createTestKeyFromBigInt(1n)),
         );
         tx.addOutput(outputToMe);
 
@@ -195,7 +195,7 @@ export class FakeTxBuilder {
             params,
             value,
             to,
-            ECKey.fromPrivate(BigInt('1')).toAddress(params),
+            Address.fromKey(params, UtilBase.createTestKeyFromBigInt(1n)),
         );
     }
 
@@ -207,7 +207,7 @@ export class FakeTxBuilder {
     public static createFakeTxECKey(
         params: NetworkParameters,
         value: Coin,
-        to: ECKey,
+        to: PQKey,
     ): Transaction {
         const t = new Transaction(params);
         const outputToMe = TransactionOutput.fromCoinKey(params, t, value, to);
@@ -219,7 +219,7 @@ export class FakeTxBuilder {
                  CoinConstants.COIN.getValue() * 1n + 11n,
                 NetworkParameters.getBIGTANGLE_TOKENID()
             ),
-            ECKey.fromPrivate(BigInt('2')).toAddress(params),
+            Address.fromKey(params, UtilBase.createTestKeyFromBigInt(2n)),
         );
         t.addOutput(change);
         // Make a previous tx simply to send us sufficient coins. This prev tx
@@ -259,7 +259,7 @@ export class FakeTxBuilder {
                  CoinConstants.COIN.getValue() * 1n + 11n,
                 NetworkParameters.getBIGTANGLE_TOKENID()
             ),
-            ECKey.fromPrivate(BigInt('2')).toAddress(params),
+            Address.fromKey(params, UtilBase.createTestKeyFromBigInt(2n)),
         );
         t.addOutput(change);
         // Make a feeder tx that sends to the from address specified. This
@@ -312,7 +312,7 @@ export class FakeTxBuilder {
     ): DoubleSpends {
         const doubleSpends = new DoubleSpends();
         const value =  CoinConstants.COIN;
-        const someBadGuy = ECKey.fromPrivate(BigInt('3')).toAddress(params);
+        const someBadGuy = Address.fromKey(params, UtilBase.createTestKeyFromBigInt(3n));
 
         doubleSpends.prevTx = new Transaction(params);
         const prevOut = TransactionOutput.fromAddress(

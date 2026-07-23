@@ -1,7 +1,7 @@
 import { ChildNumber } from './ChildNumber';
 import { hmac } from '@noble/hashes/hmac';
 import { sha512 } from '@noble/hashes/sha512';
-import { ECKey } from '../core/ECKey';
+import { PQKey } from '../crypto/pq/PQKey';
 import { ECPoint } from '../core/ECPoint'; // Added import
 
 export class HDUtils {
@@ -25,8 +25,8 @@ export class HDUtils {
         return hmac(sha512, chainCode, data);
     }
 
-    static toCompressed(key: ECKey | Uint8Array): Uint8Array {
-        if (key instanceof ECKey) {
+    static toCompressed(key: PQKey | Uint8Array): Uint8Array {
+        if (key instanceof PQKey) {
             return key.getPubKeyBytes(); // Already returns compressed
         } else if (key instanceof Uint8Array) {
             // Assume it's a public key in Uint8Array format, decode and re-encode compressed

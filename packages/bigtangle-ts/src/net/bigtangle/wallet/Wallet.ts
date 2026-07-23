@@ -2,7 +2,8 @@ import { Address } from "../core/Address";
 import { Block } from "../core/Block";
 import { Coin } from "../core/Coin";
 import { CoinConstants } from "../core/CoinConstants";
-import { ECKey } from "../core/ECKey";
+import { PQKey } from "../crypto/pq/PQKey";
+import { SignatureBundle } from "../crypto/pq/SignatureBundle";
 import { NetworkParameters } from "../params/NetworkParameters";
 import { Token } from "../core/Token";
 import { TokenInfo } from "../core/TokenInfo";
@@ -43,12 +44,10 @@ import { ScriptBuilder } from "../script/ScriptBuilder";
 import { OrderCancelInfo } from "../core/OrderCancelInfo";
 import { ContractEventCancelInfo } from "../core/ContractEventCancelInfo";
 import { ContractEventInfo } from "../core/ContractEventInfo";
-import { TransactionSignature } from "../crypto/TransactionSignature";
 import { OutputsDetailsResponse } from "../response/OutputsDetailsResponse";
 import { OrderTickerResponse } from "../response/OrderTickerResponse";
 import { MatchLastdayResult } from "../ordermatch/MatchLastdayResult";
 import { MonetaryFormat } from "../utils/MonetaryFormat";
-import { ECIESCoder } from "../crypto/ECIESCoder";
 import { KeyParameter } from "../crypto/KeyCrypter";
 import { UserSettingDataInfo } from "../core/UserSettingDataInfo";
 
@@ -56,7 +55,7 @@ export class Wallet extends WalletBase {
   keyChainGroup: KeyChainGroup;
   url: string | null = null;
 
-  static fromKeys(params: NetworkParameters, keys: ECKey[]): Wallet {
+  static fromKeys(params: NetworkParameters, keys: PQKey[]): Wallet {
     for (const key of keys) {
       if (key instanceof DeterministicKey) {
         throw new Error("DeterministicKey not allowed");
@@ -69,7 +68,7 @@ export class Wallet extends WalletBase {
 
   static fromKeysURL(
     params: NetworkParameters,
-    keys: ECKey[],
+    keys: PQKey[],
     url: string
   ): Wallet {
     for (const key of keys) {
@@ -82,11 +81,11 @@ export class Wallet extends WalletBase {
     return new Wallet(params, group, url);
   }
 
-  static fromKeysSingle(params: NetworkParameters, key: ECKey, url?: string): Wallet {
+  static fromKeysSingle(params: NetworkParameters, key: PQKey, url?: string): Wallet {
     if (key instanceof DeterministicKey) {
       throw new Error("DeterministicKey not allowed");
     }
-    const keys: ECKey[] = [key];
+    const keys: PQKey[] = [key];
     const group = new KeyChainGroup(params);
     group.importKeys(...keys);
     return url ? new Wallet(params, group, url) : new Wallet(params, group);
@@ -236,7 +235,7 @@ export class Wallet extends WalletBase {
   async saveToken(
     tokenInfo: TokenInfo,
     basecoin: Coin,
-    ownerKey: ECKey,
+    ownerKey: PQKey,
     aesKey: any,
     pubKeyTo?: Uint8Array,
     memoInfo?: MemoInfo
@@ -291,15 +290,15 @@ export class Wallet extends WalletBase {
 
     const transaction = block.getTransactions()![0];
     const sighash = transaction.getHash();
-    const party1Signature = await ownerKey.sign(sighash.getBytes(), aesKey);
-    const buf1 = party1Signature.encodeToDER();
+    const party1Signature = await ownerKey.signWithAesKey(sighash, aesKey);
+    const buf1 = party1Signature.serialize();
 
     const multiSignBies: MultiSignBy[] = [];
     const multiSignBy0 = new MultiSignBy();
     const tokenIdStr = token.getTokenid() || "";
     multiSignBy0.setTokenid(tokenIdStr.trim());
     multiSignBy0.setTokenindex(0);
-    multiSignBy0.setAddress(ownerKey.toAddress(this.params).toBase58());
+    multiSignBy0.setAddress(ownerKey.toAddress().toHex());
     multiSignBy0.setPublickey(Utils.HEX.encode(ownerKey.getPubKey()));
     multiSignBy0.setSignature(Utils.HEX.encode(buf1));
     multiSignBies.push(multiSignBy0);
@@ -314,7 +313,7 @@ export class Wallet extends WalletBase {
 
   async signToken(
     tokenid: string,
-    signkey: ECKey,
+    signkey: PQKey,
     aesKey: any
   ): Promise<Block> {
     await this.checkTokenId(tokenid);
@@ -329,11 +328,11 @@ export class Wallet extends WalletBase {
 
   async multiSign(
     tokenid: string,
-    outKey: ECKey,
+    outKey: PQKey,
     aesKey: any
   ): Promise<Block | null> {
     const requestParam = new Map<string, any>();
-    const address = outKey.toAddress(this.params).toBase58();
+    const address = outKey.toAddress().toHex();
     requestParam.set("address", address);
     requestParam.set("tokenid", tokenid);
 
@@ -392,9 +391,8 @@ export class Wallet extends WalletBase {
     }
 
     const sighash = transaction.getHash();
-    const sighashBytes = sighash.getBytes();
-    const party1Signature = await outKey.sign(sighashBytes, aesKey);
-    const buf1 = party1Signature.encodeToDER();
+    const party1Signature = await outKey.signWithAesKey(sighash, aesKey);
+    const buf1 = party1Signature.serialize();
 
     const multiSignBy0 = new MultiSignBy();
     let multiSignTokenId: string;
@@ -409,7 +407,7 @@ export class Wallet extends WalletBase {
 
     multiSignBy0.setTokenid(multiSignTokenId);
     multiSignBy0.setTokenindex(tokenindex);
-    multiSignBy0.setAddress(outKey.toAddress(this.params).toBase58());
+    multiSignBy0.setAddress(outKey.toAddress().toHex());
     multiSignBy0.setPublickey(Utils.HEX.encode(outKey.getPubKey()));
     multiSignBy0.setSignature(Utils.HEX.encode(buf1));
 
@@ -436,8 +434,8 @@ export class Wallet extends WalletBase {
       }
       const pubKeyBytes = Utils.HEX.decode(pubKeyHex);
       const signatureBytes = Utils.HEX.decode(signatureHex);
-      const tempKey = ECKey.fromPublicOnly(pubKeyBytes);
-      const isValid = tempKey.verify(tx.getHash().getBytes(), signatureBytes);
+      const sigBundle = SignatureBundle.deserialize(signatureBytes);
+      const isValid = PQKey.verify(tx.getHash(), sigBundle, pubKeyBytes);
       if (!isValid) {
         throw new Error(
           `Signature verification failed for address: ${multiSignBy.getAddress()}`
@@ -456,21 +454,17 @@ export class Wallet extends WalletBase {
     toAddress: string,
     coin: Coin,
     memoInfo?: MemoInfo
-  ): Promise<Block> {
+  ): Promise<Transaction | null> {
     const giveMoneyResult = new Map<string, bigint>();
     giveMoneyResult.set(toAddress, coin.getValue());
     const coinList = await this.calculateAllSpendCandidates(aesKey, false);
-    const block = await this.payMoneyToECKeyList(
+    return this.payMoneyToECKeyList(
       aesKey,
       giveMoneyResult,
       coin.getTokenid(),
       memoInfo ? memoInfo.toString() : "",
       coinList
     );
-    if (!block) {
-      throw new Error("Failed to create payment transaction");
-    }
-    return block;
   }
 
   async payToList(
@@ -538,7 +532,7 @@ export class Wallet extends WalletBase {
     if (this.getFee() && amount.isBIG()) {
       amount = amount.add(CoinConstants.FEE_DEFAULT.negate());
     }
-    let beneficiary: ECKey | null = null;
+    let beneficiary: PQKey | null = null;
     const coinListTokenid = this.filterTokenid(tokenid, coinList);
     for (const spendableOutput of coinListTokenid) {
       const utxo = spendableOutput.getUTXO();
@@ -638,7 +632,7 @@ export class Wallet extends WalletBase {
     multispent.setMemo(memo.toJson());
     multispent.addOutputAddress(amount, Address.fromBase58(this.params, destination));
     let restAmount = amount.negate();
-    let beneficiary: ECKey | null = null;
+    let beneficiary: PQKey | null = null;
     if (this.getFee() && amount.isBIG()) {
       restAmount = restAmount.add(CoinConstants.FEE_DEFAULT.negate());
     }
@@ -679,7 +673,7 @@ export class Wallet extends WalletBase {
     if (memo) multispent.setMemo(memo.toJson());
     multispent.addOutputScript(amount, script);
     let restAmount = amount.negate();
-    let beneficiary: ECKey | null = null;
+    let beneficiary: PQKey | null = null;
     if (this.getFee() && amount.isBIG()) {
       restAmount = restAmount.add(CoinConstants.FEE_DEFAULT.negate());
     }
@@ -729,7 +723,7 @@ export class Wallet extends WalletBase {
     const spent = new Transaction(this.params);
     spent.setMemo("fee");
     let amount = CoinConstants.FEE_DEFAULT.negate();
-    let beneficiary: ECKey | null = null;
+    let beneficiary: PQKey | null = null;
     const coinListTokenid = this.filterTokenid(
       NetworkParameters.getBIGTANGLE_TOKENID(),
       coinList
@@ -768,7 +762,7 @@ export class Wallet extends WalletBase {
     tokenid: Uint8Array,
     memo: string,
     low?: bigint
-  ): Promise<Block> {
+  ): Promise<Transaction | null> {
     const utxos = await this.calculateAllSpendCandidatesUTXO(aesKey, false);
     let summe = Coin.valueOf(0n, tokenid);
     let size = 0;
@@ -847,7 +841,7 @@ export class Wallet extends WalletBase {
       toBePaid = toBePaid.add(CoinConstants.FEE_DEFAULT.negate());
     }
     const tx = new Transaction(this.params);
-    let beneficiary: ECKey | null = null;
+    let beneficiary: PQKey | null = null;
 
     for (const spendableOutput of candidates) {
       if (orderBaseToken === spendableOutput.getUTXO().getTokenId()) {
@@ -879,7 +873,7 @@ export class Wallet extends WalletBase {
       validToTime != null ? validToTime : Date.now(),
       validFromTime != null ? validFromTime : Date.now(),
       Side.BUY,
-      beneficiary.toAddress(this.params).toBase58(),
+      beneficiary.toAddress().toHex(),
       orderBaseToken,
       Number(buyPrice),
       Number(this.totalAmount(buyPrice, targetValue, targetToken.getDecimals() + priceshift, allowRemainder)),
@@ -932,7 +926,7 @@ export class Wallet extends WalletBase {
       myCoin = myCoin.add(CoinConstants.FEE_DEFAULT.negate());
     }
     const tx = new Transaction(this.params);
-    let beneficiary: ECKey | null = null;
+    let beneficiary: PQKey | null = null;
 
     for (const spendableOutput of candidates) {
       if (t.getTokenid() === spendableOutput.getUTXO().getTokenId()) {
@@ -968,7 +962,7 @@ export class Wallet extends WalletBase {
       validToTime != null ? validToTime : Date.now(),
       validFromTime != null ? validFromTime : Date.now(),
       Side.SELL,
-      beneficiary.toAddress(this.params).toBase58(),
+      beneficiary.toAddress().toHex(),
       orderBaseToken,
       Number(sellPrice),
       Number(offerValue),
@@ -992,10 +986,10 @@ export class Wallet extends WalletBase {
     aesKey: any,
     address: string
   ): Promise<Transaction> {
-    let legitimatingKey: ECKey | null = null;
+    let legitimatingKey: PQKey | null = null;
     const keys = await this.walletKeys(aesKey);
     for (const ecKey of keys) {
-      if (address === ecKey.toAddress(this.params).toString()) {
+      if (address === ecKey.toAddress().toHex()) {
         legitimatingKey = ecKey;
         break;
       }
@@ -1008,8 +1002,8 @@ export class Wallet extends WalletBase {
     tx.setData(info.toByteArray());
     tx.setDataClassName("OrderCancelInfo");
     const sighash1 = tx.getHash();
-    const party1Signature = await legitimatingKey.sign(sighash1.getBytes(), null);
-    tx.setDataSignature(party1Signature.encodeToDER());
+    const party1Signature = await legitimatingKey.signWithAesKey(sighash1, null);
+    tx.setDataSignature(party1Signature.serialize());
     await this.submitTransaction(tx);
     if (this.getFee()) {
       await this.submitTransaction(await this.feeTransaction(aesKey));
@@ -1022,10 +1016,10 @@ export class Wallet extends WalletBase {
     aesKey: any,
     address: string
   ): Promise<Transaction> {
-    let legitimatingKey: ECKey | null = null;
+    let legitimatingKey: PQKey | null = null;
     const keys = await this.walletKeys(aesKey);
     for (const ecKey of keys) {
-      if (address === ecKey.toAddress(this.params).toString()) {
+      if (address === ecKey.toAddress().toHex()) {
         legitimatingKey = ecKey;
         break;
       }
@@ -1038,8 +1032,8 @@ export class Wallet extends WalletBase {
     tx.setData(info.toByteArray());
     tx.setDataClassName("ContractEventCancelInfo");
     const sighash1 = tx.getHash();
-    const party1Signature = await legitimatingKey.sign(sighash1.getBytes(), null);
-    tx.setDataSignature(party1Signature.encodeToDER());
+    const party1Signature = await legitimatingKey.signWithAesKey(sighash1, null);
+    tx.setDataSignature(party1Signature.serialize());
     await this.submitTransaction(tx);
     if (this.getFee()) {
       await this.submitTransaction(await this.feeTransaction(aesKey));
@@ -1058,7 +1052,7 @@ export class Wallet extends WalletBase {
     const amount = new Coin(payAmount, new Uint8Array(Utils.HEX.decode(tokenId))).negate();
     const tx = new Transaction(this.params);
     const coinList = await this.calculateAllSpendCandidates(aesKey, false);
-    let beneficiary: ECKey | null = null;
+    let beneficiary: PQKey | null = null;
     for (const spendableOutput of this.filterTokenid(amount.getTokenid(), coinList)) {
       const utxo = spendableOutput.getUTXO();
       if (utxo) {
@@ -1082,7 +1076,7 @@ export class Wallet extends WalletBase {
       contractTokenid,
       payAmount,
       tokenId,
-      beneficiary.toAddress(this.params).toBase58(),
+      beneficiary.toAddress().toHex(),
       validToTime,
       validFromTime,
       ""
@@ -1149,7 +1143,7 @@ export class Wallet extends WalletBase {
   async paySubtangle(
     aesKey: any,
     outputStr: string,
-    connectKey: ECKey,
+    connectKey: PQKey,
     toAddressInSubtangle: Address,
     coin: Coin,
     address: Address
@@ -1170,12 +1164,8 @@ export class Wallet extends WalletBase {
     transaction.setToAddressInSubtangle(toAddressInSubtangle.getHash160());
     const input = transaction.addInput2(findOutput.getBlockHash(), spendableOutput);
     const sighash = transaction.hashForSignature(0, spendableOutput.getScriptBytes(), 1 as any, false);
-    const tsrecsig = new TransactionSignature(
-      await connectKey.sign(sighash.getBytes(), aesKey),
-      1 as any,
-      false
-    );
-    const inputScript = ScriptBuilder.createInputScript(tsrecsig);
+    const sigBundle = await connectKey.signWithAesKey(sighash, aesKey);
+    const inputScript = new ScriptBuilder().data(sigBundle.serialize()).build();
     input.setScriptSig(inputScript);
     await this.submitTransaction(transaction);
     return transaction;
@@ -1185,13 +1175,13 @@ export class Wallet extends WalletBase {
    * Signing / Keys
    * ================================================================= */
 
-  async getECKey(aesKey: any, address: string | null): Promise<ECKey> {
+  async getECKey(aesKey: any, address: string | null): Promise<PQKey> {
     if (address === null) {
       throw new Error("Address cannot be null");
     }
     const keys = await this.walletKeys(aesKey);
     for (const ecKey of keys) {
-      if (address === ecKey.toAddress(this.params).toString()) {
+      if (address === ecKey.toAddress().toHex()) {
         return ecKey;
       }
     }
@@ -1203,24 +1193,16 @@ export class Wallet extends WalletBase {
    * ================================================================= */
 
   async saveUserdata(
-    userKey: ECKey,
+    userKey: PQKey,
     transaction: Transaction,
     encrypt: boolean,
     aesKey: any
   ): Promise<Transaction> {
-    if (encrypt && transaction.getData()) {
-      const cipher = await ECIESCoder.encrypt(
-        userKey.getPubKey(),
-        transaction.getData()!
-      );
-      transaction.setData(cipher);
-    }
-    const sighashBytes = transaction.getHash().getBytes();
-    const party1Signature = await userKey.sign(sighashBytes);
-    const buf1 = party1Signature.encodeToDER();
+    const party1Signature = await userKey.signWithAesKey(transaction.getHash(), aesKey);
+    const buf1 = party1Signature.serialize();
     const multiSignBies: MultiSignBy[] = [];
     const multiSignBy0 = new MultiSignBy();
-    multiSignBy0.setAddress(userKey.toAddress(this.params).toBase58());
+    multiSignBy0.setAddress(userKey.toAddress().toHex());
     multiSignBy0.setPublickey(Utils.HEX.encode(userKey.getPubKey()));
     multiSignBy0.setSignature(Utils.HEX.encode(buf1));
     multiSignBies.push(multiSignBy0);
@@ -1235,7 +1217,7 @@ export class Wallet extends WalletBase {
   }
 
   async getUserSettingDataInfo(
-    userKey: ECKey,
+    userKey: PQKey,
     encrypt: boolean
   ): Promise<any> {
     const requestParam: Record<string, string> = {
@@ -1248,12 +1230,7 @@ export class Wallet extends WalletBase {
     );
     if (!hexData || hexData.length === 0) return null;
     const buf = Utils.HEX.decode(hexData);
-    let payload: Uint8Array;
-    if (encrypt) {
-      payload = await ECIESCoder.decrypt(userKey.getPrivKeyBytes(), buf);
-    } else {
-      payload = buf;
-    }
+    const payload = buf;
     const parsed = new UserSettingDataInfo().parse(payload);
     return parsed;
   }
@@ -1263,7 +1240,7 @@ export class Wallet extends WalletBase {
    * ================================================================= */
 
   async publishDomainName(
-    ownerKey: ECKey,
+    ownerKey: PQKey,
     tokenid: string,
     tokenname: string,
     aesKey: any,
@@ -1271,14 +1248,14 @@ export class Wallet extends WalletBase {
   ): Promise<void> {
     const getDomainBlockHashResponse = await this.getDomainNameBlockHash(tokenname);
     const domainName = getDomainBlockHashResponse.getdomainNameToken();
-    const walletKeysList: ECKey[] = [ownerKey];
+    const walletKeysList: PQKey[] = [ownerKey];
     const signnumber = walletKeysList.length;
     await this.publishDomainNameInternal(walletKeysList, ownerKey, tokenid, tokenname, domainName, aesKey, description, signnumber);
   }
 
   async publishDomainNameMulti(
-    signKeys: ECKey[],
-    ownerKey: ECKey,
+    signKeys: PQKey[],
+    ownerKey: PQKey,
     tokenid: string,
     tokenname: string,
     aesKey: any,
@@ -1291,8 +1268,8 @@ export class Wallet extends WalletBase {
   }
 
   private async publishDomainNameInternal(
-    multiSigns: ECKey[],
-    ownerKey: ECKey,
+    multiSigns: PQKey[],
+    ownerKey: PQKey,
     tokenid: string,
     tokenname: string,
     domainNameBlockHash: Token | null,
@@ -1304,7 +1281,7 @@ export class Wallet extends WalletBase {
     const tokenindex_ = tokenIndexResponse.getTokenindex();
     const tokens = Token.buildDomainnameTokenInfo(
       true,
-      tokenIndexResponse.getBlockhash() || "",
+      tokenIndexResponse.getBlockhash() || Sha256Hash.ZERO_HASH,
       tokenid,
       tokenname,
       description,
@@ -1336,7 +1313,7 @@ export class Wallet extends WalletBase {
    * ================================================================= */
 
   async createToken(
-    key: ECKey,
+    key: PQKey,
     domainname: string,
     increment: boolean,
     token: Token,
@@ -1624,7 +1601,7 @@ export class Wallet extends WalletBase {
     return chunks;
   }
 
-  freshReceiveKey(): ECKey {
+  freshReceiveKey(): PQKey {
     return this.keyChainGroup.freshKey(KeyPurpose.RECEIVE_FUNDS);
   }
 
@@ -1728,7 +1705,7 @@ export class Wallet extends WalletBase {
     giveMoneyResult: Map<string, bigint>,
     tokenid: Uint8Array,
     memo: string
-  ): Promise<Block | null> {
+  ): Promise<Transaction | null> {
     const coinList = await this.calculateAllSpendCandidates(aesKey, false);
     return this.payMoneyToECKeyList(aesKey, giveMoneyResult, tokenid, memo, coinList);
   }
@@ -1790,7 +1767,7 @@ export class Wallet extends WalletBase {
           return;
         }
         for (const ecKey of keys) {
-          console.info("Wallet key: " + ecKey.toAddress(this.params));
+          console.info("Wallet key: " + ecKey.toAddress().toHex());
         }
       }).catch((e: Error) => {
         console.info("Wallet keys unavailable (" + e.message + ")");

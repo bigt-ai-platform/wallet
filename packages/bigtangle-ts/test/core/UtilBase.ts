@@ -1,12 +1,26 @@
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
+import { Utils } from '../../src/net/bigtangle/utils/Utils';
 
 export class UtilBase {
-    /**
-     * Creates a new ECKey with both private and public keys for testing purposes.
-     * This avoids the "Public key is not available" errors in serialization tests.
-     */
-    public static createTestKey(): ECKey {
-        // Create a new key with both private and public keys
-        return ECKey.createNewKey(true);
+    public static createTestKey(): PQKey {
+        return PQKey.createNew();
+    }
+
+    public static createTestKeyFromBigInt(n: bigint): PQKey {
+        const seed = new Uint8Array(64);
+        let v = n;
+        for (let i = 63; i >= 0 && v > 0n; i--) {
+            seed[i] = Number(v & 0xffn);
+            v >>= 8n;
+        }
+        return PQKey.fromKeyMaterial(seed);
+    }
+
+    public static createTestKeyFromHex(hex: string): PQKey {
+        const bytes = new Uint8Array(Utils.HEX.decode(hex));
+        if (bytes.length >= 64) return PQKey.fromKeyMaterial(bytes);
+        const padded = new Uint8Array(64);
+        padded.set(bytes, 0);
+        return PQKey.fromKeyMaterial(padded);
     }
 }

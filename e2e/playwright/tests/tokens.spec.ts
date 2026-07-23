@@ -19,7 +19,8 @@ test.describe('Tokens Screen', () => {
   test('Create tab shows token creation form', async ({ page }) => {
     await waitForApp(page);
     await clickTab(page, 'Tokens');
-    await page.getByText('Create').click();
+    const screen = await getElement(page, 'tokens-screen');
+    await screen.getByText('Create').click();
 
     await expect(page.getByText('Create New Token')).toBeAttached({ timeout: 5000 });
     await expect(page.getByText('Token Name')).toBeAttached({ timeout: 5000 });
@@ -33,7 +34,8 @@ test.describe('Tokens Screen', () => {
   test('Create form can be filled with USDC example', async ({ page }) => {
     await waitForApp(page);
     await clickTab(page, 'Tokens');
-    await page.getByText('Create').click();
+    const screen = await getElement(page, 'tokens-screen');
+    await screen.getByText('Create').click();
 
     const nameInput = page.getByPlaceholder('e.g. USD Coin');
     const symbolInput = page.getByPlaceholder('e.g. USDC');
@@ -64,9 +66,9 @@ test.describe('Tokens Screen', () => {
     await waitForApp(page);
     page.on('dialog', (dialog) => { dialog.accept().catch(() => {}); });
     await clickTab(page, 'Tokens');
-    await page.getByText('Create').click();
+    const screen = await getElement(page, 'tokens-screen');
+    await screen.getByText('Create').click();
 
-    // Fill the form with real token data
     const tokenName = 'E2E Test Token ' + Date.now().toString(36);
     await page.getByPlaceholder('e.g. USD Coin').fill(tokenName);
     await page.getByPlaceholder('e.g. USDC').fill('E2E');
@@ -74,13 +76,8 @@ test.describe('Tokens Screen', () => {
     await page.getByPlaceholder('1000000').fill('10000');
     await page.getByPlaceholder('Describe your token').fill('Created by Playwright e2e test');
 
-    // Click Create Token button
     await page.getByText('Create Token').click();
-
-    // Wait for dialog (success or error from the server)
-    // The server should respond — either success or error with a message
     await page.waitForTimeout(2000);
-    // Check that the form still shows (it might show an error or redirect)
     await expect(page.getByText('Create New Token')).toBeAttached({ timeout: 5000 });
   });
 });

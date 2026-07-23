@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { Transaction } from '../../src/net/bigtangle/core/Transaction';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
 import { Address } from '../../src/net/bigtangle/core/Address';
 import { NetworkParameters } from '../../src/net/bigtangle/params/NetworkParameters';
 import { Sha256Hash } from '../../src/net/bigtangle/core/Sha256Hash';
@@ -17,13 +17,13 @@ import { UtilParam } from '../../src/net/bigtangle/params/UtilParam';
 
 describe('TransactionSerializationTest', () => {
     let params: NetworkParameters;
-    let key: ECKey;
+    let key: PQKey;
     let address: Address;
 
     beforeEach(() => {
         params = UtilParam.fromID(NetworkParameters.ID_MAINNET);
-        key = ECKey.createNewKey(true);
-        address = key.toAddress(params);
+        key = PQKey.createNew();
+        address = Address.fromKey(params, key);
     });
 
     it('should serialize and deserialize basic transaction', () => {
@@ -81,8 +81,8 @@ describe('TransactionSerializationTest', () => {
         transaction.addOutput(output1);
         
         const coinValue2 = Coin.valueOf(2000000n, Buffer.from('6263', 'hex'));
-        const key2 = ECKey.createNewKey(true);
-        const address2 = key2.toAddress(params);
+        const key2 = PQKey.createNew();
+        const address2 = Address.fromKey(params, key2);
         const output2 = TransactionOutput.fromAddress(params, transaction, coinValue2, address2);
         transaction.addOutput(output2);
         
@@ -176,8 +176,8 @@ describe('TransactionSerializationTest', () => {
         transaction.addOutput(output1);
         
         const coinValue2 = Coin.valueOf(3000000n, Buffer.from('6263', 'hex'));
-        const key2 = ECKey.createNewKey(true);
-        const address2 = key2.toAddress(params);
+        const key2 = PQKey.createNew();
+        const address2 = Address.fromKey(params, key2);
         const output2 = TransactionOutput.fromAddress(params, transaction, coinValue2, address2);
         transaction.addOutput(output2);
         

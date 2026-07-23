@@ -1,7 +1,13 @@
 import { BasicKeyChain } from '../../src/net/bigtangle/wallet/BasicKeyChain';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
 import { Utils } from '../../src/net/bigtangle/utils/Utils';
 import { describe, test, expect, beforeEach } from 'vitest';
+
+function createTestKey(n: number): PQKey {
+    const seed = new Uint8Array(64);
+    seed[63] = n;
+    return PQKey.fromKeyMaterial(seed);
+}
 
 describe('BasicKeyChainTest', () => {
     let chain: BasicKeyChain;
@@ -20,16 +26,16 @@ describe('BasicKeyChainTest', () => {
     test('importKeys', () => {
         Utils.setMockClock();
         const now = Utils.currentTimeSeconds();
-        const key1 = ECKey.fromPrivate(BigInt('1'));
+        const key1 = createTestKey(1);
         Utils.rollMockClock(now);
-        const key2 = ECKey.fromPrivate(BigInt('2'));
+        const key2 = createTestKey(2);
         const keys = [key1, key2];
 
         expect(chain.importKeys(...keys)).toBe(2);
         expect(chain.numKeys()).toBe(2);
         expect(chain.getEarliestKeyCreationTime()).toBe(now);
 
-        const newKey = ECKey.fromPrivate(BigInt('3'));
+        const newKey = createTestKey(3);
         keys.push(newKey);
         expect(chain.importKeys(...keys)).toBe(1);
         expect(chain.importKeys(...keys)).toBe(0);
@@ -42,7 +48,7 @@ describe('BasicKeyChainTest', () => {
     });
 
     test('removeKey', () => {
-        const key = ECKey.fromPrivate(BigInt('1'));
+        const key = createTestKey(1);
         chain.importKeys(key);
         expect(chain.numKeys()).toBe(1);
         expect(chain.removeKey(key)).toBe(true);
@@ -50,38 +56,35 @@ describe('BasicKeyChainTest', () => {
         expect(chain.removeKey(key)).toBe(false);
     });
 
-    // Removed encryption-related tests as they're not supported by BasicKeyChain
-
     test('watching', () => {
-        const key1 = ECKey.createNewKey();
-        const pub = ECKey.fromPublic(key1.getPubKey());
+        const key1 = PQKey.createNew();
+        const pub = PQKey.fromPublicOnly(key1.getPubKey());
         chain.importKeys(pub);
         expect(chain.numKeys()).toBe(1);
-        expect(chain.findKeyFromPubKey(pub.getPubKey())?.isPubKeyOnly()).toBe(true);
+        expect(chain.findKeyFromPubKey(pub.getPubKey())?.isWatching()).toBe(true);
     });
 
     test('bloom', () => {
-        const key1 = ECKey.createNewKey();
-        const key2 = ECKey.createNewKey();
+        const key1 = PQKey.createNew();
+        const key2 = PQKey.createNew();
         chain.importKeys(key1, key2);
         expect(chain.numKeys()).toBe(2);
         expect(chain.numBloomFilterEntries()).toBe(4);
-        // Use a larger filter to reduce false positives
         const filter = chain.getFilter(100, 0.000001, 100);
         expect(filter.contains(key1.getPubKey())).toBe(true);
         expect(filter.contains(key1.getPubKeyHash())).toBe(true);
         expect(filter.contains(key2.getPubKey())).toBe(true);
         expect(filter.contains(key2.getPubKeyHash())).toBe(true);
-        const key3 = ECKey.createNewKey();
+        const key3 = PQKey.createNew();
         expect(filter.contains(key3.getPubKey())).toBe(false);
     });
 
     test('keysBeforeAndAfter', () => {
         const now = Utils.currentTimeSeconds();
-        const key1 = ECKey.createNewKey();
+        const key1 = PQKey.createNew();
         key1.setCreationTimeSeconds(now);
         const key1Creation = key1.getCreationTimeSeconds();
-        const key2 = ECKey.createNewKey();
+        const key2 = PQKey.createNew();
         key2.setCreationTimeSeconds(now + 86400);
         const key2Creation = key2.getCreationTimeSeconds();
         const keys = [key1, key2];

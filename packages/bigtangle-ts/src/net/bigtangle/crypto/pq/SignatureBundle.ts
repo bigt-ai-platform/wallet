@@ -1,5 +1,7 @@
 import { PQConstants } from './PQConstants';
 
+export const DEFAULT_SIGHASH_BYTE = 0x01; // SIGHASH_ALL
+
 export class SignatureBundle {
   readonly version: number;
   readonly entries: SignatureBundleEntry[];
@@ -7,6 +9,22 @@ export class SignatureBundle {
   constructor(entries: SignatureBundleEntry[], version: number = PQConstants.BUNDLE_VERSION) {
     this.version = version;
     this.entries = [...entries].sort((a, b) => a.algorithm - b.algorithm);
+  }
+
+  /** Encode as serialized bundle + trailing sighash byte (bitcoin-like format) */
+  encodeToBitcoin(sighashByte: number = DEFAULT_SIGHASH_BYTE): Uint8Array {
+    const raw = this.serialize();
+    const out = new Uint8Array(raw.length + 1);
+    out.set(raw, 0);
+    out[raw.length] = sighashByte;
+    return out;
+  }
+
+  /** Decode from serialized bundle + trailing sighash byte */
+  static decodeFromBitcoin(bytes: Uint8Array): { bundle: SignatureBundle; sighashByte: number } {
+    const sighashByte = bytes[bytes.length - 1];
+    const bundleBytes = bytes.slice(0, -1);
+    return { bundle: SignatureBundle.deserialize(bundleBytes), sighashByte };
   }
 
   getEntry(algorithm: number): SignatureBundleEntry | undefined {

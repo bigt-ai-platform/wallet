@@ -1,7 +1,7 @@
 import { NetworkParameters } from '../params/NetworkParameters.js';
 import { Sha256Hash } from '../core/Sha256Hash.js';
 import { Address } from '../core/Address.js';
-import { ECKey } from '../core/ECKey.js';
+import { PQKey } from '../crypto/pq/PQKey';
 // Using dynamic import to avoid circular dependency during module initialization
 // The Transaction class will be loaded on-demand when first accessed
 let _Transaction: any = null;
@@ -18,7 +18,7 @@ import { TransactionSignature } from '../crypto/TransactionSignature.js';
 import { ScriptException } from '../exception/ScriptException.js';
 import { Utils } from '../utils/Utils.js';
 import { ScriptChunk } from './ScriptChunk.js';
-import { ECDSASignature } from '../core/ECDSASignature.js'; // Added ECDSignature import
+import { SignatureBundle } from '../crypto/pq/SignatureBundle';
 import {
     OP_0, OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4, OP_1NEGATE, OP_1, OP_2, OP_3, OP_4, OP_5, OP_6, OP_7, OP_8, OP_9, OP_10, OP_11, OP_12, OP_13, OP_14, OP_15, OP_16,
     OP_NOP, OP_IF, OP_NOTIF, OP_VERIF, OP_VERNOTIF, OP_ELSE, OP_ENDIF, OP_VERIFY, OP_RETURN,
@@ -363,8 +363,8 @@ export class Script {
             // Assuming params.p2shVersion exists; adjust as needed for your codebase
             return new Address(params, params.getP2SHHeader(), new Uint8Array(this.getPubKeyHash()));
         } else if (forcePayToPubKey && this.isSentToRawPubKey()) {
-            // Use ECKey.fromPublic instead of fromPublicOnly
-            return ECKey.fromPublic(this.getPubKey()).toAddress(params);
+            // Use PQKey.fromPublicOnly instead of fromPublicOnly
+            return Address.fromKey(params, PQKey.fromPublicOnly(this.getPubKey()));
         } else {
             throw new ScriptException("Cannot cast this script to a pay-to-address type");
         }
@@ -395,7 +395,7 @@ export class Script {
     }
 
     /** Creates a program that requires at least N of the given keys to sign, using OP_CHECKMULTISIG. */
-    static createMultiSigOutputScript(threshold: number, pubkeys: ECKey[]): Script { // Changed return type to Script
+    static createMultiSigOutputScript(threshold: number, pubkeys: PQKey[]): Script { // Changed return type to Script
         if (threshold <= 0) throw new Error("threshold must be greater than 0");
         if (threshold > pubkeys.length) throw new Error("threshold cannot be greater than number of pubkeys");
         if (pubkeys.length > 16) throw new Error("Too many pubkeys, max 16");
@@ -435,7 +435,7 @@ export class Script {
      * Having incomplete input script allows to pass around partially signed tx.
      * It is expected that this program later on will be updated with proper signatures.
      */
-    createEmptyInputScript(key: ECKey | null, redeemScript: Script | null): Script {
+    createEmptyInputScript(key: PQKey | null, redeemScript: Script | null): Script {
         if (this.isSentToAddress()) {
             if (key == null) throw new Error("Key required to create pay-to-address input script");
             return Script.createInputScript(new Uint8Array(), key.getPubKey()); // Dummy signature
@@ -492,7 +492,7 @@ export class Script {
      * Returns the index where a signature by the key should be inserted.  Only applicable to
      * a P2SH scriptSig.
      */
-    getSigInsertionIndex(hash: Sha256Hash, signingKey: ECKey): number {
+    getSigInsertionIndex(hash: Sha256Hash, signingKey: PQKey): number {
         // Iterate over existing signatures, skipping the initial OP_0, the final redeem script
         // and any placeholder OP_0 sigs.
         const existingChunks = this.chunks.slice(1, this.chunks.length - 1);
@@ -516,7 +516,7 @@ export class Script {
         return sigCount;
     }
 
-    private findKeyInRedeem(key: ECKey): number {
+    private findKeyInRedeem(key: PQKey): number {
         if (!this.chunks[0].isOpCode()) throw new Error("P2SH scriptSig expected to start with opcode"); // P2SH scriptSig
         const numKeys = Script.decodeFromOpN(this.chunks[this.chunks.length - 2].opcode);
         for (let i = 0 ; i < numKeys ; i++) {
@@ -533,16 +533,16 @@ export class Script {
      *
      * @throws ScriptException if the script type is not understood or is pay to address or is P2SH (run this method on the "Redeem script" instead).
      */
-    getPubKeys(): ECKey[] {
+    getPubKeys(): PQKey[] {
         if (!this.isSentToMultiSig()) {
             throw new ScriptException("Only usable for multisig scripts.");
         }
 
-        const result: ECKey[] = [];
+        const result: PQKey[] = [];
         const numKeys = Script.decodeFromOpN(this.chunks[this.chunks.length - 2].opcode);
         for (let i = 0 ; i < numKeys ; i++) {
             if (!this.chunks[1 + i].data) throw new Error("Pubkey chunk has no data");
-            result.push(ECKey.fromPublic(this.chunks[1 + i].data!));
+            result.push(PQKey.fromPublicOnly(this.chunks[1 + i].data!));
         }
         return result;
     }
@@ -550,13 +550,11 @@ export class Script {
     private findSigInRedeem(signatureBytes: Uint8Array, hash: Sha256Hash): number {
         if (!this.chunks[0].isOpCode()) throw new Error("P2SH scriptSig expected to start with opcode"); // P2SH scriptSig
         const numKeys = Script.decodeFromOpN(this.chunks[this.chunks.length - 2].opcode);
+        const sigBundle = SignatureBundle.deserialize(signatureBytes);
             for (let i = 0; i < numKeys; i++) {
                 if (!this.chunks[i + 1].data) throw new Error("Pubkey chunk has no data");
-                // Use ECKey.fromPublic to create a key and call verify
-                const pubKey = ECKey.fromPublic(this.chunks[i + 1].data!);
-                // Create ECDSASignature from the raw signature bytes
-                const sig = ECDSASignature.decodeFromDER(new Uint8Array(signatureBytes));
-                if (pubKey.verify(hash.getBytes(), sig.encodeToDER())) {
+                const pubKey = PQKey.fromPublicOnly(this.chunks[i + 1].data!);
+                if (PQKey.verify(hash, sigBundle, pubKey.getPublicKeyBytes())) {
                     return i;
                 }
         }
@@ -658,10 +656,10 @@ export class Script {
     }
 
     /**
-     * Returns number of bytes required to spend this script. It accepts optional ECKey and redeemScript that may
+     * Returns number of bytes required to spend this script. It accepts optional PQKey and redeemScript that may
      * be required for certain types of script to estimate target size.
      */
-    getNumberOfBytesRequiredToSpend(pubKey: ECKey | null, redeemScript: Script | null): number {
+    getNumberOfBytesRequiredToSpend(pubKey: PQKey | null, redeemScript: Script | null): number {
         if (this.isPayToScriptHash()) {
             // scriptSig: <sig> [sig] [sig...] <redeemscript>
             if (redeemScript == null) throw new Error("P2SH script requires redeemScript to be spent");
@@ -1445,20 +1443,19 @@ export class Script {
         const outStream = new UnsafeByteArrayOutputStream();
         Script.writeBytes(outStream, sigBytes);
         // Create a copy to ensure the Uint8Array has an ArrayBuffer
-        const byteArray = new Uint8Array(outStream.toByteArray());
+        const byteArray = outStream.toByteArray().slice() as Uint8Array;
         connectedScript = Script.removeAllInstancesOf(connectedScript, byteArray);
 
-        // TODO: Use int for indexes everywhere, we can't have that many inputs/outputs
         let sigValid = false;
         try {
-            const sig = TransactionSignature.decodeFromBitcoin(sigBytes, requireCanonical,
-                verifyFlags.has(Script.VerifyFlag.LOW_S));
+            const sighashByte = sigBytes[sigBytes.length - 1];
+            const bundleBytes = sigBytes.slice(0, -1);
+            const sigBundle = SignatureBundle.deserialize(bundleBytes);
 
-            const hash = txContainingThis.hashForSignature(index, connectedScript, sig.sigHashMode(), sig.anyoneCanPay());
+            const hash = txContainingThis.hashForSignature(index, connectedScript, sighashByte & 0x1F, (sighashByte & 0x80) !== 0);
             
-            // Use the raw signature bytes for verification
             if (hash !== null) {
-                sigValid = ECKey.fromPublic(pubKey).verify(hash.getBytes(), sigBytes);
+                sigValid = PQKey.verify(hash, sigBundle, pubKey);
             }
         } catch (e) {
             if (e instanceof Error && !e.message.includes("Reached past end of ASN.1 stream")) {
@@ -1522,7 +1519,7 @@ export class Script {
         for (const sig of sigs) {
             const outStream = new UnsafeByteArrayOutputStream();
             Script.writeBytes(outStream, sig);
-            connectedScript = Script.removeAllInstancesOf(connectedScript, outStream.toByteArray());
+            connectedScript = Script.removeAllInstancesOf(connectedScript, outStream.toByteArray().slice() as Uint8Array);
         }
 
         let valid = true;
@@ -1531,11 +1528,12 @@ export class Script {
             // We could reasonably move this out of the loop, but because signature verification is significantly
             // more expensive than hashing, its not a big deal.
             try {
-                const sig = TransactionSignature.decodeFromBitcoin(sigs[0], requireCanonical, false);
-                const hash = txContainingThis.hashForSignature(index, connectedScript, sig.sigHashMode(), sig.anyoneCanPay());
+                const sighashByte = sigs[0][sigs[0].length - 1];
+                const bundleBytes = sigs[0].slice(0, -1);
+                const sigBundle = SignatureBundle.deserialize(bundleBytes);
+                const hash = txContainingThis.hashForSignature(index, connectedScript, sighashByte & 0x1F, (sighashByte & 0x80) !== 0);
                 
-                // Use the raw signature bytes for verification
-                if (hash !== null && ECKey.fromPublic(pubKey).verify(hash.getBytes(), sigs[0])) {
+                if (hash !== null && PQKey.verify(hash, sigBundle, pubKey)) {
                     sigs.shift(); // Remove the used signature
                 }
             } catch (e) {

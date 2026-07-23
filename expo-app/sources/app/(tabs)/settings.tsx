@@ -11,27 +11,41 @@ export default function SettingsScreen() {
     return stored?.includes('test') ?? false;
   });
   const [serverUrl, setServerUrl] = React.useState(httpService.getServerUrl());
+  const [l1Url, setL1Url] = React.useState(httpService.getL1Url());
   const appVersion = '1.2.0';
 
   const toggleTestnet = (val: boolean) => {
     setUseTestnet(val);
     httpService.setTestnet(val);
-    if (val) setServerUrl('https://testp.bigtangle.org:8088/');
-    else setServerUrl('https://p.bigtangle.org:8088/');
+    if (val) {
+      setServerUrl('https://testp.bigtangle.org:8088/');
+      setL1Url('https://testm.bigtangle.org');
+    } else {
+      setServerUrl('https://p.bigtangle.org:8088/');
+      setL1Url('https://m.bigtangle.org');
+    }
   };
 
   const saveServer = () => {
-    if (!serverUrl.trim()) { Alert.alert('Error', t('settings.urlEmpty')); return; }
+    if (!serverUrl.trim()) { Alert.alert('', t('settings.urlEmpty')); return; }
     httpService.setServerUrl(serverUrl.trim());
     Alert.alert(t('settings.saved'), t('settings.serverUpdated'));
+  };
+
+  const saveL1 = () => {
+    if (!l1Url.trim()) { Alert.alert('', t('settings.urlEmpty')); return; }
+    httpService.setL1Url(l1Url.trim());
+    Alert.alert(t('settings.saved'), t('settings.l1Updated'));
   };
 
   const resetDefaults = () => {
     setUseTestnet(false);
     setServerUrl('https://p.bigtangle.org:8088/');
+    setL1Url('https://m.bigtangle.org');
     httpService.setTestnet(false);
     httpService.setServerUrl('https://p.bigtangle.org:8088/');
-    Alert.alert(t('settings.reset'), t('settings.resetDone'));
+    httpService.setL1Url('https://m.bigtangle.org');
+    Alert.alert('', t('settings.resetDone'));
   };
 
   return (
@@ -56,6 +70,17 @@ export default function SettingsScreen() {
           placeholder="https://..." placeholderTextColor={s.placeholder.color}
           autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="server-url-input" />
         <TouchableOpacity style={s.saveBtn} onPress={saveServer}>
+          <Text style={s.saveBtnText}>{t('settings.save')}</Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={s.card}>
+        <Text style={s.cardLabel}>{t('settings.l1Url')}</Text>
+        <Text style={s.settingDesc}>{t('settings.l1UrlDesc')}</Text>
+        <TextInput style={s.input} value={l1Url} onChangeText={setL1Url}
+          placeholder="https://..." placeholderTextColor={s.placeholder.color}
+          autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="l1-url-input" />
+        <TouchableOpacity style={s.saveBtn} onPress={saveL1}>
           <Text style={s.saveBtnText}>{t('settings.save')}</Text>
         </TouchableOpacity>
       </View>
@@ -93,7 +118,7 @@ const s = StyleSheet.create((theme) => ({
   settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   settingLeft: { flex: 1, marginRight: 12 },
   settingLabel: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
-  settingDesc: { fontSize: 12, color: theme.colors.text.secondary },
+  settingDesc: { fontSize: 12, color: theme.colors.text.secondary, marginBottom: 8 },
   switchOff: { color: theme.colors.border },
   switchOn: { color: theme.colors.primary },
   switchThumb: { color: '#FFFFFF' },

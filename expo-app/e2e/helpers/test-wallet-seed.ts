@@ -5,7 +5,7 @@
  * WARNING: These keys are for TESTING ONLY - never use in production
  */
 
-import { ECKey, NetworkParameters, TestParams } from "bigtangle-ts";
+import { PQKey, NetworkParameters, TestParams, Utils } from "bigtangle-ts";
 
 /**
  * Test wallet configuration
@@ -60,18 +60,18 @@ export const TEST_WALLETS: Record<string, TestWalletConfig> = {
 };
 
 /**
- * Create ECKey from test wallet config
+ * Create PQKey from test wallet config
  */
 export function createECKeyFromTestWallet(
   walletConfig: TestWalletConfig,
-): ECKey {
-  return ECKey.fromPrivateString(walletConfig.privateKey);
+): PQKey {
+  return PQKey.fromPrivateKey(Utils.HEX.decode(walletConfig.privateKey));
 }
 
 /**
  * Get all user test keys (for testing transactions)
  */
-export function getAllUserKeys(): ECKey[] {
+export function getAllUserKeys(): PQKey[] {
   return [
     createECKeyFromTestWallet(TEST_WALLETS.USER_1),
     createECKeyFromTestWallet(TEST_WALLETS.USER_2),
@@ -81,7 +81,7 @@ export function getAllUserKeys(): ECKey[] {
 /**
  * Get yuan issuer key
  */
-export function getYuanIssuerKey(): ECKey {
+export function getYuanIssuerKey(): PQKey {
   return createECKeyFromTestWallet(TEST_WALLETS.YUAN_ISSUER);
 }
 
@@ -99,7 +99,7 @@ export function createTestWalletFileContent(
   // For testing, we just create a structure similar to the real wallet file
   const walletData = {
     version: "1.0",
-    address: key.toAddress(networkParams).toString(),
+    address: key.toAddressWithParams(networkParams).toString(),
     publicKey: key.getPublicKeyAsHex(),
     // In a real wallet file, privateKey would be encrypted
     encryptedPrivateKey: walletConfig.privateKey, // Simplified for testing
@@ -118,10 +118,10 @@ export function initializeTestWallets(): void {
   Object.keys(TEST_WALLETS).forEach((key) => {
     const wallet = TEST_WALLETS[key];
     if (!wallet.address) {
-      const ecKey = createECKeyFromTestWallet(wallet);
+      const pqKey = createECKeyFromTestWallet(wallet);
       const networkParams = new TestParams();
-      wallet.address = ecKey.toAddress(networkParams).toString();
-      wallet.publicKey = ecKey.getPublicKeyAsHex();
+      wallet.address = pqKey.toAddressWithParams(networkParams).toString();
+      wallet.publicKey = pqKey.getPublicKeyAsHex();
     }
   });
 }

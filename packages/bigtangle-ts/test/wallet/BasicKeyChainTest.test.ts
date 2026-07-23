@@ -1,18 +1,17 @@
 import { BasicKeyChain } from '../../src/net/bigtangle/wallet/BasicKeyChain';
-import { ECKey } from '../../src/net/bigtangle/core/ECKey';
+import { PQKey } from '../../src/net/bigtangle/crypto/pq/PQKey';
 import { BloomFilter } from '../../src/net/bigtangle/core/BloomFilter';
 import { MainNetParams } from '../../src/net/bigtangle/params/MainNetParams';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
-// Helper function to create test keys
-function createTestKey(): ECKey {
-    return ECKey.createNewKey();
+function createTestKey(): PQKey {
+    return PQKey.createNew();
 }
 
 describe('BasicKeyChain', () => {
     let keyChain: BasicKeyChain;
-    let key1: ECKey;
-    let key2: ECKey;
+    let key1: PQKey;
+    let key2: PQKey;
     const networkParams = MainNetParams.get();
 
     beforeEach(() => {
@@ -65,14 +64,12 @@ describe('BasicKeyChain', () => {
     });
 
     test('should create bloom filter', () => {
-        // Spy on BloomFilter insert method
         const insertSpy = vi.spyOn(BloomFilter.prototype, 'insert');
         
         keyChain.importKeys(key1, key2);
-        const tweak = 1234; // Use a number instead of Buffer
+        const tweak = 1234;
         const filter = keyChain.getFilter(100, 0.001, tweak);
         
-        // Verify keys were added to the filter
         expect(insertSpy).toHaveBeenCalledWith(key1.getPubKeyHash());
         expect(insertSpy).toHaveBeenCalledWith(key2.getPubKeyHash());
     });

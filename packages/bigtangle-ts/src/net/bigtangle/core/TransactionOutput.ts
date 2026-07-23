@@ -36,7 +36,7 @@ import { ScriptBuilder } from "../script/ScriptBuilder";
 import { ScriptHelper } from "../script/ScriptHelper";
 import { NetworkParameters } from "../params/NetworkParameters";
 import { Address } from "./Address";
-import { ECKey } from "./ECKey";
+import { PQKey } from "../crypto/pq/PQKey";
 import { Coin } from "./Coin";
 import { CoinConstants } from "./CoinConstants";
 import { Sha256Hash } from "./Sha256Hash";
@@ -192,14 +192,14 @@ export class TransactionOutput extends ChildMessage {
    * Creates an output that sends 'value' to the given public key using a
    * simple CHECKSIG script (no addresses). The amount should be created with
    * something like {@link Coin#valueOf(int, int)}. Typically you would use
-   * {@link Transaction#addOutput(Coin, ECKey)} instead of creating an output
+   * {@link Transaction#addOutput(Coin, PQKey)} instead of creating an output
    * directly.
    */
   public static fromCoinKey(
     params: NetworkParameters,
     parent: Transaction | null,
     value: Coin,
-    to: ECKey
+    to: PQKey
   ): TransactionOutput {
     const script = ScriptBuilder.createOutputScript(to);
     return new TransactionOutput(params, parent, value, script.getProgram());
