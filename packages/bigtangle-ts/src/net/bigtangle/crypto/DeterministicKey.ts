@@ -260,22 +260,17 @@ export class DeterministicKey extends PQKey {
         }
     }
 
-    public async sign(data: Uint8Array, aesKey?: KeyParameter): Promise<SignatureBundle> {
-        if (this.isEncrypted()) {
-            if (!aesKey) {
-                throw new MissingPrivateKeyException('Key is encrypted but no AES key provided');
-            }
-            const decrypted = await this.decrypt(this.getKeyCrypter()!, aesKey);
-            if (decrypted instanceof DeterministicKey) {
-                return decrypted.sign(data, null);
-            }
-            return decrypted.signWithAesKey(Sha256Hash.of(data), null);
-        }
+    public sign(data: Sha256Hash): SignatureBundle {
         const privateKey = this.findOrDerivePrivateKey();
         if (privateKey === null) {
             throw new MissingPrivateKeyException();
         }
-        return DeterministicKey.doSign(data, privateKey);
+        const privBytes = DeterministicKey.bigIntegerToBytes(privateKey, 32);
+        const secp256k1 = require('secp256k1');
+        const { signature } = secp256k1.ecdsaSign(data.getBytes(), privBytes);
+        const derBytes = secp256k1.signatureExport(signature);
+        const entry = new SignatureBundleEntry(PQConstants.ALG_ML_DSA_87, new Uint8Array(derBytes));
+        return new SignatureBundle([entry]);
     }
 
     public async signWithAesKey(data: Sha256Hash, aesKey: KeyParameter | null): Promise<SignatureBundle> {
@@ -289,21 +284,7 @@ export class DeterministicKey extends PQKey {
             }
             return decrypted.signWithAesKey(data, null);
         }
-        const privateKey = this.findOrDerivePrivateKey();
-        if (privateKey === null) {
-            throw new MissingPrivateKeyException();
-        }
-        const msg = typeof (data as any).getBytes === 'function' ? (data as any).getBytes() : data as Uint8Array;
-        return DeterministicKey.doSign(msg, privateKey);
-    }
-
-    private static doSign(message: Uint8Array, privateKey: bigint): Promise<SignatureBundle> {
-        const privBytes = DeterministicKey.bigIntegerToBytes(privateKey, 32);
-        const secp256k1 = require('secp256k1');
-        const { signature } = secp256k1.ecdsaSign(message, privBytes);
-        const derBytes = secp256k1.signatureExport(signature);
-        const entry = new SignatureBundleEntry(PQConstants.ALG_ML_DSA_87, new Uint8Array(derBytes));
-        return Promise.resolve(new SignatureBundle([entry]));
+        return Promise.resolve(this.sign(data));
     }
 
     public async decrypt(aesKey: KeyParameter): Promise<PQKey>;
