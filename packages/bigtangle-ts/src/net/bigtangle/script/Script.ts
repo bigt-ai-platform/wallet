@@ -759,7 +759,7 @@ export class Script {
     /**
      * Returns the script bytes of inputScript with all instances of the specified script object removed
      */
-    static removeAllInstancesOf(inputScript: Uint8Array, chunkToRemove: Uint8Array): Uint8Array {
+    static removeAllInstancesOf(inputScript: Uint8Array, chunkToRemove: Uint8Array): Uint8Array<ArrayBuffer> {
         const bos = new UnsafeByteArrayOutputStream(inputScript.length);
         let cursor = 0;
         while (cursor < inputScript.length) {
@@ -786,7 +786,7 @@ export class Script {
             }
             cursor += additionalBytes;
         }
-        return bos.toByteArray();
+        return bos.toByteArray() as unknown as Uint8Array<ArrayBuffer>;
     }
 
     /**
@@ -1443,8 +1443,8 @@ export class Script {
         const outStream = new UnsafeByteArrayOutputStream();
         Script.writeBytes(outStream, sigBytes);
         // Create a copy to ensure the Uint8Array has an ArrayBuffer
-        const byteArray = outStream.toByteArray().slice() as Uint8Array;
-        connectedScript = Script.removeAllInstancesOf(connectedScript, byteArray);
+        const raw = outStream.toByteArray();
+        connectedScript = Script.removeAllInstancesOf(connectedScript, new Uint8Array(raw.buffer as unknown as ArrayBuffer, raw.byteOffset, raw.byteLength));
 
         let sigValid = false;
         try {
@@ -1519,7 +1519,8 @@ export class Script {
         for (const sig of sigs) {
             const outStream = new UnsafeByteArrayOutputStream();
             Script.writeBytes(outStream, sig);
-            connectedScript = Script.removeAllInstancesOf(connectedScript, outStream.toByteArray().slice() as Uint8Array);
+            const raw2 = outStream.toByteArray();
+            connectedScript = Script.removeAllInstancesOf(connectedScript, new Uint8Array(raw2.buffer as unknown as ArrayBuffer, raw2.byteOffset, raw2.byteLength));
         }
 
         let valid = true;

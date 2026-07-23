@@ -245,7 +245,7 @@ export abstract class BaseEncoding {
 
   // A simple string builder for performance
   protected static StringBuilder = class {
-      private parts: string[] = [];
+      parts: string[] = [];
       append(s: string): this {
           this.parts.push(s);
           return this;
