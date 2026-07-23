@@ -17,6 +17,10 @@ export default {
         version: "1.0.0",
         runtimeVersion: "1",
         orientation: "default",
+        splash: {
+            backgroundColor: "#F5F5F5",
+            resizeMode: "contain",
+        },
         icon: "./sources/assets/images/icon.png",
         scheme: "bapp",
         userInterfaceStyle: "automatic",
@@ -68,6 +72,8 @@ export default {
             [
                 'expo-splash-screen',
                 {
+                    backgroundColor: "#F5F5F5",
+                    resizeMode: "contain",
                     ios: {
                         backgroundColor: "#F2F2F7",
                         dark: {

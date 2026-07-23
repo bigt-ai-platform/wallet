@@ -83,7 +83,7 @@ jobs:
   # Job 3: E2E Tests (iOS)
   e2e-tests-ios:
     name: E2E Tests (iOS)
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 60
 
     steps:
