@@ -72,20 +72,22 @@ export class KeyCrypterScrypt implements KeyCrypter {
     // Use Web Crypto API for AES-CBC encryption when available
     if (typeof crypto !== 'undefined' && crypto.subtle) {
       try {
+        const keyBuf = keyBytes.buffer.slice(keyBytes.byteOffset, keyBytes.byteOffset + keyBytes.byteLength) as ArrayBuffer;
+        const ivBuf = iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as ArrayBuffer;
+        const plainBuf = plainBytes.buffer.slice(plainBytes.byteOffset, plainBytes.byteOffset + plainBytes.byteLength) as ArrayBuffer;
         // Import the key for Web Crypto API
         const importedKey = await crypto.subtle.importKey(
           'raw',
-          keyBytes,
+          keyBuf,
           { name: 'AES-CBC' },
           false,
           ['encrypt']
         );
 
-        // Encrypt the data
         const encryptedBuffer = await crypto.subtle.encrypt(
-          { name: 'AES-CBC', iv: iv },
+          { name: 'AES-CBC', iv: ivBuf },
           importedKey,
-          plainBytes
+          plainBuf
         );
 
         return new EncryptedData(iv, new Uint8Array(encryptedBuffer));
@@ -114,23 +116,23 @@ export class KeyCrypterScrypt implements KeyCrypter {
     const { initialisationVector: iv, encryptedBytes } = data;
     const keyBytes = aesKey.key;
 
-    // Use Web Crypto API for AES-CBC decryption
     if (typeof crypto !== 'undefined' && crypto.subtle) {
       try {
-        // Import the key for Web Crypto API
+        const keyBuf = keyBytes.buffer.slice(keyBytes.byteOffset, keyBytes.byteOffset + keyBytes.byteLength) as ArrayBuffer;
+        const ivBuf = iv.buffer.slice(iv.byteOffset, iv.byteOffset + iv.byteLength) as ArrayBuffer;
+        const encBuf = encryptedBytes.buffer.slice(encryptedBytes.byteOffset, encryptedBytes.byteOffset + encryptedBytes.byteLength) as ArrayBuffer;
         const importedKey = await crypto.subtle.importKey(
           'raw',
-          keyBytes,
+          keyBuf,
           { name: 'AES-CBC' },
           false,
           ['decrypt']
         );
 
-        // Decrypt the data
         const decryptedBuffer = await crypto.subtle.decrypt(
-          { name: 'AES-CBC', iv: iv },
+          { name: 'AES-CBC', iv: ivBuf },
           importedKey,
-          encryptedBytes
+          encBuf
         );
 
         return new Uint8Array(decryptedBuffer);
