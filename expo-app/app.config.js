@@ -18,6 +18,7 @@ export default {
         runtimeVersion: "1",
         orientation: "default",
         splash: {
+            image: "./sources/assets/images/splash.png",
             backgroundColor: "#F5F5F5",
             resizeMode: "contain",
         },
