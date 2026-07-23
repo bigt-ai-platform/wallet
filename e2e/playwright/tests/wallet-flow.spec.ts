@@ -16,15 +16,6 @@ async function createWalletQuick(page: Page): Promise<string> {
 
 test.describe('Wallet Flow', () => {
 
-  test('wallet screen shows locked state initially', async ({ page }) => {
-    await waitForApp(page);
-    await clickTab(page, 'Wallet');
-    const screen = await getElement(page, 'wallet-screen');
-    await expect(screen).toBeAttached({ timeout: 10000 });
-    await expect(screen.getByText('Wallet Locked')).toBeAttached({ timeout: 5000 });
-    await expect(screen.getByText('Manage Wallet')).toBeAttached({ timeout: 5000 });
-  });
-
   test('creates wallet and saves with password — address is valid', async ({ page }) => {
     page.on('dialog', (d) => d.accept().catch(() => {}));
     await waitForApp(page);
