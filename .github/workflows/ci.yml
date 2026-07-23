@@ -103,6 +103,7 @@ jobs:
       - name: Install CocoaPods dependencies
         working-directory: ./expo-app
         run: |
+          rm -rf ios
           npx expo prebuild --platform ios --no-install 2>&1
           cd ios && pod install 2>&1
 
@@ -172,6 +173,7 @@ jobs:
       - name: Build Android app for Detox
         working-directory: ./expo-app
         run: |
+          rm -rf android ios
           npx expo prebuild --platform android --no-install 2>&1
           yarn e2e:build:android 2>&1
 
