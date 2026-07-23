@@ -1,6 +1,5 @@
 export const ALICE_WALLET = {
   label: 'Alice',
   password: 'AlicePass123!',
-  privateKey: '8db6bd17fa4a827619e165bfd4b0f551705ef2d549a799e7f07115e5c3abad55',
-  address: 'mrY7C5eBzQmM9Qz1LtYXbPmqLGdjs3VQjX',
+  seed: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
 };

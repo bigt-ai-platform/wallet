@@ -1,6 +1,5 @@
 export const BOB_WALLET = {
   label: 'Bob',
   password: 'BobPass123!',
-  privateKey: '88c8383183d9db0a5fdbd8d862709f729e055d8981b8515044f28d4cf12d3f27',
-  address: 'n3MotdMXgRKwrSwDLwAdr3gPaXQsFXdNDs',
+  seed: 'b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b',
 };
