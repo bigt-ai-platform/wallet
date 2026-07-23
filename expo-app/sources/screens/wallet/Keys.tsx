@@ -489,8 +489,8 @@ export default function KeysScreen() {
           )}
 
           {isUnlocked && (
-            <TouchableOpacity style={styles.button} onPress={lockWallet}>
-              <Text style={styles.buttonText}>Lock Wallet</Text>
+            <TouchableOpacity style={[styles.button, styles.buttonPrimary]} onPress={lockWallet}>
+              <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Lock Wallet</Text>
             </TouchableOpacity>
           )}
         </View>
@@ -511,19 +511,19 @@ export default function KeysScreen() {
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={styles.button}
+        style={[styles.button, styles.buttonPrimary]}
         onPress={handleStartImport}
         disabled={isLoading}
       >
-        <Text style={styles.buttonText}>Import Private Key</Text>
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Import Private Key</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={styles.button}
+        style={[styles.button, styles.buttonPrimary]}
         onPress={handleLoadFromFile}
         disabled={isLoading}
       >
-        <Text style={styles.buttonText}>Load from File</Text>
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Load from File</Text>
       </TouchableOpacity>
     </View>
   );
@@ -554,10 +554,10 @@ export default function KeysScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.button, styles.buttonFlex]}
+          style={[styles.button, styles.buttonPrimary, styles.buttonFlex]}
           onPress={handleReset}
         >
-          <Text style={styles.buttonText}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -611,11 +611,11 @@ export default function KeysScreen() {
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[styles.button, styles.buttonFlex]}
+          style={[styles.button, styles.buttonPrimary, styles.buttonFlex]}
           onPress={() => setStep("created")}
           disabled={isLoading}
         >
-          <Text style={styles.buttonText}>Back</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Back</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -691,7 +691,7 @@ export default function KeysScreen() {
           onPress={handleReset}
           disabled={isLoading}
         >
-          <Text style={styles.buttonText}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -756,7 +756,7 @@ export default function KeysScreen() {
           onPress={handleReset}
           disabled={isLoading}
         >
-          <Text style={styles.buttonText}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -800,7 +800,7 @@ export default function KeysScreen() {
           onPress={handleReset}
           disabled={isLoading}
         >
-          <Text style={styles.buttonText}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -958,26 +958,20 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.margins.md,
   },
   button: {
-    backgroundColor: theme.colors.groupped.surface,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.margins.md,
+    backgroundColor: theme.colors.primary,
+    borderRadius: 10,
+    paddingVertical: 15,
+    paddingHorizontal: theme.margins.md,
     alignItems: "center",
     marginTop: theme.margins.sm,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-  },
-  buttonPrimary: {
-    backgroundColor: theme.colors.primary,
-    borderColor: theme.colors.primary,
   },
   buttonText: {
-    fontSize: 15,
-    color: theme.colors.text.primary,
+    fontSize: 16,
+    color: "#FFFFFF",
     fontWeight: "600",
   },
-  buttonTextPrimary: {
-    color: "#FFFFFF",
-  },
+  buttonPrimary: {},
+  buttonTextPrimary: {},
   buttonRow: {
     flexDirection: "row",
     gap: theme.margins.sm,
