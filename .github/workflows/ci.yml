@@ -102,7 +102,7 @@ jobs:
 
       - name: Install CocoaPods dependencies
         run: |
-          npx expo prebuild --platform ios --yes --no-install 2>&1
+          yes | npx expo prebuild --platform ios --no-install 2>&1
           cd ios && pod install 2>&1
 
       - name: Setup iOS Simulator
@@ -170,7 +170,7 @@ jobs:
 
       - name: Build Android app for Detox
         run: |
-          npx expo prebuild --platform android --yes 2>&1
+          yes | npx expo prebuild --platform android 2>&1
           yarn e2e:build:android 2>&1
 
       - name: Run E2E tests
