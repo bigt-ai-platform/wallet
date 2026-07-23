@@ -9,8 +9,8 @@ async function createWalletQuick(page: Page): Promise<string> {
   await page.waitForURL('**/wallet/keys**');
   await page.getByText('Create New Wallet').click();
   await expect(page.getByText('New Wallet Created!')).toBeAttached({ timeout: 10000 });
-  const addressEl = page.locator('text=/^[mn][a-km-zA-HJ-NP-Z1-9]{25,34}$/').first();
-  await expect(addressEl).toBeAttached({ timeout: 5000 });
+  const addressEl = page.locator('text=/^[0-9a-f]{70}$/').first();
+  await expect(addressEl).toBeAttached({ timeout: 10000 });
   return (await addressEl.textContent())!;
 }
 
@@ -29,7 +29,7 @@ test.describe('Wallet Flow', () => {
     page.on('dialog', (d) => d.accept().catch(() => {}));
     await waitForApp(page);
     const address = await createWalletQuick(page);
-    expect(address).toMatch(/^[mn][a-km-zA-HJ-NP-Z1-9]{25,34}$/);
+    expect(address).toMatch(/^[0-9a-f]{70}$/);
 
     // Save with password (tested once)
     await page.getByText('Save with Password').click();
