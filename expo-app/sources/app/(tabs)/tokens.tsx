@@ -178,7 +178,7 @@ const s = StyleSheet.create((theme) => ({
   tabText: { fontSize: 14, fontWeight: '600', color: theme.colors.text.secondary },
   tabTextActive: { color: '#FFFFFF' },
   searchRow: { paddingHorizontal: 16, paddingTop: 12 },
-  searchInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 14 },
+  searchInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 14 },
   placeholder: { color: theme.colors.text.secondary },
   listContent: { padding: 16 },
   listTitle: { fontSize: 13, color: theme.colors.text.secondary, marginBottom: 12 },
@@ -199,5 +199,5 @@ const s = StyleSheet.create((theme) => ({
   fieldArea: { minHeight: 72, textAlignVertical: 'top' },
   fieldRow: { flexDirection: 'row' },
   createBtn: { backgroundColor: theme.colors.accent?.blue || '#3B82F6', borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
-  createBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '700' },
+  createBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 }));

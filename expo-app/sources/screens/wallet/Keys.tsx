@@ -888,7 +888,7 @@ const styles = StyleSheet.create((theme) => ({
   walletInfo: {
     backgroundColor: theme.colors.groupped.surface,
     padding: theme.margins.md,
-    borderRadius: theme.borderRadius.lg,
+    borderRadius: theme.borderRadius.xl,
     marginBottom: theme.margins.lg,
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -931,7 +931,8 @@ const styles = StyleSheet.create((theme) => ({
     marginBottom: theme.margins.md,
   },
   inputLabel: {
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: "600",
     color: theme.colors.text.primary,
     marginBottom: theme.margins.xs,
   },

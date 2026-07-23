@@ -217,7 +217,7 @@ const s = StyleSheet.create({
   sellBtn: {
     flex: 1, borderRadius: 6, paddingVertical: 10, alignItems: 'center',
   },
-  actionBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  actionBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
   footer: {
     borderTopWidth: 1, paddingVertical: 10, paddingHorizontal: 16,
   },
