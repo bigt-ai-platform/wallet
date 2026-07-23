@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { View, Text, TouchableOpacity, Modal, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, Modal } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { useTranslation } from 'react-i18next';
 import { useUnistyles } from 'react-native-unistyles';
 import { GlobeIcon, CloseIcon } from './Icons';
@@ -19,33 +20,28 @@ export default function LanguageSwitcher() {
 
   return (
     <>
-      <TouchableOpacity onPress={() => setVisible(true)} style={{ padding: 6 }}>
+      <TouchableOpacity onPress={() => setVisible(true)} style={styles.trigger}>
         <GlobeIcon size={20} color={theme.colors.text.secondary} />
       </TouchableOpacity>
 
       <Modal visible={visible} transparent animationType="fade" onRequestClose={() => setVisible(false)}>
-        <TouchableOpacity style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' }}
-          activeOpacity={1} onPress={() => setVisible(false)}>
-          <View style={{
-            backgroundColor: theme.colors.groupped.surface, borderRadius: 14,
-            width: 260, paddingVertical: 8, borderWidth: 1, borderColor: theme.colors.border,
-          }}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }}>
-              <Text style={{ fontSize: 15, fontWeight: '600', color: theme.colors.text.primary }}>{t('common.language')}</Text>
+        <TouchableOpacity style={styles.overlay} activeOpacity={1} onPress={() => setVisible(false)}>
+          <View style={styles.dialog}>
+            <View style={styles.header}>
+              <Text style={styles.headerText}>{t('common.language')}</Text>
               <TouchableOpacity onPress={() => setVisible(false)}>
                 <CloseIcon size={18} color={theme.colors.text.secondary} />
               </TouchableOpacity>
             </View>
             {supportedLanguages.map((lang) => (
               <TouchableOpacity key={lang.code} onPress={() => changeLang(lang.code)}
-                style={{
-                  flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16,
-                  backgroundColor: current.code === lang.code ? theme.colors.groupped.background : 'transparent',
-                }}>
-                <Text style={{ fontSize: 20, marginRight: 10 }}>{lang.flag}</Text>
-                <Text style={{ fontSize: 15, fontWeight: current.code === lang.code ? '600' : '400', color: theme.colors.text.primary }}>{lang.name}</Text>
+                style={[styles.option, current.code === lang.code && styles.optionActive]}>
+                <Text style={styles.flag}>{lang.flag}</Text>
+                <Text style={[styles.optionText, current.code === lang.code && styles.optionTextActive]}>
+                  {lang.name}
+                </Text>
                 {current.code === lang.code && (
-                  <Text style={{ marginLeft: 'auto', color: theme.colors.primary, fontSize: 16 }}>✓</Text>
+                  <Text style={styles.checkmark}>✓</Text>
                 )}
               </TouchableOpacity>
             ))}
@@ -55,3 +51,63 @@ export default function LanguageSwitcher() {
     </>
   );
 }
+
+const styles = StyleSheet.create((theme) => ({
+  trigger: {
+    padding: 6,
+  },
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dialog: {
+    backgroundColor: theme.colors.groupped.surface,
+    borderRadius: theme.borderRadius.xl,
+    width: 260,
+    paddingVertical: theme.margins.xs,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: theme.margins.lg,
+    paddingVertical: theme.margins.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
+  headerText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: theme.colors.text.primary,
+  },
+  option: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: theme.margins.sm,
+    paddingHorizontal: theme.margins.lg,
+  },
+  optionActive: {
+    backgroundColor: theme.colors.groupped.background,
+  },
+  flag: {
+    fontSize: 20,
+    marginRight: theme.margins.sm,
+  },
+  optionText: {
+    fontSize: 15,
+    fontWeight: '400',
+    color: theme.colors.text.primary,
+  },
+  optionTextActive: {
+    fontWeight: '600',
+  },
+  checkmark: {
+    marginLeft: 'auto',
+    color: theme.colors.primary,
+    fontSize: 16,
+  },
+}));

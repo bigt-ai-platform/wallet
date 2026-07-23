@@ -851,11 +851,11 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.margins.lg,
     backgroundColor: theme.colors.header.background,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.divider,
+    borderBottomColor: theme.colors.border,
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 22,
+    fontWeight: "700",
     color: theme.colors.text.primary,
   },
   container: {
@@ -863,12 +863,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     fontSize: 20,
-    fontWeight: "bold",
+    fontWeight: "700",
     color: theme.colors.text.primary,
     marginBottom: theme.margins.md,
   },
   successText: {
-    color: "#34C759",
+    color: theme.colors.accent?.emerald ?? theme.colors.primary,
   },
   description: {
     fontSize: 14,
@@ -886,13 +886,16 @@ const styles = StyleSheet.create((theme) => ({
     borderRadius: theme.borderRadius.md,
   },
   walletInfo: {
-    backgroundColor: theme.colors.surface,
+    backgroundColor: theme.colors.groupped.surface,
     padding: theme.margins.md,
-    borderRadius: theme.borderRadius.md,
+    borderRadius: theme.borderRadius.lg,
     marginBottom: theme.margins.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   label: {
     fontSize: 12,
+    fontWeight: "600",
     color: theme.colors.text.secondary,
     marginBottom: theme.margins.xs,
   },
@@ -915,13 +918,13 @@ const styles = StyleSheet.create((theme) => ({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: "#8E8E93",
+    backgroundColor: theme.colors.text.secondary,
   },
   statusDotUnlocked: {
-    backgroundColor: "#34C759",
+    backgroundColor: theme.colors.accent?.emerald ?? theme.colors.primary,
   },
   statusText: {
-    fontSize: 12,
+    fontSize: 14,
     color: theme.colors.text.secondary,
   },
   inputGroup: {
@@ -934,8 +937,8 @@ const styles = StyleSheet.create((theme) => ({
   },
   input: {
     borderWidth: 1,
-    borderColor: theme.colors.divider,
-    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.groupped.surface,
     color: theme.colors.text.primary,
     borderRadius: theme.borderRadius.md,
     padding: theme.margins.md,
@@ -951,29 +954,29 @@ const styles = StyleSheet.create((theme) => ({
   },
   error: {
     fontSize: 14,
-    color: "#FF3B30",
+    color: theme.colors.accent?.red ?? theme.colors.text.secondary,
     marginBottom: theme.margins.md,
   },
   button: {
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md,
+    backgroundColor: theme.colors.groupped.surface,
+    borderRadius: theme.borderRadius.lg,
     padding: theme.margins.md,
     alignItems: "center",
     marginTop: theme.margins.sm,
     borderWidth: 1,
-    borderColor: theme.colors.divider,
+    borderColor: theme.colors.border,
   },
   buttonPrimary: {
-    backgroundColor: theme.colors.text.primary,
-    borderColor: theme.colors.text.primary,
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
   },
   buttonText: {
-    fontSize: 16,
+    fontSize: 15,
     color: theme.colors.text.primary,
     fontWeight: "600",
   },
   buttonTextPrimary: {
-    color: theme.colors.groupped.background,
+    color: "#FFFFFF",
   },
   buttonRow: {
     flexDirection: "row",
