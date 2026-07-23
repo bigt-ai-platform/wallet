@@ -12,13 +12,13 @@ module.exports = {
   apps: {
     'ios.debug': {
       type: 'ios.app',
-      binaryPath: 'ios/build/Build/Products/Debug-iphonesimulator/bapp.app',
-      build: 'xcodebuild -workspace ios/bapp.xcworkspace -scheme bapp -configuration Debug -sdk iphonesimulator -derivedDataPath ios/build',
+      binaryPath: 'ios/build/Build/Products/Debug-iphonesimulator/Bappdev.app',
+      build: 'xcodebuild -workspace ios/Bappdev.xcworkspace -scheme Bappdev -configuration Debug -sdk iphonesimulator -derivedDataPath ios/build',
     },
     'ios.release': {
       type: 'ios.app',
-      binaryPath: 'ios/build/Build/Products/Release-iphonesimulator/bapp.app',
-      build: 'xcodebuild -workspace ios/bapp.xcworkspace -scheme bapp -configuration Release -sdk iphonesimulator -derivedDataPath ios/build',
+      binaryPath: 'ios/build/Build/Products/Release-iphonesimulator/Bapp.app',
+      build: 'xcodebuild -workspace ios/Bapp.xcworkspace -scheme Bapp -configuration Release -sdk iphonesimulator -derivedDataPath ios/build',
     },
     'android.debug': {
       type: 'android.apk',

@@ -73,7 +73,7 @@ export default {
             [
                 'expo-splash-screen',
                 {
-                    backgroundColor: "#F5F5F5",
+                    image: "./sources/assets/images/splash.png",
                     resizeMode: "contain",
                     ios: {
                         backgroundColor: "#F2F2F7",
