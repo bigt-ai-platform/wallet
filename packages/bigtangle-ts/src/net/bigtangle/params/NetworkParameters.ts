@@ -50,6 +50,7 @@ export abstract class NetworkParameters {
   abstract getBip32HeaderPriv(): number;
   abstract getDumpedPrivateKeyHeader(): number;
   abstract serverSeeds(): string[];
+  abstract getDnsSeeds(): string[];
   abstract getGenesisPub(): string;
   abstract getPacketMagic(): number;
 
