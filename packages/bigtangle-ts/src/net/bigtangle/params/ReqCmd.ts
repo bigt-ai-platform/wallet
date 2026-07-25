@@ -59,7 +59,6 @@ export enum ReqCmd {
     deleteAccessGrant = 'deleteAccessGrant',
     // check point value
     getCheckPoint = 'getCheckPoint',
-    serverinfolist = 'serverinfolist',
     submitTransaction = 'submitTransaction',
     submitTransactions = 'submitTransactions'
 }

@@ -97,3 +97,8 @@ export type { ECDHEncryptedData } from './net/bigtangle/crypto/ECDH';
 export { ChallengeAuth } from './net/bigtangle/crypto/ChallengeAuth';
 export type { Challenge, ChallengeResponse } from './net/bigtangle/crypto/ChallengeAuth';
 
+// Peer discovery
+export { PeerDiscoveryClient } from './net/bigtangle/pool/server/PeerDiscoveryClient';
+export { DnsDiscoveryResolver } from './net/bigtangle/pool/server/DnsDiscoveryResolver';
+export type { PeerInfo, GetPeersResponse } from './net/bigtangle/pool/server/NodeRecord';
+
