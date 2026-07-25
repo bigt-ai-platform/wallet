@@ -45,7 +45,7 @@ export class TestParams extends NetworkParameters {
     }
 
     serverSeeds(): string[] {
-        return ["test.bigt.ai:8089"];
+        return ["92.5.34.128:80"];
     }
 
     getDnsSeeds(): string[] {

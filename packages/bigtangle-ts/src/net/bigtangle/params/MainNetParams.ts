@@ -44,7 +44,7 @@ export class MainNetParams extends NetworkParameters {
     }
 
     serverSeeds(): string[] {
-        return ["eu.bigt.ai:8089", "asia.bigt.ai:8089", "us.bigt.ai:8089", "92.5.34.128:8089"];
+        return ["92.5.34.128:80", "43.132.208.9:80", "43.162.118.46:80"];
     }
 
     getDnsSeeds(): string[] {
