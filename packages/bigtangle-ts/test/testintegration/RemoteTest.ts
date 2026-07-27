@@ -245,7 +245,7 @@ export abstract class RemoteTest {
     const adjust = this.networkParameters
       .getDefaultSerializer()
       .makeBlock(Buffer.from(Utils.HEX.decode(dataHex)));
-    adjust.solve( );
+    adjust.setNonce(Math.floor(Math.random() * 0xFFFFFFFF));
     return adjust;
   }
 

@@ -154,6 +154,16 @@ export class UnsafeByteArrayOutputStream {
         }
     }
 
+    writeNBytes(bytes: Uint8Array | null | undefined): void {
+        if (bytes === null || bytes === undefined) {
+            this.writeBoolean(false);
+        } else {
+            this.writeBoolean(true);
+            this.writeInt(bytes.length);
+            this.writeBytes(new Uint8Array(bytes), 0, bytes.length);
+        }
+    }
+
     close(): void {
         // No-op since we're just buffering in memory
     }

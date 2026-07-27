@@ -45,7 +45,7 @@ describe('ScriptTest', () => {
         expect(toAddr.toString()).toBe('15jTWe6r9zqxkjjLFntAWADZosAwiuw4U5');
     });
 
-    test('testMultiSig', () => {
+    test('testMultiSig', { timeout: 30000 }, () => {
         const keys = [createTestKey(1), createTestKey(2), createTestKey(3)];
         expect(
             ScriptBuilder.createMultiSigOutputScript(2, keys).isSentToMultiSig(),

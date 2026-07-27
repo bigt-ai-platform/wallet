@@ -98,12 +98,26 @@ export class PQKey implements EncryptableItem {
     );
   }
 
+  static fromPrefixedPublicKey(pubBytes: Uint8Array, network: number = PQConstants.NETWORK_TESTNET): PQKey {
+    if (pubBytes.length < 2 || pubBytes[0] !== 0x05)
+      throw new Error('invalid prefixed PQ public key bytes');
+    return PQKey.fromPublicOnly(pubBytes.slice(1), network);
+  }
+
   getKeyBundle(): KeyBundle {
     return this.keyBundle;
   }
 
   getPublicKeyBytes(): Uint8Array {
     return this.keyBundle.serialize();
+  }
+
+  getPrefixedPublicKeyBytes(): Uint8Array {
+    const raw = this.keyBundle.serialize();
+    const prefixed = new Uint8Array(1 + raw.length);
+    prefixed[0] = 0x05;
+    prefixed.set(raw, 1);
+    return prefixed;
   }
 
   /** Alias for getPublicKeyBytes - matches ECKey API */

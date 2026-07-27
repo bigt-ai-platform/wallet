@@ -33,24 +33,22 @@ export class SpentBlock extends DataClass {
   public toByteArray(): Uint8Array {
     const baos = new UnsafeByteArrayOutputStream();
 
-    // Write superclass data
     const superBytes = new Uint8Array(super.toByteArray());
     baos.writeBytes(superBytes, 0, superBytes.length);
 
-    // Write class-specific data
-    const blockHashBytes = new Uint8Array(this.blockHash === null
+    const blockHashBytes = this.blockHash === null
       ? Sha256Hash.ZERO_HASH.getBytes()
-      : this.blockHash.getBytes());
-    baos.writeBytes(blockHashBytes, 0, blockHashBytes.length);
-    
+      : this.blockHash.getBytes();
+    Utils.writeNBytes(baos, new Uint8Array(blockHashBytes));
+
     baos.writeBoolean(this.confirmed);
     baos.writeBoolean(this.spent);
-    
-    const spenderBlockHashBytes = new Uint8Array(this.spenderBlockHash === null
+
+    const spenderBlockHashBytes = this.spenderBlockHash === null
       ? Sha256Hash.ZERO_HASH.getBytes()
-      : this.spenderBlockHash.getBytes());
-    baos.writeBytes(spenderBlockHashBytes, 0, spenderBlockHashBytes.length);
-    
+      : this.spenderBlockHash.getBytes();
+    Utils.writeNBytes(baos, new Uint8Array(spenderBlockHashBytes));
+
     baos.writeLong(this.time);
 
     return baos.toByteArray();
@@ -58,10 +56,19 @@ export class SpentBlock extends DataClass {
 
   public parseDIS(dis: DataInputStream): SpentBlock {
     super.parseDIS(dis);
-    this.blockHash = Sha256Hash.wrap(dis.readBytes(32));
+    const blockHashBytes = Utils.readNBytes(dis);
+    if (blockHashBytes) {
+      this.blockHash = Sha256Hash.wrap(blockHashBytes);
+    }
+    if (this.blockHash?.equals(Sha256Hash.ZERO_HASH)) {
+      this.blockHash = null;
+    }
     this.confirmed = dis.readBoolean();
     this.spent = dis.readBoolean();
-    this.spenderBlockHash = Sha256Hash.wrap(dis.readBytes(32));
+    const spenderBlockHashBytes = Utils.readNBytes(dis);
+    if (spenderBlockHashBytes) {
+      this.spenderBlockHash = Sha256Hash.wrap(spenderBlockHashBytes);
+    }
     if (this.spenderBlockHash?.equals(Sha256Hash.ZERO_HASH)) {
       this.spenderBlockHash = null;
     }

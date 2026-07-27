@@ -28,15 +28,15 @@ describe('DeterministicKeyChainTest', () => {
         expect(key2.isPubKeyOnly()).toBe(false);
 
         // Verify keys can sign
-        const hashBytes = new Uint8Array(32); // 32 zero bytes for hash simulation
-        key1.sign(hashBytes);
+        const hash = Sha256Hash.wrap(new Uint8Array(32)); // 32 zero bytes for hash simulation
+        key1.sign(hash);
         expect(key1.isPubKeyOnly()).toBe(false);
-        key2.sign(hashBytes);
+        key2.sign(hash);
         expect(key2.isPubKeyOnly()).toBe(false);
 
         const key3 = chain.getKey(KeyPurpose.CHANGE);
         expect(key3.isPubKeyOnly()).toBe(false);
-        key3.sign(hashBytes);
+        key3.sign(hash);
         expect(key3.isPubKeyOnly()).toBe(false);
     });
 
@@ -46,9 +46,9 @@ describe('DeterministicKeyChainTest', () => {
         chain = new DeterministicKeyChain(MainNetParams.get(), seed);
         chain.setLookaheadSize(10);
         
-        const hashBytes = new Uint8Array(32); // 32 zero bytes for hash simulation
-        chain.getKey(KeyPurpose.RECEIVE_FUNDS).sign(hashBytes);
-        chain.getKey(KeyPurpose.CHANGE).sign(hashBytes);
+        const hash = Sha256Hash.of(new Uint8Array(32)); // 32 zero bytes for hash simulation
+        chain.getKey(KeyPurpose.RECEIVE_FUNDS).sign(hash);
+        chain.getKey(KeyPurpose.CHANGE).sign(hash);
     });
 
     test('hierarchy', async () => {

@@ -299,7 +299,7 @@ export class Wallet extends WalletBase {
     multiSignBy0.setTokenid(tokenIdStr.trim());
     multiSignBy0.setTokenindex(0);
     multiSignBy0.setAddress(ownerKey.toAddress().toHex());
-    multiSignBy0.setPublickey(Utils.HEX.encode(ownerKey.getPubKey()));
+    multiSignBy0.setPublickey(Utils.HEX.encode(ownerKey.getPrefixedPublicKeyBytes()));
     multiSignBy0.setSignature(Utils.HEX.encode(buf1));
     multiSignBies.push(multiSignBy0);
     const multiSignByRequest = MultiSignByRequest.create(multiSignBies);
@@ -1540,9 +1540,13 @@ export class Wallet extends WalletBase {
    * Block solving / posting
    * ================================================================= */
 
+  private setRandomNonce(block: Block): void {
+    block.setNonce(Math.floor(Math.random() * 0xFFFFFFFF));
+  }
+
   async solveAndPost(block: Block): Promise<Block> {
     try {
-      block.solve();
+      this.setRandomNonce(block);
       await OkHttp3Util.post(
         this.getServerURL() + ReqCmd.saveBlock,
         new Uint8Array(block.bitcoinSerialize())
@@ -1560,7 +1564,7 @@ export class Wallet extends WalletBase {
   }
 
   async adjustSolveAndSign(block: Block): Promise<Block> {
-    block.solve();
+    this.setRandomNonce(block);
     await OkHttp3Util.post(
       this.getServerURL() + ReqCmd.signToken,
       new Uint8Array(block.bitcoinSerialize())

@@ -270,22 +270,12 @@ export class Block extends Message {
         this.prevBranchBlockHash = this.readHash();
         this.merkleRoot = this.readHash();
         this.time = Number(this.readInt64());
-        this.difficultyTarget = Number(this.readInt64());
         this.lastMiningRewardBlock = Number(this.readInt64());
-        this.nonce = this.readUint32();
-        
-        // Read miner address - handle potentially shorter addresses
-        const addressBytes = this.readBytes(20);
-        if (addressBytes.length < 20) {
-            // Pad with zeros if address is shorter than 20 bytes
-            const padded = new Uint8Array(20);
-            padded.set(addressBytes);
-            this.minerAddress = padded;
-        } else {
-            this.minerAddress = addressBytes;
-        }
-        
-        this.blockType = BlockType.values()[this.readUint32()];
+
+        // blockType as VarInt-prefixed string (e.g. "BLOCKTYPE_TRANSFER")
+        const blockTypeName = this.readStr();
+        const bt = BlockType[blockTypeName as keyof typeof BlockType];
+        this.blockType = typeof bt === 'number' ? bt as BlockType : BlockType.BLOCKTYPE_TRANSFER;
         this.height = Number(this.readInt64());
 
         // Proposer PQ fields (backward compat: only if version > genesis and data remains).
@@ -333,11 +323,14 @@ export class Block extends Message {
         stream.write(this.prevBranchBlockHash.getReversedBytes());
         stream.write(this.getMerkleRoot().getReversedBytes());
         Utils.int64ToByteStreamLE(BigInt(this.time), stream);
-        Utils.int64ToByteStreamLE(BigInt(this.difficultyTarget), stream);
         Utils.int64ToByteStreamLE(BigInt(this.lastMiningRewardBlock), stream);
-        Utils.uint32ToByteStreamLE(this.nonce, stream);
-        stream.write(this.minerAddress);
-        Utils.uint32ToByteStreamLE(BlockType.ordinal(this.blockType), stream);
+
+        // blockType as VarInt-prefixed string (e.g. "BLOCKTYPE_TRANSFER")
+        const blockTypeName = BlockType[this.blockType ?? BlockType.BLOCKTYPE_TRANSFER];
+        const blockTypeBytes = new TextEncoder().encode(blockTypeName);
+        stream.write(new VarInt(blockTypeBytes.length).encode());
+        stream.write(blockTypeBytes);
+
         Utils.int64ToByteStreamLE(BigInt(this.height), stream);
 
         // Proposer PQ fields (conditional on version).
@@ -483,12 +476,6 @@ export class Block extends Message {
     /**
      * Calculates the hash relevant for PoW difficulty checks.
      */
-    private calculatePoWHash(): Sha256Hash {
-        const bos = new UnsafeByteArrayOutputStream(NetworkParameters.HEADER_SIZE);
-        this.writeHeader(bos);
-        return Sha256Hash.wrapReversed(Sha256Hash.hashTwice(new Uint8Array(bos.toByteArray())));
-    }
-
     /**
      * Returns the hash of the block (which for a valid, solved block should be
      * below the target) in the form seen on the block explorer. If you call this on
@@ -627,53 +614,6 @@ export class Block extends Message {
     }
 
     /**
-     * <p>
-     * Finds a value of nonce and equihashProof if using Equihash that validates
-     * correctly.
-     */
-    public solveTarget(target?: bigint): void {
-        // Add randomness to prevent new empty blocks from same miner with same
-        // approved blocks to be the same
-        // Constrain nonce to 32-bit unsigned integer range
-        this.setNonce(Math.floor(Block.gen() * 0xFFFFFFFF));
-
-        // Use provided target or calculate from difficulty
-        const powTarget = target || this.getDifficultyTargetAsInteger();
-
-        // Limit the number of iterations to prevent infinite loops
-        let iterations = 0;
-        const MAX_ITERATIONS = 1000000; // 1 million iterations should be enough
-
-        while (iterations < MAX_ITERATIONS) {
-            try {
-                // Is our proof of work valid yet?
-                if (this.checkProofOfWork(false, powTarget))
-                    return;
-
-                // No, so increment the nonce and try again.
-                // Constrain nonce to 32-bit unsigned integer range
-                let newNonce = this.getNonce() + 1;
-                if (newNonce > 0xFFFFFFFF) {
-                    newNonce = 0; // Wrap around to 0
-                }
-                this.setNonce(newNonce);
-                
-                iterations++;
-            } catch (e) {
-                throw new Error("Runtime exception"); // Cannot happen.
-            }
-        }
-        
-        // If we reach here, we couldn't find a solution within the iteration limit
-        throw new Error("Failed to solve block within iteration limit");
-    }
-    
-    // Alias for solve to maintain backward compatibility
-    public solve(): void {
-        this.solveTarget(this.getDifficultyTargetAsInteger());
-    }
-
-    /**
      * Returns the difficulty target as a 256 bit value that can be compared to a
      * SHA-256 hash. Inside a block the target is represented using a compact form.
      * If this form decodes to a value that is out of bounds, an exception is
@@ -684,29 +624,6 @@ export class Block extends Message {
         if (target < 0 || target > this.params!.getMaxTarget())
             throw new VerificationException("Difficulty target out of bounds");
         return target;
-    }
-
-    /**
-     * Returns true if the PoW of the block is OK
-     */
-    public checkProofOfWork(throwException: boolean, target?: bigint): boolean {
-        // Use provided target or calculate from difficulty
-        const powTarget = target || this.getDifficultyTargetAsInteger();
-        
-        // No PoW for genesis block
-        if (this.getBlockType() === BlockType.BLOCKTYPE_INITIAL) {
-            return true;
-        }
-
-        const h = this.calculatePoWHash().toBigInteger();
-
-        if (h > powTarget) {
-            if (throwException)
-                throw new VerificationException("Proof of work failed");
-            return false;
-        }
-
-        return true;
     }
 
     private checkTimestamp(): void {
@@ -845,15 +762,6 @@ export class Block extends Message {
      *
      */
     public verifyHeader(): void {
-        // Prove that this block is OK. It might seem that we can just ignore
-        // most of these checks given that the
-        // network is also verifying the blocks, but we cannot as it'd open us
-        // to a variety of obscure attacks.
-        //
-        // Firstly we need to ensure this block does in fact represent real work
-        // done. If the difficulty is high
-        // enough, it's probably been done by the network.
-        this.checkProofOfWork(true);
         this.checkTimestamp();
 
         // Check proposer PQ signatures for non-genesis blocks.
@@ -889,7 +797,7 @@ export class Block extends Message {
         stream.write(this.getMerkleRoot().getReversedBytes());
         Utils.int64ToByteStreamLE(BigInt(this.time), stream);
         Utils.int64ToByteStreamLE(BigInt(this.lastMiningRewardBlock), stream);
-        const blockTypeName = new TextEncoder().encode(BlockType.ordinal(this.blockType).toString());
+        const blockTypeName = new TextEncoder().encode(BlockType[this.blockType]);
         stream.write(new VarInt(blockTypeName.length).encode());
         stream.write(blockTypeName);
         Utils.int64ToByteStreamLE(BigInt(this.height), stream);

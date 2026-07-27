@@ -169,7 +169,7 @@ export class ScriptBuilder {
                     .build();
             }
         } else if (to instanceof PQKey) {
-            return new ScriptBuilder().data(to.getPubKey()).op(ScriptOpCodes.OP_CHECKSIG).build();
+            return new ScriptBuilder().data(to.getPrefixedPublicKeyBytes()).op(ScriptOpCodes.OP_CHECKSIG).build();
         }
         throw new Error("Invalid type for createOutputScript");
     }

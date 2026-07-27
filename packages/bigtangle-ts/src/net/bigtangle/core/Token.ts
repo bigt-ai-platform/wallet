@@ -6,6 +6,10 @@ import { TokenKeyValues } from "./TokenKeyValues";
 import { KeyValue } from "./KeyValue";
  
 import { JsonProperty } from "jackson-js";
+import { DataInputStream } from '../utils/DataInputStream';
+import { UnsafeByteArrayOutputStream } from './UnsafeByteArrayOutputStream';
+import { Utils } from '../utils/Utils';
+import { bigIntToBytes, bytesToBigInt } from './BigIntegerConverter';
 
 
 export class Token extends SpentBlock {
@@ -358,6 +362,80 @@ export class Token extends SpentBlock {
     tokens.prevblockhash = prevblockhash;
 
     return tokens;
+  }
+
+  public toByteArray(): Uint8Array {
+    const baos = new UnsafeByteArrayOutputStream();
+    const superBytes = new Uint8Array(super.toByteArray());
+    baos.writeBytes(superBytes, 0, superBytes.length);
+    Utils.writeNBytesString(baos, this.tokenid);
+    baos.writeLong(Number(this.tokenindex));
+    Utils.writeNBytesString(baos, this.tokenname);
+    Utils.writeNBytesString(baos, this.description);
+    Utils.writeNBytesString(baos, this.domainName);
+    Utils.writeNBytesString(baos, this.domainNameBlockHash);
+    baos.writeInt(this.signnumber);
+    baos.writeInt(this.tokentype);
+    baos.writeBoolean(this.tokenstop);
+    const prevBytes = this.prevblockhash === null ? null : this.prevblockhash.getBytes();
+    Utils.writeNBytes(baos, prevBytes ? new Uint8Array(prevBytes) : null);
+    const amountBytes = bigIntToBytes(this.amount ?? 0n);
+    Utils.writeNBytes(baos, amountBytes);
+    baos.writeInt(this.decimals);
+    Utils.writeNBytesString(baos, this.classification);
+    Utils.writeNBytesString(baos, this.language);
+    baos.writeBoolean(this.revoked === true);
+    if (this.tokenKeyValues != null) {
+      const kvBytes = this.tokenKeyValues.toByteArray();
+      baos.writeInt(kvBytes.length);
+      baos.writeBytes(new Uint8Array(kvBytes), 0, kvBytes.length);
+    } else {
+      baos.writeInt(0);
+    }
+    baos.close();
+    return baos.toByteArray();
+  }
+
+  public parseDIS(dis: DataInputStream): Token {
+    super.parseDIS(dis);
+    this.tokenid = Utils.readNBytesString(dis);
+    this.tokenindex = dis.readLong();
+    this.tokenname = Utils.readNBytesString(dis);
+    this.description = Utils.readNBytesString(dis);
+    this.domainName = Utils.readNBytesString(dis) ?? "";
+    this.domainNameBlockHash = Utils.readNBytesString(dis);
+    this.signnumber = dis.readInt();
+    this.tokentype = dis.readInt();
+    this.tokenstop = dis.readBoolean();
+    const prevBytes = Utils.readNBytes(dis);
+    if (prevBytes) {
+      this.prevblockhash = Sha256Hash.wrap(prevBytes);
+    }
+    const amountBytes = Utils.readNBytes(dis);
+    if (amountBytes) {
+      this.amount = bytesToBigInt(amountBytes);
+    }
+    this.decimals = dis.readInt();
+    this.classification = Utils.readNBytesString(dis);
+    this.language = Utils.readNBytesString(dis);
+    this.revoked = dis.readBoolean();
+    const kvLen = dis.readInt();
+    if (kvLen > 0) {
+      const kvBytes = dis.readBytes(kvLen);
+      this.tokenKeyValues = TokenKeyValues.parse(kvBytes);
+    }
+    return this;
+  }
+
+  public parse(buf: Uint8Array): Token {
+    const dis = new DataInputStream(buf);
+    try {
+      this.parseDIS(dis);
+      dis.close();
+    } catch (e: any) {
+      throw new Error(e);
+    }
+    return this;
   }
 
   public toString(): string {
