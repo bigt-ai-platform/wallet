@@ -170,7 +170,7 @@ test.describe('Tokens Screen', () => {
     token.setAmount(77777n);
     token.setTokenstop(true);
     token.setTokenindex(0);
-    token.setSignnumber(1);
+    token.setSignnumber(2);
     token.setDomainName('');
     token.setDomainNameBlockHash(genesisHash);
     token.setConfirmed(true);
