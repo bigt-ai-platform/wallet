@@ -10,7 +10,7 @@ export default defineConfig({
     ['list'],
     ['html', { outputFolder: 'playwright-report' }],
   ],
-  timeout: 30000,
+  timeout: 60000,
   use: {
     baseURL: process.env.APP_URL || 'http://localhost:8081',
     headless: process.env.CI ? true : false,

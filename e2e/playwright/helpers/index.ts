@@ -10,8 +10,22 @@ export async function getElement(page: Page, testId: string) {
 }
 
 export async function clickTab(page: Page, label: string) {
-  await page.getByText(label, { exact: true }).first().click();
+  await page.getByRole('tab', { name: label, exact: true }).click();
   await page.waitForTimeout(1500);
+}
+
+export async function configureServerUrl(page: Page, serverUrl: string, l1Url?: string) {
+  await clickTab(page, 'Settings');
+  const input = page.locator('[data-testid="server-url-input"]');
+  await input.fill('');
+  await input.fill(serverUrl);
+  if (l1Url) {
+    const l1Input = page.locator('[data-testid="l1-url-input"]');
+    await l1Input.fill('');
+    await l1Input.fill(l1Url);
+  }
+  await page.locator('text=Save').first().click();
+  await page.waitForTimeout(1000);
 }
 
 export const TEST_WALLET = {
