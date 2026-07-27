@@ -31,7 +31,7 @@ services:
     environment:
       APP_MODULE: layer0-server
       SERVER_PORT: 8088
-      SERVER_NET: Preprod
+      SERVER_NET: Test
       DB_HOSTNAME: postgres
       DB_PORT: 5432
       DB_NAME: layer0
@@ -61,7 +61,7 @@ services:
     environment:
       APP_MODULE: layer0-mcmc
       SERVER_PORT: 8084
-      SERVER_NET: Preprod
+      SERVER_NET: Test
       REQUESTER: http://l0-server:8088
       DB_HOSTNAME: postgres
       DB_PORT: 5432
@@ -116,7 +116,7 @@ services:
     environment:
       APP_MODULE: l1-order-server
       SERVER_PORT: 8086
-      SERVER_NET: Preprod
+      SERVER_NET: Test
       DB_HOSTNAME: postgres-l1-order
       DB_PORT: 5432
       DB_NAME: ordermatch
@@ -142,7 +142,7 @@ services:
     environment:
       APP_MODULE: l1-order-mcmc
       SERVER_PORT: 8087
-      SERVER_NET: Preprod
+      SERVER_NET: Test
       REQUESTER: http://l1-order-server:8086
       DB_HOSTNAME: postgres-l1-order
       DB_PORT: 5432
