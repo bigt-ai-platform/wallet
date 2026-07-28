@@ -124,7 +124,7 @@ test.describe('Order Screen', () => {
       );
       console.log('Sell order submitted');
     } catch (e: any) {
-      console.log('Sell order note:', e.message?.substring(0, 80));
+      console.log('Sell order error:', e.message);
     }
     try {
       const buyTx = await wallet.buyOrderDo(
@@ -132,7 +132,7 @@ test.describe('Order Screen', () => {
       );
       console.log('Buy order submitted');
     } catch (e: any) {
-      console.log('Buy order note:', e.message?.substring(0, 80));
+      console.log('Buy order error:', e.message);
     }
     console.log('Token+orders done');
   });

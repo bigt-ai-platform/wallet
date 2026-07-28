@@ -1014,7 +1014,12 @@ export class Transaction extends ChildMessage {
       hashType,
       anyoneCanPay
     );
-    return await key.signWithAesKey(hash, null);
+    const sigBundle = await key.signWithAesKey(hash, null);
+    // Store PQ signature for later serialization (matching Java Wallet behavior)
+    if (this.version >= PQConstants.TX_PQ_VERSION) {
+      this.pqSignatureBundle = sigBundle.serialize();
+    }
+    return sigBundle;
   }
 
  
