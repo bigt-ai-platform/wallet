@@ -3,6 +3,7 @@ import { Transaction } from '../core/Transaction';
 import { PQKey } from '../crypto/pq/PQKey';
 import { Script } from '../script/Script';
 import { KeyBag } from '../wallet/KeyBag'; // Placeholder
+import { SignatureBundle } from '../crypto/pq/SignatureBundle';
 import { MissingPrivateKeyException } from '../crypto/MissingPrivateKeyException';
 // Placeholder
 import { DeterministicKey } from '../crypto/DeterministicKey';
@@ -103,12 +104,21 @@ export class LocalTransactionSigner extends StatelessTransactionSigner {
              const connectedOutput = txIn.getConnectedOutput()!;
              const currentScriptPubKey = connectedOutput.getScriptPubKey();
              try {
-                 const signature = await tx.calculateSignature(i, key, currentScriptPubKey.getProgram(),  SigHash.ALL, false);
-                 // Always push <sigBundle.serialize()> <pubKey> (matching Java
-                 // LocalTransactionSigner which removed isSentToRawPubKey usage).
-                 // The bundle is written without sighash byte (serialize, not encodeToBitcoin).
-                 const newInputScript = ScriptBuilder.createInputScript(signature, key);
-                 txIn.setScriptSig(newInputScript);
+                 // Match Java LocalTransactionSigner: call calculateSignature (sets pqSignatureBundle),
+                 // then read the stored bundle from tx.getPqSignatureBundle() to build the scriptSig.
+                 // This ensures the scriptSig uses serialize() (no sighash byte), matching Java's
+                 // createInputScriptForPQ(sigBundle, key).
+                 await tx.calculateSignature(i, key, currentScriptPubKey.getProgram(), SigHash.ALL, false);
+                 const storedBundle = tx.getPqSignatureBundle();
+                 if (storedBundle) {
+                     const sigBundle = SignatureBundle.deserialize(storedBundle);
+                     const newInputScript = ScriptBuilder.createInputScript(sigBundle, key);
+                     txIn.setScriptSig(newInputScript);
+                 } else {
+                     const signature = await tx.calculateSignature(i, key, currentScriptPubKey.getProgram(), SigHash.ALL, false);
+                     const newInputScript = ScriptBuilder.createInputScript(signature, key);
+                     txIn.setScriptSig(newInputScript);
+                 }
              } catch (e: any) {
                 if (e instanceof MissingPrivateKeyException) {
                     console.warn(`No private key in keypair for input ${i}`);

@@ -175,8 +175,11 @@ export class ScriptBuilder {
     }
 
     static createInputScript(signature: TransactionSignature | SignatureBundle | null, pubKey?: PQKey): Script {
+        // For PQ signatures, use serialize() (no sighash byte) matching Java's
+        // createInputScriptForPQ. The encodeToBitcoin() variant would append a
+        // sighash byte that Java's LocalTransactionSigner does not include.
         const sigBytes = signature !== null
-            ? (signature instanceof SignatureBundle ? signature.encodeToBitcoin() : signature.encodeToBitcoin())
+            ? (signature instanceof SignatureBundle ? signature.serialize() : signature.encodeToBitcoin())
             : new Uint8Array();
         const builder = new ScriptBuilder().data(sigBytes);
         if (pubKey) {
