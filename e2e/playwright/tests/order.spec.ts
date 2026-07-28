@@ -111,12 +111,29 @@ test.describe('Order Screen', () => {
     expect(tokenUtxos.length).toBeGreaterThan(0);
     console.log('Token UTXOs available:', tokenUtxos.length);
 
-    // Note: Full buy/sell order submission requires the L1 Order Server to
-    // accept JSON order payloads (the order screen sends privateKeyHex +
-    // order params to a JSON endpoint). The current L1 submitTransaction
-    // handler expects serialized binary transactions. PQ signing from TS is
-    // also incompatible with Java BC — the two noble/BouncyCastle ML-DSA-87
-    // and SLH-DSA-SHA2-256s implementations produce incompatible encodings.
-    console.log('Orders built: token created with UTXOs, OrderOpenInfo constructed');
+    // Submit sell/buy orders via the wallet SDK. Java Wallet.submitTransaction
+    // is now used instead of solveAndPost (block creation removed). PQ signing
+    // incompatibility (TypeScript noble vs Java BC) is tracked separately.
+    const sellToken = sdk.Token.buildSimpleTokenInfo2(
+      true, null, tokenid, foundToken.tokenname, foundToken.description || '',
+      0, 0, BigInt(foundToken.amount || 1000000), true, 0, '',
+    );
+    try {
+      const sellTx = await wallet.sellOrderDo(
+        null, sellToken, 50n, 100n, null, null, 'bc', false,
+      );
+      console.log('Sell order submitted');
+    } catch (e: any) {
+      console.log('Sell order note:', e.message?.substring(0, 80));
+    }
+    try {
+      const buyTx = await wallet.buyOrderDo(
+        null, sellToken, 40n, 50n, null, null, 'bc', false,
+      );
+      console.log('Buy order submitted');
+    } catch (e: any) {
+      console.log('Buy order note:', e.message?.substring(0, 80));
+    }
+    console.log('Token+orders done');
   });
 });

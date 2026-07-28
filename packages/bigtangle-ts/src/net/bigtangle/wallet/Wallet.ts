@@ -813,7 +813,7 @@ export class Wallet extends WalletBase {
     validFromTime: number | null,
     orderBaseToken: string,
     allowRemainder: boolean
-  ): Promise<Block> {
+  ): Promise<Transaction> {
     const targetToken = await this.checkTokenId(tokenId);
     return this.buyOrderDo(aesKey, targetToken, buyPrice, targetValue, validToTime, validFromTime, orderBaseToken, allowRemainder);
   }
@@ -827,7 +827,7 @@ export class Wallet extends WalletBase {
     validFromTime: number | null,
     orderBaseToken: string,
     allowRemainder: boolean
-  ): Promise<Block> {
+  ): Promise<Transaction> {
     if (targetToken.getTokenid() === orderBaseToken) {
       throw new Error("buy token is base token");
     }
@@ -883,13 +883,11 @@ export class Wallet extends WalletBase {
     tx.setDataClassName("OrderOpen");
     await this.signTransaction(tx, aesKey, "THROW");
 
-    const block = await this.getTip();
-    block.addTransaction(tx);
-    block.setBlockType(BlockType.BLOCKTYPE_ORDER_OPEN);
+    await this.submitTransaction(tx);
     if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING !== orderBaseToken) {
       await this.submitTransaction(await this.feeTransaction(aesKey, candidates));
     }
-    return await this.solveAndPost(block);
+    return tx;
   }
 
   async sellOrder(
@@ -901,7 +899,7 @@ export class Wallet extends WalletBase {
     validFromTime: number | null,
     orderBaseToken: string,
     allowRemainder: boolean
-  ): Promise<Block> {
+  ): Promise<Transaction> {
     const t = await this.checkTokenId(offerTokenId);
     return this.sellOrderDo(aesKey, t, sellPrice, offerValue, validToTime, validFromTime, orderBaseToken, allowRemainder);
   }
@@ -915,7 +913,7 @@ export class Wallet extends WalletBase {
     validFromTime: number | null,
     orderBaseToken: string,
     allowRemainder: boolean
-  ): Promise<Block> {
+  ): Promise<Transaction> {
     if (t.getTokenid() === orderBaseToken) {
       throw new Error("sell token is not allowed as base token");
     }
@@ -972,13 +970,11 @@ export class Wallet extends WalletBase {
     tx.setDataClassName("OrderOpen");
     await this.signTransaction(tx, aesKey, "THROW");
 
-    const block = await this.getTip();
-    block.addTransaction(tx);
-    block.setBlockType(BlockType.BLOCKTYPE_ORDER_OPEN);
+    await this.submitTransaction(tx);
     if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING !== t.getTokenid()) {
       await this.submitTransaction(await this.feeTransaction(aesKey, candidates));
     }
-    return await this.solveAndPost(block);
+    return tx;
   }
 
   async cancelOrder(
