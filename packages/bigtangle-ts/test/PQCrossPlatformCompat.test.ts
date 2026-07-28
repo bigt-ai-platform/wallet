@@ -8,14 +8,16 @@ import * as fs from "fs";
 /**
  * Cross-platform PQ signature compatibility test.
  *
- * This test signs a known message with TypeScript @noble/post-quantum
- * and exports test vectors for Java BouncyCastle to verify.
+ * Verifies that @noble/post-quantum signatures match the FIPS 204/205
+ * standard sizes expected by Java BouncyCastle, and exports test vectors
+ * for cross-platform verification.
  *
- * Run: npx vitest run test/PQCrossPlatformCompat.test.ts
- * Regenerates: /tmp/pq-test-vectors.json
+ * Standard signature sizes (FIPS 204 §7.3 / FIPS 205 §10.2):
+ *   ML-DSA-87:       4627 bytes
+ *   SLH-DSA-SHA2-256s: 29792 bytes
  */
 describe("PQCrossPlatformCompat", () => {
-  test("noble signs and self-verifies", () => {
+  test("signature sizes match FIPS 204/205 standards", () => {
     const mlSeed = new Uint8Array(32).fill(0x42);
     const slhSeed = new Uint8Array(32).fill(0x24);
     const key = PQKey.fromSeeds(mlSeed, slhSeed);
@@ -25,52 +27,28 @@ describe("PQCrossPlatformCompat", () => {
 
     const sigBundle = key.sign(baseHash);
 
-    // Self-verify: the key's signature must verify with the same key
-    const txHash = domainSeparatedHash(baseHash.getBytes(), PQConstants.TX_DOMAIN);
-    const mlMsg = domainSeparatedHash(txHash, PQConstants.MLDSA_SIG_DOMAIN);
-    const slhMsg = domainSeparatedHash(txHash, PQConstants.SLHDSA_SIG_DOMAIN);
-
     const mlEntry = sigBundle.getEntry(PQConstants.ALG_ML_DSA_87);
     const slhEntry = sigBundle.getEntry(PQConstants.ALG_SLH_DSA_SHA2_256S);
     expect(mlEntry).toBeDefined();
     expect(slhEntry).toBeDefined();
 
-    // We only self-verify structure — actual noble self-verify requires
-    // the verify method which may not be exposed. For now, just check
-    // that the signature bundle serialization round-trips.
-    const serialized = sigBundle.serialize();
-    const deserialized = sigBundle.constructor.name === "SignatureBundle"
-      ? sigBundle
-      : null;
-    expect(serialized.length).toBeGreaterThan(0);
+    // FIPS standard sizes
+    expect(mlEntry!.signature.length).toBe(4627);
+    expect(slhEntry!.signature.length).toBe(29792);
 
-    // Export test vectors for Java BC verification
+    // Bundle format: version(1) + count(1) + entry1(alg+len+data) + entry2(alg+len+data)
+    const expectedBundleSize = 1 + 1 + (1 + 2 + 4627) + (1 + 2 + 29792);
+    expect(sigBundle.serialize().length).toBe(expectedBundleSize);
+
+    // Export test vectors for Java BC to verify
     const vectors = {
       pubKeyHex: Utils.HEX.encode(key.getPrefixedPublicKeyBytes()),
       sigHex: Utils.HEX.encode(sigBundle.serialize()),
       baseHashHex: Utils.HEX.encode(baseHash.getBytes()),
-      mlDsaSeedHex: Utils.HEX.encode(mlSeed),
-      slhDsaSeedHex: Utils.HEX.encode(slhSeed),
-      mlSigSize: mlEntry!.signature.length,
-      slhSigSize: slhEntry!.signature.length,
-      bundleSize: serialized.length,
-      pubKeySize: key.getPrefixedPublicKeyBytes().length,
     };
-
-    const outPath = "/tmp/pq-test-vectors.json";
-    fs.writeFileSync(outPath, JSON.stringify(vectors, null, 2));
-    console.log("Test vectors written to", outPath);
-    console.log("  pubKeySize:", vectors.pubKeySize);
-    console.log("  mlSigSize:", vectors.mlSigSize);
-    console.log("  slhSigSize:", vectors.slhSigSize);
-    console.log("  bundleSize:", vectors.bundleSize);
+    fs.writeFileSync("/tmp/pq-test-vectors.json", JSON.stringify(vectors, null, 2));
+    console.log("Test vectors written to /tmp/pq-test-vectors.json");
   });
 });
 
-function domainSeparatedHash(data: Uint8Array, domain: string): Uint8Array {
-  const domainBytes = new TextEncoder().encode(domain);
-  const combined = new Uint8Array(domainBytes.length + data.length);
-  combined.set(domainBytes);
-  combined.set(data, domainBytes.length);
-  return Sha256Hash.hash(combined);
-}
+
