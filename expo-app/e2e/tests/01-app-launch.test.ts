@@ -27,7 +27,7 @@ describe('App Launch', () => {
     // Check all tabs are visible
     await detoxExpect(element(by.text('Transaction'))).toBeVisible();
     await detoxExpect(element(by.text('Wallet'))).toBeVisible();
-    await detoxExpect(element(by.text('Market'))).toBeVisible();
+    await detoxExpect(element(by.text('Order'))).toBeVisible();
     await detoxExpect(element(by.text('Tokens'))).toBeVisible();
     await detoxExpect(element(by.text('Settings'))).toBeVisible();
 
@@ -42,9 +42,9 @@ describe('App Launch', () => {
     await waitForElementToBeVisible(by.id('wallet-screen'));
     await takeScreenshot('wallet-tab');
 
-    await element(by.text('Market')).tap();
-    await waitForElementToBeVisible(by.id('market-screen'));
-    await takeScreenshot('market-tab');
+    await element(by.text('Order')).tap();
+    await waitForElementToBeVisible(by.id('order-screen'));
+    await takeScreenshot('order-tab');
 
     await element(by.text('Tokens')).tap();
     await waitForElementToBeVisible(by.id('tokens-screen'));

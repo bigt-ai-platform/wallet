@@ -1,7 +1,7 @@
 /**
- * E2E Test: Market
+ * E2E Test: Order
  *
- * Tests market price viewing and functionality
+ * Tests order price viewing and functionality
  */
 
 import { device, element, by, expect as detoxExpect } from 'detox';
@@ -17,29 +17,27 @@ import {
   verifySortOrder,
 } from '../helpers/logic-verification';
 
-describe('Market', () => {
+describe('Order', () => {
   beforeAll(async () => {
     await device.launchApp();
     await waitForAppToBeReady();
   });
 
   beforeEach(async () => {
-    // Navigate to market tab
-    await element(by.text('Market')).tap();
-    await waitForElementToBeVisible(by.id('market-screen'));
+    // Navigate to order tab
+    await element(by.text('Order')).tap();
+    await waitForElementToBeVisible(by.id('order-screen'));
   });
 
-  it('should display market screen', async () => {
-    await detoxExpect(element(by.text('Market Prices'))).toBeVisible();
-    await takeScreenshot('market-screen');
+  it('should display order screen', async () => {
+    await detoxExpect(element(by.text('Order Prices'))).toBeVisible();
+    await takeScreenshot('order-screen');
   });
 
-  it('should load market prices', async () => {
-    // Wait for prices to load
+  it('should load order prices', async () => {
     await waitForNetwork(3000);
 
-    // Should show price list or empty state
-    await takeScreenshot('market-prices-loaded');
+    await takeScreenshot('order-prices-loaded');
   });
 
   it('should display price cards with data', async () => {
@@ -52,9 +50,9 @@ describe('Market', () => {
       // Price card should have token name, price, and change
       await takeScreenshot('price-card-details');
     } catch (e) {
-      // No market data available
-      await detoxExpect(element(by.text('No market data available'))).toBeVisible();
-      await takeScreenshot('no-market-data');
+      // No order data available
+      await detoxExpect(element(by.text('No order data available'))).toBeVisible();
+      await takeScreenshot('no-order-data');
     }
   });
 
@@ -86,16 +84,16 @@ describe('Market', () => {
     }
   });
 
-  it('should refresh market data', async () => {
+  it('should refresh order data', async () => {
     await waitForNetwork(2000);
 
     // Swipe down to refresh
-    await element(by.id('market-screen')).swipe('down', 'slow', 0.75);
+    await element(by.id('order-screen')).swipe('down', 'slow', 0.75);
 
     // Wait for refresh to complete
     await waitForNetwork(2000);
 
-    await takeScreenshot('market-refreshed');
+    await takeScreenshot('order-refreshed');
   });
 
   it('should display volume information', async () => {
@@ -103,13 +101,13 @@ describe('Market', () => {
 
     try {
       // Check if volume is displayed
-      await takeScreenshot('market-volume');
+      await takeScreenshot('order-volume');
     } catch (e) {
-      await takeScreenshot('no-volume-data');
+      await takeScreenshot('no-order-volume-data');
     }
   });
 
-  it('should handle empty market data', async () => {
+  it('should handle empty order data', async () => {
     // Wait for loading to complete
     await waitForNetwork(3000);
 
@@ -124,7 +122,7 @@ describe('Market', () => {
     }
     if (!hasData) {
       try {
-        await detoxExpect(element(by.text('No market data available'))).toBeVisible();
+        await detoxExpect(element(by.text('No order data available'))).toBeVisible();
         isEmpty = true;
       } catch {
         isEmpty = false;
@@ -132,25 +130,25 @@ describe('Market', () => {
     }
 
     if (isEmpty) {
-      await detoxExpect(element(by.text('No market data available'))).toBeVisible();
+      await detoxExpect(element(by.text('No order data available'))).toBeVisible();
     }
 
-    await takeScreenshot('market-empty-state');
+    await takeScreenshot('order-empty-state');
   });
 
   it('should handle network errors gracefully', async () => {
     // This would require mocking network failures
     // Document expected error handling
-    await takeScreenshot('market-error-handling');
+    await takeScreenshot('order-error-handling');
   });
 
   it('should display loading state', async () => {
     // Reload to see loading state
     await device.reloadReactNative();
-    await element(by.text('Market')).tap();
+    await element(by.text('Order')).tap();
 
     // Should show loading indicator briefly
-    await takeScreenshot('market-loading');
+    await takeScreenshot('order-loading');
 
     await waitForNetwork(3000);
   });

@@ -60,20 +60,20 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
     {
       titleKey: 'sidebar.trade',
       items: [
-        { label: t('sidebar.exchange'), key: 'exchange', icon: MarketIcon, route: '/market' },
-        { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/market' },
+        { label: t('sidebar.exchange'), key: 'exchange', icon: MarketIcon, route: '/order' },
+        { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/order' },
       ],
     },
     {
       titleKey: 'sidebar.orders',
       items: [
-        { label: t('sidebar.order'), key: 'order', icon: OrderIcon, route: '/market' },
+        { label: t('sidebar.order'), key: 'order', icon: OrderIcon, route: '/order' },
       ],
     },
     {
       titleKey: 'sidebar.market',
       items: [
-        { label: t('sidebar.marketData'), key: 'marketData', icon: DataIcon, route: '/market' },
+        { label: t('sidebar.marketData'), key: 'marketData', icon: DataIcon, route: '/order' },
       ],
     },
     {
@@ -125,14 +125,14 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       <View style={[s.quickActions, { borderTopColor: theme.colors.border }]}>
         <TouchableOpacity
           style={[s.buyBtn, { backgroundColor: theme.colors.accent?.emerald || '#0ECB81' }]}
-          onPress={() => navigate('/market')}
+          onPress={() => navigate('/order')}
           activeOpacity={0.8}
         >
           <Text style={s.actionBtnText}>{t('sidebar.buy')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[s.sellBtn, { backgroundColor: theme.colors.accent?.red || '#F6465D' }]}
-          onPress={() => navigate('/market')}
+          onPress={() => navigate('/order')}
           activeOpacity={0.8}
         >
           <Text style={s.actionBtnText}>{t('sidebar.sell')}</Text>

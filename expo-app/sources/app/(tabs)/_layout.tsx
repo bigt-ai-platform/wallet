@@ -41,7 +41,7 @@ export default function TabsLayout() {
         >
           <Tabs.Screen name="index" options={{ title: t('nav.transaction'), tabBarLabel: t('nav.transaction'), tabBarIcon: ({ color, size }) => <WalletIcon size={size} color={color} /> }} />
           <Tabs.Screen name="wallet" options={{ title: t('nav.wallet'), tabBarLabel: t('nav.wallet'), tabBarIcon: ({ color, size }) => <WalletIcon size={size} color={color} /> }} />
-          <Tabs.Screen name="market" options={{ title: t('nav.market'), tabBarLabel: t('nav.market'), tabBarIcon: ({ color, size }) => <MarketIcon size={size} color={color} /> }} />
+          <Tabs.Screen name="order" options={{ title: t('nav.order'), tabBarLabel: t('nav.order'), tabBarIcon: ({ color, size }) => <MarketIcon size={size} color={color} /> }} />
           <Tabs.Screen name="tokens" options={{ title: t('nav.tokens'), tabBarLabel: t('nav.tokens'), tabBarIcon: ({ color, size }) => <TokensIcon size={size} color={color} /> }} />
           <Tabs.Screen name="settings" options={{ title: t('nav.settings'), tabBarLabel: t('nav.settings'), tabBarIcon: ({ color, size }) => <SettingsIcon size={size} color={color} /> }} />
         </Tabs>

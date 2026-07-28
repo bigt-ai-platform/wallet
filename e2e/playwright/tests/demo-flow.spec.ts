@@ -6,7 +6,7 @@ import { test, expect } from "@playwright/test";
  * Pattern: inject mock HTML into the page (no wallet, no server needed).
  * Each step shows a realistic wallet UI and takes a screenshot.
  *
- * Based on ../bigtai/tests/demo/market/market.spec.ts
+ * Based on ../bigtai/tests/demo/order/order.spec.ts
  */
 
 const SCREENSHOT_DIR = "demo-output/screenshots";

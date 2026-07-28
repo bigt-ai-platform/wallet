@@ -10,7 +10,7 @@ import { httpService } from '@/services/http';
 import { CloseIcon } from '@/components/Icons';
 import type { MarketPrice } from '@/types/api';
 
-export default function MarketScreen() {
+export default function OrderScreen() {
   const { t } = useTranslation();
   const { publicInfo, isUnlocked, getUnlockedWallet } = useWallet();
   const [prices, setPrices] = React.useState<MarketPrice[]>([]);
@@ -39,7 +39,7 @@ export default function MarketScreen() {
   };
 
   const openOrder = (side: 'buy' | 'sell', token: MarketPrice) => {
-    if (!isUnlocked) { Alert.alert(t('wallet.locked'), t('market.unlockFirst')); return; }
+    if (!isUnlocked) { Alert.alert(t('wallet.locked'), t('order.unlockFirst')); return; }
     setOrderSide(side);
     setSelectedToken(token);
     setOrderPrice(token.price || '0');
@@ -58,11 +58,11 @@ export default function MarketScreen() {
     if (!selectedToken || !publicInfo?.address) return;
     const price = parseFloat(orderPrice);
     const amount = parseFloat(orderAmount);
-    if (!price || price <= 0) { Alert.alert('', t('market.invalidPrice')); return; }
-    if (!amount || amount <= 0) { Alert.alert('', t('market.invalidAmount')); return; }
+    if (!price || price <= 0) { Alert.alert('', t('order.invalidPrice')); return; }
+    if (!amount || amount <= 0) { Alert.alert('', t('order.invalidAmount')); return; }
 
     const wallet = getUnlockedWallet();
-    if (!wallet) { Alert.alert('', t('market.unlockFirst')); return; }
+    if (!wallet) { Alert.alert('', t('order.unlockFirst')); return; }
 
     setSubmitting(true);
     try {
@@ -79,13 +79,13 @@ export default function MarketScreen() {
       };
       const res = await httpService.requestL1('submitTransaction', 'POST', payload);
       if (res.success) {
-        Alert.alert(t('market.orderPlaced'), t('market.orderPlacedDesc', { side: orderSide === 'buy' ? t('market.buy') : t('market.sell'), amount, token: selectedToken.tokenname, price }));
+        Alert.alert(t('order.orderPlaced'), t('order.orderPlacedDesc', { side: orderSide === 'buy' ? t('order.buy') : t('order.sell'), amount, token: selectedToken.tokenname, price }));
         setOrderModal(false);
       } else {
-        Alert.alert('', res.error || t('market.placeFailed'));
+        Alert.alert('', res.error || t('order.placeFailed'));
       }
     } catch (e: any) {
-      Alert.alert('', e.message || t('market.submitFailed'));
+      Alert.alert('', e.message || t('order.submitFailed'));
     } finally { setSubmitting(false); }
   };
 
@@ -94,20 +94,20 @@ export default function MarketScreen() {
 
   if (loading) {
     return (
-      <View style={s.container} testID="market-screen">
+      <View style={s.container} testID="order-screen">
         <View style={s.centered}><ActivityIndicator size="large" color={s.loader.color} /></View>
       </View>
     );
   }
 
   return (
-    <View style={s.container} testID="market-screen">
+    <View style={s.container} testID="order-screen">
       <View style={s.tabRow}>
         <TouchableOpacity style={[s.tab, activeTab === 'prices' && s.tabActive]} onPress={() => setActiveTab('prices')}>
-          <Text style={[s.tabText, activeTab === 'prices' && s.tabTextActive]}>{t('market.title')}</Text>
+          <Text style={[s.tabText, activeTab === 'prices' && s.tabTextActive]}>{t('order.title')}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[s.tab, activeTab === 'orders' && s.tabActive]} onPress={() => setActiveTab('orders')}>
-          <Text style={[s.tabText, activeTab === 'orders' && s.tabTextActive]}>{t('market.myOrders')}</Text>
+          <Text style={[s.tabText, activeTab === 'orders' && s.tabTextActive]}>{t('order.myOrders')}</Text>
         </TouchableOpacity>
       </View>
 
@@ -115,7 +115,7 @@ export default function MarketScreen() {
         <ScrollView style={s.scroll} contentContainerStyle={s.content}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadPrices(true)} />}>
           {prices.length === 0 ? (
-            <View style={s.emptyCard}><Text style={s.emptyTitle}>{t('market.noData')}</Text></View>
+            <View style={s.emptyCard}><Text style={s.emptyTitle}>{t('order.noData')}</Text></View>
           ) : (
             prices.map((item, i) => (
               <View key={i} style={s.priceCard}>
@@ -129,10 +129,10 @@ export default function MarketScreen() {
                 </View>
                 <View style={s.actionCol}>
                   <TouchableOpacity style={s.buyBtn} onPress={() => openOrder('buy', item)}>
-                    <Text style={s.buyBtnText}>{t('market.buy')}</Text>
+                    <Text style={s.buyBtnText}>{t('order.buy')}</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={s.sellBtn} onPress={() => openOrder('sell', item)}>
-                    <Text style={s.sellBtnText}>{t('market.sell')}</Text>
+                    <Text style={s.sellBtnText}>{t('order.sell')}</Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -141,9 +141,9 @@ export default function MarketScreen() {
         </ScrollView>
       ) : (
         <ScrollView style={s.scroll} contentContainerStyle={s.content}>
-          <Text style={s.sectionTitle}>{t('market.yourOrders')}</Text>
+          <Text style={s.sectionTitle}>{t('order.yourOrders')}</Text>
           {myOrders.length === 0 ? (
-            <View style={s.emptyCard}><Text style={s.emptySub}>{t('market.noOpenOrders')}</Text></View>
+            <View style={s.emptyCard}><Text style={s.emptySub}>{t('order.noOpenOrders')}</Text></View>
           ) : (
             myOrders.map((o, i) => (
               <View key={i} style={s.orderCard}>
@@ -159,39 +159,39 @@ export default function MarketScreen() {
         <View style={s.modalOverlay}>
           <View style={s.modal}>
             <View style={s.modalHeader}>
-              <Text style={s.modalTitle}>{orderSide === 'buy' ? t('market.buyToken', { token: selectedToken?.tokenname }) : t('market.sellToken', { token: selectedToken?.tokenname })}</Text>
+              <Text style={s.modalTitle}>{orderSide === 'buy' ? t('order.buyToken', { token: selectedToken?.tokenname }) : t('order.sellToken', { token: selectedToken?.tokenname })}</Text>
               <TouchableOpacity onPress={() => setOrderModal(false)}><CloseIcon size={20} color="#000" /></TouchableOpacity>
             </View>
 
             <View style={s.sideToggle}>
               <TouchableOpacity style={[s.sideBtn, orderSide === 'buy' && s.sideBuyActive]} onPress={() => setOrderSide('buy')}>
-                <Text style={[s.sideBtnText, orderSide === 'buy' && s.sideBtnTextActive]}>{t('market.buy')}</Text>
+                <Text style={[s.sideBtnText, orderSide === 'buy' && s.sideBtnTextActive]}>{t('order.buy')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[s.sideBtn, orderSide === 'sell' && s.sideSellActive]} onPress={() => setOrderSide('sell')}>
-                <Text style={[s.sideBtnText, orderSide === 'sell' && s.sideBtnTextActive]}>{t('market.sell')}</Text>
+                <Text style={[s.sideBtnText, orderSide === 'sell' && s.sideBtnTextActive]}>{t('order.sell')}</Text>
               </TouchableOpacity>
             </View>
 
             <View style={s.fieldGroup}>
-              <Text style={s.fieldLabel}>{t('market.price', { token: selectedToken?.tokenname })}</Text>
+              <Text style={s.fieldLabel}>{t('order.price', { token: selectedToken?.tokenname })}</Text>
               <TextInput style={s.fieldInput} value={orderPrice} onChangeText={(v) => { setOrderPrice(v); calcTotal(v, orderAmount); }}
                 keyboardType="decimal-pad" placeholder="0.00" />
             </View>
 
             <View style={s.fieldGroup}>
-              <Text style={s.fieldLabel}>{t('market.amount')}</Text>
+              <Text style={s.fieldLabel}>{t('order.amount')}</Text>
               <TextInput style={s.fieldInput} value={orderAmount} onChangeText={(v) => { setOrderAmount(v); calcTotal(orderPrice, v); }}
                 keyboardType="decimal-pad" placeholder="0.00" />
             </View>
 
             <View style={s.totalRow}>
-              <Text style={s.totalLabel}>{t('market.total')}</Text>
+              <Text style={s.totalLabel}>{t('order.total')}</Text>
               <Text style={s.totalValue}>{orderTotal || '0'} BIG</Text>
             </View>
 
             <TouchableOpacity style={[s.submitBtn, { backgroundColor: orderSide === 'buy' ? s.pos.color : s.neg.color }]}
               onPress={submitOrder} disabled={submitting}>
-              <Text style={s.submitBtnText}>{submitting ? t('market.placing') : t('market.placeOrder', { side: orderSide === 'buy' ? t('market.buy') : t('market.sell') })}</Text>
+              <Text style={s.submitBtnText}>{submitting ? t('order.placing') : t('order.placeOrder', { side: orderSide === 'buy' ? t('order.buy') : t('order.sell') })}</Text>
             </TouchableOpacity>
           </View>
         </View>
