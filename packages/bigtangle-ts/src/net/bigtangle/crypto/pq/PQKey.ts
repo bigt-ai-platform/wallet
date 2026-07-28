@@ -1,6 +1,5 @@
 import { ml_dsa87 } from '@noble/post-quantum/ml-dsa.js';
 import { slh_dsa_sha2_256s } from '@noble/post-quantum/slh-dsa.js';
-import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha256';
 import { PQConstants } from './PQConstants';
 import { KeyBundle, KeyBundleEntry } from './KeyBundle';
@@ -65,8 +64,13 @@ export class PQKey implements EncryptableItem {
     if (mlDsaSeed.length !== MLDSA_SEED_BYTES)
       throw new Error(`ML-DSA seed must be ${MLDSA_SEED_BYTES} bytes`);
 
-    const mlKp = ml_dsa87.keygen(mlDsaSeed);
-    const slhSeed = expandSeed(slhDsaSeed, SLHDSA_SEED_BYTES);
+    // Match Java BC DigestRandomGenerator(SHA256) behavior:
+    // seed → SHA256-DRBG → ξ → FIPS 204 ML-DSA.KeyGen
+    const xi = sha256Drbg(mlDsaSeed, MLDSA_SEED_BYTES);
+    const mlKp = ml_dsa87.keygen(xi);
+
+    // seed → SHA256-DRBG → 96-byte expanded seed → FIPS 205 SLH-DSA.KeyGen
+    const slhSeed = sha256Drbg(slhDsaSeed, SLHDSA_SEED_BYTES);
     const slhKp = slh_dsa_sha2_256s.keygen(slhSeed);
 
     const entries: KeyBundleEntry[] = [
@@ -286,7 +290,7 @@ export class PQKey implements EncryptableItem {
 
   /** ECKey-compat: returns empty - PQKey doesn't support this */
   getPrivKeyBytes(): Uint8Array {
-    throw new Error('PQKey does not have EC private key bytes');
+    return this.encodePrivateKeys();
   }
 
   protected encodePrivateKeys(): Uint8Array {
@@ -386,21 +390,39 @@ function domainSeparatedHash(data: Uint8Array, domain: string): Uint8Array {
   return Sha256Hash.hash(combined);
 }
 
-function expandSeed(seed: Uint8Array, targetLength: number): Uint8Array {
-  if (seed.length >= targetLength) return seed.slice(0, targetLength);
-  const info = new TextEncoder().encode('pq-seed-expand');
-  const prk = new Uint8Array(hmac(sha256, new TextEncoder().encode('pq-seed-salt'), seed));
-  const result = new Uint8Array(targetLength);
-  let t = new Uint8Array(0);
+function sha256Drbg(seed: Uint8Array, outputLen: number): Uint8Array {
+  const hashLen = 32;
+  const hashSize = BigInt(hashLen);
+
+  // addSeedMaterial(byte[]): seed = H(input || seed_old)
+  let d = sha256.create();
+  if (seed.length > 0) {
+    d.update(seed);
+  }
+  let seedBuf = new Uint8Array(hashLen);
+  d.update(seedBuf);
+  seedBuf = d.digest();
+
+  let stateBuf = new Uint8Array(hashLen);
+  let stateCounter = 1n;
+
+  const result = new Uint8Array(outputLen);
   let offset = 0;
-  for (let i = 1; offset < targetLength; i++) {
-    const mac = hmac.create(sha256, prk);
-    mac.update(t);
-    mac.update(info);
-    mac.update(new Uint8Array([i & 0xFF]));
-    t = new Uint8Array(mac.digest());
-    const copyLen = Math.min(t.length, targetLength - offset);
-    result.set(t.subarray(0, copyLen), offset);
+  while (offset < outputLen) {
+    // generateState(): state = H(old_counter || state || seed)
+    const oldCounter = stateCounter;
+    stateCounter += 1n;
+
+    d = sha256.create();
+    for (let i = 0; i < 8; i++) {
+      d.update(new Uint8Array([Number(oldCounter >> BigInt(i * 8) & 0xFFn)]));
+    }
+    d.update(stateBuf);
+    d.update(seedBuf);
+    stateBuf = d.digest();
+
+    const copyLen = Math.min(hashLen, outputLen - offset);
+    result.set(stateBuf.subarray(0, copyLen), offset);
     offset += copyLen;
   }
   return result;

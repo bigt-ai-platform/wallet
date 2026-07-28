@@ -9,98 +9,195 @@ import { MemoInfo } from "../../src/net/bigtangle/core/MemoInfo";
 import { Sha256Hash } from "../../src/net/bigtangle/core/Sha256Hash";
 import { TokenType } from "../../src/net/bigtangle/core/TokenType";
 
+
 const L0_URL = process.env.TEST_CONTEXT_ROOT || "http://localhost:18088/";
 
 async function httpPost(path: string, body: any): Promise<any> {
   const res = await fetch(L0_URL + path, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   return res.json();
 }
 
-/*
- * Reproduces the e2e token creation problem from tokens.spec.ts:
- * wallet.createToken -> signToken -> block saved to multisign (pending),
- * NOT to blocks. Token never appears in searchTokens.
- *
- * Root cause: ServiceBaseCheck.checkFullTokenSolidity requires a domain
- * permission signature matching the server's permissionDomainname.
- *
- * For TestParams: permissionDomainname = genesisPub (a hardcoded PQ key).
- * The JS fromSeeds(0x01,0x02) produces different key material than Java,
- * so the genesis key signature doesn't match the domain permission check.
- *
- * This is a JS key derivation mismatch that prevents full token creation
- * via the HTTP API. The e2e test verifies what works:
- * - wallet.createToken submits successfully (errorcode 0)
- * - The block is saved to multisign pending
- * - BIG token exists and payment works
- */
 describe("RemoteTokenIT", () => {
   let wallet: Wallet;
+  let genesisKey: PQKey;
   let key: PQKey;
 
   beforeEach(() => {
+    const mlDsaSeed = new Uint8Array(32).fill(0x01);
+    const slhDsaSeed = new Uint8Array(32).fill(0x02);
+    genesisKey = PQKey.fromSeeds(mlDsaSeed, slhDsaSeed);
     key = PQKey.createNew();
-    wallet = Wallet.fromKeys(TestParams.get(), [key]);
+    wallet = Wallet.fromKeys(TestParams.get(), [genesisKey, key]);
     wallet.setServerURL(L0_URL);
     wallet.setFee(false);
   });
 
-  test("token creation via HTTP API (multisign pending)", { timeout: 60000 }, async () => {
-    const tokenid = Utils.HEX.encode(key.getPrefixedPublicKeyBytes());
+  async function getTokenById(tokenid: string): Promise<any> {
+    const resp = await httpPost("getTokenById", { tokenid });
+    if (resp.tokens && resp.tokens.length > 0) {
+      return resp.tokens[0];
+    }
+    return null;
+  }
 
-    // Fund
+  async function pollToken(tokenid: string, maxRetries = 15, delayMs = 2000): Promise<any> {
+    for (let i = 0; i < maxRetries; i++) {
+      const t = await getTokenById(tokenid);
+      if (t) return t;
+      if (i < maxRetries - 1) await new Promise(r => setTimeout(r, delayMs));
+    }
+    return null;
+  }
+
+  async function fundKey(k: PQKey): Promise<void> {
     const fundRes = await httpPost("fundAddresses", {
       addresses: [{
-        address: key.toAddressHex(), value: 10000000000,
-        pubkey: Utils.HEX.encode(key.getPrefixedPublicKeyBytes()),
+        address: k.toAddressHex(), value: 10000000000,
+        pubkey: Utils.HEX.encode(k.getPrefixedPublicKeyBytes()),
       }],
     });
     expect(fundRes.errorcode).toBe(0);
+  }
 
-    // Build token matching Java RemoteTokenTests
-    const token = new Token(tokenid, "E2ETest_" + Date.now().toString(36));
-    token.setDescription("Created by RemoteTokenIT");
-    token.setDecimals(2);
+  test("server health check", async () => {
+    const res = await fetch(L0_URL, { method: "POST" });
+    const body = await res.text();
+    expect(body).toMatch(/Bigtangle|duration/);
+  });
+
+  test("BIG token exists via searchTokens", async () => {
+    const { tokenList } = await wallet.searchToken();
+    expect(tokenList).toBeDefined();
+    expect(tokenList.length).toBeGreaterThan(0);
+    const big = tokenList.find((t: any) => t.tokenid === "bc" || t.tokenname === "BIG");
+    expect(big).toBeDefined();
+    expect(big.tokenname).toBe("BIG");
+  });
+
+  test("get BIG token by ID", async () => {
+    const { tokenList } = await wallet.searchToken();
+    expect(tokenList.length).toBeGreaterThan(0);
+    const big = await getTokenById("bc");
+    expect(big).not.toBeNull();
+    expect(big.tokenname).toBe("BIG");
+  });
+
+  test("create token via signToken (TokenType.identity)", { timeout: 60000 }, async () => {
+    const k = PQKey.createNew();
+    const tokenid = Utils.HEX.encode(k.getPrefixedPublicKeyBytes());
+    await fundKey(k);
+
+    const tokenName = "testtoken_" + Date.now().toString(36);
+    const token = new Token(tokenid, tokenName);
+    token.setDescription("test");
+    token.setDecimals(0);
     token.setAmount(BigInt(1000000));
     token.setTokenstop(true);
     token.setTokenindex(0);
-    token.setSignnumber(1);
-    token.setDomainName("");
+    token.setSignnumber(0);
     token.setDomainNameBlockHash("");
     token.setPrevblockhash(Sha256Hash.ZERO_HASH);
-    token.setConfirmed(true);
-    token.setTokentype(TokenType.token);
+    token.setTokentype(TokenType.identity);
 
-    // wallet.createToken -> saveToken -> adjustSolveAndSign -> signToken
+    const addr = new MultiSignAddress(tokenid, "", Utils.HEX.encode(k.getPrefixedPublicKeyBytes()), 0);
     const block = await wallet.createToken(
-      key, "", true, token,
-      [new MultiSignAddress(tokenid, "", Utils.HEX.encode(key.getPrefixedPublicKeyBytes()), 0)],
-      key.getPubKey(), new MemoInfo("coinbase"),
+      k, "", true, token, [addr], k.getPubKey(), new MemoInfo("coinbase"),
     );
     expect(block).toBeDefined();
-    console.log("signToken returned success, block hash:", block.getHashAsString());
 
-    // Verify token is NOT in searchTokens (pending multisign)
-    await new Promise(r => setTimeout(r, 2000));
-    const searchRes = await httpPost("searchTokens", {});
-    const found = (searchRes.tokens || []).find((t: any) => t.tokenid === tokenid);
+    const signed = await wallet.multiSign(tokenid, genesisKey, null);
+    expect(signed).not.toBeNull();
 
-    console.log("Token in searchTokens:", !!found);
-    if (!found) {
-      console.log("Block is pending in multisign table (expected)");
-      console.log("Root cause: JS fromSeeds key derivation differs from Java");
-      console.log("TestParams.genesisPub uses different seed than fromSeeds(0x01,0x02)");
-    }
+    const foundToken = await pollToken(tokenid);
+    expect(foundToken).not.toBeNull();
+    expect(foundToken.tokenname).toBe(tokenName);
   });
 
-  test("BIG token exists and API works", async () => {
-    const searchRes = await httpPost("searchTokens", {});
-    const big = (searchRes.tokens || []).find((t: any) => t.tokenid === "bc");
-    expect(big).toBeDefined();
-    expect(big.tokenname).toBe("BIG");
-    console.log("BIG token verified");
+  test("beacon chain exists", async () => {
+    const resp = await httpPost("getAllConfirmedReward", {});
+    expect(resp).toBeDefined();
+  });
+
+  test("create token via wallet (TokenType.token)", { timeout: 60000 }, async () => {
+    const k = PQKey.createNew();
+    const tokenid = Utils.HEX.encode(k.getPrefixedPublicKeyBytes());
+    await fundKey(k);
+
+    const tokenName = "wallettoken_" + Date.now().toString(36);
+    const token = new Token(tokenid, tokenName);
+    token.setDescription("wallet test");
+    token.setDecimals(0);
+    token.setAmount(BigInt(500000));
+    token.setTokenstop(true);
+    token.setTokenindex(0);
+    token.setSignnumber(0);
+    token.setDomainNameBlockHash("");
+    token.setPrevblockhash(Sha256Hash.ZERO_HASH);
+    token.setTokentype(TokenType.token);
+
+    const addr = new MultiSignAddress(tokenid, "", Utils.HEX.encode(k.getPrefixedPublicKeyBytes()), 0);
+    const block = await wallet.createToken(
+      k, "", true, token, [addr], k.getPubKey(), new MemoInfo("coinbase"),
+    );
+    expect(block).toBeDefined();
+
+    const signed = await wallet.multiSign(tokenid, genesisKey, null);
+    expect(signed).not.toBeNull();
+
+    const foundToken = await pollToken(tokenid);
+    expect(foundToken).not.toBeNull();
+    expect(foundToken.tokenname).toBe(tokenName);
+  });
+
+  test("create token and verify minting (UTXOs available)", { timeout: 120000 }, async () => {
+    const issuer = PQKey.createNew();
+    const tokenid = Utils.HEX.encode(issuer.getPrefixedPublicKeyBytes());
+
+    const payWallet = Wallet.fromKeys(TestParams.get(), [genesisKey, issuer]);
+    payWallet.setServerURL(L0_URL);
+    payWallet.setFee(false);
+
+    await fundKey(issuer);
+
+    const tokenName = "paytoken_" + Date.now().toString(36);
+    const token = new Token(tokenid, tokenName);
+    token.setDescription("paytoken");
+    token.setDecimals(0);
+    token.setAmount(BigInt(10000000));
+    token.setTokenstop(true);
+    token.setTokenindex(0);
+    token.setSignnumber(0);
+    token.setDomainNameBlockHash("");
+    token.setPrevblockhash(Sha256Hash.ZERO_HASH);
+    token.setTokentype(TokenType.token);
+
+    const addr = new MultiSignAddress(tokenid, "", Utils.HEX.encode(issuer.getPrefixedPublicKeyBytes()), 0);
+    const block = await payWallet.createToken(
+      issuer, "", true, token, [addr], issuer.getPubKey(), new MemoInfo("coinbase"),
+    );
+    expect(block).toBeDefined();
+
+    const signed = await payWallet.multiSign(tokenid, genesisKey, null);
+    expect(signed).not.toBeNull();
+
+    const foundToken = await pollToken(tokenid);
+    expect(foundToken).not.toBeNull();
+    expect(foundToken.tokenname).toBe(tokenName);
+
+    // Wait for blockbatch to mint the initial supply as spendable UTXOs
+    await new Promise(r => setTimeout(r, 15000));
+
+    // Verify the issuer has token UTXOs (supply was minted)
+    const utxos = await payWallet.calculateAllSpendCandidates(null, false);
+    const tokenUtxos = utxos.filter(u => {
+      const utxoTokenId = u.getUTXO().getTokenId();
+      return utxoTokenId === tokenid;
+    });
+    expect(tokenUtxos.length).toBeGreaterThan(0);
+    console.log("Token minted with", tokenUtxos.length, "UTXOs, supply:", tokenUtxos[0].getValue().getValue().toString());
   });
 });

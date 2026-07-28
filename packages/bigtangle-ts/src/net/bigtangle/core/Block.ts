@@ -1037,7 +1037,8 @@ export class Block extends Message {
 
         // Create output to specified public key - ensure the correct token ID and value are used
         const pqKey = PQKey.fromPublicOnly(pubKeyTo);
-        const scriptPubKey = ScriptBuilder.createOutputScript(pqKey);
+        const address = Address.fromKey(this.params!, pqKey);
+        const scriptPubKey = ScriptBuilder.createOutputScript(address);
         // Create output with the value that contains the correct token ID and amount
         // Ensure the value object is properly constructed to avoid serialization issues
         const output = new TransactionOutput(this.params!, coinbase, value, scriptPubKey.getProgram());

@@ -19,6 +19,7 @@ import {
   type TokenItem,
   type MarketPrice,
   type ContactInfo,
+  type L1ChainConfig,
 } from '@/types/api';
 
 /**
@@ -36,6 +37,7 @@ const STORAGE_KEYS = {
   SERVER_URL: ['settings', 'serverUrl'],
   L1_URL: ['settings', 'l1Url'],
   USE_TESTNET: ['settings', 'useTestnet'],
+  L1_CHAINS: ['settings', 'l1Chains'],
 };
 
 /**
@@ -97,6 +99,58 @@ export class HttpService {
    */
   setTestnet(useTestnet: boolean): void {
     device.set(STORAGE_KEYS.USE_TESTNET, useTestnet.toString());
+  }
+
+  /**
+   * Get all configured L1 chains
+   */
+  getL1Chains(): L1ChainConfig[] {
+    const stored = device.get(STORAGE_KEYS.L1_CHAINS);
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch { /* fall through */ }
+    }
+    const singleUrl = this.getL1Url();
+    return [{ name: 'Default', url: singleUrl }];
+  }
+
+  /**
+   * Save all L1 chains
+   */
+  setL1Chains(chains: L1ChainConfig[]): void {
+    device.set(STORAGE_KEYS.L1_CHAINS, JSON.stringify(chains));
+  }
+
+  /**
+   * Add a new L1 chain
+   */
+  addL1Chain(name: string, url: string): void {
+    const chains = this.getL1Chains();
+    chains.push({ name, url });
+    this.setL1Chains(chains);
+  }
+
+  /**
+   * Remove an L1 chain by index
+   */
+  removeL1Chain(index: number): void {
+    const chains = this.getL1Chains();
+    if (index >= 0 && index < chains.length) {
+      chains.splice(index, 1);
+      this.setL1Chains(chains);
+    }
+  }
+
+  /**
+   * Update an L1 chain at index
+   */
+  updateL1Chain(index: number, name: string, url: string): void {
+    const chains = this.getL1Chains();
+    if (index >= 0 && index < chains.length) {
+      chains[index] = { name, url };
+      this.setL1Chains(chains);
+    }
   }
 
   /**
@@ -272,6 +326,22 @@ export class HttpService {
     body?: any,
   ): Promise<ApiResponse<T>> {
     return this.request(endpoint, method, body, this.getL1Url());
+  }
+
+  /**
+   * Make HTTP request to a specific L1 chain by index
+   */
+  async requestL1ByIndex<T>(
+    index: number,
+    endpoint: string,
+    method: 'GET' | 'POST' = 'POST',
+    body?: any,
+  ): Promise<ApiResponse<T>> {
+    const chains = this.getL1Chains();
+    if (index < 0 || index >= chains.length) {
+      return { success: false, error: 'L1 chain not found' };
+    }
+    return this.request(endpoint, method, body, chains[index].url);
   }
 
   /**

@@ -32,6 +32,9 @@ services:
       APP_MODULE: layer0-server
       SERVER_PORT: 8088
       SERVER_NET: Test
+      SERVICE_SCHEDULE_MICROBATCH: "true"
+      SERVICE_SCHEDULE_BLOCKBATCHSERVICE_ACTIVE: "true"
+      SERVICE_SCHEDULE_BLOCKBATCHRATE: 5000
       DB_HOSTNAME: postgres
       DB_PORT: 5432
       DB_NAME: layer0

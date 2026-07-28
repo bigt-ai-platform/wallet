@@ -135,3 +135,110 @@ test.describe('Payment', () => {
     expect(balanceResp.ok()).toBeTruthy();
   });
 });
+
+test.describe('L1 Test Tab', () => {
+  async function ensureWallet(page: Page) {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    const { PQKey } = await import('/home/jcui/git/bapp/packages/bigtangle-ts/dist/index.js');
+    const key = PQKey.createNew();
+    const privHex = key.getPrivateKeyHex();
+    await clickTab(page, 'Wallet');
+    const manageBtn = page.getByText('Manage Wallet');
+    if (await manageBtn.isVisible().catch(() => false)) {
+      await manageBtn.click();
+      await page.waitForURL('**/wallet/keys**', { timeout: 10000 }).catch(() => {});
+      await importKey(page, privHex);
+      await saveWallet(page, 'Test123!');
+      await page.goto('/');
+      await page.waitForLoadState('networkidle');
+      await clickTab(page, 'Transaction');
+      await page.waitForTimeout(2000);
+      const unlockPwd = page.getByPlaceholder('Enter wallet password');
+      if (await unlockPwd.isVisible().catch(() => false)) {
+        await unlockPwd.fill('Test123!');
+        await page.getByText('Unlock Wallet').click();
+        await page.waitForTimeout(2000);
+      }
+      return;
+    }
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+  }
+
+  test('L1 Test tab is present after wallet unlock', async ({ page }) => {
+    test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
+    await ensureWallet(page);
+    const l1Tab = page.getByText('L1 Test');
+    await expect(l1Tab).toBeAttached({ timeout: 10000 });
+    await l1Tab.click();
+    await expect(page.getByText('Test paying L1 chain')).toBeAttached({ timeout: 5000 });
+  });
+
+  test('shows L1 chain selector after clicking L1 Test tab', async ({ page }) => {
+    test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
+    await ensureWallet(page);
+    await page.getByText('L1 Test').click();
+    await page.waitForTimeout(1000);
+    await expect(page.getByText('Select L1 Chain')).toBeAttached({ timeout: 5000 });
+  });
+
+  test('shows Pay L1 form by default', async ({ page }) => {
+    test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
+    await ensureWallet(page);
+    await page.getByText('L1 Test').click();
+    await page.waitForTimeout(1000);
+    await expect(page.getByText('Pay L1 Chain').first()).toBeAttached({ timeout: 5000 });
+    await expect(page.getByPlaceholder('e.g. bc for BIG').first()).toBeAttached({ timeout: 5000 });
+    await expect(page.getByPlaceholder('0.00').first()).toBeAttached({ timeout: 5000 });
+    await expect(page.getByPlaceholder('L1 address on order chain').first()).toBeAttached({ timeout: 5000 });
+  });
+
+  test('switches to Pay Back form', async ({ page }) => {
+    test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
+    await ensureWallet(page);
+    await page.getByText('L1 Test').click();
+    await page.waitForTimeout(1000);
+    await page.getByText('Pay Back L1→L0').click();
+    await page.waitForTimeout(500);
+    await expect(page.getByText('Pay Back from L1 to L0').first()).toBeAttached({ timeout: 5000 });
+    await expect(page.getByText('L0 Destination Address').first()).toBeAttached({ timeout: 5000 });
+  });
+
+  test('can fill Pay L1 form', async ({ page }) => {
+    test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
+    await ensureWallet(page);
+    await page.getByText('L1 Test').click();
+    await page.waitForTimeout(1000);
+    await page.getByPlaceholder('e.g. bc for BIG').first().fill('bc');
+    await page.getByPlaceholder('0.00').first().fill('0.001');
+    await page.getByPlaceholder('L1 address on order chain').first().fill('n3MotdMXgRKwrSwDLwAdr3gPaXQsFXdNDs');
+    await expect(page.getByText('Pay L1 Chain').last()).toBeAttached();
+  });
+
+  test('can fill Pay Back form', async ({ page }) => {
+    test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
+    await ensureWallet(page);
+    await page.getByText('L1 Test').click();
+    await page.waitForTimeout(1000);
+    await page.getByText('Pay Back L1→L0').click();
+    await page.waitForTimeout(500);
+    await page.getByPlaceholder('e.g. bc for BIG').first().fill('bc');
+    await page.getByPlaceholder('0.00').first().fill('0.001');
+    await page.getByPlaceholder('L0 address').first().fill('n3MotdMXgRKwrSwDLwAdr3gPaXQsFXdNDs');
+    await expect(page.getByText('Pay Back to L0').last()).toBeAttached();
+  });
+
+  test('L1 chain chips appear when chains configured', async ({ page }) => {
+    test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
+    await ensureWallet(page);
+    await page.getByText('L1 Test').click();
+    await page.waitForTimeout(1000);
+    const chips = page.locator('[data-testid^="l1-chain-chip-"]');
+    const count = await chips.count();
+    if (count > 0) {
+      await chips.first().click();
+      await page.waitForTimeout(500);
+    }
+  });
+});

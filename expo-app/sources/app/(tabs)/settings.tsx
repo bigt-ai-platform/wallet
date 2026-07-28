@@ -3,6 +3,7 @@ import { View, Text, TextInput, Switch, ScrollView, TouchableOpacity, Alert } fr
 import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
+import type { L1ChainConfig } from '@/types/api';
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
@@ -11,7 +12,9 @@ export default function SettingsScreen() {
     return stored?.includes('test') ?? false;
   });
   const [serverUrl, setServerUrl] = React.useState(httpService.getServerUrl());
-  const [l1Url, setL1Url] = React.useState(httpService.getL1Url());
+  const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
+  const [newChainName, setNewChainName] = React.useState('');
+  const [newChainUrl, setNewChainUrl] = React.useState('');
   const appVersion = '1.2.0';
 
   const toggleTestnet = (val: boolean) => {
@@ -19,10 +22,8 @@ export default function SettingsScreen() {
     httpService.setTestnet(val);
     if (val) {
       setServerUrl('https://testp.bigtangle.org:8088/');
-      setL1Url('https://testm.bigtangle.org');
     } else {
       setServerUrl('https://p.bigtangle.org:8088/');
-      setL1Url('https://m.bigtangle.org');
     }
   };
 
@@ -32,19 +33,47 @@ export default function SettingsScreen() {
     Alert.alert(t('settings.saved'), t('settings.serverUpdated'));
   };
 
-  const saveL1 = () => {
-    if (!l1Url.trim()) { Alert.alert('', t('settings.urlEmpty')); return; }
-    httpService.setL1Url(l1Url.trim());
-    Alert.alert(t('settings.saved'), t('settings.l1Updated'));
+  const addL1Chain = () => {
+    if (!newChainName.trim()) { Alert.alert('', 'Chain name cannot be empty'); return; }
+    if (!newChainUrl.trim()) { Alert.alert('', 'Chain URL cannot be empty'); return; }
+    httpService.addL1Chain(newChainName.trim(), newChainUrl.trim());
+    setL1Chains(httpService.getL1Chains());
+    setNewChainName('');
+    setNewChainUrl('');
+  };
+
+  const removeL1Chain = (index: number) => {
+    httpService.removeL1Chain(index);
+    setL1Chains(httpService.getL1Chains());
+  };
+
+  const saveL1Chain = (index: number, name: string, url: string) => {
+    httpService.updateL1Chain(index, name, url);
+    setL1Chains(httpService.getL1Chains());
+  };
+
+  const updateChainName = (index: number, name: string) => {
+    const updated = l1Chains.map((c, i) => i === index ? { ...c, name } : c);
+    setL1Chains(updated);
+    saveL1Chain(index, name, updated[index].url);
+  };
+
+  const updateChainUrl = (index: number, url: string) => {
+    const updated = l1Chains.map((c, i) => i === index ? { ...c, url } : c);
+    setL1Chains(updated);
+    saveL1Chain(index, updated[index].name, url);
   };
 
   const resetDefaults = () => {
     setUseTestnet(false);
     setServerUrl('https://p.bigtangle.org:8088/');
-    setL1Url('https://m.bigtangle.org');
     httpService.setTestnet(false);
     httpService.setServerUrl('https://p.bigtangle.org:8088/');
-    httpService.setL1Url('https://m.bigtangle.org');
+    httpService.setL1Chains([
+      { name: 'Main', url: 'https://m.bigtangle.org' },
+      { name: 'Test', url: 'https://testm.bigtangle.org' },
+    ]);
+    setL1Chains(httpService.getL1Chains());
     Alert.alert('', t('settings.resetDone'));
   };
 
@@ -75,14 +104,38 @@ export default function SettingsScreen() {
       </View>
 
       <View style={s.card}>
-        <Text style={s.cardLabel}>{t('settings.l1Url')}</Text>
-        <Text style={s.settingDesc}>{t('settings.l1UrlDesc')}</Text>
-        <TextInput style={s.input} value={l1Url} onChangeText={setL1Url}
-          placeholder="https://..." placeholderTextColor={s.placeholder.color}
-          autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="l1-url-input" />
-        <TouchableOpacity style={s.saveBtn} onPress={saveL1}>
-          <Text style={s.saveBtnText}>{t('settings.save')}</Text>
-        </TouchableOpacity>
+        <Text style={s.cardLabel}>L1 Chains</Text>
+        <Text style={s.settingDesc}>Configure L1 order match chains</Text>
+
+        {l1Chains.map((chain, i) => (
+          <View key={i} style={s.chainRow}>
+            <View style={s.chainFields}>
+              <TextInput style={s.chainInput} value={chain.name}
+                onChangeText={(v) => updateChainName(i, v)}
+                placeholder="Name" placeholderTextColor={s.placeholder.color}
+                autoCapitalize="none" />
+              <TextInput style={s.chainInput} value={chain.url}
+                onChangeText={(v) => updateChainUrl(i, v)}
+                placeholder="https://..." placeholderTextColor={s.placeholder.color}
+                autoCapitalize="none" autoCorrect={false} keyboardType="url" />
+            </View>
+            <TouchableOpacity style={s.removeBtn} onPress={() => removeL1Chain(i)}>
+              <Text style={s.removeBtnText}>X</Text>
+            </TouchableOpacity>
+          </View>
+        ))}
+
+        <View style={s.addChainRow}>
+          <TextInput style={s.chainInputSmall} value={newChainName}
+            onChangeText={setNewChainName} placeholder="Name" placeholderTextColor={s.placeholder.color}
+            autoCapitalize="none" />
+          <TextInput style={s.chainInputSmall} value={newChainUrl}
+            onChangeText={setNewChainUrl} placeholder="https://..." placeholderTextColor={s.placeholder.color}
+            autoCapitalize="none" autoCorrect={false} keyboardType="url" />
+          <TouchableOpacity style={s.addBtn} onPress={addL1Chain}>
+            <Text style={s.addBtnText}>+</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={s.card}>
@@ -142,4 +195,27 @@ const s = StyleSheet.create((theme) => ({
   },
   resetBtnText: { fontSize: 16, fontWeight: '600', color: theme.colors.accent.red },
   footer: { fontSize: 12, color: theme.colors.text.secondary, textAlign: 'center', marginTop: 20 },
+  chainRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
+  chainFields: { flex: 1, gap: 4 },
+  chainInput: {
+    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6,
+    backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary,
+    padding: 8, fontSize: 13, fontFamily: 'monospace',
+  },
+  chainInputSmall: {
+    borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6,
+    backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary,
+    padding: 8, fontSize: 13, fontFamily: 'monospace', flex: 1,
+  },
+  removeBtn: {
+    width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.accent.red,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  removeBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 14 },
+  addChainRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  addBtn: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: theme.colors.primary,
+    justifyContent: 'center', alignItems: 'center',
+  },
+  addBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 18 },
 }));

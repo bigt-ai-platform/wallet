@@ -408,7 +408,7 @@ export class Wallet extends WalletBase {
     multiSignBy0.setTokenid(multiSignTokenId);
     multiSignBy0.setTokenindex(tokenindex);
     multiSignBy0.setAddress(outKey.toAddress().toHex());
-    multiSignBy0.setPublickey(Utils.HEX.encode(outKey.getPubKey()));
+    multiSignBy0.setPublickey(Utils.HEX.encode(outKey.getPrefixedPublicKeyBytes()));
     multiSignBy0.setSignature(Utils.HEX.encode(buf1));
 
     multiSignBies.push(multiSignBy0);
@@ -1181,7 +1181,7 @@ export class Wallet extends WalletBase {
     }
     const keys = await this.walletKeys(aesKey);
     for (const ecKey of keys) {
-      if (address === ecKey.toAddress().toHex()) {
+      if (address === Address.fromKey(this.params, ecKey).toBase58()) {
         return ecKey;
       }
     }
@@ -1564,7 +1564,8 @@ export class Wallet extends WalletBase {
   }
 
   async adjustSolveAndSign(block: Block): Promise<Block> {
-    this.setRandomNonce(block);
+    // Note: do NOT set a random nonce here — the block hash must remain
+    // stable so the server can match it to pending multisign records.
     await OkHttp3Util.post(
       this.getServerURL() + ReqCmd.signToken,
       new Uint8Array(block.bitcoinSerialize())

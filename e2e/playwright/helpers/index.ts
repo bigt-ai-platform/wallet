@@ -1,8 +1,8 @@
 import { Page } from '@playwright/test';
 
 export async function waitForApp(page: Page, timeout = 20000) {
-  await page.goto('/');
-  await page.waitForLoadState('networkidle', { timeout });
+  await page.goto('/', { waitUntil: 'load', timeout });
+  await page.waitForTimeout(3000);
 }
 
 export async function getElement(page: Page, testId: string) {
@@ -10,8 +10,8 @@ export async function getElement(page: Page, testId: string) {
 }
 
 export async function clickTab(page: Page, label: string) {
-  await page.getByRole('tab', { name: label, exact: true }).click();
-  await page.waitForTimeout(1500);
+  await page.getByRole('tab', { name: label }).click();
+  await page.waitForTimeout(2000);
 }
 
 export async function configureServerUrl(page: Page, serverUrl: string, l1Url?: string) {
@@ -20,9 +20,12 @@ export async function configureServerUrl(page: Page, serverUrl: string, l1Url?: 
   await input.fill('');
   await input.fill(serverUrl);
   if (l1Url) {
-    const l1Input = page.locator('[data-testid="l1-url-input"]');
-    await l1Input.fill('');
-    await l1Input.fill(l1Url);
+    const l1UrlInputs = page.locator('input[placeholder="https://..."]');
+    const count = await l1UrlInputs.count();
+    if (count > 0) {
+      await l1UrlInputs.first().fill('');
+      await l1UrlInputs.first().fill(l1Url);
+    }
   }
   await page.locator('text=Save').first().click();
   await page.waitForTimeout(1000);

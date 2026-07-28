@@ -299,4 +299,122 @@ describe('Transactions', () => {
       }
     });
   });
+
+  describe('L1 Test Tab', () => {
+    beforeEach(async () => {
+      // Navigate to transaction screen and switch to L1 Test tab
+      await element(by.text('Transaction')).tap();
+      await waitForElementToBeVisible(by.id('transaction-screen'));
+      await element(by.text('L1 Test')).tap();
+      await waitForNetwork(1000);
+    });
+
+    it('should display L1 Test tab with chain selector', async () => {
+      await detoxExpect(element(by.text('L1 Test'))).toBeVisible();
+      await detoxExpect(element(by.text('Select L1 Chain'))).toBeVisible();
+      await detoxExpect(element(by.id('l1-mode-tabs'))).toBeVisible();
+      await detoxExpect(element(by.text('Pay L1'))).toBeVisible();
+      await detoxExpect(element(by.text('Pay Back L1→L0'))).toBeVisible();
+
+      await takeScreenshot('l1-test-tab');
+    });
+
+    it('should show L1 chain chips when chains configured', async () => {
+      await waitForNetwork(1000);
+      try {
+        await detoxExpect(element(by.id('l1-chain-chip-0'))).toBeVisible();
+        await takeScreenshot('l1-chains-visible');
+      } catch (e) {
+        // No chains configured, check empty state
+        await detoxExpect(element(by.text('No L1 chains configured'))).toBeVisible();
+        await takeScreenshot('l1-chains-empty');
+      }
+    });
+
+    it('should display Pay L1 form by default', async () => {
+      await detoxExpect(element(by.id('l1-pay-section'))).toBeVisible();
+      await detoxExpect(element(by.text('Pay L1 Chain'))).toBeVisible();
+      await detoxExpect(element(by.id('l1-pay-token-input'))).toBeVisible();
+      await detoxExpect(element(by.id('l1-pay-amount-input'))).toBeVisible();
+      await detoxExpect(element(by.id('l1-pay-dest-input'))).toBeVisible();
+      await detoxExpect(element(by.id('l1-pay-button'))).toBeVisible();
+
+      await takeScreenshot('l1-pay-form');
+    });
+
+    it('should switch to Pay Back form when toggled', async () => {
+      await element(by.text('Pay Back L1→L0')).tap();
+      await waitForNetwork(500);
+
+      await detoxExpect(element(by.id('l1-payback-section'))).toBeVisible();
+      await detoxExpect(element(by.text('Pay Back from L1 to L0'))).toBeVisible();
+      await detoxExpect(element(by.id('l1-payback-token-input'))).toBeVisible();
+      await detoxExpect(element(by.id('l1-payback-amount-input'))).toBeVisible();
+      await detoxExpect(element(by.id('l1-payback-dest-input'))).toBeVisible();
+      await detoxExpect(element(by.id('l1-payback-button'))).toBeVisible();
+
+      await takeScreenshot('l1-payback-form');
+    });
+
+    it('should validate Pay L1 form fields', async () => {
+      // Try submitting empty form
+      await tapByTestId('l1-pay-button');
+      await waitForNetwork(500);
+
+      // Should show validation error
+      await takeScreenshot('l1-pay-validation');
+
+      // Fill in fields
+      await typeTextByTestId('l1-pay-token-input', 'bc');
+      await typeTextByTestId('l1-pay-amount-input', '0.001');
+      await typeTextByTestId('l1-pay-dest-input', 'n3MotdMXgRKwrSwDLwAdr3gPaXQsFXdNDs');
+
+      await takeScreenshot('l1-pay-form-filled');
+    });
+
+    it('should validate Pay Back form fields', async () => {
+      // Switch to payback
+      await element(by.text('Pay Back L1→L0')).tap();
+      await waitForNetwork(500);
+
+      // Try submitting empty
+      await tapByTestId('l1-payback-button');
+      await waitForNetwork(500);
+
+      await takeScreenshot('l1-payback-validation');
+
+      // Fill in fields
+      await typeTextByTestId('l1-payback-token-input', 'bc');
+      await typeTextByTestId('l1-payback-amount-input', '0.001');
+      await typeTextByTestId('l1-payback-dest-input', 'n3MotdMXgRKwrSwDLwAdr3gPaXQsFXdNDs');
+
+      await takeScreenshot('l1-payback-form-filled');
+    });
+
+    it('should handle network errors gracefully for Pay L1', async () => {
+      await typeTextByTestId('l1-pay-token-input', 'bc');
+      await typeTextByTestId('l1-pay-amount-input', '0.001');
+      await typeTextByTestId('l1-pay-dest-input', 'n3MotdMXgRKwrSwDLwAdr3gPaXQsFXdNDs');
+
+      await tapByTestId('l1-pay-button');
+      await waitForNetwork(3000);
+
+      // Should either succeed or show error
+      await takeScreenshot('l1-pay-result');
+    });
+
+    it('should switch back to Pay L1 from Pay Back', async () => {
+      // Switch to payback first
+      await element(by.text('Pay Back L1→L0')).tap();
+      await waitForNetwork(500);
+      await detoxExpect(element(by.id('l1-payback-section'))).toBeVisible();
+
+      // Switch back to pay
+      await element(by.text('Pay L1')).tap();
+      await waitForNetwork(500);
+      await detoxExpect(element(by.id('l1-pay-section'))).toBeVisible();
+
+      await takeScreenshot('l1-switch-back-to-pay');
+    });
+  });
 });

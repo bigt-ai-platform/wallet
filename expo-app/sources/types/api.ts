@@ -201,3 +201,8 @@ export interface OrderOpenParams {
   fromAddress: string;
   privateKeyHex: string;
 }
+
+export interface L1ChainConfig {
+  name: string;
+  url: string;
+}
