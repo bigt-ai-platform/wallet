@@ -1195,17 +1195,15 @@ export class Transaction extends ChildMessage {
       tx.inputs = [input];
     }
 
-    // Serialize and hash the transaction
+    // Serialize and hash the transaction — use the normal serialization
+    // (excluding PQ witness which was already nulled above), matching Java's
+    // hashForSignature which calls tx.bitcoinSerialize(bos).
     const stream = new UnsafeByteArrayOutputStream(
       tx.length === (tx.constructor as any).UNKNOWN_LENGTH ? 256 : tx.length + 4
     );
-    // Use the signature hash serialization method that includes additional fields
-    tx.bitcoinSerializeForSignatureHash(stream);
+    tx.bitcoinSerialize(stream);
     // We also have to write a hash type (sigHashType is actually an unsigned char)
     Utils.uint32ToByteStreamLE(sigHashType & 0x000000ff, stream);
-    // Note that this is NOT reversed to ensure it will be signed
-    // correctly. If it were to be printed out
-    // however then we would expect that it is IS reversed.
     const hash = Sha256Hash.twiceOf(stream.toByteArray());
 
     return hash;
