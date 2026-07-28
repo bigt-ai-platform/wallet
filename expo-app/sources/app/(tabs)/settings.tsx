@@ -154,7 +154,7 @@ export default function SettingsScreen() {
         <Text style={s.resetBtnText}>{t('settings.reset')}</Text>
       </TouchableOpacity>
 
-      <Text style={s.footer}>Bapp v{appVersion}</Text>
+      <Text style={s.footer}>bigt.ai v{appVersion}</Text>
     </ScrollView>
   );
 }

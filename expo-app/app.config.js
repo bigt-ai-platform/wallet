@@ -1,8 +1,8 @@
 const variant = process.env.APP_ENV || 'development';
 const name = {
-    development: "Bapp (dev)",
-    preview: "Bapp (preview)",
-    production: "Bapp"
+    development: "bigt.ai (dev)",
+    preview: "bigt.ai (preview)",
+    production: "bigt.ai"
 }[variant];
 const bundleId = {
     development: "com.example.bapp.dev",
@@ -13,7 +13,7 @@ const bundleId = {
 export default {
     expo: {
         name,
-        slug: "bapp",
+        slug: "bigtai",
         version: "1.0.0",
         runtimeVersion: "1",
         orientation: "default",
@@ -23,7 +23,7 @@ export default {
             resizeMode: "contain",
         },
         icon: "./sources/assets/images/icon.png",
-        scheme: "bapp",
+        scheme: "bigtai",
         userInterfaceStyle: "automatic",
         newArchEnabled: true,
         notification: {

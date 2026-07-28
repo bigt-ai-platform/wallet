@@ -16,7 +16,7 @@ export default {
 
     // Home screen
     home: {
-        title: 'Welcome to Bapp',
+        title: 'Welcome to bigt.ai',
         subtitle: 'Your Bigtangle blockchain app',
     },
 
