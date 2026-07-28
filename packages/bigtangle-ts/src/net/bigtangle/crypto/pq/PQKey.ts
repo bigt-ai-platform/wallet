@@ -414,6 +414,7 @@ function sha256Drbg(seed: Uint8Array, outputLen: number): Uint8Array {
     stateCounter += 1n;
 
     d = sha256.create();
+    // Little-endian counter byte order (matching BC DigestRandomGenerator)
     for (let i = 0; i < 8; i++) {
       d.update(new Uint8Array([Number(oldCounter >> BigInt(i * 8) & 0xFFn)]));
     }
