@@ -401,7 +401,7 @@ function sha256Drbg(seed: Uint8Array, outputLen: number): Uint8Array {
   }
   let seedBuf = new Uint8Array(hashLen);
   d.update(seedBuf);
-  seedBuf = d.digest();
+  seedBuf = new Uint8Array(d.digest());
 
   let stateBuf = new Uint8Array(hashLen);
   let stateCounter = 1n;
@@ -419,7 +419,7 @@ function sha256Drbg(seed: Uint8Array, outputLen: number): Uint8Array {
     }
     d.update(stateBuf);
     d.update(seedBuf);
-    stateBuf = d.digest();
+    stateBuf = new Uint8Array(d.digest());
 
     const copyLen = Math.min(hashLen, outputLen - offset);
     result.set(stateBuf.subarray(0, copyLen), offset);

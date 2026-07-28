@@ -101,4 +101,9 @@ export type { Challenge, ChallengeResponse } from './net/bigtangle/crypto/Challe
 export { PeerDiscoveryClient } from './net/bigtangle/pool/server/PeerDiscoveryClient';
 export { DnsDiscoveryResolver } from './net/bigtangle/pool/server/DnsDiscoveryResolver';
 export type { PeerInfo, GetPeersResponse } from './net/bigtangle/pool/server/NodeRecord';
+export { MemoInfo } from './net/bigtangle/core/MemoInfo';
+export { OrderOpenInfo } from './net/bigtangle/core/OrderOpenInfo';
+export { Side } from './net/bigtangle/core/Side';
+export { FreeStandingTransactionOutput } from './net/bigtangle/wallet/FreeStandingTransactionOutput';
+export { TokenType } from './net/bigtangle/core/TokenType';
 
