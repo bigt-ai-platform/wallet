@@ -155,13 +155,15 @@ export class TransactionInput extends ChildMessage {
         this.cursor += TransactionOutPoint.MESSAGE_LENGTH;
         
         const scriptLen = this.readVarInt();
-        	this.length = this.cursor - this.offset + scriptLen + 4;
         this.scriptBytes = this.readBytes(scriptLen);
         this.sequence = this.readUint32();
 	if (this.readUint32() == 1) {
 			this.outpoint.connectedOutput = TransactionOutput.fromTransactionOutput(this.params, this.parent as Transaction,
 					this.payload, this.cursor, this.serializer);
 			this.cursor += this.outpoint.connectedOutput.getMessageSize();
+			this.length = this.cursor - this.offset;
+		} else {
+			this.length = this.cursor - this.offset;
 		}
     }
 
