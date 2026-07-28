@@ -99,29 +99,17 @@ export class LocalTransactionSigner extends StatelessTransactionSigner {
                 console.warn(`No local key found for input ${i}`);
                 continue;
             }
-           let inputScript = txIn.getScriptSig();
-            const connectedOutput = txIn.getConnectedOutput()!;
-            const currentScriptPubKey = connectedOutput.getScriptPubKey();
-            try {
-                const signature = await tx.calculateSignature(i, key, currentScriptPubKey.getProgram(),  SigHash.ALL, false);
-                 // For P2PK outputs (scriptPubKey is PUSHDATA(pubkey) OP_CHECKSIG),
-                 // the scriptSig should only contain the signature, not signature + public key
-                 if (currentScriptPubKey.isSentToRawPubKey()) {
-                     // For raw public key outputs, only push the signature
-
-                     const newInputScript = ScriptBuilder.createInputScript(signature, undefined);
-                     txIn.setScriptSig(newInputScript);
-
-                 } else {
-                     // For P2PKH outputs (scriptPubKey is OP_DUP OP_HASH160 PUSHDATA(pubKeyHash) OP_EQUALVERIFY OP_CHECKSIG),
-                     // the scriptSig should contain the signature and public key
-                     // Also for other script types that require both signature and public key
-
-                     const newInputScript = ScriptBuilder.createInputScript(signature, key);
-                     txIn.setScriptSig(newInputScript);
-
-                 }
-            } catch (e: any) {
+            let inputScript = txIn.getScriptSig();
+             const connectedOutput = txIn.getConnectedOutput()!;
+             const currentScriptPubKey = connectedOutput.getScriptPubKey();
+             try {
+                 const signature = await tx.calculateSignature(i, key, currentScriptPubKey.getProgram(),  SigHash.ALL, false);
+                 // Always push <sigBundle.serialize()> <pubKey> (matching Java
+                 // LocalTransactionSigner which removed isSentToRawPubKey usage).
+                 // The bundle is written without sighash byte (serialize, not encodeToBitcoin).
+                 const newInputScript = ScriptBuilder.createInputScript(signature, key);
+                 txIn.setScriptSig(newInputScript);
+             } catch (e: any) {
                 if (e instanceof MissingPrivateKeyException) {
                     console.warn(`No private key in keypair for input ${i}`);
                 } else {
