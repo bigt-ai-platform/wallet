@@ -266,7 +266,7 @@ export class PQKey implements EncryptableItem {
 
   /** Returns RIPE160(SHA256(pubKey)) - matches ECKey.getPubKeyHash() */
   getPubKeyHash(): Uint8Array {
-    return Utils.sha256hash160(this.getPubKey());
+    return Utils.sha256hash160(this.getPrefixedPublicKeyBytes());
   }
 
   /** Format key information for display */
@@ -325,7 +325,9 @@ export class PQKey implements EncryptableItem {
   };
 
   static verify(data: Sha256Hash, sigBundle: SignatureBundle, pubBytes: Uint8Array): boolean {
-    const bundle = KeyBundle.deserialize(pubBytes);
+    // Accept both prefixed (0x05 + bundle) and raw (bundle) public key bytes
+    const bundleBytes = (pubBytes.length > 0 && pubBytes[0] === 0x05) ? pubBytes.slice(1) : pubBytes;
+    const bundle = KeyBundle.deserialize(bundleBytes);
     return PQKey.verifyWithBundle(data, sigBundle, bundle);
   }
 

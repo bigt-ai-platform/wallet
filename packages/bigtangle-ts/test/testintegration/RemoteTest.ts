@@ -328,7 +328,7 @@ export abstract class RemoteTest {
       utxos = utxos.filter(utxo =>  
         utxo &&  
         !utxo.isSpent()  && 
-        !this.checkSpendpending(utxo)
+        this.checkSpendpending(utxo)
       );
       this.logUTXOs(utxos);
       return utxos;

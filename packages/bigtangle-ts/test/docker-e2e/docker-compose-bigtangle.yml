@@ -4,7 +4,6 @@ networks:
 
 volumes:
   bigtangle-ts-e2e-postgres:
-  bigtangle-ts-e2e-minio:
 
 services:
   postgres:
@@ -26,114 +25,62 @@ services:
       retries: 10
     restart: unless-stopped
 
-  minio:
-    image: minio/minio
-    container_name: bigtangle-ts-e2e-minio
-    hostname: minio
+  layer0-server:
+    image: ghcr.io/bigt-ai-platform/layer0-server:latest
+    container_name: bigtangle-ts-e2e-l0-server
+    hostname: layer0-server
     networks:
       - bigtangle-ts-e2e-network
+    ports:
+      - "18088:8088"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadminpassword
-      MINIO_DEFAULT_BUCKETS: testbigtangle
-    volumes:
-      - bigtangle-ts-e2e-minio:/data
-    command: server /data --console-address ":9001"
+      JAVA_OPTS: "-Ddebug -Xmx5028m --add-exports java.base/sun.nio.ch=ALL-UNNAMED -Dfile.encoding=UTF-8"
+      DB_PASSWORD: test1234
+      DB_USER: root
+      DB_PORT: 5432
+      SERVER_PORT: 8088
+      DB_NAME: info
+      DB_HOSTNAME: postgres
+      SERVICE_MCMC_RATE: 1000
+      SERVER_MINERADDRESS: 1LLtbSLJJn1D2churfWG55aDYqQQTu4eqH
+      SERVERMODE: ""
+      SERVICE_MINING_RATE: 10000
+      SERVICE_MINING: "true"
+      SERVICE_MCMC: "true"
+      SERVER_NET: Test
+      SSL: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
-  bigtangle:
-    image: ghcr.io/bigtangle/server:bigtangle-server-develop-0.5.0
-    container_name: bigtangle-ts-e2e-server
-    hostname: bigtangle
+  l1-order-server:
+    image: ghcr.io/bigt-ai-platform/l1-order-server:latest
+    container_name: bigtangle-ts-e2e-l1-order-server
+    hostname: l1-order-server
     networks:
       - bigtangle-ts-e2e-network
     ports:
       - "18089:8088"
     environment:
-      JAVA_OPTS: "-Ddebug -Xmx5028m --add-exports java.base/sun.nio.ch=ALL-UNNAMED -Dfile.encoding=UTF-8 -Dminio.url=http://minio:9000 -Dminio.access-key=minioadmin -Dminio.secret-key=minioadminpassword"
+      JAVA_OPTS: "-Ddebug -Xmx5028m --add-exports java.base/sun.nio.ch=ALL-UNNAMED -Dfile.encoding=UTF-8"
       DB_PASSWORD: test1234
       DB_USER: root
       DB_PORT: 5432
       SERVER_PORT: 8088
       DB_NAME: info
       DB_HOSTNAME: postgres
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadminpassword
       SERVICE_MCMC_RATE: 1000
       SERVER_MINERADDRESS: 1LLtbSLJJn1D2churfWG55aDYqQQTu4eqH
       SERVERMODE: ""
-      BOOT_STRAP_SERVERS: test.kafka.bigtangle.de:9092
-      TOPIC_OUT_NAME: bigtangle
-      CONSUMERIDSUFFIX: bigtangle-ts-e2e
-      REQUESTER: ""
-      SERVICE_MINING_RATE: 36000
-      SERVICE_MINING: "true"
+      SERVICE_MINING_RATE: 10000
+      SERVICE_MINING: "false"
       SERVICE_MCMC: "true"
       SERVER_NET: Test
       SSL: "false"
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
-        condition: service_started
     restart: unless-stopped
 
 
-  bigtanglemcmc:
-    image: ghcr.io/bigtangle/server:bigtangle-mcmc-develop-0.5.0
-    profiles:
-      - mcmc
-    container_name: bigtangle-ts-e2e-mcmc-server
-    hostname: bigtanglemcmc
-    networks:
-      - bigtangle-ts-e2e-network
-    ports:
-      - "18090:8088"
-    environment:
-      JAVA_OPTS: "-Ddebug -Xmx5028m --add-exports java.base/sun.nio.ch=ALL-UNNAMED -Dfile.encoding=UTF-8 -Dminio.url=http://minio:9000 -Dminio.access-key=minioadmin -Dminio.secret-key=minioadminpassword"
-      DB_PASSWORD: test1234
-      DB_USER: root
-      DB_PORT: 5432
-      SERVER_PORT: 8088
-      DB_NAME: info
-      DB_HOSTNAME: postgres
-      MINIO_ENDPOINT: http://minio:9000
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadminpassword
-      SERVICE_MCMC_RATE: 1000
-      SERVER_MINERADDRESS: 1LLtbSLJJn1D2churfWG55aDYqQQTu4eqH
-      SERVERMODE: ""
-      BOOT_STRAP_SERVERS: test.kafka.bigtangle.de:9092
-      TOPIC_OUT_NAME: bigtangle
-      CONSUMERIDSUFFIX: bigtangle-ts-e2e
-      REQUESTER: ""
-      SERVICE_MINING_RATE: 36000
-      SERVICE_MINING: "true"
-      SERVICE_MCMC: "true"
-      SERVER_NET: Test
-      SSL: "false"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_started
-    restart: unless-stopped
-
-  bigtangle-ts-e2e:
-    build:
-      context: ../..
-      dockerfile: test/docker-e2e/Dockerfile
-      args:
-        PACKAGE_TGZ: ${PACKAGE_TGZ:?PACKAGE_TGZ must point to the packed npm tarball}
-    container_name: bigtangle-ts-e2e-tests
-    networks:
-      - bigtangle-ts-e2e-network
-    environment:
-      TEST_CONTEXT_ROOT: http://bigtangle:8088/
-      TEST_WALLET_SERVER_URL: http://bigtangle:8088/
-      BIGTANGLE_E2E_HOST: bigtangle
-      BIGTANGLE_E2E_PORT: 8088
-    depends_on:
-      bigtangle:
-        condition: service_started

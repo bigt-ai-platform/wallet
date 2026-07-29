@@ -169,7 +169,13 @@ export class ScriptBuilder {
                     .build();
             }
         } else if (to instanceof PQKey) {
-            return new ScriptBuilder().data(to.getPrefixedPublicKeyBytes()).op(ScriptOpCodes.OP_CHECKSIG).build();
+            return new ScriptBuilder()
+                .op(ScriptOpCodes.OP_DUP)
+                .op(ScriptOpCodes.OP_HASH160)
+                .data(to.getPubKeyHash())
+                .op(ScriptOpCodes.OP_EQUALVERIFY)
+                .op(ScriptOpCodes.OP_CHECKSIG)
+                .build();
         }
         throw new Error("Invalid type for createOutputScript");
     }
@@ -183,7 +189,7 @@ export class ScriptBuilder {
             : new Uint8Array();
         const builder = new ScriptBuilder().data(sigBytes);
         if (pubKey) {
-            builder.data(pubKey.getPubKey());
+            builder.data(pubKey.getPrefixedPublicKeyBytes());
         }
         return builder.build();
     }

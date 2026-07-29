@@ -1,0 +1,251 @@
+import { describe, test, expect, beforeEach } from "vitest";
+import { RemoteTest, createKeyFromHex } from "./RemoteTest";
+import { PQKey } from "../../src/net/bigtangle/crypto/pq/PQKey";
+import { Wallet } from "../../src/net/bigtangle/wallet/Wallet";
+import { NetworkParameters } from "../../src/net/bigtangle/params/NetworkParameters";
+import { ReqCmd } from "../../src/net/bigtangle/params/ReqCmd";
+import { OrderdataResponse } from "../../src/net/bigtangle/response/OrderdataResponse";
+import { OkHttp3Util } from "../../src/net/bigtangle/utils/OkHttp3Util";
+import { Json } from "../../src/net/bigtangle/utils/Json";
+import { UTXO } from "../../src/net/bigtangle/core/UTXO";
+import { Token } from "../../src/net/bigtangle/core/Token";
+import { TokenType } from "../../src/net/bigtangle/core/TokenType";
+import { MultiSignAddress } from "../../src/net/bigtangle/core/MultiSignAddress";
+import { MemoInfo } from "../../src/net/bigtangle/core/MemoInfo";
+import { Address } from "../../src/net/bigtangle/core/Address";
+import { Block } from "../../src/net/bigtangle/core/Block";
+import { Utils } from "../../src/net/bigtangle/core/Utils";
+import { CoinConstants } from "../../src/net/bigtangle/core/CoinConstants";
+
+class RemoteOrderTests extends RemoteTest {
+  private l1Url = process.env.TEST_L1_URL || "http://localhost:18086/";
+
+  private async fundKey(key: PQKey, value: bigint): Promise<void> {
+    const body = {
+      addresses: [{
+        address: key.toAddressHex(),
+        value: Number(value),
+        pubkey: Utils.HEX.encode(key.getPrefixedPublicKeyBytes()),
+      }],
+    };
+    await OkHttp3Util.post(
+      this.contextRoot + "fundAddresses",
+      new TextEncoder().encode(Json.jsonmapper().stringify(body))
+    );
+  }
+
+  async testCreateTokenAndTrade() {
+    // 1. Create keys and wallets
+    const issuer = PQKey.createNew();
+    const buyer = PQKey.createNew();
+    const issuerWallet = await Wallet.fromKeysURL(this.networkParameters, [issuer], this.contextRoot);
+    const buyerWallet = await Wallet.fromKeysURL(this.networkParameters, [buyer], this.contextRoot);
+    const bcToken = NetworkParameters.BIGTANGLE_TOKENID_STRING;
+
+    // 2. Fund issuer and buyer with BC (before token creation) via fundAddresses (PQ key path)
+    const userFunds = CoinConstants.FEE_DEFAULT.getValue() * BigInt(500);
+    console.log("Funding issuer...");
+    await this.fundKey(issuer, userFunds);
+    console.log("Funding buyer...");
+    await this.fundKey(buyer, userFunds);
+    // Wait for MCMC to confirm
+    console.log("Waiting 25s for MCMC...");
+    await new Promise(resolve => setTimeout(resolve, 25000));
+
+    // Verify both have confirmed BC
+    for (const key of [issuer, buyer]) {
+      let hasBc = false;
+      for (let i = 0; i < 30; i++) {
+        const utxos = await this.getBalanceByKey(false, key);
+        for (const u of utxos) {
+          if (u.getTokenId() === bcToken && u.getValue()!.getValue() > BigInt(0))
+            hasBc = true;
+        }
+        if (hasBc) break;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      expect(hasBc).toBe(true);
+    }
+    console.log("Issuer and buyer funded with BC");
+
+    // Fund the wallet key too (needed for token creation fee)
+    const walletKeys = await this.wallet.walletKeys(null);
+    if (walletKeys.length > 0) {
+      await this.fundKey(walletKeys[0], userFunds);
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    }
+
+    // 3. Create a custom token
+    const tokenName = "tradetoken";
+    const supply = BigInt(10000000);
+    const tokenid = issuer.getPublicKeyAsHex();
+    const block = await this.createToken(issuer, tokenName, 0, "", "token for buy/sell test",
+      supply, true, null, TokenType.token, tokenid);
+    expect(block).not.toBeNull();
+
+    const signkey = createKeyFromHex(RemoteTest.testPriv);
+    const signed = await this.wallet.multiSign(tokenid, signkey, null);
+    if (signed != null) {
+      console.log("Token multi-signed, waiting for confirmation...");
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    } else {
+      console.log("multiSign returned null (may need more time)");
+    }
+
+    let foundToken: Token | null = null;
+    for (let i = 0; i < 40; i++) {
+      foundToken = await this.getToken(tokenid);
+      if (foundToken != null) break;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    expect(foundToken).not.toBeNull();
+    console.log(`Token ${tokenName} created`);
+
+    // Wait for token UTXOs to be confirmed
+    await new Promise(resolve => setTimeout(resolve, 25000));
+
+    let hasToken = false;
+    for (let i = 0; i < 30; i++) {
+      const utxos = await this.getBalanceByKey(false, issuer);
+      for (const u of utxos) {
+        if (u.getTokenId() === tokenid && u.getValue()!.getValue() > BigInt(0))
+          hasToken = true;
+      }
+      if (hasToken) break;
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+    expect(hasToken).toBe(true);
+
+    // 4. Create a sell order: sell 100 tradetoken at price 1000 (BC base)
+    const sellPrice = BigInt(1000);
+    const sellAmount = BigInt(100);
+    console.log(`Sell: ${sellAmount} ${tokenName} @ price ${sellPrice}`);
+    issuerWallet.setServerURL(this.contextRoot);
+    await issuerWallet.sellOrder(null, tokenid, sellPrice, sellAmount, null, null,
+      NetworkParameters.BIGTANGLE_TOKENID_STRING, true);
+    await new Promise(resolve => setTimeout(resolve, 3000));
+
+    // 5. Verify sell order is open via getOrders API
+    const requestParam = {};
+    let ordersBefore: OrderdataResponse | null = null;
+    for (let i = 0; i < 40; i++) {
+      const resp = await OkHttp3Util.post(this.l1Url + ReqCmd.getOrders,
+        new TextEncoder().encode(Json.jsonmapper().stringify(requestParam)));
+      ordersBefore = Json.jsonmapper().parse(resp, {
+        mainCreator: () => [OrderdataResponse],
+      }) as OrderdataResponse;
+      if (ordersBefore.getAllOrdersSorted() != null && ordersBefore.getAllOrdersSorted()!.length > 0)
+        break;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    expect(ordersBefore).not.toBeNull();
+    const sellOrders = ordersBefore!.getAllOrdersSorted();
+    expect(sellOrders).not.toBeNull();
+    expect(sellOrders!.length).toBeGreaterThanOrEqual(1);
+    console.log(`Sell order confirmed: ${sellOrders!.length} open`);
+
+    // 6. Create a matching buy order
+    // Ensure buyer's BC UTXOs are still confirmed
+    let buyerReady = false;
+    for (let i = 0; i < 15; i++) {
+      const utxos = await this.getBalanceByKey(false, buyer);
+      for (const u of utxos) {
+        if (u.getTokenId() === bcToken && u.getValue()!.getValue() > BigInt(0))
+          buyerReady = true;
+      }
+      if (buyerReady) break;
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    }
+    expect(buyerReady).toBe(true);
+
+    console.log(`Buy: ${sellAmount} ${tokenName} @ price ${sellPrice}`);
+    buyerWallet.setServerURL(this.contextRoot);
+    await buyerWallet.buyOrder(null, tokenid, sellPrice, sellAmount, null, null,
+      NetworkParameters.BIGTANGLE_TOKENID_STRING, false);
+    await new Promise(resolve => setTimeout(resolve, 5000));
+
+    // 7. Wait for order matching and verify
+    let ordersAfter: OrderdataResponse | null = null;
+    for (let i = 0; i < 40; i++) {
+      const resp = await OkHttp3Util.post(this.l1Url + ReqCmd.getOrders,
+        new TextEncoder().encode(Json.jsonmapper().stringify(requestParam)));
+      ordersAfter = Json.jsonmapper().parse(resp, {
+        mainCreator: () => [OrderdataResponse],
+      }) as OrderdataResponse;
+      const remaining = ordersAfter.getAllOrdersSorted();
+      if (remaining == null || remaining.length === 0)
+        break;
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    const remainingOrders = ordersAfter!.getAllOrdersSorted();
+    expect(remainingOrders == null || remainingOrders.length === 0).toBe(true);
+
+    // 8. Verify issuer received BC from the trade
+    const issuerBalance = await this.getBalanceByKey(false, issuer);
+    console.log(`Issuer has ${issuerBalance.length} UTXOs after trade`);
+    let hasBcTrade = false;
+    for (const u of issuerBalance) {
+      console.log(`  UTXO: ${u.getTokenId()} value=${u.getValue()!.getValue()}`);
+      if (u.getTokenId() === bcToken)
+        hasBcTrade = true;
+    }
+    expect(hasBcTrade).toBe(true);
+    console.log("Buy/sell trade test completed successfully");
+  }
+
+  private async getToken(tokenid: string): Promise<Token | null> {
+    try {
+      return await this.wallet.checkTokenId(tokenid);
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  private async createToken(
+    key: PQKey,
+    tokenname: string,
+    decimals: number,
+    domainname: string,
+    description: string,
+    amount: bigint,
+    increment: boolean,
+    tokenKeyValues: any,
+    tokentype: TokenType,
+    tokenid: string
+  ): Promise<Block> {
+    this.wallet.importKey(key);
+    const token = new Token();
+    token.setTokenid(tokenid);
+    token.setTokenname(tokenname);
+    token.setDescription(description);
+    token.setDecimals(decimals);
+    token.setAmount(amount);
+    token.setTokenstop(!increment);
+    token.setTokentype(tokentype);
+    if (tokenKeyValues) {
+      token.setTokenKeyValues(tokenKeyValues);
+    }
+    const addresses = [new MultiSignAddress(tokenid, "", Utils.HEX.encode(key.getPrefixedPublicKeyBytes()))];
+    return await this.wallet.createToken(
+      key,
+      domainname,
+      increment,
+      token,
+      addresses,
+      key.getPubKey(),
+      new MemoInfo("coinbase")
+    );
+  }
+}
+
+describe("RemoteOrderTests", () => {
+  const tests = new RemoteOrderTests();
+
+  beforeEach(async () => {
+    await tests.setUp();
+  });
+
+  test("testCreateTokenAndTrade", async () => {
+    await tests.testCreateTokenAndTrade();
+  }, 300000);
+});

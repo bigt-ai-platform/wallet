@@ -28,6 +28,8 @@ services:
       - e2e-network
     ports:
       - "18088:8088"
+    extra_hosts:
+      - "e2e-l0-server:127.0.0.1"
     environment:
       APP_MODULE: layer0-server
       SERVER_PORT: 8088
@@ -61,6 +63,8 @@ services:
       - e2e-network
     ports:
       - "18084:8084"
+    extra_hosts:
+      - "e2e-l0-mcmc:127.0.0.1"
     environment:
       APP_MODULE: layer0-mcmc
       SERVER_PORT: 8084
@@ -116,6 +120,8 @@ services:
       - e2e-network
     ports:
       - "18086:8086"
+    extra_hosts:
+      - "e2e-l1-order-server:127.0.0.1"
     environment:
       APP_MODULE: l1-order-server
       SERVER_PORT: 8086
