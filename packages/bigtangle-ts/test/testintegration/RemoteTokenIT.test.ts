@@ -7,6 +7,7 @@ import { Token } from "../../src/net/bigtangle/core/Token";
 import { MultiSignAddress } from "../../src/net/bigtangle/core/MultiSignAddress";
 import { MemoInfo } from "../../src/net/bigtangle/core/MemoInfo";
 import { TokenType } from "../../src/net/bigtangle/core/TokenType";
+import { Address } from "../../src/net/bigtangle/core/Address";
 
 const L0_URL = process.env.TEST_CONTEXT_ROOT || "http://localhost:18088/";
 
@@ -203,8 +204,28 @@ describe("RemoteTokenIT", () => {
 
     expect(tokenUtxos.length).toBeGreaterThan(0);
 
-    // Create a payment (matching Java's testCreateAndPayToken)
-    // Note: full payment flow may be limited by current PQ sign compatibility
+    // Create a payment: send 1000 tokens to a recipient (matching Java's testCreateAndPayToken)
+    const recipient = PQKey.createNew();
+    const sendAmount = BigInt(1000);
+    const tokenidBytes = Utils.HEX.decode(tokenid);
+    const recipientAddr = Address.fromP2PKH(TestParams.get(), recipient.getPubKeyHash());
+
+    const giveMoney = new Map<string, bigint>();
+    giveMoney.set(recipientAddr.toString(), sendAmount);
+
+    const tx = await payWallet.payToList(null, giveMoney, tokenidBytes, "pay");
+    expect(tx).not.toBeNull();
+    console.log(`Paid ${sendAmount} ${tokenName} tokens to recipient`);
+
+    await new Promise(r => setTimeout(r, 6000));
+
+    // Verify recipient received tokens
+    const recipientWallet = Wallet.fromKeysURL(TestParams.get(), [recipient], L0_URL);
+    recipientWallet.setFee(false);
+    const after = await recipientWallet.calculateAllSpendCandidates(null, false);
+    const recipientTokens = after.filter(u => u.getUTXO().getTokenId() === tokenid);
+    console.log(`Recipient has ${recipientTokens.length} token UTXOs after payment`);
+    expect(recipientTokens.length).toBeGreaterThan(0);
     console.log(`Pay token test completed`);
   });
 });
