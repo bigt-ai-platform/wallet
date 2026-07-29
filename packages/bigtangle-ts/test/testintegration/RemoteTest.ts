@@ -74,18 +74,12 @@ export abstract class RemoteTest {
     expect(token_.getDomainName() === domainname).toBeTruthy();
   }
 
-  public async setUp() {
+  public setUp() {
     this.wallet = Wallet.fromKeysURL(
       this.networkParameters,
       [createKeyFromHex(RemoteTest.testPriv)],
       this.contextRoot
     );
-    // Fund the wallet key so payBigTo and other spending operations work
-    const keys = await this.wallet.walletKeys(null);
-    if (keys.length > 0) {
-      await this.fundKey(keys[0]);
-      await new Promise(resolve => setTimeout(resolve, 10000));
-    }
   }
 
   protected async payTestTokenTo(

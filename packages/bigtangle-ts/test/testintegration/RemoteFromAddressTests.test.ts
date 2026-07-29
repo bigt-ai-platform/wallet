@@ -43,6 +43,13 @@ class RemoteFromAddressTests extends RemoteTest {
     this.userkeys.push(k1);
     this.userkeys.push(k2);
 
+    // Fund the wallet key so payBigTo can send BC
+    const walletKeys = await this.wallet.walletKeys(null);
+    if (walletKeys.length > 0) {
+      await this.fundKey(walletKeys[0]);
+      await new Promise(r => setTimeout(r, 10000));
+    }
+
     await this.payBigTo(
       [
         createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv),
