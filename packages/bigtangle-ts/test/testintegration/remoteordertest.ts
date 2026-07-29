@@ -20,7 +20,7 @@ import { CoinConstants } from "../../src/net/bigtangle/core/CoinConstants";
 class RemoteOrderTests extends RemoteTest {
   private l1Url = process.env.TEST_L1_URL || "http://localhost:18086/";
 
-  private async fundKey(key: PQKey, value: bigint): Promise<void> {
+  private async fundKey(key: PQKey, value: bigint = BigInt(10000000000)): Promise<void> {
     const body = {
       addresses: [{
         address: key.toAddressHex(),

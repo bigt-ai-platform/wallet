@@ -5,6 +5,21 @@ import { Block } from "../../src/net/bigtangle/core/Block";
 import { Wallet } from "../../src/net/bigtangle/wallet/Wallet";
 import { Address } from "../../src/net/bigtangle/core/Address";
 import { TestParams } from "../../src/net/bigtangle/params/TestParams";
+import { PQKey } from "../../src/net/bigtangle/crypto/pq/PQKey";
+
+async function fundKey(k: PQKey, url: string): Promise<void> {
+  await fetch(url + "fundAddresses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      addresses: [{
+        address: k.toAddressHex(),
+        value: 10000000000,
+        pubkey: Utils.HEX.encode(k.getPrefixedPublicKeyBytes()),
+      }],
+    }),
+  });
+}
 
 type Token = {
   tokenid: string;
@@ -36,7 +51,7 @@ describe('bigtangle wallet pay', () => {
   });
 
 
-  beforeEach(() => {
+  beforeEach(async () => {
     wallet = Wallet.fromKeysURL(
       TestParams.get(),
       [createKeyFromHex(
@@ -44,6 +59,12 @@ describe('bigtangle wallet pay', () => {
       )],
       serverUrl
     );
+    // Fund the wallet key
+    const keys = await wallet.walletKeys(null);
+    if (keys.length > 0) {
+      await fundKey(keys[0], serverUrl);
+      await new Promise(r => setTimeout(r, 10000));
+    }
   });
 
   test('should pay to an address using payToList', async () => {

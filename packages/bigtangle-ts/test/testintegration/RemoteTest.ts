@@ -49,6 +49,21 @@ export abstract class RemoteTest {
 
   networkParameters: NetworkParameters = TestParams.get();
 
+  /** Fund a key via fundAddresses (PQ key path with prefixed pubkey). */
+  protected async fundKey(key: PQKey, value: number = 10000000000): Promise<void> {
+    const body = {
+      addresses: [{
+        address: key.toAddressHex(),
+        value,
+        pubkey: Utils.HEX.encode(key.getPrefixedPublicKeyBytes()),
+      }],
+    };
+    await OkHttp3Util.post(
+      this.contextRoot + "fundAddresses",
+      new TextEncoder().encode(Json.jsonmapper().stringify(body)),
+    );
+  }
+
   public async checkTokenAssertTrue(tokenid: string, domainname: string) {
     const getTokensResponse = (await this.post(
       ReqCmd.getTokenById,
@@ -59,12 +74,18 @@ export abstract class RemoteTest {
     expect(token_.getDomainName() === domainname).toBeTruthy();
   }
 
-  public setUp() {
+  public async setUp() {
     this.wallet = Wallet.fromKeysURL(
       this.networkParameters,
       [createKeyFromHex(RemoteTest.testPriv)],
       this.contextRoot
     );
+    // Fund the wallet key so payBigTo and other spending operations work
+    const keys = await this.wallet.walletKeys(null);
+    if (keys.length > 0) {
+      await this.fundKey(keys[0]);
+      await new Promise(resolve => setTimeout(resolve, 10000));
+    }
   }
 
   protected async payTestTokenTo(
