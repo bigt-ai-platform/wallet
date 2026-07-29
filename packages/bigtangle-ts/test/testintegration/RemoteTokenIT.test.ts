@@ -163,7 +163,7 @@ describe("RemoteTokenIT", () => {
     console.log(`Wallet token verified: ${foundToken.tokenname} (${tokenid})`);
   });
 
-  test("create token and pay", { timeout: 180000 }, async () => {
+  test("create token and pay", { timeout: 300000 }, async () => {
     const issuer = PQKey.createNew();
     const tokenName = "paytoken";
     const tokenid = Utils.HEX.encode(issuer.getPrefixedPublicKeyBytes());
@@ -217,13 +217,16 @@ describe("RemoteTokenIT", () => {
     expect(tx).not.toBeNull();
     console.log(`Paid ${sendAmount} ${tokenName} tokens to recipient`);
 
-    await new Promise(r => setTimeout(r, 6000));
-
-    // Verify recipient received tokens
+    // Wait for MCMC to confirm the payment transaction
     const recipientWallet = Wallet.fromKeysURL(TestParams.get(), [recipient], L0_URL);
     recipientWallet.setFee(false);
-    const after = await recipientWallet.calculateAllSpendCandidates(null, false);
-    const recipientTokens = after.filter(u => u.getUTXO().getTokenId() === tokenid);
+    let recipientTokens: any[] = [];
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 3000));
+      const after = await recipientWallet.calculateAllSpendCandidates(null, false);
+      recipientTokens = after.filter(u => u.getUTXO().getTokenId() === tokenid);
+      if (recipientTokens.length > 0) break;
+    }
     console.log(`Recipient has ${recipientTokens.length} token UTXOs after payment`);
     expect(recipientTokens.length).toBeGreaterThan(0);
     console.log(`Pay token test completed`);
