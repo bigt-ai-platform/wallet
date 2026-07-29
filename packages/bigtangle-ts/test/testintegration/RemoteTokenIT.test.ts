@@ -186,7 +186,8 @@ describe("RemoteTokenIT", () => {
     console.log(`Token ${tokenName} created, id=${tokenid}`);
 
     // Wait for blockbatch to mint the initial supply as spendable UTXOs
-    await new Promise(r => setTimeout(r, 15000));
+    console.log("Waiting 30s for token minting...");
+    await new Promise(r => setTimeout(r, 30000));
 
     const payWallet = Wallet.fromKeysURL(TestParams.get(), [issuer], L0_URL);
     payWallet.setFee(false);
