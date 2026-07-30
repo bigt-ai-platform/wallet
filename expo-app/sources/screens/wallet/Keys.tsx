@@ -537,6 +537,10 @@ export default function KeysScreen() {
         <Text style={styles.address} selectable>
           {walletAddress}
         </Text>
+        <Text style={styles.label}>Your public key:</Text>
+        <Text style={styles.address} selectable>
+          {newWallet?.wallet.pubkey ?? ""}
+        </Text>
       </View>
 
       <Text style={styles.warning}>

@@ -114,16 +114,25 @@ test.describe('Tokens Screen', () => {
     await page.getByText('Create New Wallet').click();
     await page.waitForTimeout(2000);
 
-    // Read the generated address from the screen
+    // Read the generated address and pubkey from the screen
     const addressText = await page.locator('body').innerText();
     const addrMatch = addressText.match(/wallet address:\s*(\S+)/);
     expect(addrMatch).not.toBeNull();
-    const walletAddress = addrMatch![1];
-    console.log('Wallet address:', walletAddress);
+    const walletAddressHex = addrMatch![1];
+    console.log('Wallet address:', walletAddressHex);
+
+    const pubkeyMatch = addressText.match(/public key:\s*(\S+)/);
+    const pubkeyHex = pubkeyMatch ? pubkeyMatch[1] : null;
+    if (pubkeyHex) console.log('Wallet pubkey:', pubkeyHex.substring(0, 60) + '...');
+
+    // Fund the wallet via API with pubkey
+    const fundBody = pubkeyHex
+      ? { addresses: [{ address: walletAddressHex, pubkey: pubkeyHex, value: 10000000000 }] }
+      : { addresses: [{ address: walletAddressHex, value: 10000000000 }] };
 
     // Fund the wallet via API
     const fundResp = await request.post(`${E2E_SERVER_URL}fundAddresses`, {
-      data: { addresses: [{ address: walletAddress, value: 10000000000 }] },
+      data: fundBody,
     });
     expect((await fundResp.json()).errorcode).toBe(0);
     console.log('Funded wallet');

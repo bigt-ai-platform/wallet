@@ -20,6 +20,7 @@ export interface CredentialEntry {
 
 export interface Key {
   readonly address: string;
+  readonly pubkey: string;
   readonly privateKey: string;
 }
 
@@ -29,7 +30,7 @@ export interface WalletFile {
 }
 
 export interface SerializedWallet {
-  keys: Array<{ address: string; privateKey: string }>;
+  keys: Array<{ address: string; pubkey: string; privateKey: string }>;
   credentials: CredentialEntry;
 }
 
@@ -57,10 +58,12 @@ export async function createWallet(): Promise<WalletFile> {
   const pqKey = PQKey.createNew();
 
   const address = pqKey.toAddressHex();
+  const pubkey = Utils.HEX.encode(pqKey.getPrefixedPublicKeyBytes());
   const privateKey = pqKey.getPrivateKeyHex();
 
   const wallet: Key = {
     address,
+    pubkey,
     privateKey,
   };
 
