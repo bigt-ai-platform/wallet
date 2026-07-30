@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from "vitest";
-import { RemoteTest, createKeyFromHex } from "./RemoteTest";
+import { RemoteTest } from "./RemoteTest";
 import { PQKey } from "../../src/net/bigtangle/crypto/pq/PQKey";
 import { Wallet } from "../../src/net/bigtangle/wallet/Wallet";
 import { NetworkParameters } from "../../src/net/bigtangle/params/NetworkParameters";
@@ -78,13 +78,13 @@ class RemoteOrderTests extends RemoteTest {
     // 3. Create a custom token
     const tokenName = "tradetoken";
     const supply = BigInt(10000000);
-    const tokenid = issuer.getPublicKeyAsHex();
+    const tokenid = Utils.HEX.encode(issuer.getPrefixedPublicKeyBytes());
     const block = await this.createToken(issuer, tokenName, 0, "", "token for buy/sell test",
       supply, true, null, TokenType.token, tokenid);
     expect(block).not.toBeNull();
 
-    const signkey = createKeyFromHex(RemoteTest.testPriv);
-    const signed = await this.wallet.multiSign(tokenid, signkey, null);
+    const walletKeys2 = await this.wallet.walletKeys(null);
+    const signed = await this.wallet.multiSign(tokenid, walletKeys2[0], null);
     if (signed != null) {
       console.log("Token multi-signed, waiting for confirmation...");
       await new Promise(resolve => setTimeout(resolve, 5000));
@@ -121,6 +121,7 @@ class RemoteOrderTests extends RemoteTest {
     const sellAmount = BigInt(100);
     console.log(`Sell: ${sellAmount} ${tokenName} @ price ${sellPrice}`);
     issuerWallet.setServerURL(this.contextRoot);
+    issuerWallet.setFee(false);
     await issuerWallet.sellOrder(null, tokenid, sellPrice, sellAmount, null, null,
       NetworkParameters.BIGTANGLE_TOKENID_STRING, true);
     await new Promise(resolve => setTimeout(resolve, 3000));
@@ -131,9 +132,11 @@ class RemoteOrderTests extends RemoteTest {
     for (let i = 0; i < 40; i++) {
       const resp = await OkHttp3Util.post(this.l1Url + ReqCmd.getOrders,
         new TextEncoder().encode(Json.jsonmapper().stringify(requestParam)));
-      ordersBefore = Json.jsonmapper().parse(resp, {
-        mainCreator: () => [OrderdataResponse],
-      }) as OrderdataResponse;
+      const parsed = JSON.parse(resp);
+      ordersBefore = new OrderdataResponse();
+      if (parsed.allOrdersSorted) {
+        ordersBefore.setAllOrdersSorted(parsed.allOrdersSorted);
+      }
       if (ordersBefore.getAllOrdersSorted() != null && ordersBefore.getAllOrdersSorted()!.length > 0)
         break;
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -160,6 +163,7 @@ class RemoteOrderTests extends RemoteTest {
 
     console.log(`Buy: ${sellAmount} ${tokenName} @ price ${sellPrice}`);
     buyerWallet.setServerURL(this.contextRoot);
+    buyerWallet.setFee(false);
     await buyerWallet.buyOrder(null, tokenid, sellPrice, sellAmount, null, null,
       NetworkParameters.BIGTANGLE_TOKENID_STRING, false);
     await new Promise(resolve => setTimeout(resolve, 5000));
@@ -169,9 +173,11 @@ class RemoteOrderTests extends RemoteTest {
     for (let i = 0; i < 40; i++) {
       const resp = await OkHttp3Util.post(this.l1Url + ReqCmd.getOrders,
         new TextEncoder().encode(Json.jsonmapper().stringify(requestParam)));
-      ordersAfter = Json.jsonmapper().parse(resp, {
-        mainCreator: () => [OrderdataResponse],
-      }) as OrderdataResponse;
+      const parsed = JSON.parse(resp);
+      ordersAfter = new OrderdataResponse();
+      if (parsed.allOrdersSorted) {
+        ordersAfter.setAllOrdersSorted(parsed.allOrdersSorted);
+      }
       const remaining = ordersAfter.getAllOrdersSorted();
       if (remaining == null || remaining.length === 0)
         break;
@@ -195,8 +201,17 @@ class RemoteOrderTests extends RemoteTest {
 
   private async getToken(tokenid: string): Promise<Token | null> {
     try {
-      return await this.wallet.checkTokenId(tokenid);
-    } catch (_e) {
+      const res = await fetch(this.contextRoot + "getTokenById", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tokenid }),
+      });
+      const data: any = await res.json();
+      if (data.tokens && data.tokens.length > 0) {
+        return data.tokens[0] as Token;
+      }
+      return null;
+    } catch {
       return null;
     }
   }

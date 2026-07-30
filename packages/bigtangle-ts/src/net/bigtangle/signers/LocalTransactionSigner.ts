@@ -9,6 +9,7 @@ import { MissingPrivateKeyException } from '../crypto/MissingPrivateKeyException
 import { DeterministicKey } from '../crypto/DeterministicKey';
 import { SigHash } from '../core/SigHash';
 import { ScriptBuilder } from '../script/ScriptBuilder';
+import { PQConstants } from '../crypto/pq/PQConstants';
 
 /**
  * <p>{@link TransactionSigner} implementation for signing inputs using keys from provided {@link net.bigtangle.wallet.KeyBag}.</p>
@@ -35,6 +36,10 @@ export class LocalTransactionSigner extends StatelessTransactionSigner {
 
     public async signInputs(propTx: any, keyBag: KeyBag): Promise<boolean> {
         const tx: Transaction = propTx.partialTx;
+        // Match Java LocalTransactionSigner: upgrade tx version to PQ
+        if (tx.version < PQConstants.TX_PQ_VERSION) {
+            tx.version = PQConstants.TX_PQ_VERSION;
+        }
         const numInputs = tx.getInputs().length;
         for (let i = 0; i < numInputs; i++) {
             const txIn = tx.getInput(i);

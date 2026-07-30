@@ -214,22 +214,34 @@ export class Wallet extends WalletBase {
    * ================================================================= */
 
   async checkTokenId(tokenid: string): Promise<Token> {
-    const requestParam = new Map<string, any>();
-    requestParam.set("tokenid", tokenid);
     const resp = await OkHttp3Util.post(
       this.getServerURL() + ReqCmd.getTokenById,
       new TextEncoder().encode(
-        Json.jsonmapper().stringify(Object.fromEntries(requestParam))
+        Json.jsonmapper().stringify(Object.fromEntries(new Map([["tokenid", tokenid]])))
       )
     );
-    const token: GetTokensResponse = Json.jsonmapper().parse(resp, {
-      mainCreator: () => [GetTokensResponse],
-    });
-    const tokens = token.getTokens();
-    if (!tokens || tokens.length === 0) {
+    const parsed = JSON.parse(resp);
+    const tokenData = parsed?.tokens;
+    if (!tokenData || tokenData.length === 0) {
       throw new NoTokenException();
     }
-    return tokens[0];
+    const token = new Token();
+    if (tokenData[0].tokenid != null) token.setTokenid(tokenData[0].tokenid);
+    if (tokenData[0].tokenname != null) token.setTokenname(tokenData[0].tokenname);
+    if (tokenData[0].description != null) token.setDescription(tokenData[0].description);
+    if (tokenData[0].domainName != null) token.setDomainName(tokenData[0].domainName);
+    if (tokenData[0].domainNameBlockHash != null) token.setDomainNameBlockHash(tokenData[0].domainNameBlockHash);
+    if (tokenData[0].tokenindex != null) token.setTokenindex(tokenData[0].tokenindex);
+    if (tokenData[0].tokentype != null) token.setTokentype(tokenData[0].tokentype);
+    if (tokenData[0].tokenstop != null) token.setTokenstop(tokenData[0].tokenstop);
+    if (tokenData[0].signnumber != null) token.setSignnumber(tokenData[0].signnumber);
+    if (tokenData[0].decimals != null) token.setDecimals(tokenData[0].decimals);
+    if (tokenData[0].revoked != null) token.setRevoked(tokenData[0].revoked);
+    if (tokenData[0].classification != null) token.setClassification(tokenData[0].classification);
+    if (tokenData[0].language != null) token.setLanguage(tokenData[0].language);
+    if (tokenData[0].amount != null) token.setAmount(BigInt(tokenData[0].amount));
+    if (tokenData[0].confirmed != null) token.setConfirmed(tokenData[0].confirmed);
+    return token;
   }
 
   async saveToken(
@@ -869,7 +881,7 @@ export class Wallet extends WalletBase {
     const info = new OrderOpenInfo(
       Number(targetValue),
       targetToken.getTokenid(),
-      beneficiary.getPubKey(),
+      beneficiary.getPrefixedPublicKeyBytes(),
       validToTime != null ? validToTime : Date.now(),
       validFromTime != null ? validFromTime : Date.now(),
       Side.BUY,
@@ -956,7 +968,7 @@ export class Wallet extends WalletBase {
     const info = new OrderOpenInfo(
       Number(targetvalue),
       orderBaseToken,
-      beneficiary.getPubKey(),
+      beneficiary.getPrefixedPublicKeyBytes(),
       validToTime != null ? validToTime : Date.now(),
       validFromTime != null ? validFromTime : Date.now(),
       Side.SELL,

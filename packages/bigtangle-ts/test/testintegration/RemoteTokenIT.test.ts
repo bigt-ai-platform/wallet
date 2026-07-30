@@ -84,10 +84,9 @@ describe("RemoteTokenIT", () => {
     wallet = Wallet.fromKeys(TestParams.get(), [genesisKey]);
     wallet.setServerURL(L0_URL);
     wallet.setFee(false);
-    // Fund the wallet key (matching Java RemoteTest.setUp which funds testPriv)
     await fundKey(genesisKey);
     await new Promise(r => setTimeout(r, 10000));
-  });
+  }, 30000);
 
   test("server health check", async () => {
     const res = await fetch(L0_URL, { method: "POST" });
@@ -127,7 +126,6 @@ describe("RemoteTokenIT", () => {
     const signed = await wallet.multiSign(tokenid, walletKeys[0], null);
     if (signed != null) {
       console.log("multiSign succeeded");
-      // makeRewardBlock equivalent — let signed block propagate
       await new Promise(r => setTimeout(r, 5000));
     }
 

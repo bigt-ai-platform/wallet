@@ -18,7 +18,7 @@ PG_CONTAINER=""
 L0_PID=""; MCMC_PID=""; L1_PID=""
 L0_LOG="/tmp/l0-server.log"; MCMC_LOG="/tmp/l0-mcmc.log"; L1_LOG="/tmp/l1-order-server.log"
 
-DB_ARGS="-DDB_HOSTNAME=127.0.0.1 -DDB_USERNAME=root -DDB_PASSWORD=test1234 -DDB_PORT=5432 -DDB_NAME=$DB_NAME"
+DB_ARGS="-DDB_HOSTNAME=127.0.0.1 -DDB_USERNAME=root -DDB_PASSWORD=test1234 -DDB_PORT=$DB_PORT -DDB_NAME=$DB_NAME"
 SCHED_ARGS="-Dservice.schedule.mcmc=true -Dservice.schedule.microbatch=true -Dservice.schedule.blockbatch=true -Dservice.schedule.blockbatchrate=5000 -Dservice.schedule.initsync=true"
 L0_ARGS="--server.net=Test --server.port=$SERVER_PORT --server.mineraddress=mj61qqqkFDcXFx6P5bMtspDH7tJZ7jVHL4"
 L1_ARGS="--server.net=Test --server.port=$L1_PORT --server.mineraddress=mj61qqqkFDcXFx6P5bMtspDH7tJZ7jVHL4"

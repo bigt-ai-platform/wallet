@@ -75,9 +75,11 @@ export abstract class RemoteTest {
   }
 
   public setUp() {
+    const mlDsaSeed = new Uint8Array(32).fill(0x01);
+    const slhDsaSeed = new Uint8Array(32).fill(0x02);
     this.wallet = Wallet.fromKeysURL(
       this.networkParameters,
-      [createKeyFromHex(RemoteTest.testPriv)],
+      [PQKey.fromSeeds(mlDsaSeed, slhDsaSeed)],
       this.contextRoot
     );
   }
