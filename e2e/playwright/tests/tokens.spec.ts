@@ -149,6 +149,11 @@ test.describe('Tokens Screen', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
+
+    // Wallet state lost after reload — unlock
+    await page.getByPlaceholder('Enter wallet password').fill(PASSWORD);
+    await page.getByText('Unlock Wallet').click();
+    await page.waitForTimeout(2000);
     await page.getByRole('tab', { name: /Transaction/ }).click();
     await page.waitForTimeout(3000);
 
