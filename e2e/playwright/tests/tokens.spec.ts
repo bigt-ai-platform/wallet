@@ -37,7 +37,7 @@ test.describe('Tokens Screen', () => {
   test('shows search input and token list', async ({ page }) => {
     await waitForApp(page);
     await clickTab(page, 'Tokens');
-    await expect(page.getByPlaceholder('Search tokens...').first()).toBeAttached({ timeout: 10000 });
+    await expect(page.getByPlaceholder('Search by name or ID').first()).toBeAttached({ timeout: 10000 });
   });
 
   test('BIG token exists on server (requires server)', async ({ request }) => {
@@ -146,7 +146,8 @@ test.describe('Tokens Screen', () => {
     await saveWallet(page, PASSWORD);
 
     // Wallet is unlocked after save — go back to main screen
-    await page.goBack();
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
     await page.getByRole('tab', { name: /Transaction/ }).click();
     await page.waitForTimeout(3000);
@@ -155,7 +156,7 @@ test.describe('Tokens Screen', () => {
     const bobKey = (await import('/home/jcui/git/bapp/packages/bigtangle-ts/dist/index.js')).PQKey.createNew();
     const bobAddress = bobKey.toAddressHex();
 
-    await page.getByPlaceholder('Enter address').fill(bobAddress);
+    await page.getByPlaceholder('Recipient').fill(bobAddress);
     await page.getByPlaceholder('0.00').first().fill('0.001');
     await page.locator('text=Send').last().click();
     await page.waitForTimeout(2000);
