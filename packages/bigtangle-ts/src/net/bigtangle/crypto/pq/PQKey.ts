@@ -49,11 +49,29 @@ export class PQKey implements EncryptableItem {
   }
 
   static createNew(network: number = PQConstants.NETWORK_TESTNET): PQKey {
+    // Default: ML-DSA-87 only (FIPS 204), matching Java PQKey.createNew().
+    // Dual (SLH-DSA) keys are created explicitly via fromSeeds().
     const mlDsaSeed = new Uint8Array(MLDSA_SEED_BYTES);
-    const slhDsaSeed = new Uint8Array(MLDSA_SEED_BYTES);
     crypto.getRandomValues(mlDsaSeed);
-    crypto.getRandomValues(slhDsaSeed);
-    return PQKey.fromSeeds(mlDsaSeed, slhDsaSeed, network);
+    return PQKey.fromMLDSA(mlDsaSeed, network);
+  }
+
+  /** ML-DSA-87 only key (FIPS 204). Matches Java PQKey.fromMLDSA(). */
+  static fromMLDSA(mlDsaSeed: Uint8Array, network: number = PQConstants.NETWORK_TESTNET): PQKey {
+    if (mlDsaSeed.length !== MLDSA_SEED_BYTES)
+      throw new Error(`ML-DSA seed must be ${MLDSA_SEED_BYTES} bytes`);
+
+    // Match Java BC DigestRandomGenerator(SHA256) behavior:
+    // seed → SHA256-DRBG → ξ → FIPS 204 ML-DSA.KeyGen
+    const xi = sha256Drbg(mlDsaSeed, MLDSA_SEED_BYTES);
+    const mlKp = ml_dsa87.keygen(xi);
+
+    const entries: KeyBundleEntry[] = [
+      new KeyBundleEntry(PQConstants.ALG_ML_DSA_87, mlKp.publicKey),
+    ];
+    const bundle = new KeyBundle(entries);
+
+    return new PQKey(mlKp.secretKey, new Uint8Array(0), bundle, network);
   }
 
   static fromSeeds(
@@ -83,8 +101,13 @@ export class PQKey implements EncryptableItem {
   }
 
   static fromKeyMaterial(keyMaterial: Uint8Array, network: number = PQConstants.NETWORK_TESTNET): PQKey {
-    if (keyMaterial.length < 64)
-      throw new Error('keyMaterial must be at least 64 bytes');
+    // 32 bytes → ML-DSA-87 only; 64+ bytes → dual (ML + SLH-DSA), matching
+    // Java PQKey.fromPrivateKeyHex (32-byte ML-only / 64-byte dual seed).
+    if (keyMaterial.length === MLDSA_SEED_BYTES) {
+      return PQKey.fromMLDSA(keyMaterial, network);
+    }
+    if (keyMaterial.length < MLDSA_SEED_BYTES * 2)
+      throw new Error('keyMaterial must be 32 bytes (ML-DSA only) or 64 bytes (dual)');
     const mlDsaSeed = keyMaterial.slice(0, MLDSA_SEED_BYTES);
     const slhDsaSeed = keyMaterial.slice(MLDSA_SEED_BYTES, MLDSA_SEED_BYTES * 2);
     return PQKey.fromSeeds(mlDsaSeed, slhDsaSeed, network);
@@ -157,17 +180,18 @@ export class PQKey implements EncryptableItem {
     offset += mlLen;
     const slLen = dv.getUint32(offset, false);
     offset += 4;
-    if (offset + slLen > encoded.length) throw new Error('truncated SLH-DSA private key');
-    const slPriv = encoded.slice(offset, offset + slLen);
-    offset += slLen;
+    const slPriv = offset + slLen <= encoded.length
+      ? encoded.slice(offset, offset + slLen)
+      : new Uint8Array(0);
 
     const mlPub = ml_dsa87.getPublicKey(mlPriv);
-    const slPub = slh_dsa_sha2_256s.getPublicKey(slPriv);
-
     const entries: KeyBundleEntry[] = [
       new KeyBundleEntry(PQConstants.ALG_ML_DSA_87, mlPub),
-      new KeyBundleEntry(PQConstants.ALG_SLH_DSA_SHA2_256S, slPub),
     ];
+    if (slPriv.length > 0) {
+      const slPub = slh_dsa_sha2_256s.getPublicKey(slPriv);
+      entries.push(new KeyBundleEntry(PQConstants.ALG_SLH_DSA_SHA2_256S, slPub));
+    }
     const bundle = new KeyBundle(entries);
 
     return new PQKey(mlPriv, slPriv, bundle, network);
@@ -176,15 +200,20 @@ export class PQKey implements EncryptableItem {
   sign(data: Sha256Hash): SignatureBundle {
     const txHash = domainSeparatedHash(data.getBytes(), PQConstants.TX_DOMAIN);
     const mlMsg = domainSeparatedHash(txHash, PQConstants.MLDSA_SIG_DOMAIN);
-    const slhMsg = domainSeparatedHash(txHash, PQConstants.SLHDSA_SIG_DOMAIN);
 
     const mlSig = ml_dsa87.sign(mlMsg, this.mlDsaPrivateKey);
-    const slhSig = slh_dsa_sha2_256s.sign(slhMsg, this.slhDsaPrivateKey);
 
+    // ML-DSA-87 is always included. SLH-DSA-SHA2-256s is only included when
+    // this key holds an SLH-DSA private key (dual key), matching Java's
+    // PQKey.sign(input, includeSlhDsa) behaviour.
     const entries: SignatureBundleEntry[] = [
       new SignatureBundleEntry(PQConstants.ALG_ML_DSA_87, mlSig),
-      new SignatureBundleEntry(PQConstants.ALG_SLH_DSA_SHA2_256S, slhSig),
     ];
+    if (this.slhDsaPrivateKey.length > 0) {
+      const slhMsg = domainSeparatedHash(txHash, PQConstants.SLHDSA_SIG_DOMAIN);
+      const slhSig = slh_dsa_sha2_256s.sign(slhMsg, this.slhDsaPrivateKey);
+      entries.push(new SignatureBundleEntry(PQConstants.ALG_SLH_DSA_SHA2_256S, slhSig));
+    }
     return new SignatureBundle(entries);
   }
 
@@ -209,7 +238,7 @@ export class PQKey implements EncryptableItem {
   }
 
   hasPrivateKey(): boolean {
-    return this.mlDsaPrivateKey.length > 0 && this.slhDsaPrivateKey.length > 0;
+    return this.mlDsaPrivateKey.length > 0;
   }
 
   async encrypt(keyCrypter: KeyCrypter, aesKey: KeyParameter): Promise<PQKey> {
@@ -244,7 +273,12 @@ export class PQKey implements EncryptableItem {
   }
 
   toAddress(): PQAddress {
-    return PQAddress.fromKeyBundle(this.network, PQConstants.SUITE_CAT5_DUAL_1, this.keyBundle);
+    // Matches Java PQKey.toAddress: the suite depends on whether the key
+    // bundle holds an SLH-DSA entry (dual) or is ML-DSA-87 only.
+    const suite = this.keyBundle.getEntry(PQConstants.ALG_SLH_DSA_SHA2_256S) != null
+      ? PQConstants.SUITE_CAT5_DUAL_1
+      : PQConstants.SUITE_ML_DSA_ONLY;
+    return PQAddress.fromKeyBundle(this.network, suite, this.keyBundle);
   }
 
   /** Convenience method matching ECKey's toAddress(params) pattern */
@@ -334,20 +368,24 @@ export class PQKey implements EncryptableItem {
   static verifyWithBundle(data: Sha256Hash, sigBundle: SignatureBundle, keyBundle: KeyBundle): boolean {
     const txHash = domainSeparatedHash(data.getBytes(), PQConstants.TX_DOMAIN);
     const mlMsg = domainSeparatedHash(txHash, PQConstants.MLDSA_SIG_DOMAIN);
-    const slhMsg = domainSeparatedHash(txHash, PQConstants.SLHDSA_SIG_DOMAIN);
 
+    // ML-DSA-87 is always required (matches Java PQScriptUtils.verifyPQ).
     const mlEntry = keyBundle.getEntry(PQConstants.ALG_ML_DSA_87);
-    const slhEntry = keyBundle.getEntry(PQConstants.ALG_SLH_DSA_SHA2_256S);
     const mlSigEntry = sigBundle.getEntry(PQConstants.ALG_ML_DSA_87);
-    const slhSigEntry = sigBundle.getEntry(PQConstants.ALG_SLH_DSA_SHA2_256S);
-
-    if (!mlEntry || !slhEntry || !mlSigEntry || !slhSigEntry) return false;
+    if (!mlEntry || !mlSigEntry) return false;
 
     try {
-      const mlOk = ml_dsa87.verify(mlSigEntry.signature, mlMsg, mlEntry.publicKey);
-      if (!mlOk) return false;
-      const slhOk = slh_dsa_sha2_256s.verify(slhSigEntry.signature, slhMsg, slhEntry.publicKey);
-      return slhOk;
+      if (!ml_dsa87.verify(mlSigEntry.signature, mlMsg, mlEntry.publicKey)) return false;
+      // SLH-DSA-SHA2-256s is required only if the key bundle holds an SLH-DSA
+      // entry (dual key); absent for ML-DSA-87-only keys.
+      const slhEntry = keyBundle.getEntry(PQConstants.ALG_SLH_DSA_SHA2_256S);
+      if (slhEntry) {
+        const slhMsg = domainSeparatedHash(txHash, PQConstants.SLHDSA_SIG_DOMAIN);
+        const slhSigEntry = sigBundle.getEntry(PQConstants.ALG_SLH_DSA_SHA2_256S);
+        if (!slhSigEntry) return false;
+        if (!slh_dsa_sha2_256s.verify(slhSigEntry.signature, slhMsg, slhEntry.publicKey)) return false;
+      }
+      return true;
     } catch {
       return false;
     }

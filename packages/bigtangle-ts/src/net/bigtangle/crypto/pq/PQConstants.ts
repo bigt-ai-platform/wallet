@@ -3,6 +3,7 @@ export const PQConstants = {
   ALG_SLH_DSA_SHA2_256S: 2,
 
   SUITE_CAT5_DUAL_1: 1,
+  SUITE_ML_DSA_ONLY: 2,
 
   ML_DSA_87_PUBKEY_BYTES: 2560,
   ML_DSA_87_SEED_BYTES: 32,
