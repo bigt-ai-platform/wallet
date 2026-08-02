@@ -7,8 +7,9 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
+import { listOrders, recordOrder, refreshAllStatuses } from '@/services/tracking';
 import { CloseIcon } from '@/components/Icons';
-import type { MarketPrice } from '@/types/api';
+import type { MarketPrice, OrderInfo, TrackedRecord } from '@/types/api';
 
 export default function OrderScreen() {
   const { t } = useTranslation();
@@ -25,7 +26,10 @@ export default function OrderScreen() {
   const [orderTotal, setOrderTotal] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<'prices' | 'orders'>('prices');
-  const [myOrders, setMyOrders] = React.useState<any[]>([]);
+  const [liveOrders, setLiveOrders] = React.useState<OrderInfo[]>([]);
+  const [trackedOrders, setTrackedOrders] = React.useState<TrackedRecord[]>([]);
+  const [loadingOrders, setLoadingOrders] = React.useState(false);
+  const [refreshingOrders, setRefreshingOrders] = React.useState(false);
 
   React.useEffect(() => { loadPrices(); }, []);
 
@@ -37,6 +41,24 @@ export default function OrderScreen() {
     } catch (e) { console.error('Error loading prices:', e); }
     finally { setLoading(false); setRefreshing(false); }
   };
+
+  const loadMyOrders = async (isRefresh = false) => {
+    if (!publicInfo?.address) return;
+    if (isRefresh) setRefreshingOrders(true); else setLoadingOrders(true);
+    try {
+      if (isRefresh) {
+        await refreshAllStatuses(publicInfo.address);
+      }
+      setTrackedOrders(listOrders());
+      const res = await httpService.getOrdersByAddress(publicInfo.address);
+      if (res.success && res.data) setLiveOrders(res.data);
+    } catch (e) { console.error('Error loading orders:', e); }
+    finally { setLoadingOrders(false); setRefreshingOrders(false); }
+  };
+
+  React.useEffect(() => {
+    if (activeTab === 'orders') loadMyOrders();
+  }, [activeTab]);
 
   const openOrder = (side: 'buy' | 'sell', token: MarketPrice) => {
     if (!isUnlocked) { Alert.alert(t('wallet.locked'), t('order.unlockFirst')); return; }
@@ -79,6 +101,17 @@ export default function OrderScreen() {
       };
       const res = await httpService.requestL1('submitTransaction', 'POST', payload);
       if (res.success) {
+        recordOrder({
+          side: orderSide,
+          tokenId: selectedToken.tokenid,
+          tokenName: selectedToken.tokenname,
+          baseToken: 'bc',
+          price: orderPrice,
+          amount: orderAmount,
+          decimals: 8,
+          fromAddress: publicInfo.address,
+        });
+        setTrackedOrders(listOrders());
         Alert.alert(t('order.orderPlaced'), t('order.orderPlacedDesc', { side: orderSide === 'buy' ? t('order.buy') : t('order.sell'), amount, token: selectedToken.tokenname, price }));
         setOrderModal(false);
       } else {
@@ -140,17 +173,57 @@ export default function OrderScreen() {
           )}
         </ScrollView>
       ) : (
-        <ScrollView style={s.scroll} contentContainerStyle={s.content}>
-          <Text style={s.sectionTitle}>{t('order.yourOrders')}</Text>
-          {myOrders.length === 0 ? (
-            <View style={s.emptyCard}><Text style={s.emptySub}>{t('order.noOpenOrders')}</Text></View>
+        <ScrollView style={s.scroll} contentContainerStyle={s.content} testID="my-orders-tab">
+          <View style={s.sectionRow}>
+            <Text style={s.sectionTitle}>{t('order.yourOrders')}</Text>
+            <TouchableOpacity onPress={() => loadMyOrders(true)} disabled={refreshingOrders}>
+              <Text style={s.refreshBtn}>{refreshingOrders ? '...' : 'Refresh'}</Text>
+            </TouchableOpacity>
+          </View>
+          {loadingOrders ? (
+            <ActivityIndicator size="large" color={s.loader.color} style={{ padding: 24 }} />
           ) : (
-            myOrders.map((o, i) => (
-              <View key={i} style={s.orderCard}>
-                <Text style={[s.orderSide, { color: o.side === 'BUY' ? s.pos.color : s.neg.color }]}>{o.side}</Text>
-                <Text style={s.orderInfo}>{o.offerValue} {o.offerTokenid?.slice(0, 8)} @ {o.price}</Text>
-              </View>
-            ))
+            <>
+              {trackedOrders.length > 0 && (
+                <>
+                  <Text style={s.groupLabel}>Tracked (in-app)</Text>
+                  {trackedOrders.map((o) => {
+                    const badgeColor = o.status === 'confirmed' ? s.statusConfirmed.color : o.status === 'failed' || o.status === 'cancelled' ? s.statusFailed.color : s.statusPending.color;
+                    return (
+                      <View key={o.id} style={s.orderCard}>
+                        <Text style={[s.orderSide, { color: o.side === 'buy' ? s.pos.color : s.neg.color }]}>
+                          {o.side === 'buy' ? t('order.buy') : t('order.sell')}
+                        </Text>
+                        <View style={s.orderInfoCol}>
+                          <Text style={s.orderInfo}>{o.amount} {o.tokenName} @ {o.price}</Text>
+                          <Text style={s.orderSub}>{o.statusDetail || o.status}</Text>
+                        </View>
+                        <View style={[s.statusBadge, { backgroundColor: badgeColor }]}>
+                          <Text style={s.statusBadgeText} testID="order-status">{o.status}</Text>
+                        </View>
+                      </View>
+                    );
+                  })}
+                </>
+              )}
+              <Text style={s.groupLabel}>Live on chain</Text>
+              {liveOrders.length === 0 ? (
+                <View style={s.emptyCard}><Text style={s.emptySub}>{t('order.noOpenOrders')}</Text></View>
+              ) : (
+                liveOrders.map((o, i) => (
+                  <View key={i} style={s.orderCard} testID="live-order">
+                    <Text style={[s.orderSide, { color: (o.side || '').toUpperCase() === 'BUY' ? s.pos.color : s.neg.color }]}>{o.side}</Text>
+                    <View style={s.orderInfoCol}>
+                      <Text style={s.orderInfo}>{o.offerValue} {o.offerTokenid?.slice(0, 8)} @ {o.price} ({o.targetTokenid?.slice(0, 8)})</Text>
+                      <Text style={s.orderSub}>{o.cancelPending ? 'CANCELLED' : 'OPEN'}</Text>
+                    </View>
+                    <View style={[s.statusBadge, { backgroundColor: o.cancelPending ? s.statusFailed.color : s.statusPending.color }]}>
+                      <Text style={s.statusBadgeText} testID="live-order-status">{o.cancelPending ? 'cancelled' : 'pending'}</Text>
+                    </View>
+                  </View>
+                ))
+              )}
+            </>
           )}
         </ScrollView>
       )}
@@ -232,7 +305,17 @@ const s = StyleSheet.create((theme) => ({
   sellBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
   orderCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 8, padding: 12, marginBottom: 6, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border },
   orderSide: { fontSize: 13, fontWeight: '700', width: 40 },
-  orderInfo: { fontSize: 13, color: theme.colors.text.primary, flex: 1 },
+  orderInfo: { fontSize: 13, color: theme.colors.text.primary },
+  orderInfoCol: { flex: 1 },
+  orderSub: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 },
+  sectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
+  refreshBtn: { fontSize: 14, color: theme.colors.primary, fontWeight: '600' },
+  groupLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 4 },
+  statusBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, alignItems: 'center', marginLeft: 8 },
+  statusBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  statusPending: { color: '#F59E0B' },
+  statusConfirmed: { color: '#10B981' },
+  statusFailed: { color: '#EF4444' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modal: { backgroundColor: theme.colors.groupped.surface, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 20, paddingBottom: 40 },

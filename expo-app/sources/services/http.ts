@@ -12,6 +12,8 @@ import {
   type GetTokensResponse,
   type GetMarketPricesResponse,
   type GetUserDataResponse,
+  type GetTransactionStatusesResponse,
+  type TransactionStatusInfo,
   ReqCmd,
   UserDataType,
   type WalletAccountItem,
@@ -20,6 +22,7 @@ import {
   type MarketPrice,
   type ContactInfo,
   type L1ChainConfig,
+  type OrderInfo,
 } from '@/types/api';
 
 /**
@@ -79,6 +82,10 @@ export class HttpService {
    * Get the L1 (Order Match) server URL
    */
   getL1Url(): string {
+    const chains = this.getL1Chains();
+    if (chains.length > 0 && chains[0].url) {
+      return chains[0].url;
+    }
     const savedUrl = device.get(STORAGE_KEYS.L1_URL);
     if (savedUrl) {
       return savedUrl;
@@ -108,10 +115,15 @@ export class HttpService {
     const stored = device.get(STORAGE_KEYS.L1_CHAINS);
     if (stored) {
       try {
-        return JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
       } catch { /* fall through */ }
     }
-    const singleUrl = this.getL1Url();
+    const savedUrl = device.get(STORAGE_KEYS.L1_URL);
+    const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
+    const singleUrl = savedUrl || (useTestnet ? DEFAULT_L1_TESTNET_URL : DEFAULT_L1_MAINNET_URL);
     return [{ name: 'Default', url: singleUrl }];
   }
 
@@ -248,6 +260,47 @@ export class HttpService {
   }
 
   /**
+   * Get the on-chain lifecycle status of a single transaction
+   */
+  async getTransactionStatus(txHash: string): Promise<ApiResponse<TransactionStatusInfo>> {
+    const response = await this.request<TransactionStatusInfo>(
+      ReqCmd.GetTransactionStatus,
+      'POST',
+      { txHash }
+    );
+
+    if (response.success && response.data) {
+      return { success: true, data: response.data };
+    }
+    return {
+      success: false,
+      error: response.error || 'Failed to get transaction status',
+    } as ApiResponse<TransactionStatusInfo>;
+  }
+
+  /**
+   * Get transaction lifecycle statuses for all transactions of an address
+   */
+  async getTransactionsStatusByAddress(address: string): Promise<ApiResponse<TransactionStatusInfo[]>> {
+    const response = await this.request<GetTransactionStatusesResponse>(
+      ReqCmd.GetTransactionsStatusByAddress,
+      'POST',
+      { address }
+    );
+
+    if (response.success && response.data) {
+      return {
+        success: true,
+        data: response.data.transactions || [],
+      };
+    }
+    return {
+      success: false,
+      error: response.error || 'Failed to get transaction statuses',
+    } as ApiResponse<TransactionStatusInfo[]>;
+  }
+
+  /**
    * Get all available tokens
    */
   async getTokensItemList(): Promise<ApiResponse<TokenItem[]>> {
@@ -351,6 +404,18 @@ export class HttpService {
     const response = await this.requestL1<any>('getOrders', 'POST', { tokenids, basetoken: baseToken || '' });
     if (response.success && response.data) return { success: true, data: response.data };
     return { success: false, error: response.error || 'Failed to get orders' } as ApiResponse<any>;
+  }
+
+  /**
+   * Get open orders for an address on the L1 order chain
+   */
+  async getOrdersByAddress(address: string): Promise<ApiResponse<OrderInfo[]>> {
+    const response = await this.requestL1<any>('getOrders', 'POST', { address });
+    if (response.success && response.data) {
+      const orders = response.data.allOrdersSorted || response.data.orders || [];
+      return { success: true, data: orders };
+    }
+    return { success: false, error: response.error || 'Failed to get orders' } as ApiResponse<OrderInfo[]>;
   }
 
   /**

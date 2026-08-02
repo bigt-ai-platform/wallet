@@ -6,6 +6,7 @@ E2E_DIR="$ROOT/e2e"
 WEB_BUILD="$ROOT/e2e/web-build"
 WEB_PORT="${WEB_PORT:-18081}"
 SERVER_PORT="${SERVER_PORT:-18088}"
+L1_PORT="${L1_PORT:-18086}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()   { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -46,6 +47,13 @@ cd "$E2E_DIR"
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
   npx playwright test --reporter=list --grep "Payment" 2>&1
 log "Payment test passed."
+
+# 4b. Run payment & order tracking tests
+info "Running payment & order tracking tests..."
+E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
+E2E_L1_URL="http://localhost:${L1_PORT}/" \
+  npx playwright test --reporter=list --grep "Tracking" 2>&1
+log "Tracking tests passed."
 
 # 5. Capture payment flow screenshots and generate PDF
 info "Capturing payment flow screenshots..."

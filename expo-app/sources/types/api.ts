@@ -14,6 +14,9 @@ export enum ReqCmd {
   GetUserData = 'getUserData',
   GetTokensItemList = 'getTokensItemList',
   GetMyValidTokenItemList = 'getMyValidTokenItemList',
+  GetTransactionStatus = 'getTransactionStatus',
+  GetTransactionsStatusByAddress = 'getTransactionsStatusByAddress',
+  SubmitTransaction = 'submitTransaction',
 }
 
 /**
@@ -205,4 +208,84 @@ export interface OrderOpenParams {
 export interface L1ChainConfig {
   name: string;
   url: string;
+}
+
+/**
+ * On-chain transaction lifecycle status returned by the L0
+ * `getTransactionStatus` endpoint.
+ */
+export type ChainTxStatus =
+  | 'MEMPOOL'
+  | 'BATCHED'
+  | 'IN_BLOCK'
+  | 'SOLID'
+  | 'CONFIRMED'
+  | 'DROPPED'
+  | 'UNKNOWN';
+
+/**
+ * Normalized status used by the local payment/order tracker.
+ */
+export type TrackedStatus = 'pending' | 'confirmed' | 'failed' | 'cancelled';
+
+/**
+ * Response of the L0 `getTransactionStatus` endpoint.
+ */
+export interface TransactionStatusInfo {
+  txHash: string;
+  status: ChainTxStatus | string;
+  blockHash?: string;
+  chainlength?: number;
+  address?: string;
+  createdTime?: number;
+  updatedTime?: number;
+}
+
+/**
+ * Response of the L0 `getTransactionsStatusByAddress` endpoint.
+ */
+export interface GetTransactionStatusesResponse {
+  transactions: TransactionStatusInfo[];
+}
+
+/**
+ * Locally tracked transaction record (payment or order).
+ */
+export interface TrackedRecord {
+  id: string;
+  kind: 'payment' | 'order';
+  txHash?: string;
+  tokenId: string;
+  tokenName: string;
+  amount: string;
+  decimals?: number;
+  side?: 'buy' | 'sell';
+  price?: string;
+  baseToken?: string;
+  fromAddress?: string;
+  toAddress?: string;
+  memo?: string;
+  status: TrackedStatus;
+  statusDetail?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * L1 order data returned by the `getOrders` endpoint.
+ */
+export interface OrderInfo {
+  blockHashHex?: string;
+  offerValue: number;
+  offerTokenid: string;
+  targetValue: number;
+  targetTokenid: string;
+  beneficiaryAddress?: string;
+  validToTime?: number;
+  validFromTime?: number;
+  side?: 'BUY' | 'SELL';
+  orderBaseToken?: string;
+  price?: number;
+  tokenDecimals?: number;
+  cancelPending?: boolean;
 }

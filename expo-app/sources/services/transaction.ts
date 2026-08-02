@@ -14,6 +14,7 @@ import { TransactionOutput } from 'bigtangle-ts/dist/net/bigtangle/core/Transact
 // @ts-ignore
 import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutPoint';
 import { httpService } from './http';
+import { ReqCmd } from '@/types/api';
 import type { UTXO, ApiResponse } from '@/types/api';
 
 /**
@@ -243,21 +244,23 @@ export async function createAndSignTransaction(
 }
 
 /**
- * Broadcast a signed transaction to the network
+ * Broadcast a signed transaction to the network.
+ *
+ * The L0 server exposes the raw serialized transaction via the
+ * `submitTransaction` endpoint (matching the bigtangle-ts Wallet SDK), so we
+ * POST the raw bytes instead of a JSON wrapper.
  */
 export async function broadcastTransaction(rawTx: string): Promise<ApiResponse<string>> {
   try {
     const serverUrl = httpService.getServerUrl();
-    const url = `${serverUrl}broadcastTransaction`;
+    const url = `${serverUrl}${ReqCmd.SubmitTransaction}`;
 
     const response = await fetch(url, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/octet-stream',
       },
-      body: JSON.stringify({
-        rawtx: rawTx,
-      }),
+      body: hexToBytes(rawTx) as unknown as BodyInit,
     });
 
     if (!response.ok) {
@@ -266,16 +269,16 @@ export async function broadcastTransaction(rawTx: string): Promise<ApiResponse<s
 
     const result = await response.json();
 
-    if (result.error) {
+    if (result.error || (result.errorcode !== undefined && result.errorcode !== 0)) {
       return {
         success: false,
-        error: result.error,
+        error: result.message || result.error || 'Transaction rejected',
       };
     }
 
     return {
       success: true,
-      data: result.txHash || 'Transaction broadcasted',
+      data: 'Transaction broadcasted',
     };
   } catch (error) {
     console.error('[Transaction] Error broadcasting:', error);

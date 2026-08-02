@@ -9,8 +9,9 @@ import { useTranslation } from "react-i18next";
 import { useWallet } from "@/state/wallet";
 import { httpService } from "@/services/http";
 import { sendTransaction } from "@/services/transaction";
+import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { WalletIcon } from "@/components/Icons";
-import type { WalletAccountItem, L1ChainConfig } from "@/types/api";
+import type { WalletAccountItem, L1ChainConfig, TrackedRecord } from "@/types/api";
 
 export default function TransactionScreen() {
   const { t } = useTranslation();
@@ -22,9 +23,11 @@ export default function TransactionScreen() {
   const [memo, setMemo] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [loadingTokens, setLoadingTokens] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'send' | 'history' | 'l1test'>('send');
+  const [activeTab, setActiveTab] = React.useState<'send' | 'history' | 'l1test' | 'payments'>('send');
   const [txHistory, setTxHistory] = React.useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = React.useState(false);
+  const [payments, setPayments] = React.useState<TrackedRecord[]>([]);
+  const [refreshingPayments, setRefreshingPayments] = React.useState(false);
   const [unlockPwd, setUnlockPwd] = React.useState("");
   const [unlocking, setUnlocking] = React.useState(false);
 
@@ -63,6 +66,23 @@ export default function TransactionScreen() {
     finally { setLoadingHistory(false); }
   };
 
+  const loadPayments = async (isRefresh = false) => {
+    if (isRefresh) setRefreshingPayments(true);
+    try {
+      if (isRefresh) {
+        const updated = await refreshAllStatuses(publicInfo?.address);
+        setPayments(updated.filter((r) => r.kind === 'payment'));
+      } else {
+        setPayments(listPayments());
+      }
+    } catch (e) { /* ignore */ }
+    finally { setRefreshingPayments(false); }
+  };
+
+  React.useEffect(() => {
+    if (activeTab === 'payments') loadPayments();
+  }, [activeTab]);
+
   const handleSend = async () => {
     const wallet = getUnlockedWallet();
     const password = getPassword();
@@ -90,7 +110,19 @@ export default function TransactionScreen() {
               privateKeyHex: wallet.wallet.privateKey, memo: memo || undefined,
             });
             if (!result.success) throw new Error(result.error || "Transaction failed");
-            Alert.alert("Success", `Tx sent!`);
+            const txHash = result.data || "";
+            recordPayment({
+              txHash,
+              tokenId: selectedToken.tokenid,
+              tokenName: selectedToken.tokenname,
+              amount,
+              decimals: selectedToken.decimals || 8,
+              fromAddress: publicInfo!.address,
+              toAddress,
+              memo: memo || undefined,
+            });
+            setPayments(listPayments());
+            Alert.alert("Success", `Tx sent!\nTracking: ${txHash.slice(0, 12)}...`);
             setToAddress(""); setAmount(""); setMemo(""); loadTokens(); loadHistory();
           } catch (error) {
             Alert.alert("Error", error instanceof Error ? error.message : "Failed");
@@ -229,6 +261,9 @@ export default function TransactionScreen() {
         <TouchableOpacity style={[s.tab, activeTab === 'history' && s.tabActive]} onPress={() => setActiveTab('history')}>
           <Text style={[s.tabText, activeTab === 'history' && s.tabTextActive]}>History</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[s.tab, activeTab === 'payments' && s.tabActive]} onPress={() => setActiveTab('payments')}>
+          <Text style={[s.tabText, activeTab === 'payments' && s.tabTextActive]}>Payments</Text>
+        </TouchableOpacity>
       </View>
 
       {activeTab === 'send' ? (
@@ -358,6 +393,41 @@ export default function TransactionScreen() {
             </>
           )}
         </ScrollView>
+      ) : activeTab === 'payments' ? (
+        <ScrollView contentContainerStyle={s.content} testID="payments-tab">
+          <View style={s.sectionHeader}>
+            <Text style={s.pageTitle}>Payment Tracking</Text>
+            <TouchableOpacity onPress={() => loadPayments(true)} disabled={refreshingPayments}>
+              <Text style={s.refreshBtn}>{refreshingPayments ? '...' : 'Refresh'}</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={s.desc}>Track the on-chain status of every payment sent from this wallet.</Text>
+          {payments.length === 0 ? (
+            <View style={s.emptyCard}>
+              <Text style={s.emptyTitle}>No Payments Yet</Text>
+              <Text style={s.emptySub}>Payments sent from the Send tab will appear here with their live status.</Text>
+            </View>
+          ) : (
+            payments.map((p) => {
+              const badgeColor = p.status === 'confirmed' ? s.statusConfirmed.color : p.status === 'failed' || p.status === 'cancelled' ? s.statusFailed.color : s.statusPending.color;
+              return (
+                <View key={p.id} style={s.txCard} testID={`payment-${p.id}`}>
+                  <View style={s.txInfo}>
+                    <View style={s.payHeader}>
+                      <Text style={s.txType}>{p.amount} {p.tokenName}</Text>
+                      <View style={[s.statusBadge, { backgroundColor: badgeColor }]}>
+                        <Text style={s.statusBadgeText} testID="payment-status">{p.status}</Text>
+                      </View>
+                    </View>
+                    <Text style={s.txId}>to {p.toAddress?.slice(0, 12)}...</Text>
+                    <Text style={s.txId} testID="payment-txhash">{p.txHash}</Text>
+                    {p.statusDetail && <Text style={s.payDetail}>{p.statusDetail}</Text>}
+                  </View>
+                </View>
+              );
+            })
+          )}
+        </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={s.content}>
           <Text style={s.pageTitle}>Transaction History</Text>
@@ -430,6 +500,15 @@ const s = StyleSheet.create((theme) => ({
   txType: { fontSize: 13, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
   txId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: 'monospace' },
   txValue: { fontSize: 14, fontWeight: '700', color: theme.colors.text.primary },
+  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  refreshBtn: { fontSize: 14, color: theme.colors.primary, fontWeight: '600' },
+  payHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  statusBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, alignItems: 'center' },
+  statusBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  payDetail: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 },
+  statusPending: { color: '#F59E0B' },
+  statusConfirmed: { color: '#10B981' },
+  statusFailed: { color: '#EF4444' },
   desc: { fontSize: 13, color: theme.colors.text.secondary, lineHeight: 18, marginBottom: 16 },
   modeRow: { flexDirection: 'row', marginBottom: 12, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border },
   modeTab: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: theme.colors.groupped.surface },

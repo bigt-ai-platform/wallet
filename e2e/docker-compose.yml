@@ -82,12 +82,10 @@ services:
       SERVICE_MCMC_RATE: 1000
       SERVICE_INITSYNC: "false"
       SERVICE_SYNC: "true"
+      SERVICE_SCHEDULE_REWARDONLYWITHREFERENCED: "false"
       SYNCBLOCKS: 1000
       CREATETABLE: "false"
-      POS_ENABLED: "true"
-      POS_SLOT_INTERVAL_MS: 12000
-      POS_SLOTS_PER_EPOCH: 32
-      POS_VALIDATOR_KEY: "4d09f2fd7a61ff8a519b15e605e29572fe32b6f3c0b6ea050aa9f70f4b92f692"
+      POS_ENABLED: "false"
     depends_on:
       l0-server:
         condition: service_started
@@ -126,6 +124,7 @@ services:
       APP_MODULE: l1-order-server
       SERVER_PORT: 8086
       SERVER_NET: Test
+      REQUESTER: http://l0-server:8088
       DB_HOSTNAME: postgres-l1-order
       DB_PORT: 5432
       DB_NAME: ordermatch
@@ -135,6 +134,12 @@ services:
       CREATETABLE: "true"
       SERVICE_SYNC: "true"
       SERVICE_INITSYNC: "true"
+      SERVICE_MCMC: "true"
+      SERVICE_MCMC_RATE: 500
+      SERVICE_SCHEDULE_MICROBATCH: "true"
+      SERVICE_SCHEDULE_BLOCKBATCH: "true"
+      SERVICE_SCHEDULE_BLOCKBATCHRATE: 5000
+      SERVICE_SCHEDULE_REWARDONLYWITHREFERENCED: "false"
       SYNCBLOCKS: 1000
     depends_on:
       postgres-l1-order:
@@ -165,6 +170,7 @@ services:
       SERVICE_MCMC_RATE: 500
       SERVICE_INITSYNC: "false"
       SERVICE_SYNC: "true"
+      SERVICE_SCHEDULE_REWARDONLYWITHREFERENCED: "false"
       SYNCBLOCKS: 1000
       CREATETABLE: "false"
     depends_on:
@@ -203,5 +209,5 @@ services:
     environment:
       APP_URL: http://app:8081
       E2E_SERVER_URL: http://l0-server:8088/
-      E2E_L1_URL: http://l0-server:8088/
+      E2E_L1_URL: http://l1-order-server:8086/
       WEB_PORT: 18081

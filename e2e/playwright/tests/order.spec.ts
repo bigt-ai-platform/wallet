@@ -102,12 +102,17 @@ test.describe('Order Screen', () => {
     expect(foundToken).not.toBeNull();
     console.log('Token confirmed');
 
-    // Wait for blockbatch to mint UTXOs
-    await new Promise(r => setTimeout(r, 15000));
+    // Wait for blockbatch to mint + confirm token UTXOs (the reward chain
+    // confirms the token block, which can take ~1 min).
+    let tokenUtxos: any[] = [];
+    for (let i = 0; i < 30; i++) {
+      const utxos = await wallet.calculateAllSpendCandidates(null, false);
+      tokenUtxos = utxos.filter((u: any) => u.getUTXO().getTokenId() === tokenid);
+      if (tokenUtxos.length > 0) break;
+      if (i < 29) await new Promise(r => setTimeout(r, 3000));
+    }
 
     // Verify token UTXOs exist
-    const utxos = await wallet.calculateAllSpendCandidates(null, false);
-    const tokenUtxos = utxos.filter((u: any) => u.getUTXO().getTokenId() === tokenid);
     expect(tokenUtxos.length).toBeGreaterThan(0);
     console.log('Token UTXOs available:', tokenUtxos.length);
 
