@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "vitest";
-import { RemoteTest, createKeyFromHex } from "./RemoteTest";
+import { RemoteTest } from "./RemoteTest";
 import { Utils } from "../../src/net/bigtangle/core/Utils";
 import { Block } from "../../src/net/bigtangle/core/Block";
 import { Wallet } from "../../src/net/bigtangle/wallet/Wallet";
@@ -54,16 +54,21 @@ describe('bigtangle wallet pay', () => {
   beforeEach(async () => {
     wallet = Wallet.fromKeysURL(
       TestParams.get(),
-      [createKeyFromHex(
-        "ec1d240521f7f254c52aea69fca3f28d754d1b89f310f42b0fb094d16814317f"
-      )],
+      [PQKey.createNew()],
       serverUrl
     );
-    // Fund the wallet key
+    // Fund the wallet key and wait for the BC to be spendable
     const keys = await wallet.walletKeys(null);
     if (keys.length > 0) {
       await fundKey(keys[0], serverUrl);
-      await new Promise(r => setTimeout(r, 10000));
+      let funded = false;
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const candidates = await wallet.calculateAllSpendCandidates(null, false);
+        const hasBc = candidates.some(c => c.getUTXO().getTokenId() === "bc");
+        if (hasBc) { funded = true; break; }
+      }
+      if (!funded) throw new Error("Funding not confirmed for wallet key");
     }
   });
 

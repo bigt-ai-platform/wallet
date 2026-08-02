@@ -151,8 +151,19 @@ export class Token extends SpentBlock {
     return this.prevblockhash;
   }
 
-  public setPrevblockhash(prevblockhash: Sha256Hash | null): void {
-    this.prevblockhash = prevblockhash;
+  public setPrevblockhash(prevblockhash: any): void {
+    if (prevblockhash instanceof Sha256Hash) {
+      this.prevblockhash = prevblockhash;
+      return;
+    }
+    let hex = "";
+    if (typeof prevblockhash === "string") {
+      hex = prevblockhash.trim();
+    } else if (prevblockhash != null && typeof prevblockhash === "object") {
+      // jackson-js may parse Sha256Hash as an object ({ hash: "..." }).
+      hex = String((prevblockhash as any).hash || (prevblockhash as any).hex || "").trim();
+    }
+    this.prevblockhash = hex ? Sha256Hash.wrap(new Uint8Array(Utils.HEX.decode(hex))) : null;
   }
 
   public getTokenKeyValues(): TokenKeyValues | null {
@@ -377,7 +388,11 @@ export class Token extends SpentBlock {
     baos.writeInt(this.signnumber);
     baos.writeInt(this.tokentype);
     baos.writeBoolean(this.tokenstop);
-    const prevBytes = this.prevblockhash === null ? null : this.prevblockhash.getBytes();
+    const prevBytes = this.prevblockhash === null || this.prevblockhash === undefined
+      ? null
+      : (this.prevblockhash instanceof Sha256Hash
+          ? this.prevblockhash.getBytes()
+          : Utils.HEX.decode(String(this.prevblockhash)));
     Utils.writeNBytes(baos, prevBytes ? new Uint8Array(prevBytes) : null);
     const amountBytes = bigIntToBytes(this.amount ?? 0n);
     Utils.writeNBytes(baos, amountBytes);

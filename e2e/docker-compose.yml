@@ -22,7 +22,7 @@ services:
     restart: unless-stopped
 
   l0-server:
-    image: bigtangle-l0:dev
+    image: bigtangle:layer0-server
     container_name: e2e-l0-server
     networks:
       - e2e-network
@@ -31,7 +31,6 @@ services:
     extra_hosts:
       - "e2e-l0-server:127.0.0.1"
     environment:
-      APP_MODULE: layer0-server
       SERVER_PORT: 8088
       SERVER_NET: Test
       SERVICE_SCHEDULE_MICROBATCH: "true"
@@ -57,7 +56,7 @@ services:
     restart: unless-stopped
 
   l0-mcmc:
-    image: bigtangle-l0:dev
+    image: bigtangle:layer0-mcmc
     container_name: e2e-l0-mcmc
     networks:
       - e2e-network
@@ -66,7 +65,6 @@ services:
     extra_hosts:
       - "e2e-l0-mcmc:127.0.0.1"
     environment:
-      APP_MODULE: layer0-mcmc
       SERVER_PORT: 8084
       SERVER_NET: Test
       REQUESTER: http://l0-server:8088
@@ -112,7 +110,7 @@ services:
     restart: unless-stopped
 
   l1-order-server:
-    image: bigtangle-l0:dev
+    image: bigtangle:l1-order-server
     container_name: e2e-l1-order-server
     networks:
       - e2e-network
@@ -121,9 +119,9 @@ services:
     extra_hosts:
       - "e2e-l1-order-server:127.0.0.1"
     environment:
-      APP_MODULE: l1-order-server
       SERVER_PORT: 8086
       SERVER_NET: Test
+      SERVER_CHAIN: L0
       REQUESTER: http://l0-server:8088
       DB_HOSTNAME: postgres-l1-order
       DB_PORT: 5432
@@ -147,14 +145,13 @@ services:
     restart: unless-stopped
 
   l1-order-mcmc:
-    image: bigtangle-l0:dev
+    image: bigtangle:l1-order-mcmc
     container_name: e2e-l1-order-mcmc
     networks:
       - e2e-network
     ports:
       - "18087:8087"
     environment:
-      APP_MODULE: l1-order-mcmc
       SERVER_PORT: 8087
       SERVER_NET: Test
       REQUESTER: http://l1-order-server:8086

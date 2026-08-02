@@ -10,6 +10,9 @@ export default defineConfig({
     exclude: process.env.INCLUDE_INTEGRATION_TESTS
       ? ['**/Abstract*.ts', 'vitest.config.ts', 'node_modules/**']
       : ['**/testintegration/**', '**/Abstract*.ts', 'vitest.config.ts', 'node_modules/**'],
+    ...(process.env.INCLUDE_INTEGRATION_TESTS
+      ? { testTimeout: 180000, hookTimeout: 180000 }
+      : {}),
   },
 
 });

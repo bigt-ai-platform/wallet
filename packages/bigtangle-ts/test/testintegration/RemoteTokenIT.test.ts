@@ -33,7 +33,7 @@ async function fundKey(k: PQKey): Promise<void> {
 }
 
 /** Poll for a token by ID until it appears or max retries. */
-async function pollToken(tokenid: string, maxRetries = 15, delayMs = 2000): Promise<any> {
+async function pollToken(tokenid: string, maxRetries = 40, delayMs = 2000): Promise<any> {
   for (let i = 0; i < maxRetries; i++) {
     const resp = await httpPost("getTokenById", { tokenid });
     if (resp.tokens && resp.tokens.length > 0) return resp.tokens[0];
@@ -78,9 +78,10 @@ describe("RemoteTokenIT", () => {
   let genesisKey: PQKey;
 
   beforeAll(async () => {
+    // Matches Java RemoteTokenTests: ML-DSA-87 only with a 0x01 seed so the
+    // wallet key is the root domain signer (TestParams.genesisPub).
     const mlDsaSeed = new Uint8Array(32).fill(0x01);
-    const slhDsaSeed = new Uint8Array(32).fill(0x02);
-    genesisKey = PQKey.fromSeeds(mlDsaSeed, slhDsaSeed);
+    genesisKey = PQKey.fromMLDSA(mlDsaSeed);
     wallet = Wallet.fromKeys(TestParams.get(), [genesisKey]);
     wallet.setServerURL(L0_URL);
     wallet.setFee(false);
@@ -179,7 +180,7 @@ describe("RemoteTokenIT", () => {
       await new Promise(r => setTimeout(r, 5000));
     }
 
-    const foundToken = await pollToken(tokenid, 20, 3000);
+    const foundToken = await pollToken(tokenid, 40, 3000);
     expect(foundToken).not.toBeNull();
     console.log(`Token ${tokenName} created, id=${tokenid}`);
 

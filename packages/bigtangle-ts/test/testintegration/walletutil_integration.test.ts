@@ -103,7 +103,7 @@ describe('bigtangle walletutil', () => {
 
   test('should check if an address belongs to the wallet using checkCancel', async () => {
     const keys = await wallet.walletKeys(null);
-    const address = Address.fromKey(wallet.params, keys[0]).toString();
+    const address = keys[0].toAddress().toHex();
 
     const result = await WalletUtil.checkCancel(
       wallet,

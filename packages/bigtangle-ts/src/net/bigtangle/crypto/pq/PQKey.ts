@@ -295,7 +295,9 @@ export class PQKey implements EncryptableItem {
   }
 
   getPublicKeyAsHex(): string {
-    return Utils.HEX.encode(this.getPublicKeyBytes());
+    // Matches Java PQKey.getPublicKeyAsHex() which returns the prefixed
+    // (0x05 + bundle) public key.
+    return Utils.HEX.encode(this.getPrefixedPublicKeyBytes());
   }
 
   /** Returns RIPE160(SHA256(pubKey)) - matches ECKey.getPubKeyHash() */

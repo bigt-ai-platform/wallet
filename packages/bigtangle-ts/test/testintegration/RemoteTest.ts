@@ -75,11 +75,13 @@ export abstract class RemoteTest {
   }
 
   public setUp() {
+    // Matches Java RemoteTest.setUp: ML-DSA-87 only with a 0x01 seed. This key
+    // IS the root domain signer (TestParams.genesisPub), so wallet.multiSign
+    // provides the domain signature that makes token blocks solid.
     const mlDsaSeed = new Uint8Array(32).fill(0x01);
-    const slhDsaSeed = new Uint8Array(32).fill(0x02);
     this.wallet = Wallet.fromKeysURL(
       this.networkParameters,
-      [PQKey.fromSeeds(mlDsaSeed, slhDsaSeed)],
+      [PQKey.fromMLDSA(mlDsaSeed)],
       this.contextRoot
     );
   }

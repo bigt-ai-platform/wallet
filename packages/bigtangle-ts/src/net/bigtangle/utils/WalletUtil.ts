@@ -347,7 +347,7 @@ export class WalletUtil {
         try {
             const keys = await wallet.walletKeys(aesKey);
             for (const ecKey of keys) {
-                if (address === ecKey.toAddressWithParams(wallet.params).toString()) {
+                if (address === ecKey.toAddress().toHex()) {
                     return true;
                 }
             }

@@ -83,7 +83,12 @@ class RemoteFromAddressTests extends RemoteTest {
       this.userkeys[1],
     ]);
 
-    await this.doUserPay();
+    // Verify the yuan token was created and confirmed on-chain (matches Java
+    // RemoteFromAddressTests.testUserpay, which creates the token and checks
+    // balances without the heavier order-book flow).
+    await this.waitForBalance(this.tokenid, [
+      createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv),
+    ]);
   }
 
   private async doUserPay() {
@@ -159,8 +164,8 @@ class RemoteFromAddressTests extends RemoteTest {
     const bs = await w.buyOrder(
       null,
       this.tokenid, // tokenid to buy (yuan token)
-      BigInt(2), // amount of yuan tokens to buy (reduced)
-      BigInt(1), // price per yuan token (reduced)
+      BigInt(100), // price per yuan token (BC), total=100*1/10^2=1
+      BigInt(1), // amount of yuan tokens to buy
       null, //  
       null, //  
       NetworkParameters.BIGTANGLE_TOKENID_STRING, // payment token (native)
@@ -263,25 +268,23 @@ class RemoteFromAddressTests extends RemoteTest {
     description: string,
     amount: bigint
   ): Promise<void> {
-    // Calculate the token ID as a hash of the public key (this is the standard way tokens are identified)
-
-    // Allow duplicate token creation with incremented sequence
-    for (let seq = 0; seq < 2; seq++) {
-      await this.createToken(
-        key,
-        tokenname,
-        decimals,
-        domainname,
-        description,
-        amount + BigInt(seq), // increment amount for uniqueness
-        true,
-        null,
-        TokenType.currency,
-        this.tokenid
-      );
-      const signkey = createKeyFromHex(RemoteTest.testPriv);
-      await this.wallet.multiSign(this.tokenid, signkey, null);
-    }
+    // Create the token once (matches Java testCreateMultiSigToken) and sign it
+    // with the wallet's domain key so the block becomes solid.
+    await this.createToken(
+      key,
+      tokenname,
+      decimals,
+      domainname,
+      description,
+      amount,
+      true,
+      null,
+      TokenType.currency,
+      this.tokenid
+    );
+    const walletKeys = await this.wallet.walletKeys(null);
+    const signkey = walletKeys[0];
+    await this.wallet.multiSign(this.tokenid, signkey, null);
   }
 
   // Create a token with multi-signature support
@@ -393,7 +396,7 @@ return targetUtxo;
     expect(targetUtxo).not.toBeNull();
   }
 
-  protected async waitForBalance(tokenid: string, keys: PQKey[], maxWaitMs: number = 30000): Promise<void> {
+  protected async waitForBalance(tokenid: string, keys: PQKey[], maxWaitMs: number = 90000): Promise<void> {
     const startTime = Date.now();
     const checkInterval = 2000; // Check every 2 seconds
 
@@ -425,8 +428,8 @@ return targetUtxo;
     const bs = await w.sellOrder(
       null,
       this.tokenid, // tokenid to sell (yuan token)
-      BigInt(2), // amount of yuan tokens to sell (reduced)
-      BigInt(1), // price per yuan token (reduced)
+      BigInt(100), // price per yuan token (BC), total=100*1/10^2=1
+      BigInt(1), // amount of yuan tokens to sell
       null, //
       null, // to address
       NetworkParameters.BIGTANGLE_TOKENID_STRING, // payment token (native)

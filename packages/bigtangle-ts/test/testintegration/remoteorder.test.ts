@@ -84,7 +84,14 @@ class RemoteOrderTests extends RemoteTest {
     expect(block).not.toBeNull();
 
     const walletKeys2 = await this.wallet.walletKeys(null);
-    const signed = await this.wallet.multiSign(tokenid, walletKeys2[0], null);
+    let signed: Block | null = null;
+    for (let attempt = 0; attempt < 10 && signed == null; attempt++) {
+      signed = await this.wallet.multiSign(tokenid, walletKeys2[0], null);
+      if (signed == null) {
+        console.log(`multiSign attempt ${attempt + 1} returned null, retrying...`);
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+    }
     if (signed != null) {
       console.log("Token multi-signed, waiting for confirmation...");
       await new Promise(resolve => setTimeout(resolve, 5000));

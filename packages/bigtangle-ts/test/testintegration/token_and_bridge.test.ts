@@ -108,7 +108,7 @@ describe("Token creation and bridge transfer", () => {
   });
 
   test("register subtangle permission for bridge", async () => {
-    const pubkeyHex = Utils.HEX.encode(testKey.getPubKey());
+    const pubkeyHex = Utils.HEX.encode(testKey.getPrefixedPublicKeyBytes());
     const zeroHash = Sha256Hash.of(new Uint8Array(32));
     const signature = testKey.sign(zeroHash);
     const signHex = Utils.HEX.encode(signature.serialize());
