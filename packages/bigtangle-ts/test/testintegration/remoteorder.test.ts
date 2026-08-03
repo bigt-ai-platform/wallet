@@ -20,6 +20,14 @@ import { CoinConstants } from "../../src/net/bigtangle/core/CoinConstants";
 class RemoteOrderTests extends RemoteTest {
   private l1Url = process.env.TEST_L1_URL || "http://localhost:18086/";
 
+  constructor() {
+    super();
+    // Matches Java RemoteOrderTests, which sets contextRoot = l1Url: ALL
+    // operations (wallets, funding, token creation, buy/sell orders) run on
+    // the L1-order server; L0 is only used for payment/token creation.
+    this.contextRoot = this.l1Url;
+  }
+
   private async fundKey(key: PQKey, value: bigint = BigInt(10000000000)): Promise<void> {
     const body = {
       addresses: [{
@@ -42,13 +50,17 @@ class RemoteOrderTests extends RemoteTest {
     const buyerWallet = await Wallet.fromKeysURL(this.networkParameters, [buyer], this.contextRoot);
     const bcToken = NetworkParameters.BIGTANGLE_TOKENID_STRING;
 
-    // 2. Fund issuer and buyer with BC (before token creation) via fundAddresses (PQ key path)
+    // 2. Fund issuer and buyer with BC (before token creation) via real
+    //    on-chain transactions from the genesis wallet (matches Java's
+    //    payBigTo). fundAddresses coinbases are virtual (not in a block), so
+    //    orders that spend them cannot be synced to the L1 order server.
     const userFunds = CoinConstants.FEE_DEFAULT.getValue() * BigInt(500);
     console.log("Funding issuer...");
-    await this.fundKey(issuer, userFunds);
+    await this.payBigTo([issuer], userFunds, []);
+    console.log("Waiting 25s for MCMC...");
+    await new Promise(resolve => setTimeout(resolve, 25000));
     console.log("Funding buyer...");
-    await this.fundKey(buyer, userFunds);
-    // Wait for MCMC to confirm
+    await this.payBigTo([buyer], userFunds, []);
     console.log("Waiting 25s for MCMC...");
     await new Promise(resolve => setTimeout(resolve, 25000));
 
@@ -67,13 +79,6 @@ class RemoteOrderTests extends RemoteTest {
       expect(hasBc).toBe(true);
     }
     console.log("Issuer and buyer funded with BC");
-
-    // Fund the wallet key too (needed for token creation fee)
-    const walletKeys = await this.wallet.walletKeys(null);
-    if (walletKeys.length > 0) {
-      await this.fundKey(walletKeys[0], userFunds);
-      await new Promise(resolve => setTimeout(resolve, 10000));
-    }
 
     // 3. Create a custom token
     const tokenName = "tradetoken";
@@ -112,14 +117,14 @@ class RemoteOrderTests extends RemoteTest {
     await new Promise(resolve => setTimeout(resolve, 25000));
 
     let hasToken = false;
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 60; i++) {
       const utxos = await this.getBalanceByKey(false, issuer);
       for (const u of utxos) {
         if (u.getTokenId() === tokenid && u.getValue()!.getValue() > BigInt(0))
           hasToken = true;
       }
       if (hasToken) break;
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
     expect(hasToken).toBe(true);
 
@@ -128,7 +133,6 @@ class RemoteOrderTests extends RemoteTest {
     const sellAmount = BigInt(100);
     console.log(`Sell: ${sellAmount} ${tokenName} @ price ${sellPrice}`);
     issuerWallet.setServerURL(this.contextRoot);
-    issuerWallet.setFee(false);
     await issuerWallet.sellOrder(null, tokenid, sellPrice, sellAmount, null, null,
       NetworkParameters.BIGTANGLE_TOKENID_STRING, true);
     await new Promise(resolve => setTimeout(resolve, 3000));
@@ -170,7 +174,6 @@ class RemoteOrderTests extends RemoteTest {
 
     console.log(`Buy: ${sellAmount} ${tokenName} @ price ${sellPrice}`);
     buyerWallet.setServerURL(this.contextRoot);
-    buyerWallet.setFee(false);
     await buyerWallet.buyOrder(null, tokenid, sellPrice, sellAmount, null, null,
       NetworkParameters.BIGTANGLE_TOKENID_STRING, false);
     await new Promise(resolve => setTimeout(resolve, 5000));
