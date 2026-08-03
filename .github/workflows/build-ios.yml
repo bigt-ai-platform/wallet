@@ -71,6 +71,9 @@ jobs:
             echo "profile=preview" >> $GITHUB_OUTPUT
           fi
 
+      - name: Setup EAS CLI
+        run: yarn global add eas-cli
+
       - name: Build iOS
         working-directory: ./expo-app
         run: eas build --platform ios --profile ${{ steps.profile.outputs.profile }} --non-interactive
