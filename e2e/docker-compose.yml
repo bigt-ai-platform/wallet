@@ -14,6 +14,7 @@ services:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: test1234
       POSTGRES_DB: layer0
+    command: postgres -c max_connections=200
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U root -d layer0"]
       interval: 5s
@@ -22,7 +23,7 @@ services:
     restart: unless-stopped
 
   l0-server:
-    image: bigtangle:layer0-server
+    image: ghcr.io/bigt-ai-platform/layer0-server
     container_name: e2e-l0-server
     networks:
       - e2e-network
@@ -43,11 +44,10 @@ services:
       DB_PASSWORD: test1234
       DBTYPE: postgresql
       CREATETABLE: "true"
-      SERVICE_MINING: "false"
       SERVICE_SYNC: "true"
       SERVICE_INITSYNC: "true"
       SYNCBLOCKS: 1000
-      POS_ENABLED: "true"
+      POS_ENABLED: "false"
       POS_SLOT_INTERVAL_MS: 12000
       POS_SLOTS_PER_EPOCH: 32
     depends_on:
@@ -56,7 +56,7 @@ services:
     restart: unless-stopped
 
   l0-mcmc:
-    image: bigtangle:layer0-mcmc
+    image: ghcr.io/bigt-ai-platform/layer0-mcmc
     container_name: e2e-l0-mcmc
     networks:
       - e2e-network
@@ -74,16 +74,20 @@ services:
       DB_USERNAME: root
       DB_PASSWORD: test1234
       DBTYPE: postgresql
-      SERVICE_MINING: "true"
-      SERVICE_MINING_RATE: 50000
       SERVICE_MCMC: "true"
       SERVICE_MCMC_RATE: 1000
+      SERVICE_SCHEDULE_MICROBATCH: "true"
+      SERVICE_SCHEDULE_BLOCKBATCH: "true"
+      SERVICE_SCHEDULE_BLOCKBATCHRATE: 5000
       SERVICE_INITSYNC: "false"
       SERVICE_SYNC: "true"
       SERVICE_SCHEDULE_REWARDONLYWITHREFERENCED: "false"
+      SERVICE_SCHEDULE_REWARD: "false"
       SYNCBLOCKS: 1000
       CREATETABLE: "false"
-      POS_ENABLED: "false"
+      POS_ENABLED: "true"
+      POS_VALIDATOR_KEY: ${POS_VALIDATOR_KEY}
+      POS_SLOT_INTERVAL_MS: 2000
     depends_on:
       l0-server:
         condition: service_started
@@ -102,6 +106,7 @@ services:
       POSTGRES_USER: root
       POSTGRES_PASSWORD: test1234
       POSTGRES_DB: ordermatch
+    command: postgres -c max_connections=200
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U root -d ordermatch"]
       interval: 5s
@@ -110,7 +115,7 @@ services:
     restart: unless-stopped
 
   l1-order-server:
-    image: bigtangle:l1-order-server
+    image: ghcr.io/bigt-ai-platform/l1-order-server
     container_name: e2e-l1-order-server
     networks:
       - e2e-network
@@ -145,7 +150,7 @@ services:
     restart: unless-stopped
 
   l1-order-mcmc:
-    image: bigtangle:l1-order-mcmc
+    image: ghcr.io/bigt-ai-platform/l1-order-mcmc
     container_name: e2e-l1-order-mcmc
     networks:
       - e2e-network
@@ -161,8 +166,6 @@ services:
       DB_USERNAME: root
       DB_PASSWORD: test1234
       DBTYPE: postgresql
-      SERVICE_MINING: "true"
-      SERVICE_MINING_RATE: 500
       SERVICE_MCMC: "true"
       SERVICE_MCMC_RATE: 500
       SERVICE_INITSYNC: "false"
@@ -176,6 +179,8 @@ services:
       postgres-l1-order:
         condition: service_healthy
     restart: unless-stopped
+    profiles:
+      - legacy-mcmc
 
   app:
     build:
