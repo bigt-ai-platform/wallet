@@ -1,9 +1,5 @@
 const variant = process.env.APP_ENV || 'development';
-const name = {
-    development: "bigt.ai (dev)",
-    preview: "bigt.ai (preview)",
-    production: "bigt.ai"
-}[variant];
+const name = "bigt.ai";
 const bundleId = {
     development: "com.example.bapp.dev",
     preview: "com.example.bapp.preview",
@@ -13,7 +9,8 @@ const bundleId = {
 export default {
     expo: {
         name,
-        slug: "bigtai",
+        slug: "j0904",
+        owner: "j0904s-team",
         version: "1.0.0",
         runtimeVersion: "1",
         orientation: "default",
@@ -94,6 +91,9 @@ export default {
             typedRoutes: true
         },
         extra: {
+            eas: {
+                projectId: "5c47005b-17aa-4139-b824-c054b5b7f90e"
+            },
             router: {
                 root: "./sources/app"
             }
