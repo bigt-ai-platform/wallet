@@ -13,13 +13,26 @@ if [ ! -x "$REMOTE_SH" ]; then
   fail "remote.sh not found at $REMOTE_SH"
 fi
 
-info "Starting blockchain infra via remote.sh (infra mode)..."
-info "  L0   : http://localhost:${L0_PORT:-24089}/"
-info "  L1   : http://localhost:${L1_PORT:-24086}/"
-info "  MCMC : port ${MCMC_PORT:-24091}"
-info "  DB   : postgres:${PG_PORT:-21532}"
+CMD="${1:-up}"
 
-# remote.sh infra builds the modules, starts L0/L1/MCMC, registers the PoS
-# validator, and keeps everything running until Ctrl+C. Env overrides
-# (L0_PORT, L1_PORT, MCMC_PORT, PG_PORT, ...) are forwarded through.
-exec "$REMOTE_SH" infra
+case "$CMD" in
+  up)
+    info "Starting blockchain infra via remote.sh (infra mode)..."
+    info "  L0   : http://localhost:${L0_PORT:-24089}/"
+    info "  L1   : http://localhost:${L1_PORT:-24086}/"
+    info "  MCMC : port ${MCMC_PORT:-24091}"
+    info "  DB   : postgres:${PG_PORT:-21532}"
+
+    # remote.sh infra builds the modules, starts L0/L1/MCMC, registers the
+    # PoS validator, and keeps everything running until Ctrl+C. Env overrides
+    # (L0_PORT, L1_PORT, MCMC_PORT, PG_PORT, ...) are forwarded through.
+    exec "$REMOTE_SH" infra
+    ;;
+  down|stop)
+    info "Stopping blockchain infra via remote.sh..."
+    exec "$REMOTE_SH" stop
+    ;;
+  *)
+    fail "Usage: $0 [up|down]"
+    ;;
+esac
