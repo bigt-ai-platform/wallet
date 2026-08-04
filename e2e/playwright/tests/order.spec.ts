@@ -47,7 +47,7 @@ test.describe('Order Screen', () => {
     test.setTimeout(120000);
     test.skip(!E2E_SERVER_URL, 'E2E_SERVER_URL not set');
 
-    const sdk = await import('/home/jcui/git/bapp/packages/bigtangle-ts/dist/index.js');
+    const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
 
     // Create a new token
     const issuer = sdk.PQKey.createNew();

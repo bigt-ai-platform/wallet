@@ -11,6 +11,7 @@ import { httpService } from "@/services/http";
 import { sendTransaction } from "@/services/transaction";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { WalletIcon } from "@/components/Icons";
+import SegmentedTabs from "@/components/SegmentedTabs";
 import type { WalletAccountItem, L1ChainConfig, TrackedRecord } from "@/types/api";
 
 export default function TransactionScreen() {
@@ -251,20 +252,16 @@ export default function TransactionScreen() {
 
   return (
     <View style={s.container} testID="transaction-screen">
-      <View style={s.tabRow}>
-        <TouchableOpacity style={[s.tab, activeTab === 'send' && s.tabActive]} onPress={() => setActiveTab('send')}>
-          <Text style={[s.tabText, activeTab === 'send' && s.tabTextActive]}>Send</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.tab, activeTab === 'l1test' && s.tabActive]} onPress={() => setActiveTab('l1test')}>
-          <Text style={[s.tabText, activeTab === 'l1test' && s.tabTextActive]}>L1 Test</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.tab, activeTab === 'history' && s.tabActive]} onPress={() => setActiveTab('history')}>
-          <Text style={[s.tabText, activeTab === 'history' && s.tabTextActive]}>History</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.tab, activeTab === 'payments' && s.tabActive]} onPress={() => setActiveTab('payments')}>
-          <Text style={[s.tabText, activeTab === 'payments' && s.tabTextActive]}>Payments</Text>
-        </TouchableOpacity>
-      </View>
+      <SegmentedTabs
+        tabs={[
+          { key: 'send', label: 'Send' },
+          { key: 'l1test', label: 'L1 Test' },
+          { key: 'history', label: 'History' },
+          { key: 'payments', label: 'Payments' },
+        ]}
+        active={activeTab}
+        onChange={(k) => setActiveTab(k as typeof activeTab)}
+      />
 
       {activeTab === 'send' ? (
         <ScrollView contentContainerStyle={s.content}>
@@ -306,7 +303,7 @@ export default function TransactionScreen() {
               placeholder={t('transaction.memo')} placeholderTextColor={s.placeholder.color}
               multiline numberOfLines={3} testID="memo-input" />
           </View>
-          <TouchableOpacity style={[s.primaryBtn, loading && s.btnDisabled]} onPress={handleSend} disabled={loading}>
+          <TouchableOpacity style={[s.primaryBtn, (loading || !selectedToken) && s.btnDisabled]} onPress={handleSend} disabled={loading || !selectedToken}>
             <Text style={s.primaryBtnText}>{loading ? t('transaction.sending') : t('transaction.send')}</Text>
           </TouchableOpacity>
         </ScrollView>
@@ -466,11 +463,6 @@ const s = StyleSheet.create((theme) => ({
   walletLabel: { fontSize: 13, color: theme.colors.text.secondary, marginBottom: 12, fontFamily: 'monospace' },
   unlockInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 15, width: '100%', maxWidth: 280, marginBottom: 12 },
   pageTitle: { fontSize: 22, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 16 },
-  tabRow: { flexDirection: 'row', marginHorizontal: 16, marginTop: 12, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: theme.colors.groupped.surface },
-  tabActive: { backgroundColor: theme.colors.primary },
-  tabText: { fontSize: 14, fontWeight: '600', color: theme.colors.text.secondary },
-  tabTextActive: { color: '#FFFFFF' },
   card: { backgroundColor: theme.colors.card?.background || theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.card?.border || theme.colors.border, padding: 16, marginBottom: 12 },
   cardLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
   input: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 15 },

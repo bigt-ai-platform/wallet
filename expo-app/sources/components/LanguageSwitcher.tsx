@@ -20,7 +20,8 @@ export default function LanguageSwitcher() {
 
   return (
     <>
-      <TouchableOpacity onPress={() => setVisible(true)} style={styles.trigger}>
+      <TouchableOpacity onPress={() => setVisible(true)} style={styles.trigger}
+        accessibilityRole="button" accessibilityLabel={t('common.langAriaChange')} accessibilityHint={t('common.language')}>
         <GlobeIcon size={20} color={theme.colors.text.secondary} />
       </TouchableOpacity>
 
@@ -29,7 +30,8 @@ export default function LanguageSwitcher() {
           <View style={styles.dialog}>
             <View style={styles.header}>
               <Text style={styles.headerText}>{t('common.language')}</Text>
-              <TouchableOpacity onPress={() => setVisible(false)}>
+              <TouchableOpacity onPress={() => setVisible(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button" accessibilityLabel={t('common.cancel')}>
                 <CloseIcon size={18} color={theme.colors.text.secondary} />
               </TouchableOpacity>
             </View>
@@ -66,6 +68,7 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.groupped.surface,
     borderRadius: theme.borderRadius.xl,
     width: 260,
+    maxWidth: '90%',
     paddingVertical: theme.margins.xs,
     borderWidth: 1,
     borderColor: theme.colors.border,

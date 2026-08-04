@@ -20,10 +20,18 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium',
+      name: 'mobile',
+      use: {
+        ...devices['Pixel 7'],
+      },
+      testIgnore: '**/desktop.spec.ts',
+    },
+    {
+      name: 'desktop',
       use: {
         ...devices['Desktop Chrome'],
       },
+      testMatch: '**/playwright/tests/desktop.spec.ts',
     },
   ],
   outputDir: 'test-results',

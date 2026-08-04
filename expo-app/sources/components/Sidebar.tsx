@@ -1,9 +1,10 @@
 import * as React from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView,
-  Platform, StyleSheet, StatusBar,
+  StyleSheet,
 } from 'react-native';
-import { useRouter, usePathname } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter, usePathname, useGlobalSearchParams } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   WalletIcon, MarketIcon, TokensIcon, SettingsIcon, CloseIcon,
@@ -17,6 +18,7 @@ interface NavItem {
   key: string;
   icon: React.FC<{ size?: number; color?: string }>;
   route: string;
+  view?: string;
 }
 
 interface NavSection {
@@ -40,6 +42,9 @@ function NavItemRow({ item, onPress, isActive }: { item: NavItem; onPress: () =>
       style={[s.navItem, isActive && { backgroundColor: theme.colors.primary + '15' }]}
       onPress={onPress}
       activeOpacity={0.6}
+      accessibilityRole="button"
+      accessibilityState={{ selected: isActive }}
+      accessibilityLabel={item.label}
     >
       {isActive && <View style={[s.activeDot, { backgroundColor: theme.colors.primary }]} />}
       <Icon size={18} color={isActive ? theme.colors.primary : theme.colors.text.secondary} />
@@ -52,6 +57,7 @@ function NavItemRow({ item, onPress, isActive }: { item: NavItem; onPress: () =>
 
 export default function Sidebar({ visible, onClose, persistent }: SidebarProps) {
   const { theme } = useUnistyles();
+  const insets = useSafeAreaInsets();
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useTranslation();
@@ -60,20 +66,21 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
     {
       titleKey: 'sidebar.trade',
       items: [
-        { label: t('sidebar.exchange'), key: 'exchange', icon: MarketIcon, route: '/order' },
-        { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/order' },
+        { label: t('sidebar.home'), key: 'transaction', icon: WalletIcon, route: '/' },
+        { label: t('sidebar.exchange'), key: 'exchange', icon: MarketIcon, route: '/order', view: 'exchange' },
+        { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/order', view: 'chart' },
       ],
     },
     {
       titleKey: 'sidebar.orders',
       items: [
-        { label: t('sidebar.order'), key: 'order', icon: OrderIcon, route: '/order' },
+        { label: t('sidebar.order'), key: 'order', icon: OrderIcon, route: '/order', view: 'orders' },
       ],
     },
     {
       titleKey: 'sidebar.market',
       items: [
-        { label: t('sidebar.marketData'), key: 'marketData', icon: DataIcon, route: '/order' },
+        { label: t('sidebar.marketData'), key: 'marketData', icon: DataIcon, route: '/order', view: 'market' },
       ],
     },
     {
@@ -85,13 +92,20 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
     },
   ];
 
-  const isActive = (route: string) => {
+  const { view } = useGlobalSearchParams<{ view?: string }>();
+
+  const isActive = (route: string, itemView?: string) => {
     if (route === '/') return pathname === '/';
+    if (itemView) return pathname === route && view === itemView;
     return pathname?.startsWith(route) ?? false;
   };
 
-  const navigate = (route: string) => {
-    router.push(route as any);
+  const navigate = (route: string, itemView?: string) => {
+    if (itemView) {
+      router.navigate({ pathname: route as any, params: { view: itemView } } as any);
+    } else {
+      router.navigate(route as any);
+    }
     if (!persistent) onClose();
   };
 
@@ -100,7 +114,8 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       <View style={[s.sidebarHeader, { borderBottomColor: theme.colors.border }]}>
         <Text style={[s.logoText, { color: theme.colors.text.primary }]}>{t('sidebar.bigt')}</Text>
         {!persistent && (
-          <TouchableOpacity onPress={onClose} style={s.closeBtn}>
+          <TouchableOpacity onPress={onClose} style={s.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            accessibilityRole="button" accessibilityLabel={t('common.cancel')}>
             <CloseIcon size={20} color={theme.colors.text.secondary} />
           </TouchableOpacity>
         )}
@@ -114,8 +129,8 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
               <NavItemRow
                 key={item.key}
                 item={item}
-                isActive={isActive(item.route)}
-                onPress={() => navigate(item.route)}
+                isActive={isActive(item.route, item.view)}
+                onPress={() => navigate(item.route, item.view)}
               />
             ))}
           </View>
@@ -125,14 +140,14 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       <View style={[s.quickActions, { borderTopColor: theme.colors.border }]}>
         <TouchableOpacity
           style={[s.buyBtn, { backgroundColor: theme.colors.accent?.emerald || '#0ECB81' }]}
-          onPress={() => navigate('/order')}
+          onPress={() => navigate('/order', 'exchange')}
           activeOpacity={0.8}
         >
           <Text style={s.actionBtnText}>{t('sidebar.buy')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[s.sellBtn, { backgroundColor: theme.colors.accent?.red || '#F6465D' }]}
-          onPress={() => navigate('/order')}
+          onPress={() => navigate('/order', 'exchange')}
           activeOpacity={0.8}
         >
           <Text style={s.actionBtnText}>{t('sidebar.sell')}</Text>
@@ -155,7 +170,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
 
   if (persistent) {
     return (
-      <View style={[s.persistent, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border }]}>
+      <View style={[s.persistent, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border, paddingTop: insets.top }]}>
         {renderContent()}
       </View>
     );
@@ -168,7 +183,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       <View style={s.overlay}>
         <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
       </View>
-      <View style={[s.overlaySidebar, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border }]}>
+      <View style={[s.overlaySidebar, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border, paddingTop: insets.top }]}>
         {renderContent()}
       </View>
     </>
@@ -179,11 +194,10 @@ const s = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.4)', zIndex: 998 },
   overlaySidebar: {
     position: 'absolute', top: 0, left: 0, bottom: 0, width: SIDEBAR_WIDTH, zIndex: 999,
-    borderRightWidth: 1, paddingTop: Platform.OS === 'ios' ? 50 : (StatusBar.currentHeight || 24),
+    borderRightWidth: 1,
   },
   persistent: {
     width: SIDEBAR_WIDTH, borderRightWidth: 1,
-    paddingTop: Platform.OS === 'ios' ? 50 : (StatusBar.currentHeight || 24),
   },
   sidebarHeader: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

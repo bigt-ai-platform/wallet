@@ -1,24 +1,31 @@
 /**
- * Capture UI screenshots for all screens in the bapp wallet.
+ * Capture UI screenshots for all screens in the bapp wallet, in each supported
+ * language.
  * Usage: node capture-screenshots.mjs
  * Environment: BASE_URL (default: http://localhost:8081), HEADLESS (default: true)
+ *
+ * The static web build is an SPA with no server-side route fallback, so every
+ * capture starts at "/" and navigates through the app's own tab UI. Navigation
+ * happens while the app is in its default (English) language, then the active
+ * language is switched before the screenshot, and the destination is verified
+ * via a stable testID so a failed navigation is reported instead of silently
+ * capturing the wrong screen.
  */
 
 import { chromium } from "playwright";
-import { mkdirSync, existsSync, writeFileSync } from "fs";
+import { mkdirSync } from "fs";
 
 const BASE_URL = process.env.BASE_URL || "http://localhost:8081";
 const HEADLESS = process.env.HEADLESS !== "false";
 const DIR = "demo-output/screenshots";
 
 const SHOTS = [
-  { topic: "wallet", name: "transaction-locked", url: "/", desc: "Transaction screen (locked)" },
-  { topic: "wallet", name: "wallet-locked", url: "/wallet", desc: "Wallet screen (locked)" },
-  { topic: "wallet", name: "market", url: "/market", desc: "Market prices" },
-  { topic: "wallet", name: "tokens", url: "/tokens", desc: "Token browser" },
-  { topic: "wallet", name: "tokens-create", url: "/tokens", desc: "Token creation", tab: "Create" },
-  { topic: "wallet", name: "settings", url: "/settings", desc: "Settings" },
-  { topic: "wallet", name: "wallet-keys", url: "/wallet/keys", desc: "Wallet keys management" },
+  { topic: "wallet", name: "transaction-locked", tab: null, verify: "transaction-screen", desc: "Transaction screen (locked)" },
+  { topic: "wallet", name: "wallet-locked", tab: "Wallet", verify: "wallet-screen", desc: "Wallet screen (locked)" },
+  { topic: "wallet", name: "market", tab: "Order", verify: "order-screen", desc: "Market prices" },
+  { topic: "wallet", name: "tokens", tab: "Tokens", verify: "tokens-screen", desc: "Token browser" },
+  { topic: "wallet", name: "settings", tab: "Settings", verify: "settings-screen", desc: "Settings" },
+  { topic: "wallet", name: "wallet-keys", tab: "Wallet", verify: "wallet-screen", desc: "Wallet keys management" },
 ];
 
 const LANGUAGES = ["en", "zh", "de", "fr", "es", "ja"];
@@ -26,24 +33,56 @@ const LANGUAGES = ["en", "zh", "de", "fr", "es", "ja"];
 async function captureOne(browser, lang, shot) {
   const filename = `${shot.topic}-${shot.name}-${lang}.png`;
   const filepath = `${DIR}/${filename}`;
-  if (existsSync(filepath)) return `skip ${filename}`;
 
   const context = await browser.newContext({
     viewport: { width: 390, height: 844 },
-    locale: lang === "en" ? "en-US" : lang,
   });
   const page = await context.newPage();
 
   try {
-    await page.goto(`${BASE_URL}${shot.url}`, { waitUntil: "networkidle", timeout: 20000 });
-    await page.waitForTimeout(2000);
+    await page.goto(BASE_URL + "/", { waitUntil: "load", timeout: 20000 });
+    await page.waitForTimeout(2500);
 
-    // Click tab if specified
+    // Navigate in the app's default language, then switch before capture.
     if (shot.tab) {
-      const tab = page.getByText(shot.tab).first();
-      if (await tab.isVisible().catch(() => false)) await tab.click();
-      await page.waitForTimeout(1000);
+      const tab = page.getByRole("tab", { name: shot.tab, exact: true }).first();
+      if (!(await tab.isVisible().catch(() => false))) {
+        return `err ${filename} tab "${shot.tab}" not visible`;
+      }
+      await tab.click();
+      await page.waitForTimeout(2000);
     }
+
+    // Wallet keys is a modal pushed from the Wallet screen.
+    if (shot.name === "wallet-keys") {
+      const manage = page.getByText("Manage Wallet").first();
+      if (!(await manage.isVisible().catch(() => false))) {
+        return `err ${filename} "Manage Wallet" not visible`;
+      }
+      await manage.click();
+      await page.waitForTimeout(2000);
+    }
+
+    // Fail loudly if the expected destination screen was not reached.
+    if (shot.name === "wallet-keys") {
+      if (!page.url().includes("/wallet/keys")) {
+        return `err ${filename} keys screen not reached (url ${page.url()})`;
+      }
+    } else {
+      const destination = page.locator(`[data-testid="${shot.verify}"]`).first();
+      if (!(await destination.isVisible().catch(() => false))) {
+        return `err ${filename} destination screen ${shot.verify} not reached`;
+      }
+    }
+
+    // Switch the app's active language explicitly (browser locale does not
+    // drive the app's i18n). The bundle exposes i18n on globalThis.
+    await page.evaluate((code) => {
+      if (globalThis.__bigtangleI18n) {
+        globalThis.__bigtangleI18n.changeLanguage(code);
+      }
+    }, lang);
+    await page.waitForTimeout(1000);
 
     await page.screenshot({ path: filepath, fullPage: false });
     return `ok ${filename}`;
@@ -69,10 +108,9 @@ async function main() {
 
   await browser.close();
 
-  const ok = results.filter(r => r.startsWith("ok")).length;
-  const err = results.filter(r => r.startsWith("err")).length;
-  const skip = results.filter(r => r.startsWith("skip")).length;
-  console.log(`\nDone: ${ok} captured, ${skip} skipped, ${err} errors`);
+  const ok = results.filter((r) => r.startsWith("ok")).length;
+  const err = results.filter((r) => r.startsWith("err")).length;
+  console.log(`\nDone: ${ok} captured, ${err} errors`);
 }
 
 main().catch(console.error);

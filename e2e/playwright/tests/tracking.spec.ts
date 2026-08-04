@@ -6,11 +6,6 @@ const E2E_L1_URL = process.env.E2E_L1_URL || '';
 const HAS_SERVER = !!E2E_SERVER_URL;
 const PASSWORD = 'TestPass123!';
 
-// A real CONFIRMED transaction on the L0 test chain (queried from the
-// `transactionstatus` table). Used to verify the Payment Tracking tab pulls a
-// live status from the L0 `getTransactionStatus` endpoint.
-const CONFIRMED_TXHASH = '277410a3cc26fc2488a7d6b805cb2cc8ef20ea5e1587451fdf80897fae73aa27';
-
 // MMKV web stores every key under `mmkv.default\` in localStorage.
 const TRACKING_KEY = 'mmkv.default\\tracking.records';
 
@@ -35,7 +30,7 @@ async function saveWallet(page: Page, password: string) {
 }
 
 async function setupUnlockedWallet(page: Page) {
-  const { PQKey } = await import('/home/jcui/git/bapp/packages/bigtangle-ts/dist/index.js');
+  const { PQKey } = await import('../../../packages/bigtangle-ts/dist/index.js');
   const key = PQKey.createNew();
   const privHex = key.getPrivateKeyHex();
 
@@ -57,6 +52,64 @@ async function setupUnlockedWallet(page: Page) {
     await page.waitForTimeout(2000);
   }
   return { address: key.toAddressHex(), privHex };
+}
+
+/**
+ * A real CONFIRMED transaction on the L0 test chain. Since the chain is
+ * recreated on every run, fund a fresh wallet, submit a real BIG payment, and
+ * wait for it to be confirmed. The L0 `transactionstatus` table keys records
+ * by the address of the transaction's first output (the recipient), so the
+ * recipient address is used to look the confirmed hash up. Used to verify the
+ * Payment Tracking tab pulls a live status from the L0 `getTransactionStatus`
+ * endpoint.
+ */
+async function getConfirmedTxHash(): Promise<string> {
+  const { PQKey, Wallet, TestParams, Utils, Address, NetworkParameters } = await import('../../../packages/bigtangle-ts/dist/index.js');
+  const key = PQKey.createNew();
+  const wallet = Wallet.fromKeysURL(TestParams.get(), [key], E2E_SERVER_URL);
+  await fetch(E2E_SERVER_URL + 'fundAddresses', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      addresses: [{
+        address: key.toAddressHex(),
+        value: 10000000000,
+        pubkey: Utils.HEX.encode(key.getPrefixedPublicKeyBytes()),
+      }],
+    }),
+  });
+
+  let funded = false;
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    const candidates = await wallet.calculateAllSpendCandidates(null, false);
+    if (candidates.some((c) => c.getUTXO().getTokenId() === 'bc')) {
+      funded = true;
+      break;
+    }
+  }
+  if (!funded) {
+    throw new Error('Funding did not confirm for test wallet');
+  }
+
+  const recipient = PQKey.createNew();
+  const recipientAddr = Address.fromKey(TestParams.get(), recipient).toBase58();
+  const giveMoney = new Map<string, bigint>();
+  giveMoney.set(recipientAddr, 100000000n);
+  await wallet.payToList(null, giveMoney, Buffer.from(Utils.HEX.decode(NetworkParameters.BIGTANGLE_TOKENID_STRING)), 'track-test');
+
+  for (let i = 0; i < 40; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    const res = await fetch(E2E_SERVER_URL + 'getTransactionsStatusByAddress', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: recipientAddr }),
+    });
+    const data = await res.json();
+    const tx = (data.transactions || []).find((t: any) => t.status === 'CONFIRMED');
+    if (tx) return tx.txHash;
+  }
+  throw new Error('No confirmed transaction found for funded address');
 }
 
 async function seedTracking(page: Page, records: any[]) {
@@ -173,7 +226,9 @@ test.describe('Payment Tracking', () => {
   });
 
   test('tracked payment renders and live status comes from L0 getTransactionStatus', async ({ page }) => {
-    await seedTracking(page, [paymentRecord(CONFIRMED_TXHASH)]);
+    test.setTimeout(240000);
+    const confirmedTxHash = await getConfirmedTxHash();
+    await seedTracking(page, [paymentRecord(confirmedTxHash)]);
 
     await clickTab(page, 'Transaction');
     await page.getByText('Payments', { exact: true }).click();
@@ -182,7 +237,7 @@ test.describe('Payment Tracking', () => {
     await expect(await getElement(page, 'payments-tab')).toBeAttached({ timeout: 10000 });
     const status = (await getElement(page, 'payment-status')).first();
     await expect(status).toBeAttached({ timeout: 10000 });
-    await expect((await getElement(page, 'payment-txhash')).first()).toContainText(CONFIRMED_TXHASH.slice(0, 16), { timeout: 5000 });
+    await expect((await getElement(page, 'payment-txhash')).first()).toContainText(confirmedTxHash.slice(0, 16), { timeout: 5000 });
 
     // Refresh pulls the live status from the L0 getTransactionStatus endpoint.
     const getStatusReq = page.waitForRequest(

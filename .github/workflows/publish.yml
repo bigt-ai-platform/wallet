@@ -1,12 +1,6 @@
 name: Publish App (Web, Android, iOS)
 
 on:
-  push:
-    branches:
-      - main
-      - release/*
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       platform:

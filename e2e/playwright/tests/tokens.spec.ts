@@ -73,7 +73,7 @@ test.describe('Tokens Screen', () => {
     test.setTimeout(60000);
     test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set');
 
-    const sdk = await import('/home/jcui/git/bapp/packages/bigtangle-ts/dist/index.js');
+    const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
 
     const tokenId = 'aa' + Date.now().toString(16).padStart(14, '0');
     const tokenName = 'E2ETest_' + Date.now().toString(36);
@@ -85,7 +85,7 @@ test.describe('Tokens Screen', () => {
     });
     expect((await fundResp.json()).errorcode).toBe(0);
 
-    const { MemoInfo } = await import('/home/jcui/git/bapp/packages/bigtangle-ts/dist/net/bigtangle/core/MemoInfo.js');
+    const { MemoInfo } = await import('../../../packages/bigtangle-ts/dist/net/bigtangle/core/MemoInfo.js');
     const token = new sdk.Token(tokenId, tokenName);
     token.setDescription('E2E token creation test');
     token.setDecimals(2);
@@ -158,7 +158,7 @@ test.describe('Tokens Screen', () => {
     await page.waitForTimeout(3000);
 
     // Fill send form and send
-    const bobKey = (await import('/home/jcui/git/bapp/packages/bigtangle-ts/dist/index.js')).PQKey.createNew();
+    const bobKey = (await import('../../../packages/bigtangle-ts/dist/index.js')).PQKey.createNew();
     const bobAddress = bobKey.toAddressHex();
 
     await page.getByPlaceholder('Recipient').fill(bobAddress);

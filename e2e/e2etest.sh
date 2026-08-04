@@ -118,15 +118,14 @@ async function main() {
   await page.goto(BASE + '/', { waitUntil: 'networkidle' });
   await page.waitForTimeout(2000);
 
-  // Configure server URL so token list loads from local preprod
-  await page.getByRole('tab', { name: 'Settings', exact: true }).click();
-  await page.waitForTimeout(1000);
-  await page.locator('[data-testid=\"server-url-input\"]').fill('');
-  await page.locator('[data-testid=\"server-url-input\"]').fill(SVR);
-  await page.locator('[data-testid=\"l1-url-input\"]').fill('');
-  await page.locator('[data-testid=\"l1-url-input\"]').fill(SVR);
-  await page.locator('text=Save').first().click();
-  await page.waitForTimeout(1000);
+  // Configure server + L1 URLs directly in storage (the settings UI keeps
+  // changing; storage keys are stable and match the app's httpService).
+  await page.evaluate(([sUrl]) => {
+    localStorage.setItem('mmkv.default\\settings.serverUrl', sUrl);
+    localStorage.setItem('mmkv.default\\settings.l1Chains', JSON.stringify([{ name: 'Default', url: sUrl }]));
+  }, [SVR]);
+  await page.goto(BASE + '/', { waitUntil: 'networkidle' });
+  await page.waitForTimeout(2000);
 
   // Go to Transaction and unlock
   await page.getByRole('tab', { name: 'Transaction', exact: true }).click();
@@ -163,11 +162,14 @@ async function main() {
   // Click send, accept confirmation, handle result
   await page.locator('text=Send Payment').first().click();
   await page.waitForTimeout(2000);
-  await page.locator('text=Send').last().click();
-  await page.waitForTimeout(5000);
-  const resultDlg = await page.waitForEvent('dialog', { timeout: 20000 }).catch(() => null);
-  if (resultDlg) await resultDlg.accept();
-  await page.waitForTimeout(2000);
+  const confirmSend = page.getByText('Send').last();
+  if (await confirmSend.isVisible().catch(() => false)) {
+    const resultDlg = page.waitForEvent('dialog', { timeout: 30000 }).catch(() => null);
+    await confirmSend.click();
+    const dlg = await resultDlg;
+    if (dlg) await dlg.accept();
+  }
+  await page.waitForTimeout(3000);
 
   // Screenshot 5: Transaction history
   await page.locator('text=History').first().click();

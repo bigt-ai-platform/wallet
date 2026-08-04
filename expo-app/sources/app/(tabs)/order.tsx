@@ -1,18 +1,21 @@
 import * as React from 'react';
 import {
   View, Text, ScrollView, ActivityIndicator, TouchableOpacity,
-  TextInput, Alert, RefreshControl, Modal,
+  TextInput, Alert, RefreshControl, Modal, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { listOrders, recordOrder, refreshAllStatuses } from '@/services/tracking';
 import { CloseIcon } from '@/components/Icons';
+import SegmentedTabs from '@/components/SegmentedTabs';
 import type { MarketPrice, OrderInfo, TrackedRecord } from '@/types/api';
 
 export default function OrderScreen() {
   const { t } = useTranslation();
+  const { theme } = useUnistyles();
   const { publicInfo, isUnlocked, getUnlockedWallet } = useWallet();
   const [prices, setPrices] = React.useState<MarketPrice[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -26,6 +29,21 @@ export default function OrderScreen() {
   const [orderTotal, setOrderTotal] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<'prices' | 'orders'>('prices');
+  const { view } = useLocalSearchParams<{ view?: string }>();
+  const router = useRouter();
+
+  const switchTab = (tab: 'prices' | 'orders') => {
+    setActiveTab(tab);
+    // Keep the sidebar highlight in sync by writing the tab into the URL
+    // params (sidebar items key off the `view` param). The Prices tab maps to
+    // the exchange view — there is no dedicated sidebar item for "prices".
+    router.setParams({ view: tab === 'orders' ? 'orders' : 'exchange' });
+  };
+
+  React.useEffect(() => {
+    if (view === 'orders') setActiveTab('orders');
+    else if (view) setActiveTab('prices');
+  }, [view]);
   const [liveOrders, setLiveOrders] = React.useState<OrderInfo[]>([]);
   const [trackedOrders, setTrackedOrders] = React.useState<TrackedRecord[]>([]);
   const [loadingOrders, setLoadingOrders] = React.useState(false);
@@ -135,41 +153,75 @@ export default function OrderScreen() {
 
   return (
     <View style={s.container} testID="order-screen">
-      <View style={s.tabRow}>
-        <TouchableOpacity style={[s.tab, activeTab === 'prices' && s.tabActive]} onPress={() => setActiveTab('prices')}>
-          <Text style={[s.tabText, activeTab === 'prices' && s.tabTextActive]}>{t('order.title')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.tab, activeTab === 'orders' && s.tabActive]} onPress={() => setActiveTab('orders')}>
-          <Text style={[s.tabText, activeTab === 'orders' && s.tabTextActive]}>{t('order.myOrders')}</Text>
-        </TouchableOpacity>
-      </View>
+      <SegmentedTabs
+        tabs={[
+          { key: 'prices', label: t('order.title') },
+          { key: 'orders', label: t('order.myOrders') },
+        ]}
+        active={activeTab}
+        onChange={(k) => switchTab(k as 'prices' | 'orders')}
+      />
 
       {activeTab === 'prices' ? (
         <ScrollView style={s.scroll} contentContainerStyle={s.content}
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => loadPrices(true)} />}>
+          {view === 'market' && (
+            <View style={s.marketSummary}>
+              <Text style={s.summaryTitle}>{t('order.marketData')}</Text>
+              <View style={s.summaryRow}>
+                <View style={s.summaryItem}>
+                  <Text style={s.summaryValue}>{prices.length}</Text>
+                  <Text style={s.summaryLabel}>{t('order.totalTokens')}</Text>
+                </View>
+                <View style={s.summaryItem}>
+                  <Text style={s.summaryValue}>
+                    {prices.filter((p) => parseFloat(p.change) > 0).length}
+                  </Text>
+                  <Text style={s.summaryLabel}>{t('order.gainers')}</Text>
+                </View>
+                <View style={s.summaryItem}>
+                  <Text style={s.summaryValue}>
+                    {prices.filter((p) => parseFloat(p.change) < 0).length}
+                  </Text>
+                  <Text style={s.summaryLabel}>{t('order.losers')}</Text>
+                </View>
+              </View>
+            </View>
+          )}
           {prices.length === 0 ? (
             <View style={s.emptyCard}><Text style={s.emptyTitle}>{t('order.noData')}</Text></View>
           ) : (
-            prices.map((item, i) => (
-              <View key={i} style={s.priceCard}>
-                <TouchableOpacity style={s.priceLeft} onPress={() => openOrder('buy', item)}>
-                  <Text style={s.tokenName}>{item.tokenname}</Text>
-                  <Text style={s.tokenId}>{item.tokenid.slice(0, 10)}...</Text>
-                </TouchableOpacity>
-                <View style={s.priceCenter}>
-                  <Text style={s.price}>{item.price}</Text>
-                  <Text style={[s.change, { color: changeColor(item.change) }]}>{fmtChange(item.change)}</Text>
-                </View>
-                <View style={s.actionCol}>
-                  <TouchableOpacity style={s.buyBtn} onPress={() => openOrder('buy', item)}>
-                    <Text style={s.buyBtnText}>{t('order.buy')}</Text>
+            prices.map((item, i) => {
+              const change = parseFloat(item.change);
+              const isUp = change >= 0;
+              const barWidth = Math.min(Math.abs(change), 12) * 5;
+              return (
+                <View key={i} style={s.priceCard}>
+                  <TouchableOpacity style={s.priceLeft} onPress={() => openOrder('buy', item)}>
+                    <Text style={s.tokenName}>{item.tokenname}</Text>
+                    <Text style={s.tokenId} numberOfLines={1} ellipsizeMode="middle">{item.tokenid}</Text>
                   </TouchableOpacity>
-                  <TouchableOpacity style={s.sellBtn} onPress={() => openOrder('sell', item)}>
-                    <Text style={s.sellBtnText}>{t('order.sell')}</Text>
-                  </TouchableOpacity>
+                  <View style={s.priceCenter}>
+                    <Text style={s.price}>{item.price}</Text>
+                    <Text style={[s.change, { color: changeColor(item.change) }]}>{fmtChange(item.change)}</Text>
+                  </View>
+                  {view === 'chart' ? (
+                    <View style={s.chartCol}>
+                      <View style={[s.changeBar, { width: barWidth, backgroundColor: isUp ? s.pos.color : s.neg.color }]} />
+                    </View>
+                  ) : (
+                    <View style={s.actionCol}>
+                      <TouchableOpacity style={s.buyBtn} onPress={() => openOrder('buy', item)}>
+                        <Text style={s.buyBtnText}>{t('order.buy')}</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={s.sellBtn} onPress={() => openOrder('sell', item)}>
+                        <Text style={s.sellBtnText}>{t('order.sell')}</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
                 </View>
-              </View>
-            ))
+              );
+            })
           )}
         </ScrollView>
       ) : (
@@ -229,45 +281,50 @@ export default function OrderScreen() {
       )}
 
       <Modal visible={orderModal} transparent animationType="slide" onRequestClose={() => setOrderModal(false)}>
-        <View style={s.modalOverlay}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={s.modalOverlay}>
           <View style={s.modal}>
-            <View style={s.modalHeader}>
-              <Text style={s.modalTitle}>{orderSide === 'buy' ? t('order.buyToken', { token: selectedToken?.tokenname }) : t('order.sellToken', { token: selectedToken?.tokenname })}</Text>
-              <TouchableOpacity onPress={() => setOrderModal(false)}><CloseIcon size={20} color="#000" /></TouchableOpacity>
-            </View>
+            <ScrollView contentContainerStyle={s.modalContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+              <View style={s.modalHeader}>
+                <Text style={s.modalTitle}>{orderSide === 'buy' ? t('order.buyToken', { token: selectedToken?.tokenname }) : t('order.sellToken', { token: selectedToken?.tokenname })}</Text>
+                <TouchableOpacity onPress={() => setOrderModal(false)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button" accessibilityLabel={t('common.cancel')}>
+                  <CloseIcon size={20} color={theme.colors.text.primary} />
+                </TouchableOpacity>
+              </View>
 
-            <View style={s.sideToggle}>
-              <TouchableOpacity style={[s.sideBtn, orderSide === 'buy' && s.sideBuyActive]} onPress={() => setOrderSide('buy')}>
-                <Text style={[s.sideBtnText, orderSide === 'buy' && s.sideBtnTextActive]}>{t('order.buy')}</Text>
+              <View style={s.sideToggle}>
+                <TouchableOpacity style={[s.sideBtn, orderSide === 'buy' && s.sideBuyActive]} onPress={() => setOrderSide('buy')}>
+                  <Text style={[s.sideBtnText, orderSide === 'buy' && s.sideBtnTextActive]}>{t('order.buy')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.sideBtn, orderSide === 'sell' && s.sideSellActive]} onPress={() => setOrderSide('sell')}>
+                  <Text style={[s.sideBtnText, orderSide === 'sell' && s.sideBtnTextActive]}>{t('order.sell')}</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={s.fieldGroup}>
+                <Text style={s.fieldLabel}>{t('order.price', { token: selectedToken?.tokenname })}</Text>
+                <TextInput style={s.fieldInput} value={orderPrice} onChangeText={(v) => { setOrderPrice(v); calcTotal(v, orderAmount); }}
+                  keyboardType="decimal-pad" placeholder="0.00" />
+              </View>
+
+              <View style={s.fieldGroup}>
+                <Text style={s.fieldLabel}>{t('order.amount')}</Text>
+                <TextInput style={s.fieldInput} value={orderAmount} onChangeText={(v) => { setOrderAmount(v); calcTotal(orderPrice, v); }}
+                  keyboardType="decimal-pad" placeholder="0.00" />
+              </View>
+
+              <View style={s.totalRow}>
+                <Text style={s.totalLabel}>{t('order.total')}</Text>
+                <Text style={s.totalValue}>{orderTotal || '0'} BIG</Text>
+              </View>
+
+              <TouchableOpacity style={[s.submitBtn, { backgroundColor: orderSide === 'buy' ? s.pos.color : s.neg.color }]}
+                onPress={submitOrder} disabled={submitting}>
+                <Text style={s.submitBtnText}>{submitting ? t('order.placing') : t('order.placeOrder', { side: orderSide === 'buy' ? t('order.buy') : t('order.sell') })}</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[s.sideBtn, orderSide === 'sell' && s.sideSellActive]} onPress={() => setOrderSide('sell')}>
-                <Text style={[s.sideBtnText, orderSide === 'sell' && s.sideBtnTextActive]}>{t('order.sell')}</Text>
-              </TouchableOpacity>
-            </View>
-
-            <View style={s.fieldGroup}>
-              <Text style={s.fieldLabel}>{t('order.price', { token: selectedToken?.tokenname })}</Text>
-              <TextInput style={s.fieldInput} value={orderPrice} onChangeText={(v) => { setOrderPrice(v); calcTotal(v, orderAmount); }}
-                keyboardType="decimal-pad" placeholder="0.00" />
-            </View>
-
-            <View style={s.fieldGroup}>
-              <Text style={s.fieldLabel}>{t('order.amount')}</Text>
-              <TextInput style={s.fieldInput} value={orderAmount} onChangeText={(v) => { setOrderAmount(v); calcTotal(orderPrice, v); }}
-                keyboardType="decimal-pad" placeholder="0.00" />
-            </View>
-
-            <View style={s.totalRow}>
-              <Text style={s.totalLabel}>{t('order.total')}</Text>
-              <Text style={s.totalValue}>{orderTotal || '0'} BIG</Text>
-            </View>
-
-            <TouchableOpacity style={[s.submitBtn, { backgroundColor: orderSide === 'buy' ? s.pos.color : s.neg.color }]}
-              onPress={submitOrder} disabled={submitting}>
-              <Text style={s.submitBtnText}>{submitting ? t('order.placing') : t('order.placeOrder', { side: orderSide === 'buy' ? t('order.buy') : t('order.sell') })}</Text>
-            </TouchableOpacity>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
@@ -279,11 +336,6 @@ const s = StyleSheet.create((theme) => ({
   content: { padding: 16, paddingBottom: 40 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loader: { color: theme.colors.primary },
-  tabRow: { flexDirection: 'row', marginHorizontal: 16, marginTop: 12, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: theme.colors.card?.background || theme.colors.groupped.surface },
-  tabActive: { backgroundColor: theme.colors.primary },
-  tabText: { fontSize: 14, fontWeight: '600', color: theme.colors.text.secondary },
-  tabTextActive: { color: '#FFFFFF' },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 12 },
   emptyCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, padding: 32, alignItems: 'center', marginTop: 20, borderWidth: 1, borderColor: theme.colors.border },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: theme.colors.text.secondary },
@@ -299,6 +351,14 @@ const s = StyleSheet.create((theme) => ({
   neg: { color: theme.colors.accent?.red || '#EF4444' },
   neutral: { color: theme.colors.text.secondary },
   actionCol: { gap: 4 },
+  chartCol: { alignItems: 'flex-end', justifyContent: 'center', width: 70, marginRight: 10 },
+  changeBar: { height: 6, borderRadius: 3, maxWidth: 60 },
+  marketSummary: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: theme.colors.border },
+  summaryTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 12 },
+  summaryRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  summaryItem: { alignItems: 'center', flex: 1 },
+  summaryValue: { fontSize: 20, fontWeight: '800', color: theme.colors.text.primary },
+  summaryLabel: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 4 },
   buyBtn: { backgroundColor: theme.colors.accent?.emerald || '#10B981', borderRadius: 6, paddingHorizontal: 14, paddingVertical: 5, alignItems: 'center' },
   buyBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
   sellBtn: { backgroundColor: theme.colors.accent?.red || '#EF4444', borderRadius: 6, paddingHorizontal: 14, paddingVertical: 5, alignItems: 'center' },
@@ -318,7 +378,8 @@ const s = StyleSheet.create((theme) => ({
   statusFailed: { color: '#EF4444' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
-  modal: { backgroundColor: theme.colors.groupped.surface, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 20, paddingBottom: 40 },
+  modal: { backgroundColor: theme.colors.groupped.surface, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 20, paddingBottom: 40, maxHeight: '85%' },
+  modalContent: { paddingBottom: 8 },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   modalTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text.primary },
   sideToggle: { flexDirection: 'row', borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border, marginBottom: 16 },

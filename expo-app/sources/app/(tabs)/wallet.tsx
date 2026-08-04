@@ -6,6 +6,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { CloseIcon } from '@/components/Icons';
+import SegmentedTabs from '@/components/SegmentedTabs';
 import type { WalletAccountItem } from '@/types/api';
 
 export default function WalletScreen() {
@@ -71,14 +72,14 @@ export default function WalletScreen() {
 
   return (
     <View style={s.container} testID="wallet-screen">
-      <View style={s.tabRow}>
-        <TouchableOpacity style={[s.tab, activeTab === 'assets' && s.tabActive]} onPress={() => setActiveTab('assets')}>
-          <Text style={[s.tabText, activeTab === 'assets' && s.tabTextActive]}>Assets</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.tab, activeTab === 'bridge' && s.tabActive]} onPress={() => setActiveTab('bridge')}>
-          <Text style={[s.tabText, activeTab === 'bridge' && s.tabTextActive]}>Bridge → L1</Text>
-        </TouchableOpacity>
-      </View>
+      <SegmentedTabs
+        tabs={[
+          { key: 'assets', label: 'Assets' },
+          { key: 'bridge', label: 'Bridge → L1' },
+        ]}
+        active={activeTab}
+        onChange={(k) => setActiveTab(k as typeof activeTab)}
+      />
 
       {activeTab === 'assets' ? (
         <ScrollView contentContainerStyle={s.content}>
@@ -162,11 +163,6 @@ const s = StyleSheet.create((theme) => ({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   lockedTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 8 },
   lockedSub: { fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
-  tabRow: { flexDirection: 'row', marginHorizontal: 16, marginTop: 12, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: theme.colors.groupped.surface },
-  tabActive: { backgroundColor: theme.colors.primary },
-  tabText: { fontSize: 14, fontWeight: '600', color: theme.colors.text.secondary },
-  tabTextActive: { color: '#FFFFFF' },
   addressCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 16, marginBottom: 20 },
   addressLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
   address: { fontSize: 13, color: theme.colors.text.primary, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), lineHeight: 18 },

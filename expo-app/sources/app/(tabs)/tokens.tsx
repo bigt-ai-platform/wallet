@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { CloseIcon } from '@/components/Icons';
+import SegmentedTabs from '@/components/SegmentedTabs';
 import type { TokenItem } from '@/types/api';
 
 export default function TokensScreen() {
@@ -84,15 +85,14 @@ export default function TokensScreen() {
 
   return (
     <View style={s.container} testID="tokens-screen">
-      {/* Tab bar */}
-      <View style={s.tabRow}>
-        <TouchableOpacity style={[s.tab, activeTab === 'browse' && s.tabActive]} onPress={() => setActiveTab('browse')}>
-          <Text style={[s.tabText, activeTab === 'browse' && s.tabTextActive]}>{t('tokens.title')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={[s.tab, activeTab === 'create' && s.tabActive]} onPress={() => setActiveTab('create')}>
-          <Text style={[s.tabText, activeTab === 'create' && s.tabTextActive]}>Create</Text>
-        </TouchableOpacity>
-      </View>
+      <SegmentedTabs
+        tabs={[
+          { key: 'browse', label: t('tokens.title') },
+          { key: 'create', label: 'Create' },
+        ]}
+        active={activeTab}
+        onChange={(k) => setActiveTab(k as typeof activeTab)}
+      />
 
       {activeTab === 'browse' ? (
         <>
@@ -172,11 +172,6 @@ const s = StyleSheet.create((theme) => ({
   container: { flex: 1, backgroundColor: theme.colors.groupped.background },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   loader: { color: theme.colors.primary },
-  tabRow: { flexDirection: 'row', marginHorizontal: 16, marginTop: 12, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border },
-  tab: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: theme.colors.groupped.surface },
-  tabActive: { backgroundColor: theme.colors.primary },
-  tabText: { fontSize: 14, fontWeight: '600', color: theme.colors.text.secondary },
-  tabTextActive: { color: '#FFFFFF' },
   searchRow: { paddingHorizontal: 16, paddingTop: 12 },
   searchInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 14 },
   placeholder: { color: theme.colors.text.secondary },

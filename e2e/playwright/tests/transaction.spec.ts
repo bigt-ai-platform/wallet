@@ -46,7 +46,7 @@ test.describe('Payment', () => {
 
     // 1. Generate Alice's PQ key in Node.js
     const { PQKey, Utils } = await import(
-      '/home/jcui/git/bapp/packages/bigtangle-ts/dist/index.js'
+      '../../../packages/bigtangle-ts/dist/index.js'
     );
 
     const aliceKey = PQKey.createNew();
@@ -140,7 +140,7 @@ test.describe('L1 Test Tab', () => {
   async function ensureWallet(page: Page) {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    const { PQKey } = await import('/home/jcui/git/bapp/packages/bigtangle-ts/dist/index.js');
+    const { PQKey } = await import('../../../packages/bigtangle-ts/dist/index.js');
     const key = PQKey.createNew();
     const privHex = key.getPrivateKeyHex();
     await clickTab(page, 'Wallet');
