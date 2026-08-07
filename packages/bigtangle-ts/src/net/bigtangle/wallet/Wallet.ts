@@ -17,7 +17,6 @@ import { InsufficientMoneyException } from "../exception/InsufficientMoneyExcept
 import { NoTokenException } from "../exception/NoTokenException";
 import { NoDataException } from "../exception/NoDataException";
 import { ReqCmd } from "../params/ReqCmd";
-import { ServerPool } from "../pool/server/ServerPool";
 import { GetTokensResponse } from "../response/GetTokensResponse";
 import { GetDomainTokenResponse } from "../response/GetDomainTokenResponse";
 import { MultiSignResponse } from "../response/MultiSignResponse";
@@ -108,7 +107,7 @@ export class Wallet extends WalletBase {
     this.signers = [];
     this.addTransactionSigner(new LocalTransactionSigner());
     if (!url) {
-      this.serverPool = new ServerPool(params) as ServerPool;
+      this.serverURL = null;
     } else {
       this.url = url;
       this.setServerURL(url);
@@ -1111,8 +1110,8 @@ export class Wallet extends WalletBase {
       );
     } catch (error: any) {
       if (error.message && error.message.includes("connect")) {
-        if (this.serverPool) {
-          (this.serverPool as any).removeServer(this.getServerURL());
+        if (this.serverURL) {
+          this.serverURL = null;
         }
       }
       throw error;
@@ -1562,8 +1561,8 @@ export class Wallet extends WalletBase {
       return block;
     } catch (error) {
       if (error instanceof Error && error.message.includes("connect")) {
-        if (this.serverPool) {
-          this.serverPool.removeServer(this.getServerURL());
+        if (this.serverURL) {
+          this.serverURL = null;
         }
         throw error;
       }

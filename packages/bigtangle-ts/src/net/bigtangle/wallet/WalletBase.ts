@@ -1,6 +1,5 @@
 import { KeyChainGroup } from './KeyChainGroup';
 import { NetworkParameters } from '../params/NetworkParameters';
-import { ServerPool } from '../pool/server/ServerPool';
 import { PQKey } from '../crypto/pq/PQKey';
 import { KeyCrypter, KeyParameter } from '../crypto/KeyCrypter';
 import { KeyCrypterScrypt } from '../crypto/KeyCrypterScrypt';
@@ -19,9 +18,9 @@ export abstract class WalletBase implements KeyBag {
     protected readonly lock = new Mutex();
     protected readonly keyChainGroupLock = new Mutex();
 
-    protected serverPool: ServerPool | null = null;
-    protected fee: boolean = true;
+    protected serverURL: string | null = null;
     protected static readonly SPENTPENDINGTIMEOUT = 120000;
+    protected fee: boolean = true;
 
     protected keyChainGroup!: KeyChainGroup;
     public params!: NetworkParameters;
@@ -302,7 +301,7 @@ export abstract class WalletBase implements KeyBag {
     }
 
     public setServerURL(contextRoot: string): void {
-        this.serverPool = new ServerPool(this.params, [contextRoot]);
+        this.serverURL = contextRoot;
     }
 
     public getFee(): boolean {
@@ -314,12 +313,10 @@ export abstract class WalletBase implements KeyBag {
     }
 
     public getServerURL(): string {
-        this.serverPool ??= new ServerPool(this.params);
-        return this.serverPool.getServer().getServerurl()!;
-    }
-
-    public setServerPool(serverPool: ServerPool): void {
-        this.serverPool = serverPool;
+        if (this.serverURL === null || this.serverURL === undefined) {
+            throw new Error("No servers available");
+        }
+        return this.serverURL;
     }
 
     public getKeyChainGroup(): KeyChainGroup {

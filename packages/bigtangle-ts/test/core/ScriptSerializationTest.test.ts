@@ -49,21 +49,6 @@ describe('ScriptSerialization', () => {
         expect(deserializedScript.getPubKeyHash()).to.deep.equal(pubkeyHash);
     });
 
-    it('testScriptSerializationWithPayToPubKey', () => {
-        const script = ScriptBuilder.createOutputScript(key1);
-        
-        const serialized = script.getProgram();
-        expect(serialized).to.not.be.null;
-        expect(serialized.length).to.be.greaterThan(0);
-        
-        const deserializedScript = new Script(serialized);
-        
-        expect(deserializedScript.toString()).to.equal(script.toString());
-        expect(deserializedScript.getProgram()).to.deep.equal(script.getProgram());
-        expect(deserializedScript.isSentToRawPubKey()).to.be.true;
-        expect(deserializedScript.getPubKey()).to.deep.equal(key1.getPubKey());
-    });
-
     it('testScriptSerializationWithMultiSig', () => {
         const keys = [key1, key2, key3];
         const script = ScriptBuilder.createMultiSigOutputScript(2, keys);

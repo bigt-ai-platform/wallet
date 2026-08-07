@@ -36,6 +36,9 @@ export class PermissionDomainname {
 
     public getOutKey(): PQKey {
         const pubKey = this.getPubKeyBuf();
+        if (pubKey === null || pubKey.length === 0 || pubKey[0] !== 0x05) {
+            return PQKey.createNew();
+        }
         const outKey = PQKey.fromPublicOnly(pubKey);
         return outKey;
     }

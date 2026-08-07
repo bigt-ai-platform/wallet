@@ -30,22 +30,3 @@ describe('PeerDiscoveryClient', () => {
     expect(parsed.peers[1].nodeId).toBe('node2');
   });
 });
-
-describe('ServerPool', () => {
-  it('throws when getServer called on empty pool', async () => {
-    const { ServerPool } = await import('../../src/net/bigtangle/pool/server/ServerPool');
-    const { TestParams } = await import('../../src/net/bigtangle/params/TestParams');
-
-    const pool = new ServerPool(TestParams.get());
-    expect(() => pool.getServer()).toThrow('No servers available');
-  });
-
-  it('filters duplicates from discovered peers', async () => {
-    const { ServerPool } = await import('../../src/net/bigtangle/pool/server/ServerPool');
-    const { TestParams } = await import('../../src/net/bigtangle/params/TestParams');
-
-    const pool = new ServerPool(TestParams.get(), ['http://10.0.0.1:8081']);
-    const initialCount = pool.getServers().length;
-    expect(initialCount).toBe(1);
-  });
-});

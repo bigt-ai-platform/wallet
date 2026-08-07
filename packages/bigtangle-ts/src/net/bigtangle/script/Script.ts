@@ -292,12 +292,10 @@ export class Script {
         const chunk1data = chunk1.data;
         if (chunk0data != null && chunk0data.length > 2 && chunk1data != null && chunk1data.length > 2) {
             // If we have two large constants assume the input to a pay-to-address output.
-            const raw = chunk1data;
-            return raw[0] === 0x05 ? raw.slice(1) : raw;
+            return chunk1data;
         } else if (chunk1.equalsOpCode(OP_CHECKSIG) && chunk0data != null && chunk0data.length > 2) {
             // A large constant followed by an OP_CHECKSIG is the key.
-            const raw = chunk0data;
-            return raw[0] === 0x05 ? raw.slice(1) : raw;
+            return chunk0data;
         } else {
             throw new ScriptException("Script did not match expected form: " + this.toString());
         }

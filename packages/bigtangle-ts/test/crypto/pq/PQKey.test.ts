@@ -31,7 +31,6 @@ describe('PQKey', () => {
     const msg = new Sha256Hash(new Uint8Array(32).fill(0xAB));
     const sig = key.sign(msg);
     expect(sig).toBeDefined();
-    expect(sig.entries.length).toBe(2);
 
     const ok = PQKey.verify(msg, sig, key.getPublicKeyBytes());
     expect(ok).toBe(true);

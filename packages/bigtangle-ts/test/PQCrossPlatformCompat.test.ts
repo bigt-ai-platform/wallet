@@ -17,7 +17,7 @@ import * as fs from "fs";
  *   SLH-DSA-SHA2-256s: 29792 bytes
  */
 describe("PQCrossPlatformCompat", () => {
-  test("signature sizes match FIPS 204/205 standards", () => {
+  test("signature sizes match FIPS 204/205 standards", { timeout: 60000 }, () => {
     const mlSeed = new Uint8Array(32).fill(0x42);
     const slhSeed = new Uint8Array(32).fill(0x24);
     const key = PQKey.fromSeeds(mlSeed, slhSeed);

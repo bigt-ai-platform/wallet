@@ -113,10 +113,28 @@ export class PQKey implements EncryptableItem {
     return PQKey.fromSeeds(mlDsaSeed, slhDsaSeed, network);
   }
 
+  /**
+   * Creates a PQKey (public-only) from prefixed public key bytes (0x05 + bundle),
+   * matching Java PQKey.fromPublicOnly(byte[] prefixedPubkey).
+   */
   static fromPublicOnly(pubBytes: Uint8Array, network: number = PQConstants.NETWORK_TESTNET): PQKey {
-    if (pubBytes.length < 2 || pubBytes[0] !== PQConstants.BUNDLE_VERSION)
-      throw new Error('invalid PQ public key bytes');
-    const bundle = KeyBundle.deserialize(pubBytes);
+    if (pubBytes.length < 2)
+      throw new Error('invalid prefixed PQ public key bytes');
+    const bundle = KeyBundle.deserialize(pubBytes.slice(1));
+    return new PQKey(
+      new Uint8Array(0),
+      new Uint8Array(0),
+      bundle,
+      network,
+    );
+  }
+
+  /**
+   * Creates a PQKey (public-only) from raw key bundle bytes,
+   * matching Java PQKey.fromPublicOnlyBytes(byte[] keyBundleBytes).
+   */
+  static fromPublicOnlyBytes(keyBundleBytes: Uint8Array, network: number = PQConstants.NETWORK_TESTNET): PQKey {
+    const bundle = KeyBundle.deserialize(keyBundleBytes);
     return new PQKey(
       new Uint8Array(0),
       new Uint8Array(0),
@@ -128,14 +146,20 @@ export class PQKey implements EncryptableItem {
   static fromPrefixedPublicKey(pubBytes: Uint8Array, network: number = PQConstants.NETWORK_TESTNET): PQKey {
     if (pubBytes.length < 2 || pubBytes[0] !== 0x05)
       throw new Error('invalid prefixed PQ public key bytes');
-    return PQKey.fromPublicOnly(pubBytes.slice(1), network);
+    return PQKey.fromPublicOnly(pubBytes, network);
   }
 
   getKeyBundle(): KeyBundle {
     return this.keyBundle;
   }
 
+  /** Prefixed public key (0x05 + bundle), matching Java getPublicKeyBytes(). */
   getPublicKeyBytes(): Uint8Array {
+    return this.getPrefixedPublicKeyBytes();
+  }
+
+  /** Raw key bundle bytes, matching Java getKeyBundleBytes(). */
+  getKeyBundleBytes(): Uint8Array {
     return this.keyBundle.serialize();
   }
 

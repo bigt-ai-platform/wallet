@@ -47,9 +47,9 @@ services:
       SERVICE_SYNC: "true"
       SERVICE_INITSYNC: "true"
       SYNCBLOCKS: 1000
-      POS_ENABLED: "false"
-      POS_SLOT_INTERVAL_MS: 12000
-      POS_SLOTS_PER_EPOCH: 32
+      POS_ENABLED: "true"
+      POS_VALIDATOR_KEY: ${POS_VALIDATOR_KEY}
+      POS_SLOT_INTERVAL_MS: 2000
     depends_on:
       postgres:
         condition: service_healthy
@@ -126,7 +126,6 @@ services:
     environment:
       SERVER_PORT: 8086
       SERVER_NET: Test
-      SERVER_CHAIN: L0
       REQUESTER: http://l0-server:8088
       DB_HOSTNAME: postgres-l1-order
       DB_PORT: 5432
@@ -144,6 +143,9 @@ services:
       SERVICE_SCHEDULE_BLOCKBATCHRATE: 5000
       SERVICE_SCHEDULE_REWARDONLYWITHREFERENCED: "false"
       SYNCBLOCKS: 1000
+      POS_ENABLED: "true"
+      POS_VALIDATOR_KEY: ${L1_POS_VALIDATOR_KEY}
+      POS_SLOT_INTERVAL_MS: 2000
     depends_on:
       postgres-l1-order:
         condition: service_healthy

@@ -20,7 +20,7 @@ export abstract class NetworkParameters {
   static readonly MAX_REWARD_BLOCK_SIZE = 1000000;
   static readonly ALLOWED_TIME_DRIFT = 2 * 60 * 60; // 2 hours
   static readonly MAX_BLOCK_SIGOPS = 20000;
-  static readonly ORDER_TIMEOUT_MAX = 30 * 24 * 60 * 60; // 30 days in seconds
+  static readonly ORDER_TIMEOUT_MAX = 8 * 60 * 60; // 8 hours in seconds (matches Java)
   static readonly BIGTANGLE_TOKENID_STRING = "bc";
   public static getBIGTANGLE_TOKENID() {
     // Simple hex decoder to avoid circular dependencies
@@ -35,7 +35,23 @@ export abstract class NetworkParameters {
   static readonly BIGTANGLE_DECIMAL = 6;
   static readonly ID_MAINNET = "main";
   static readonly ID_UNITTESTNET = "test";
-  static readonly BigtangleCoinTotal = BigInt(1000000000000);
+  static readonly BigtangleCoinTotal = BigInt(10) ** BigInt(11 + NetworkParameters.BIGTANGLE_DECIMAL);
+
+  protected chainId: string = "L0";
+
+  /** The chain id (e.g. "L0", "ordermatch"). Never null. */
+  public getChainId(): string {
+    return this.chainId;
+  }
+
+  public setChainId(chainId: string): void {
+    this.chainId = chainId;
+  }
+
+  /** Whether this chain's genesis block should mint the native BIG token. */
+  public genesisMintsBIG(): boolean {
+    return true;
+  }
 
   abstract getP2SHHeader(): number;
   abstract getAddressHeader(): number;
