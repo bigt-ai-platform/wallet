@@ -43,6 +43,29 @@ async function pollToken(tokenid: string, maxRetries = 40, delayMs = 2000): Prom
 }
 
 /**
+ * Wait until the token's minted UTXOs are CONFIRMED (spendable), matching Java's
+ * RemoteTokenTests.waitForTokenUtxos. Confirmation also confirms the token
+ * creation's fee change, so the next token-creating test has a fresh confirmed
+ * BIG fee source instead of the same spent one.
+ */
+async function waitForTokenUtxos(
+  wallet: Wallet,
+  tokenid: string,
+  maxRetries = 60,
+  delayMs = 3000
+): Promise<void> {
+  for (let i = 0; i < maxRetries; i++) {
+    const candidates = await wallet.calculateAllSpendCandidates(null, false);
+    const ok = candidates.some(
+      (co) => co.getUTXO().getTokenId() === tokenid && co.getValue().signum() > 0
+    );
+    if (ok) return;
+    if (i < maxRetries - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  console.log(`Token ${tokenid.slice(0, 14)} UTXOs not confirmed after polling`);
+}
+
+/**
  * Create a token, matching Java's createToken helper.
  * tokenid is the prefixed public key hex.
  */
@@ -184,9 +207,10 @@ describe("RemoteTokenIT", () => {
     expect(foundToken).not.toBeNull();
     console.log(`Token ${tokenName} created, id=${tokenid}`);
 
-    // Wait for blockbatch to mint the initial supply as spendable UTXOs
-    console.log("Waiting 30s for token minting...");
-    await new Promise(r => setTimeout(r, 30000));
+    // Wait for the token's minted UTXOs to be confirmed/spendable (matches
+    // Java RemoteTokenTests.waitForTokenUtxos, which polls instead of a fixed sleep)
+    console.log("Waiting for token minting confirmation...");
+    await waitForTokenUtxos(wallet, tokenid);
 
     const payWallet = Wallet.fromKeysURL(TestParams.get(), [issuer], L0_URL);
     payWallet.setFee(false);

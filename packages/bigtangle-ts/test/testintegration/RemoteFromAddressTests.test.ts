@@ -72,14 +72,14 @@ class RemoteFromAddressTests extends RemoteTest {
       [createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv)],
       this.contextRoot
     );
-    this.checkBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
+    await this.waitForBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
       createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv),
     ]);
-    this.checkBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
+    await this.waitForBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
       this.userkeys[0],
     ]);
 
-    this.checkBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
+    await this.waitForBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
       this.userkeys[1],
     ]);
 
