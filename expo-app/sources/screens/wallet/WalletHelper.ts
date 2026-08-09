@@ -84,6 +84,7 @@ export async function saveKeyToFile(
     keys: [
       {
         address: walletFile.wallet.address,
+        pubkey: walletFile.wallet.pubkey,
         privateKey: walletFile.wallet.privateKey,
       },
     ],
@@ -159,6 +160,7 @@ export async function loadWallet(
 
   const wallet: Key = {
     address: pqKey.toAddressHex(),
+    pubkey: pqKey.getPublicKeyAsHex(),
     privateKey: pqKey.getPrivateKeyHex(),
   };
 
@@ -184,6 +186,7 @@ export async function importPrivateKey(
 
   const wallet: Key = {
     address,
+    pubkey: pqKey.getPublicKeyAsHex(),
     privateKey,
   };
 

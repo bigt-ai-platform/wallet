@@ -1,7 +1,7 @@
 import { expect } from "vitest";
 import { ObjectMapper } from "jackson-js";
 import { Buffer } from "buffer";
-import { Address, Block, Coin, PQKey, Sha256Hash, UTXO, Utils, NetworkParameters, TestParams, Wallet, CoinConstants } from "bigtangle-ts";
+import { Address, Block, Coin, PQKey, Sha256Hash, UTXO, Utils, NetworkParameters, TestParams, Wallet, CoinConstants, Transaction } from "bigtangle-ts";
 import { ReqCmd } from "bigtangle-ts/dist/net/bigtangle/params/ReqCmd";
 import { GetBalancesResponse } from "bigtangle-ts/dist/net/bigtangle/response/GetBalancesResponse";
 import { GetTokensResponse } from "bigtangle-ts/dist/net/bigtangle/response/GetTokensResponse";
@@ -20,7 +20,7 @@ export abstract class RemoteTest {
 
   protected readonly aesKey: any = null;
 
-  protected blocksAddedAll: Block[] = [];
+  protected blocksAddedAll: Transaction[] = [];
 
   public static testPub =
     "02721b5eb0282e4bc86aab3380e2bba31d935cba386741c15447973432c61bc975";
@@ -55,7 +55,7 @@ export abstract class RemoteTest {
     beneficiary: PQKey,
     testKey: PQKey,
     amount: bigint,
-    addedBlocks: Block[] = []
+    addedBlocks: Transaction[] = []
   ) {
     await this.payTestTokenToAmount(beneficiary, testKey, amount, addedBlocks);
   }
@@ -63,8 +63,8 @@ export abstract class RemoteTest {
   protected async payBigTo(
     beneficiary: PQKey[],
     amount: bigint,
-    addedBlocks: Block[]
-  ): Promise<Block> {
+    addedBlocks: Transaction[]
+  ): Promise<Transaction> {
     const giveMoneyResult = new Map<string, bigint>();
     for (const b of beneficiary) {
     giveMoneyResult.set(
@@ -78,10 +78,10 @@ export abstract class RemoteTest {
   }
 
   private async payList(
-    addedBlocks: Block[],
+    addedBlocks: Transaction[],
     giveMoneyResult: Map<string, bigint>,
     tokenid: Buffer
-  ): Promise<Block> {
+  ): Promise<Transaction> {
     const coinList = await this.wallet.calculateAllSpendCandidates(null, false);
     this.logUTXOs(coinList);
     const result = await this.wallet.payMoneyToECKeyList(
@@ -90,7 +90,7 @@ export abstract class RemoteTest {
       tokenid,
       "payList",
       coinList,
-    ) as unknown as Block;
+    );
     // log.debug("block " + (result == null ? "block is null" : result.toString()));
     if (addedBlocks !== null && result !== null) {
       addedBlocks.push(result);
@@ -103,7 +103,7 @@ export abstract class RemoteTest {
     beneficiary: PQKey,
     testKey: PQKey,
     amount: bigint,
-    addedBlocks: Block[]
+    addedBlocks: Transaction[]
   ) {
     // Use fee as bigint - no conversion needed
     await this.payBigTo([testKey], CoinConstants.FEE_DEFAULT.getValue(), addedBlocks);
@@ -126,10 +126,12 @@ export abstract class RemoteTest {
       giveMoneyTestToken,
       tokenidBytes,
       ""
-    ) as unknown as Block;
+    );
     // log.debug("block " + (result == null ? "block is null" : result.toString()));
 
-    addedBlocks.push(result);
+    if (result !== null) {
+      addedBlocks.push(result);
+    }
 
     // Open sell order for test tokens
   }
@@ -170,8 +172,8 @@ export abstract class RemoteTest {
     buyPrice: number,
     buyAmount: number,
     basetoken: string,
-    addedBlocks: Block[]
-  ): Promise<Block> {
+    addedBlocks: Transaction[]
+  ): Promise<Transaction> {
     const w = await Wallet.fromKeysURL(
       this.networkParameters,
       [beneficiary],
@@ -238,7 +240,7 @@ export abstract class RemoteTest {
     const adjust = this.networkParameters
       .getDefaultSerializer()
       .makeBlock(Buffer.from(Utils.HEX.decode(dataHex)));
-    adjust.solve( );
+    adjust.setNonce(Math.floor(Math.random() * 0xFFFFFFFF));
     return adjust;
   }
 
