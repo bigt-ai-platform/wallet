@@ -11,7 +11,15 @@ export default defineConfig({
       ? ['**/Abstract*.ts', 'vitest.config.ts', 'node_modules/**']
       : ['**/testintegration/**', '**/Abstract*.ts', 'vitest.config.ts', 'node_modules/**'],
     ...(process.env.INCLUDE_INTEGRATION_TESTS
-      ? { testTimeout: 180000, hookTimeout: 180000 }
+      ? {
+          testTimeout: 180000,
+          hookTimeout: 180000,
+          // All test files share one chain and the same genesis wallet
+          // (ML-DSA seed 0x01). Java's remote.sh runs each test class in its
+          // own mvn invocation, so run files serially to match: parallel files
+          // contend for the same UTXOs and cause confirmation timeouts.
+          fileParallelism: false,
+        }
       : {}),
   },
 

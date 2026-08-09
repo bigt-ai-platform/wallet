@@ -38,34 +38,36 @@ first. The TS code is only there to test the TS implementation.**
 
 ## How the remote tests run
 
-Two infra paths exist:
-
-### 1. `e2eremote.sh` (docker-compose, `packages/big-tangle-ts/test/testintegration`)
-- Starts `e2e/docker-compose.yml` (L0/L0-mcmc/L1-order/L1-order-mcmc + postgres),
-  registers the PoS validator, waits for blocks, then runs:
+### 1. `e2eremote.sh` (TS remote tests, infra via `infra.sh` → Java `remote.sh`)
+- Runs the TS remote tests under
+  `packages/bigtangle-ts/test/testintegration/`:
   ```
   cd packages/bigtangle-ts && npx vitest run --exclude '**/RemoteTest.ts' test/testintegration/
   ```
-- Uses ports `18088` (L0), `18086` (L1).
+- Infra is brought up through `e2e/infra.sh` (→
+  `../blockchain/.../remote.sh infra`), so the TS tests run against the **same
+  Java-built L0/L1/MCMC infra as the Java remote tests** — no docker-compose
+  drift. `e2e/docker-compose.yml` is no longer used for the TS remote tests.
+- Default ports: `18088` (L0), `18086` (L1) — forwarded to the tests via
+  `TEST_CONTEXT_ROOT` / `TEST_L1_URL`. `remote.sh` must be started with
+  `FUND_ENABLED` (`server.fundEnabled=true`), which it does by default.
 
 ### 2. `remote.sh` (maven/spring-boot, Java)
 - Located in `../blockchain/layer0-mcmc/src/test/java/net/bigtangle/mcmc/remote/remote.sh`.
 - Starts L0/L1/MCMC via `mvn spring-boot:run` and runs the **Java** remote test
   classes. This is the reference/oracle for expected behavior.
-- Also backs `e2e/infra.sh` in this repo.
+- `e2e/infra.sh` is a thin wrapper that execs `remote.sh infra` (up) or
+  `remote.sh stop` (down).
 
-After any failing run, `e2eremote.sh` tears the docker-compose infra down.
+After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
 
-## Docker images vs local build
-- The docker compose file pulled GHCR images (`ghcr.io/bigt-ai-platform/...`).
-  If Java compiled a class (e.g. `l1-order-server`'s `Layer1HandlerConfiguration`)
-  before a dependency module (e.g. `bigtangle-bridge`) was on the classpath, the
-  image jare contains a class with **"Unresolved compilation problems"** baked in
-  and crashes at startup. If L1 won't start, rebuild the jar from `../blockchain`
-  with the dependency on the reactor classpath:
+## Java build vs remote.sh
+- `remote.sh` runs from the Java source via `mvn spring-boot:run`, so it always
+  reflects the current `../blockchain` source. Rebuild `../blockchain` modules
+  when the Java code changes:
   ```bash
   cd ../blockchain
-  mvn clean package -DskipTests -pl l1-order-server -am
-  docker build -t ghcr.io/bigt-ai-platform/l1-order-server:latest l1-order-server/
+  mvn package -DskipTests -pl layer0-server,l1-order-server -am
   ```
-  then rerun `e2eremote.sh`.
+  (The old GHCR-image path with "Unresolved compilation problems" jars only
+  applied to the removed docker-compose flow.)

@@ -146,13 +146,14 @@ describe("Token creation and bridge transfer", () => {
   });
 
   test("L1 order server getTip responds", async () => {
-    const resp = await fetch(L1_URL + ReqCmd.getTip, {
-      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' },
-      body: new TextEncoder().encode(JSON.stringify({})),
-    });
-    const text = await resp.text();
-    console.log(`L1 getTip status=${resp.status} response=${text.slice(0, 80)}`);
-    expect(resp.ok || resp.status === 404).toBe(true);
+    // Matches Java RemoteTest.fetchTip / RemoteOrderTests: L1 calls go through
+    // OkHttp3Util.post (connection pooling + error handling), not a raw fetch.
+    const resp = await OkHttp3Util.post(
+      L1_URL + ReqCmd.getTip,
+      new TextEncoder().encode(JSON.stringify({}))
+    );
+    console.log(`L1 getTip response=${resp.slice(0, 80)}`);
+    expect(resp).toBeTruthy();
   });
 
   test("can build transaction from UTXOs (no submission)", async () => {

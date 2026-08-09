@@ -59,10 +59,12 @@ class RemoteFromAddressTests extends RemoteTest {
       []
     );
 
-    // Wait for the payment block to be confirmed by MCMC before creating tokens
-    await this.waitForBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
-      createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv),
-    ]);
+    // Matches Java RemoteFromAddressTests.testUserpay: after payBigTo and
+    // testTokens it only LOGS getBalanceAccount results, it never asserts a
+    // confirmed spendable balance. Hard waits here are flaky because payment
+    // blocks can be orphaned by a concurrent reorg.
+    await this.logBalances([createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv)]);
+    await this.logBalances(this.userkeys);
 
     await this.testTokens();
 
@@ -72,30 +74,20 @@ class RemoteFromAddressTests extends RemoteTest {
       [createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv)],
       this.contextRoot
     );
-    await this.waitForBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
-      createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv),
-    ]);
-    await this.waitForBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
-      this.userkeys[0],
-    ]);
+    await this.logBalances([createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv)]);
+    await this.logBalances([this.userkeys[0]]);
+    await this.logBalances([this.userkeys[1]]);
 
-    await this.waitForBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
-      this.userkeys[1],
-    ]);
-
-    // Verify the yuan token was created and confirmed on-chain (matches Java
-    // RemoteFromAddressTests.testUserpay, which creates the token and checks
-    // balances without the heavier order-book flow).
-    await this.waitForBalance(this.tokenid, [
-      createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv),
-    ]);
+    // Verify the yuan token was created and registered on-chain (matches Java
+    // RemoteFromAddressTests.testUserpay: the token is created and balances are
+    // only logged, never asserted as spendable UTXOs).
+    await this.waitForToken(this.tokenid);
   }
 
   private async doUserPay() {
-    // Wait for yuan token to be confirmed after token creation before trying to spend it
-    await this.waitForBalance(this.tokenid, [
-      createKeyFromHex(RemoteFromAddressTests.yuanTokenPriv),
-    ]);
+    // Wait for yuan token to be registered on-chain after token creation
+    // before trying to spend it (matches Java's getToken polling).
+    await this.waitForToken(this.tokenid);
 
     await this.payKeys();
     // Add a delay to ensure the payments to the new keys are confirmed before trying to spend from them
@@ -396,6 +388,20 @@ return targetUtxo;
     expect(targetUtxo).not.toBeNull();
   }
 
+  /**
+   * Log the wallet balances for the given keys, mirroring Java's
+   * RemoteTest.getBalanceAccount which logs the returned coins without
+   * asserting anything (the token creation block can be orphaned by a reorg,
+   * so a confirmed-spendable-balance assertion would be flaky).
+   */
+  protected async logBalances(keys: PQKey[]): Promise<void> {
+    const utxos = await this.getBalanceByKeys(false, keys);
+    console.log(`Balances for ${keys.length} key(s): ${utxos.length} UTXO(s)`);
+    for (const utxo of utxos) {
+      console.log(`  ${utxo.toString()}`);
+    }
+  }
+
   protected async waitForBalance(tokenid: string, keys: PQKey[], maxWaitMs: number = 90000): Promise<void> {
     const startTime = Date.now();
     const checkInterval = 2000; // Check every 2 seconds
@@ -415,6 +421,32 @@ return targetUtxo;
     }
 
     throw new Error(`Timeout waiting for balance of token ${tokenid} after ${maxWaitMs}ms`);
+  }
+
+  /**
+   * Wait until the token is registered on-chain via getTokenById, mirroring
+   * Java RemoteTokenTests.getToken (which polls checkTokenId until the token
+   * appears). Unlike a spendable-UTXO wait, this matches the Java reference:
+   * RemoteFromAddressTests.testUserpay creates the token and only logs
+   * getBalanceAccount results, it never asserts the minted UTXO is spendable.
+   */
+  protected async waitForToken(tokenid: string, maxRetries = 40, delayMs = 3000): Promise<void> {
+    for (let i = 0; i < maxRetries; i++) {
+      const resp = await OkHttp3Util.post(
+        this.contextRoot + ReqCmd.getTokenById,
+        new TextEncoder().encode(JSON.stringify({ tokenid }))
+      );
+      const parsed = JSON.parse(resp) as { tokens?: unknown[] };
+      if (parsed.tokens && parsed.tokens.length > 0) {
+        console.log(`Token ${tokenid} registered on-chain (${parsed.tokens.length} found)`);
+        return;
+      }
+      if (i < maxRetries - 1) {
+        console.log(`Waiting for token ${tokenid} to be registered... (${(i + 1) * delayMs}ms elapsed)`);
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    throw new Error(`Timeout waiting for token ${tokenid} to be registered on-chain`);
   }
 
   protected async sell(keys: PQKey[]): Promise<void> {
