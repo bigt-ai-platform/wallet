@@ -43,6 +43,7 @@ export interface RecordOrderParams {
   amount: string;
   decimals?: number;
   fromAddress: string;
+  txHash?: string;
 }
 
 function readAll(): TrackedRecord[] {
@@ -125,8 +126,9 @@ export function recordPayment(params: RecordPaymentParams): TrackedRecord {
 export function recordOrder(params: RecordOrderParams): TrackedRecord {
   const now = Date.now();
   const record: TrackedRecord = {
-    id: makeId('order'),
+    id: makeId('order', params.txHash),
     kind: 'order',
+    txHash: params.txHash,
     tokenId: params.tokenId,
     tokenName: params.tokenName,
     amount: params.amount,
@@ -195,8 +197,13 @@ async function refreshPayment(record: TrackedRecord): Promise<TrackedRecord> {
  * Refresh tracked orders against the live L1 order book for the address.
  * Orders still open on the chain stay pending; orders that are cancelled show
  * cancelled; orders no longer in the open book are considered filled.
+ *
+ * When an order record has a txHash, first poll the L1 transaction lifecycle
+ * status (MEMPOOL/IN_BLOCK/SOLID/CONFIRMED/DROPPED) on {@code l1Url}; a
+ * confirmed transaction then falls through to the open-book check, while a
+ * dropped one is marked failed.
  */
-async function refreshOrders(address: string): Promise<TrackedRecord[]> {
+async function refreshOrders(address: string, l1Url?: string): Promise<TrackedRecord[]> {
   const res = await httpService.getOrdersByAddress(address);
   if (!res.success || !res.data) return listOrders();
 
@@ -205,6 +212,21 @@ async function refreshOrders(address: string): Promise<TrackedRecord[]> {
 
   for (const record of listOrders()) {
     if (record.kind !== 'order' || record.status !== 'pending') continue;
+
+    // If we have a txHash and an L1 URL, check the transaction lifecycle first.
+    if (record.txHash && l1Url) {
+      const txRes = await httpService.getTransactionStatusOnChain(record.txHash, l1Url);
+      if (txRes.success && txRes.data) {
+        const chainStatus = txRes.data.status;
+        if (chainStatus === 'DROPPED') {
+          const next = updateRecord(record.id, { status: 'failed', statusDetail: 'DROPPED' });
+          updated.push(next || record);
+          continue;
+        }
+        // MEMPOOL/IN_BLOCK/SOLID/CONFIRMED all count as on-chain: keep going so
+        // the open-book check below refines the final order state.
+      }
+    }
 
     const onChain = openOrders.find(
       (o) =>
@@ -231,11 +253,11 @@ async function refreshOrders(address: string): Promise<TrackedRecord[]> {
 /**
  * Refresh the status of all pending payments and orders.
  */
-export async function refreshAllStatuses(address?: string): Promise<TrackedRecord[]> {
+export async function refreshAllStatuses(address?: string, l1Url?: string): Promise<TrackedRecord[]> {
   const payments = listPayments().filter((r) => r.status === 'pending');
   await Promise.all(payments.map((r) => refreshPayment(r)));
   if (address) {
-    await refreshOrders(address);
+    await refreshOrders(address, l1Url);
   }
   return getAllRecords();
 }

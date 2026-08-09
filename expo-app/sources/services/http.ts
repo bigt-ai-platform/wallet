@@ -310,6 +310,30 @@ export class HttpService {
   }
 
   /**
+   * Get the on-chain lifecycle status of a single transaction on a specific
+   * chain (L1 order chains inherit the endpoint from BaseDispatcherController).
+   */
+  async getTransactionStatusOnChain(
+    txHash: string,
+    baseUrl: string
+  ): Promise<ApiResponse<TransactionStatusInfo>> {
+    const response = await this.request<TransactionStatusInfo>(
+      ReqCmd.GetTransactionStatus,
+      'POST',
+      { txHash },
+      baseUrl
+    );
+
+    if (response.success && response.data) {
+      return { success: true, data: response.data };
+    }
+    return {
+      success: false,
+      error: response.error || 'Failed to get transaction status',
+    } as ApiResponse<TransactionStatusInfo>;
+  }
+
+  /**
    * Get transaction lifecycle statuses for all transactions of an address
    */
   async getTransactionsStatusByAddress(address: string): Promise<ApiResponse<TransactionStatusInfo[]>> {

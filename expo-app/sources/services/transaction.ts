@@ -333,6 +333,44 @@ export async function payOnLayer1(params: {
 }
 
 /**
+ * Place a buy/sell order on an L1 (order) chain using the bigtangle-ts SDK
+ * Wallet pointed at the given L1 server URL. The SDK builds the OrderOpen
+ * transaction, signs it with the wallet key, and submits it to the L1 server's
+ * `submitTransaction` endpoint. Returns the submitted transaction hash.
+ */
+export async function orderOnLayer1(params: {
+  side: 'buy' | 'sell';
+  privateKeyHex: string;
+  l1Url: string;
+  tokenId: string;
+  price: bigint;
+  amount: bigint;
+  baseToken: string;
+  decimals: number;
+}): Promise<string> {
+  const { side, privateKeyHex, l1Url, tokenId, price, amount, baseToken, decimals } = params;
+  const testParams = getTestParams();
+
+  // @ts-ignore - dynamic wallet import (matches WalletHelper.createBigtangleWallet)
+  const { Wallet: BtWallet } = await import('bigtangle-ts/dist/net/bigtangle/wallet/Wallet');
+
+  const rawKey = hexToBytes(privateKeyHex);
+  const pqKey = PQKey.fromPrivateKey(rawKey);
+
+  const wallet = await BtWallet.fromKeysURL(testParams, [pqKey], l1Url);
+  wallet.setFee(false);
+
+  const tx = side === 'buy'
+    ? await wallet.buyOrder(null, tokenId, price, amount, null, null, baseToken, true)
+    : await wallet.sellOrder(null, tokenId, price, amount, null, null, baseToken, true);
+
+  if (!tx) {
+    throw new Error('Failed to create order transaction');
+  }
+  return tx.getHash().toString();
+}
+
+/**
  * Send a transaction (create, sign, and broadcast)
  */
 export async function sendTransaction(

@@ -8,6 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
+import { orderOnLayer1 } from '@/services/transaction';
 import { listOrders, recordOrder, refreshAllStatuses } from '@/services/tracking';
 import { CloseIcon } from '@/components/Icons';
 import SegmentedTabs from '@/components/SegmentedTabs';
@@ -24,11 +25,17 @@ export default function OrderScreen() {
   const [orderModal, setOrderModal] = React.useState(false);
   const [orderSide, setOrderSide] = React.useState<'buy' | 'sell'>('buy');
   const [selectedToken, setSelectedToken] = React.useState<MarketPrice | null>(null);
+  const [tokenSearch, setTokenSearch] = React.useState('');
+  const [tokenResults, setTokenResults] = React.useState<MarketPrice[]>([]);
+  const [searchingTokens, setSearchingTokens] = React.useState(false);
   const [orderPrice, setOrderPrice] = React.useState('');
   const [orderAmount, setOrderAmount] = React.useState('');
   const [orderTotal, setOrderTotal] = React.useState('');
   const [submitting, setSubmitting] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState<'prices' | 'orders'>('prices');
+  const [historyFromDate, setHistoryFromDate] = React.useState('');
+  const [historyToDate, setHistoryToDate] = React.useState('');
+  const l1Url = React.useMemo(() => httpService.getL1Url(), []);
   const { view } = useLocalSearchParams<{ view?: string }>();
   const router = useRouter();
 
@@ -65,7 +72,7 @@ export default function OrderScreen() {
     if (isRefresh) setRefreshingOrders(true); else setLoadingOrders(true);
     try {
       if (isRefresh) {
-        await refreshAllStatuses(publicInfo.address);
+        await refreshAllStatuses(publicInfo.address, l1Url);
       }
       setTrackedOrders(listOrders());
       const res = await httpService.getOrdersByAddress(publicInfo.address);
@@ -82,10 +89,41 @@ export default function OrderScreen() {
     if (!isUnlocked) { Alert.alert(t('wallet.locked'), t('order.unlockFirst')); return; }
     setOrderSide(side);
     setSelectedToken(token);
+    setTokenSearch(token.tokenname || token.tokenid || '');
+    setTokenResults([token]);
     setOrderPrice(token.price || '0');
     setOrderAmount('');
     setOrderTotal('');
     setOrderModal(true);
+  };
+
+  // Search tokens by name or id from the L1 exchange token list.
+  const searchTokens = async (keyword: string) => {
+    setTokenSearch(keyword);
+    if (!keyword.trim()) { setTokenResults([]); return; }
+    setSearchingTokens(true);
+    try {
+      const res = await httpService.searchExchangeTokens(keyword.trim());
+      if (res.success && res.data) {
+        const items: MarketPrice[] = res.data.map((tk) => ({
+          tokenid: tk.tokenid,
+          tokenname: tk.tokenname || tk.tokenid?.slice(0, 8),
+          price: '0',
+          change: '0',
+          executedquantity: '0',
+          decimals: tk.decimals ?? 8,
+        }));
+        setTokenResults(items);
+      }
+    } catch (e) { console.error('Error searching tokens:', e); }
+    finally { setSearchingTokens(false); }
+  };
+
+  const selectSearchedToken = (tk: MarketPrice) => {
+    setSelectedToken(tk);
+    setTokenSearch(tk.tokenname || tk.tokenid || '');
+    setTokenResults([]);
+    setOrderPrice(tk.price && tk.price !== '0' ? tk.price : orderPrice);
   };
 
   const calcTotal = (price: string, amount: string) => {
@@ -103,38 +141,35 @@ export default function OrderScreen() {
 
     const wallet = getUnlockedWallet();
     if (!wallet) { Alert.alert('', t('order.unlockFirst')); return; }
+    if (!l1Url) { Alert.alert('', 'No L1 chain configured'); return; }
 
     setSubmitting(true);
     try {
-      const payload = {
+      const decimals = selectedToken.decimals ?? 8;
+      const txHash = await orderOnLayer1({
+        side: orderSide,
+        privateKeyHex: wallet.wallet.privateKey,
+        l1Url,
+        tokenId: selectedToken.tokenid,
+        price: BigInt(Math.floor(price * Math.pow(10, decimals))),
+        amount: BigInt(Math.floor(amount * Math.pow(10, decimals))),
+        baseToken: 'bc',
+        decimals,
+      });
+      recordOrder({
         side: orderSide,
         tokenId: selectedToken.tokenid,
         tokenName: selectedToken.tokenname,
         baseToken: 'bc',
         price: orderPrice,
         amount: orderAmount,
-        decimals: 8,
+        decimals,
         fromAddress: publicInfo.address,
-        privateKeyHex: wallet.wallet.privateKey,
-      };
-      const res = await httpService.requestL1('submitTransaction', 'POST', payload);
-      if (res.success) {
-        recordOrder({
-          side: orderSide,
-          tokenId: selectedToken.tokenid,
-          tokenName: selectedToken.tokenname,
-          baseToken: 'bc',
-          price: orderPrice,
-          amount: orderAmount,
-          decimals: 8,
-          fromAddress: publicInfo.address,
-        });
-        setTrackedOrders(listOrders());
-        Alert.alert(t('order.orderPlaced'), t('order.orderPlacedDesc', { side: orderSide === 'buy' ? t('order.buy') : t('order.sell'), amount, token: selectedToken.tokenname, price }));
-        setOrderModal(false);
-      } else {
-        Alert.alert('', res.error || t('order.placeFailed'));
-      }
+        txHash,
+      });
+      setTrackedOrders(listOrders());
+      Alert.alert(t('order.orderPlaced'), t('order.orderPlacedDesc', { side: orderSide === 'buy' ? t('order.buy') : t('order.sell'), amount, token: selectedToken.tokenname, price }));
+      setOrderModal(false);
     } catch (e: any) {
       Alert.alert('', e.message || t('order.submitFailed'));
     } finally { setSubmitting(false); }
@@ -232,49 +267,81 @@ export default function OrderScreen() {
               <Text style={s.refreshBtn}>{refreshingOrders ? '...' : 'Refresh'}</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Date range filter (from / to) applied to tracked order history. */}
+          <View style={s.filterCard}>
+            <Text style={s.filterLabel}>{t('order.dateRange')}</Text>
+            <View style={s.dateRow}>
+              <TextInput style={s.dateInput} value={historyFromDate} onChangeText={setHistoryFromDate}
+                placeholder="from e.g. 2024-01-01" placeholderTextColor={s.placeholder.color}
+                autoCapitalize="none" testID="order-from-date" />
+              <TextInput style={s.dateInput} value={historyToDate} onChangeText={setHistoryToDate}
+                placeholder="to e.g. 2026-01-01" placeholderTextColor={s.placeholder.color}
+                autoCapitalize="none" testID="order-to-date" />
+            </View>
+          </View>
+
           {loadingOrders ? (
             <ActivityIndicator size="large" color={s.loader.color} style={{ padding: 24 }} />
           ) : (
             <>
-              {trackedOrders.length > 0 && (
-                <>
-                  <Text style={s.groupLabel}>Tracked (in-app)</Text>
-                  {trackedOrders.map((o) => {
-                    const badgeColor = o.status === 'confirmed' ? s.statusConfirmed.color : o.status === 'failed' || o.status === 'cancelled' ? s.statusFailed.color : s.statusPending.color;
-                    return (
-                      <View key={o.id} style={s.orderCard}>
-                        <Text style={[s.orderSide, { color: o.side === 'buy' ? s.pos.color : s.neg.color }]}>
-                          {o.side === 'buy' ? t('order.buy') : t('order.sell')}
-                        </Text>
-                        <View style={s.orderInfoCol}>
-                          <Text style={s.orderInfo}>{o.amount} {o.tokenName} @ {o.price}</Text>
-                          <Text style={s.orderSub}>{o.statusDetail || o.status}</Text>
+              {(() => {
+                const fromMs = historyFromDate ? Date.parse(historyFromDate) : NaN;
+                const toMs = historyToDate ? Date.parse(historyToDate) : NaN;
+                const inRange = (r: { createdAt: number }) =>
+                  (Number.isNaN(fromMs) || r.createdAt >= fromMs) &&
+                  (Number.isNaN(toMs) || r.createdAt <= toMs + 24 * 3600 * 1000);
+                const tracked = trackedOrders.filter(inRange);
+                const live = liveOrders.filter((o) => {
+                  const t0 = o.validFromTime ? o.validFromTime * 1000 : NaN;
+                  const t1 = o.validToTime ? o.validToTime * 1000 : NaN;
+                  return (Number.isNaN(fromMs) || Number.isNaN(t0) || t0 >= fromMs) &&
+                    (Number.isNaN(toMs) || Number.isNaN(t1) || t1 <= toMs + 24 * 3600 * 1000);
+                });
+                return (
+                  <>
+                    {tracked.length > 0 && (
+                      <>
+                        <Text style={s.groupLabel}>Tracked (in-app)</Text>
+                        {tracked.map((o) => {
+                          const badgeColor = o.status === 'confirmed' ? s.statusConfirmed.color : o.status === 'failed' || o.status === 'cancelled' ? s.statusFailed.color : s.statusPending.color;
+                          return (
+                            <View key={o.id} style={s.orderCard}>
+                              <Text style={[s.orderSide, { color: o.side === 'buy' ? s.pos.color : s.neg.color }]}>
+                                {o.side === 'buy' ? t('order.buy') : t('order.sell')}
+                              </Text>
+                              <View style={s.orderInfoCol}>
+                                <Text style={s.orderInfo}>{o.amount} {o.tokenName} @ {o.price}</Text>
+                                <Text style={s.orderSub}>{o.statusDetail || o.status}{o.createdAt ? ` · ${new Date(o.createdAt).toISOString().slice(0, 10)}` : ''}</Text>
+                              </View>
+                              <View style={[s.statusBadge, { backgroundColor: badgeColor }]}>
+                                <Text style={s.statusBadgeText} testID="order-status">{o.status}</Text>
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </>
+                    )}
+                    <Text style={s.groupLabel}>Live on chain</Text>
+                    {live.length === 0 ? (
+                      <View style={s.emptyCard}><Text style={s.emptySub}>{t('order.noOpenOrders')}</Text></View>
+                    ) : (
+                      live.map((o, i) => (
+                        <View key={i} style={s.orderCard} testID="live-order">
+                          <Text style={[s.orderSide, { color: (o.side || '').toUpperCase() === 'BUY' ? s.pos.color : s.neg.color }]}>{o.side}</Text>
+                          <View style={s.orderInfoCol}>
+                            <Text style={s.orderInfo}>{o.offerValue} {o.offerTokenid?.slice(0, 8)} @ {o.price} ({o.targetTokenid?.slice(0, 8)})</Text>
+                            <Text style={s.orderSub}>{o.cancelPending ? 'CANCELLED' : 'OPEN'}</Text>
+                          </View>
+                          <View style={[s.statusBadge, { backgroundColor: o.cancelPending ? s.statusFailed.color : s.statusPending.color }]}>
+                            <Text style={s.statusBadgeText} testID="live-order-status">{o.cancelPending ? 'cancelled' : 'pending'}</Text>
+                          </View>
                         </View>
-                        <View style={[s.statusBadge, { backgroundColor: badgeColor }]}>
-                          <Text style={s.statusBadgeText} testID="order-status">{o.status}</Text>
-                        </View>
-                      </View>
-                    );
-                  })}
-                </>
-              )}
-              <Text style={s.groupLabel}>Live on chain</Text>
-              {liveOrders.length === 0 ? (
-                <View style={s.emptyCard}><Text style={s.emptySub}>{t('order.noOpenOrders')}</Text></View>
-              ) : (
-                liveOrders.map((o, i) => (
-                  <View key={i} style={s.orderCard} testID="live-order">
-                    <Text style={[s.orderSide, { color: (o.side || '').toUpperCase() === 'BUY' ? s.pos.color : s.neg.color }]}>{o.side}</Text>
-                    <View style={s.orderInfoCol}>
-                      <Text style={s.orderInfo}>{o.offerValue} {o.offerTokenid?.slice(0, 8)} @ {o.price} ({o.targetTokenid?.slice(0, 8)})</Text>
-                      <Text style={s.orderSub}>{o.cancelPending ? 'CANCELLED' : 'OPEN'}</Text>
-                    </View>
-                    <View style={[s.statusBadge, { backgroundColor: o.cancelPending ? s.statusFailed.color : s.statusPending.color }]}>
-                      <Text style={s.statusBadgeText} testID="live-order-status">{o.cancelPending ? 'cancelled' : 'pending'}</Text>
-                    </View>
-                  </View>
-                ))
-              )}
+                      ))
+                    )}
+                  </>
+                );
+              })()}
             </>
           )}
         </ScrollView>
@@ -299,6 +366,29 @@ export default function OrderScreen() {
                 <TouchableOpacity style={[s.sideBtn, orderSide === 'sell' && s.sideSellActive]} onPress={() => setOrderSide('sell')}>
                   <Text style={[s.sideBtnText, orderSide === 'sell' && s.sideBtnTextActive]}>{t('order.sell')}</Text>
                 </TouchableOpacity>
+              </View>
+
+              <View style={s.fieldGroup}>
+                <Text style={s.fieldLabel}>{t('order.selectToken')}</Text>
+                <TextInput style={s.fieldInput} value={tokenSearch} onChangeText={searchTokens}
+                  placeholder={t('order.searchToken')} placeholderTextColor={theme.colors.text.secondary}
+                  autoCapitalize="none" autoCorrect={false} testID="order-token-search" />
+                {searchingTokens ? (
+                  <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginTop: 8 }} />
+                ) : tokenResults.length > 0 ? (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }} testID="order-token-results">
+                    {tokenResults.map((tk, i) => (
+                      <TouchableOpacity key={i} style={[s.chip, selectedToken?.tokenid === tk.tokenid && s.chipActive]} onPress={() => selectSearchedToken(tk)} testID={`order-token-${i}`}>
+                        <Text style={s.chipText}>{tk.tokenname}</Text>
+                        <Text style={s.chipSub}>{tk.tokenid.slice(0, 10)}...</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                ) : (
+                  selectedToken && (
+                    <Text style={s.selectedTokenText} testID="order-selected-token">{selectedToken.tokenname} · {selectedToken.tokenid}</Text>
+                  )
+                )}
               </View>
 
               <View style={s.fieldGroup}>
@@ -396,4 +486,14 @@ const s = StyleSheet.create((theme) => ({
   totalValue: { fontSize: 18, fontWeight: '700', color: theme.colors.text.primary },
   submitBtn: { borderRadius: 10, paddingVertical: 15, alignItems: 'center' },
   submitBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  chip: { backgroundColor: theme.colors.groupped.background, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.border },
+  chipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  chipText: { fontSize: 12, fontWeight: '600', color: theme.colors.primary },
+  chipSub: { fontSize: 10, color: theme.colors.text.secondary, marginTop: 1 },
+  selectedTokenText: { fontSize: 13, color: theme.colors.text.primary, marginTop: 8 },
+  filterCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 12, marginBottom: 12 },
+  filterLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
+  dateRow: { flexDirection: 'row', gap: 8 },
+  dateInput: { flex: 1, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.background, color: theme.colors.text.primary, padding: 10, fontSize: 14 },
+  placeholder: { color: theme.colors.text.secondary },
 }));

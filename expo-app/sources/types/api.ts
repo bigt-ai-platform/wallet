@@ -40,6 +40,7 @@ export interface MarketPrice {
   change: string;
   executedquantity: string;
   url?: string;
+  decimals?: number;
 }
 
 /**
