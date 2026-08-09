@@ -88,6 +88,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       items: [
         { label: t('sidebar.wallet'), key: 'wallet', icon: WalletIcon, route: '/wallet' },
         { label: t('sidebar.tokens'), key: 'tokens', icon: TokensIcon, route: '/tokens' },
+        { label: t('sidebar.balance'), key: 'balance', icon: DataIcon, route: '/balance' },
       ],
     },
   ];

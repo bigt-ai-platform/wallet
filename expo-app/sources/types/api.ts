@@ -11,6 +11,7 @@ export enum ReqCmd {
   SearchExchangeTokens = 'searchExchangeTokens',
   GetBalances = 'getBalances',
   GetOutputs = 'getOutputs',
+  GetOutputsHistory = 'getOutputsHistory',
   GetUserData = 'getUserData',
   GetTokensItemList = 'getTokensItemList',
   GetMyValidTokenItemList = 'getMyValidTokenItemList',
@@ -101,6 +102,12 @@ export interface UTXO {
   confirmed: boolean;
   spendable: boolean;
   script?: string;
+  tokenname?: string;
+  fromaddress?: string;
+  toaddress?: string;
+  memo?: string;
+  /** Block time in epoch seconds (present on confirmed history outputs). */
+  time?: number;
 }
 
 /**

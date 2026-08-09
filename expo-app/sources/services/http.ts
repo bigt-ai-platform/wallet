@@ -260,6 +260,37 @@ export class HttpService {
   }
 
   /**
+   * Get UTXO history for an address with optional from/to date filter.
+   * starttime/endtime are epoch seconds. Filters by toaddress when provided.
+   */
+  async getOutputsHistory(params: {
+    address?: string;
+    toAddress?: string;
+    fromTime?: number;
+    toTime?: number;
+    baseUrl?: string;
+  }): Promise<ApiResponse<UTXO[]>> {
+    const response = await this.request<GetOutputsResponse>(
+      ReqCmd.GetOutputsHistory,
+      'POST',
+      {
+        fromaddress: params.address || '',
+        toaddress: params.toAddress || '',
+        starttime: params.fromTime ?? null,
+        endtime: params.toTime ?? null,
+      },
+      params.baseUrl
+    );
+    if (response.success && response.data) {
+      return { success: true, data: response.data.outputs };
+    }
+    return {
+      success: false,
+      error: response.error || 'Failed to get outputs history',
+    } as ApiResponse<UTXO[]>;
+  }
+
+  /**
    * Get the on-chain lifecycle status of a single transaction
    */
   async getTransactionStatus(txHash: string): Promise<ApiResponse<TransactionStatusInfo>> {

@@ -79,6 +79,12 @@ export default function RootLayout() {
                                 }}
                             />
                             <Stack.Screen
+                                name="balance"
+                                options={{
+                                    headerShown: false,
+                                }}
+                            />
+                            <Stack.Screen
                                 name="wallet/keys"
                                 options={{
                                     title: 'Manage Keys',
