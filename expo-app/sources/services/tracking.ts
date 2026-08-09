@@ -30,6 +30,8 @@ export interface RecordPaymentParams {
   fromAddress: string;
   toAddress: string;
   memo?: string;
+  /** Layer the payment was submitted to: 0 = L0, 1..N = configured L1 chains. */
+  layer?: number;
 }
 
 export interface RecordOrderParams {
@@ -107,6 +109,7 @@ export function recordPayment(params: RecordPaymentParams): TrackedRecord {
     fromAddress: params.fromAddress,
     toAddress: params.toAddress,
     memo: params.memo,
+    layer: params.layer,
     status: 'pending',
     statusDetail: 'MEMPOOL',
     createdAt: now,

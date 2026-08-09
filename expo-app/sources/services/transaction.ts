@@ -290,6 +290,49 @@ export async function broadcastTransaction(rawTx: string): Promise<ApiResponse<s
 }
 
 /**
+ * Pay a token transfer on an L1 (order) chain.
+ *
+ * Uses the bigtangle-ts SDK Wallet pointed at the given L1 server URL, so the
+ * transaction is created, signed and submitted via the L1 server's
+ * `submitTransaction` endpoint (the L1 server inherits it from
+ * BaseDispatcherController). Returns the transaction hash on success.
+ */
+export async function payOnLayer1(params: {
+  privateKeyHex: string;
+  l1Url: string;
+  toAddress: string;
+  amount: bigint;
+  tokenId: string;
+  memo?: string;
+}): Promise<string> {
+  const { privateKeyHex, l1Url, toAddress, amount, tokenId, memo } = params;
+  const testParams = getTestParams();
+
+  // @ts-ignore - dynamic wallet import (matches WalletHelper.createBigtangleWallet)
+  const { Wallet: BtWallet } = await import('bigtangle-ts/dist/net/bigtangle/wallet/Wallet');
+
+  const rawKey = hexToBytes(privateKeyHex);
+  const pqKey = PQKey.fromPrivateKey(rawKey);
+
+  const wallet = await BtWallet.fromKeysURL(testParams, [pqKey], l1Url);
+  wallet.setFee(false);
+
+  const giveMoneyResult = new Map<string, bigint>();
+  giveMoneyResult.set(toAddress, amount);
+
+  const tx = await wallet.payToList(
+    null,
+    giveMoneyResult,
+    hexToBytes(tokenId),
+    memo || ''
+  );
+  if (!tx) {
+    throw new Error('Failed to create L1 transaction');
+  }
+  return tx.getHash().toString();
+}
+
+/**
  * Send a transaction (create, sign, and broadcast)
  */
 export async function sendTransaction(

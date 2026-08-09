@@ -8,7 +8,7 @@ import { router } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "@/state/wallet";
 import { httpService } from "@/services/http";
-import { sendTransaction } from "@/services/transaction";
+import { sendTransaction, payOnLayer1 } from "@/services/transaction";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { WalletIcon } from "@/components/Icons";
 import SegmentedTabs from "@/components/SegmentedTabs";
@@ -27,6 +27,8 @@ export default function TransactionScreen() {
   const [activeTab, setActiveTab] = React.useState<'send' | 'history' | 'l1test' | 'payments'>('send');
   const [txHistory, setTxHistory] = React.useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = React.useState(false);
+  const [historyLayer, setHistoryLayer] = React.useState(-1); // -1 = all, 0 = L0, 1..N = L1 chains
+  const [historyToFilter, setHistoryToFilter] = React.useState("");
   const [payments, setPayments] = React.useState<TrackedRecord[]>([]);
   const [refreshingPayments, setRefreshingPayments] = React.useState(false);
   const [unlockPwd, setUnlockPwd] = React.useState("");
@@ -34,6 +36,8 @@ export default function TransactionScreen() {
 
   const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
   const [selectedL1Chain, setSelectedL1Chain] = React.useState(0);
+  // Layer to pay through: 0 = Layer 0 (L0), 1..N = the configured L1 chains.
+  const [selectedLayer, setSelectedLayer] = React.useState(0);
   const [l1TestToken, setL1TestToken] = React.useState("");
   const [l1TestAmount, setL1TestAmount] = React.useState("");
   const [l1TestDest, setL1TestDest] = React.useState("");
@@ -51,7 +55,11 @@ export default function TransactionScreen() {
       const res = await httpService.getMyValidTokenItemList(publicInfo.address);
       if (res.success && res.data) {
         setTokens(res.data);
-        if (res.data.length > 0 && !selectedToken) setSelectedToken(res.data[0]);
+        if (res.data.length > 0 && !selectedToken) {
+          // Default to BIG (tokenid = bc) when present, otherwise the first token.
+          const big = res.data.find((t) => t.tokenid === 'bc');
+          setSelectedToken(big || res.data[0]);
+        }
       }
     } catch (e) { console.error("Error loading tokens:", e); }
     finally { setLoadingTokens(false); }
@@ -61,8 +69,31 @@ export default function TransactionScreen() {
     if (!publicInfo?.address) return;
     setLoadingHistory(true);
     try {
-      const res = await httpService.getOutputs(publicInfo.address);
-      if (res.success && res.data) setTxHistory(res.data.slice(0, 20));
+      const [outRes, statusRes] = await Promise.all([
+        httpService.getOutputs(publicInfo.address),
+        httpService.getTransactionsStatusByAddress(publicInfo.address),
+      ]);
+      const outputs: any[] = outRes.success && outRes.data ? outRes.data : [];
+      const statuses: any[] = statusRes.success && statusRes.data ? statusRes.data : [];
+      const statusByHash = new Map<string, any>();
+      for (const st of statuses) {
+        if (st.txHash) statusByHash.set(st.txHash.toLowerCase(), st);
+      }
+      // Build history items from UTXOs joined with their on-chain lifecycle status.
+      const items = outputs.map((u: any) => {
+        const st = statusByHash.get(String(u.txhash || u.txHash || '').toLowerCase());
+        return {
+          txhash: u.txhash || u.txHash || '',
+          tokenid: u.tokenid || u.tokenId || '',
+          value: u.value || u.balance || '',
+          address: u.address || '',
+          layer: 0, // UTXO history currently comes from L0
+          status: st?.status || 'UNKNOWN',
+          statusDetail: st?.status || 'UNKNOWN',
+          createdTime: st?.createdTime || 0,
+        };
+      });
+      setTxHistory(items.slice(0, 100));
     } catch (e) { /* ignore */ }
     finally { setLoadingHistory(false); }
   };
@@ -105,11 +136,28 @@ export default function TransactionScreen() {
         text: "Send", onPress: async () => {
           setLoading(true);
           try {
-            const result = await sendTransaction({
-              fromAddress: publicInfo!.address, toAddress,
-              amount: satoshis.toString(), tokenId: selectedToken.tokenid,
-              privateKeyHex: wallet.wallet.privateKey, memo: memo || undefined,
-            });
+            let result: { success: boolean; error?: string; data?: string };
+            if (selectedLayer === 0) {
+              // Layer 0: manual create/sign/broadcast.
+              result = await sendTransaction({
+                fromAddress: publicInfo!.address, toAddress,
+                amount: satoshis.toString(), tokenId: selectedToken.tokenid,
+                privateKeyHex: wallet.wallet.privateKey, memo: memo || undefined,
+              });
+            } else {
+              // L1 chain: use the SDK wallet pointed at the selected L1 server.
+              const chain = l1Chains[selectedLayer - 1];
+              if (!chain) throw new Error("No L1 chain selected");
+              const txHash = await payOnLayer1({
+                privateKeyHex: wallet.wallet.privateKey,
+                l1Url: chain.url,
+                toAddress,
+                amount: BigInt(satoshis),
+                tokenId: selectedToken.tokenid,
+                memo: memo || undefined,
+              });
+              result = { success: true, data: txHash };
+            }
             if (!result.success) throw new Error(result.error || "Transaction failed");
             const txHash = result.data || "";
             recordPayment({
@@ -121,6 +169,7 @@ export default function TransactionScreen() {
               fromAddress: publicInfo!.address,
               toAddress,
               memo: memo || undefined,
+              layer: selectedLayer,
             });
             setPayments(listPayments());
             Alert.alert("Success", `Tx sent!\nTracking: ${txHash.slice(0, 12)}...`);
@@ -266,6 +315,31 @@ export default function TransactionScreen() {
       {activeTab === 'send' ? (
         <ScrollView contentContainerStyle={s.content}>
           <Text style={s.pageTitle}>{t('transaction.title')}</Text>
+          <View style={s.card}>
+            <Text style={s.cardLabel}>Pay via Layer</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} testID="layer-list">
+              <TouchableOpacity
+                style={[s.tokenChip, selectedLayer === 0 && s.tokenChipActive]}
+                onPress={() => setSelectedLayer(0)}
+                testID="layer-chip-0"
+              >
+                <Text style={[s.tokenChipName, selectedLayer === 0 && s.tokenChipNameActive]}>Layer 0</Text>
+                <Text style={[s.tokenChipBal, selectedLayer === 0 && s.tokenChipBalActive]}>L0</Text>
+              </TouchableOpacity>
+              {l1Chains.map((chain, i) => (
+                <TouchableOpacity
+                  key={i}
+                  style={[s.tokenChip, selectedLayer === i + 1 && s.tokenChipActive]}
+                  onPress={() => setSelectedLayer(i + 1)}
+                  testID={`layer-chip-${i + 1}`}
+                >
+                  <Text style={[s.tokenChipName, selectedLayer === i + 1 && s.tokenChipNameActive]}>{chain.name}</Text>
+                  <Text style={[s.tokenChipBal, selectedLayer === i + 1 && s.tokenChipBalActive]}>L1</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <Text style={s.hint}>Layer 0 submits to the L0 chain; L1 chains submit to the selected order chain.</Text>
+          </View>
           <View style={s.card}>
             <Text style={s.cardLabel}>{t('transaction.selectToken')}</Text>
             {loadingTokens ? (
@@ -416,7 +490,7 @@ export default function TransactionScreen() {
                         <Text style={s.statusBadgeText} testID="payment-status">{p.status}</Text>
                       </View>
                     </View>
-                    <Text style={s.txId}>to {p.toAddress?.slice(0, 12)}...</Text>
+                    <Text style={s.txId}>to {p.toAddress?.slice(0, 12)}... · layer {p.layer === undefined || p.layer === 0 ? 'L0' : `L1-${p.layer}`}</Text>
                     <Text style={s.txId} testID="payment-txhash">{p.txHash}</Text>
                     {p.statusDetail && <Text style={s.payDetail}>{p.statusDetail}</Text>}
                   </View>
@@ -426,8 +500,33 @@ export default function TransactionScreen() {
           )}
         </ScrollView>
       ) : (
-        <ScrollView contentContainerStyle={s.content}>
+        <ScrollView contentContainerStyle={s.content} testID="history-tab">
           <Text style={s.pageTitle}>Transaction History</Text>
+
+          {/* Filters */}
+          <View style={s.card}>
+            <Text style={s.cardLabel}>Filter by Layer</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} testID="history-layer-filters">
+              <TouchableOpacity style={[s.tokenChip, historyLayer === -1 && s.tokenChipActive]} onPress={() => setHistoryLayer(-1)} testID="history-layer-all">
+                <Text style={[s.tokenChipName, historyLayer === -1 && s.tokenChipNameActive]}>All</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.tokenChip, historyLayer === 0 && s.tokenChipActive]} onPress={() => setHistoryLayer(0)} testID="history-layer-0">
+                <Text style={[s.tokenChipName, historyLayer === 0 && s.tokenChipNameActive]}>Layer 0</Text>
+              </TouchableOpacity>
+              {l1Chains.map((chain, i) => (
+                <TouchableOpacity key={i} style={[s.tokenChip, historyLayer === i + 1 && s.tokenChipActive]} onPress={() => setHistoryLayer(i + 1)} testID={`history-layer-${i + 1}`}>
+                  <Text style={[s.tokenChipName, historyLayer === i + 1 && s.tokenChipNameActive]}>{chain.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+          <View style={s.card}>
+            <Text style={s.cardLabel}>Filter by To Address</Text>
+            <TextInput style={s.input} value={historyToFilter} onChangeText={setHistoryToFilter}
+              placeholder="Recipient address" placeholderTextColor={s.placeholder.color}
+              autoCapitalize="none" autoCorrect={false} testID="history-to-filter" />
+          </View>
+
           {loadingHistory ? (
             <ActivityIndicator size="small" color={s.loader.color} style={{ padding: 24 }} />
           ) : txHistory.length === 0 ? (
@@ -436,16 +535,29 @@ export default function TransactionScreen() {
               <Text style={s.emptySub}>Your transaction history will appear here after you send or receive tokens.</Text>
             </View>
           ) : (
-            txHistory.map((tx, i) => (
-              <View key={i} style={s.txCard}>
-                <View style={s.txDot} />
-                <View style={s.txInfo}>
-                  <Text style={s.txType}>UTXO</Text>
-                  <Text style={s.txId}>{tx.txhash?.slice(0, 20) || '...'}</Text>
-                </View>
-                <Text style={s.txValue}>{tx.value || tx.balance || ''}</Text>
-              </View>
-            ))
+            txHistory
+              .filter((tx) => historyLayer === -1 || tx.layer === historyLayer)
+              .filter((tx) => !historyToFilter.trim() || (tx.address || '').toLowerCase().includes(historyToFilter.trim().toLowerCase()))
+              .map((tx, i) => {
+                const badgeColor = tx.status === 'CONFIRMED' ? s.statusConfirmed.color
+                  : tx.status === 'DROPPED' ? s.statusFailed.color : s.statusPending.color;
+                return (
+                  <View key={i} style={s.txCard} testID={`history-item-${i}`}>
+                    <View style={s.txDot} />
+                    <View style={s.txInfo}>
+                      <View style={s.payHeader}>
+                        <Text style={s.txType}>{tx.tokenid === 'bc' ? 'BIG' : (tx.tokenid || 'UTXO')}</Text>
+                        <View style={[s.statusBadge, { backgroundColor: badgeColor }]}>
+                          <Text style={s.statusBadgeText}>{tx.status}</Text>
+                        </View>
+                      </View>
+                      <Text style={s.txId}>layer {tx.layer === 0 ? 'L0' : `L1-${tx.layer}`} · to {tx.address ? tx.address.slice(0, 16) : '...'}</Text>
+                      <Text style={s.txId}>{tx.txhash?.slice(0, 20) || '...'}</Text>
+                    </View>
+                    <Text style={s.txValue}>{tx.value || ''}</Text>
+                  </View>
+                );
+              })
           )}
         </ScrollView>
       )}
