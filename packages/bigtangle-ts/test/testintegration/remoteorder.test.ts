@@ -57,26 +57,15 @@ class RemoteOrderTests extends RemoteTest {
     const userFunds = CoinConstants.FEE_DEFAULT.getValue() * BigInt(500);
     console.log("Funding issuer...");
     await this.payBigTo([issuer], userFunds, []);
-    console.log("Waiting 25s for MCMC...");
-    await new Promise(resolve => setTimeout(resolve, 25000));
+    await this.waitForConfirmedBalance(bcToken, [issuer]);
     console.log("Funding buyer...");
     await this.payBigTo([buyer], userFunds, []);
-    console.log("Waiting 25s for MCMC...");
-    await new Promise(resolve => setTimeout(resolve, 25000));
+    await this.waitForConfirmedBalance(bcToken, [buyer]);
 
     // Verify both have confirmed BC
     for (const key of [issuer, buyer]) {
-      let hasBc = false;
-      for (let i = 0; i < 30; i++) {
-        const utxos = await this.getBalanceByKey(false, key);
-        for (const u of utxos) {
-          if (u.getTokenId() === bcToken && u.getValue()!.getValue() > BigInt(0))
-            hasBc = true;
-        }
-        if (hasBc) break;
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      expect(hasBc).toBe(true);
+      const utxo = await this.waitForConfirmedBalance(bcToken, [key]);
+      expect(utxo.getValue()!.getValue()).toBeGreaterThan(BigInt(0));
     }
     console.log("Issuer and buyer funded with BC");
 
@@ -99,7 +88,6 @@ class RemoteOrderTests extends RemoteTest {
     }
     if (signed != null) {
       console.log("Token multi-signed, waiting for confirmation...");
-      await new Promise(resolve => setTimeout(resolve, 5000));
     } else {
       console.log("multiSign returned null (may need more time)");
     }
@@ -114,19 +102,7 @@ class RemoteOrderTests extends RemoteTest {
     console.log(`Token ${tokenName} created`);
 
     // Wait for token UTXOs to be confirmed
-    await new Promise(resolve => setTimeout(resolve, 25000));
-
-    let hasToken = false;
-    for (let i = 0; i < 60; i++) {
-      const utxos = await this.getBalanceByKey(false, issuer);
-      for (const u of utxos) {
-        if (u.getTokenId() === tokenid && u.getValue()!.getValue() > BigInt(0))
-          hasToken = true;
-      }
-      if (hasToken) break;
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    }
-    expect(hasToken).toBe(true);
+    await this.waitForConfirmedBalance(tokenid, [issuer]);
 
     // 4. Create a sell order: sell 100 tradetoken at price 1000 (BC base)
     const sellPrice = BigInt(1000);
@@ -160,17 +136,7 @@ class RemoteOrderTests extends RemoteTest {
 
     // 6. Create a matching buy order
     // Ensure buyer's BC UTXOs are still confirmed
-    let buyerReady = false;
-    for (let i = 0; i < 15; i++) {
-      const utxos = await this.getBalanceByKey(false, buyer);
-      for (const u of utxos) {
-        if (u.getTokenId() === bcToken && u.getValue()!.getValue() > BigInt(0))
-          buyerReady = true;
-      }
-      if (buyerReady) break;
-      await new Promise(resolve => setTimeout(resolve, 3000));
-    }
-    expect(buyerReady).toBe(true);
+    await this.waitForConfirmedBalance(bcToken, [buyer], 45000, 3000);
 
     console.log(`Buy: ${sellAmount} ${tokenName} @ price ${sellPrice}`);
     buyerWallet.setServerURL(this.contextRoot);

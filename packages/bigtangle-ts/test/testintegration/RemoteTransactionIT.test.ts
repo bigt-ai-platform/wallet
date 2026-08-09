@@ -38,6 +38,21 @@ function javaAddress(key: PQKey): string {
   return Address.fromP2PKH(TestParams.get(), prefixedHash).toString();
 }
 
+/** Poll getBalances until the funded UTXO is queryable (replaces a fixed 10s sleep). */
+async function waitForFundedUtxos(
+  key: PQKey,
+  maxRetries = 30,
+  delayMs = 1000
+): Promise<void> {
+  const prefixedHashHex = Utils.HEX.encode(Utils.sha256hash160(key.getPrefixedPublicKeyBytes()));
+  for (let i = 0; i < maxRetries; i++) {
+    const resp = await httpPost("getBalances", [prefixedHashHex]);
+    if ((resp.outputs?.length ?? 0) > 0) return;
+    await new Promise(r => setTimeout(r, delayMs));
+  }
+  throw new Error("Funded UTXOs never became queryable after fundKey");
+}
+
 describe("RemoteTransactionIT", () => {
   test("fund and find UTXOs via Java-matching address", { timeout: 60000 }, async () => {
     const key = PQKey.createNew();
@@ -46,8 +61,8 @@ describe("RemoteTransactionIT", () => {
     // Fund using the PQ path (pubkey with 0x05 prefix)
     await fundKey(key);
 
-    // Wait for MCMC
-    await new Promise(r => setTimeout(r, 10000));
+    // Wait for the funded UTXO to be queryable
+    await waitForFundedUtxos(key);
 
     // Use the address the Java server stores under to query getOpenAllOutputs
     // getBalances expects 20-byte hash160, which the prefixed hash is.
@@ -75,7 +90,8 @@ describe("RemoteTransactionIT", () => {
 
     await fundKey(alice);
     await fundKey(bob);
-    await new Promise(r => setTimeout(r, 10000));
+    await waitForFundedUtxos(alice);
+    await waitForFundedUtxos(bob);
 
     // Create wallets
     const aliceWallet = Wallet.fromKeysURL(TestParams.get(), [alice], L0_URL);

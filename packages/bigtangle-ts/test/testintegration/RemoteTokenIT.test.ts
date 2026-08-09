@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "vitest";
 import { Wallet } from "../../src/net/bigtangle/wallet/Wallet";
 import { PQKey } from "../../src/net/bigtangle/crypto/pq/PQKey";
 import { TestParams } from "../../src/net/bigtangle/params/TestParams";
+import { NetworkParameters } from "../../src/net/bigtangle/params/NetworkParameters";
 import { Utils } from "../../src/net/bigtangle/core/Utils";
 import { Token } from "../../src/net/bigtangle/core/Token";
 import { MultiSignAddress } from "../../src/net/bigtangle/core/MultiSignAddress";
@@ -40,6 +41,28 @@ async function pollToken(tokenid: string, maxRetries = 40, delayMs = 2000): Prom
     if (i < maxRetries - 1) await new Promise(r => setTimeout(r, delayMs));
   }
   return null;
+}
+
+/**
+ * Wait until the wallet has a spendable BIG UTXO (used after fundKey in
+ * beforeAll). Replaces a fixed sleep so tests start as soon as the funded
+ * coin is queryable.
+ */
+async function waitForSpendableBig(
+  wallet: Wallet,
+  maxRetries = 30,
+  delayMs = 1000
+): Promise<void> {
+  for (let i = 0; i < maxRetries; i++) {
+    const candidates = await wallet.calculateAllSpendCandidates(null, false);
+    const ok = candidates.some(
+      (co) => co.getUTXO().getTokenId() === NetworkParameters.BIGTANGLE_TOKENID_STRING &&
+        co.getValue().signum() > 0
+    );
+    if (ok) return;
+    if (i < maxRetries - 1) await new Promise((r) => setTimeout(r, delayMs));
+  }
+  throw new Error("Genesis wallet has no spendable BIG UTXO after fundKey");
 }
 
 /**
@@ -109,7 +132,8 @@ describe("RemoteTokenIT", () => {
     wallet.setServerURL(L0_URL);
     wallet.setFee(false);
     await fundKey(genesisKey);
-    await new Promise(r => setTimeout(r, 10000));
+    // Wait for the funded BIG UTXO to become spendable instead of a fixed 10s.
+    await waitForSpendableBig(wallet);
   }, 30000);
 
   test("server health check", async () => {
@@ -150,7 +174,6 @@ describe("RemoteTokenIT", () => {
     const signed = await wallet.multiSign(tokenid, walletKeys[0], null);
     if (signed != null) {
       console.log("multiSign succeeded");
-      await new Promise(r => setTimeout(r, 5000));
     }
 
     const foundToken = await pollToken(tokenid);
@@ -176,7 +199,7 @@ describe("RemoteTokenIT", () => {
     const walletKeys = await wallet.walletKeys(null);
     const signed = await wallet.multiSign(tokenid, walletKeys[0], null);
     if (signed != null) {
-      await new Promise(r => setTimeout(r, 5000));
+      console.log("multiSign succeeded");
     }
 
     const foundToken = await pollToken(tokenid);
@@ -200,7 +223,7 @@ describe("RemoteTokenIT", () => {
     const walletKeys = await wallet.walletKeys(null);
     const signed = await wallet.multiSign(tokenid, walletKeys[0], null);
     if (signed != null) {
-      await new Promise(r => setTimeout(r, 5000));
+      console.log("multiSign succeeded");
     }
 
     const foundToken = await pollToken(tokenid, 40, 3000);

@@ -378,6 +378,32 @@ export abstract class RemoteTest {
 
     return null;
   }
+
+  /**
+   * Poll until a spendable (confirmed, non-spent) UTXO for {@code tokenid}
+   * appears for {@code keys}. Replaces fixed sleeps (e.g. 25s MCMC waits) that
+   * idle for far longer than the actual confirmation latency.
+   */
+  protected async waitForConfirmedBalance(
+    tokenid: string,
+    keys: PQKey[],
+    maxWaitMs: number = 90000,
+    checkIntervalMs: number = 2000
+  ): Promise<UTXO> {
+    const startTime = Date.now();
+    while (Date.now() - startTime < maxWaitMs) {
+      const utxos = await this.getBalanceByKeys(false, keys);
+      for (const utxo of utxos) {
+        if (tokenid === utxo.getTokenId() && utxo.getValue()!.getValue() > BigInt(0)) {
+          return utxo;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, checkIntervalMs));
+    }
+    throw new Error(
+      `Timeout waiting for confirmed balance of token ${tokenid} after ${maxWaitMs}ms`
+    );
+  }
   
   protected async getBalanceForToken(
     tokenid: string,

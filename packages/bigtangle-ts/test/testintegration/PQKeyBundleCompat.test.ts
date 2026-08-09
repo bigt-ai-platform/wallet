@@ -31,6 +31,23 @@ async function fundKey(k: PQKey, value: number = 10000000000): Promise<void> {
   expect(fundRes.errorcode).toBe(0);
 }
 
+/** Poll until the wallet sees a spendable BIG UTXO (replaces a fixed 10s sleep). */
+async function waitForSpendableBig(
+  wallet: Wallet,
+  maxRetries = 30,
+  delayMs = 1000
+): Promise<void> {
+  for (let i = 0; i < maxRetries; i++) {
+    const candidates = await wallet.calculateAllSpendCandidates(null, false);
+    const ok = candidates.some(
+      (co) => co.getUTXO().getTokenId() === "bc" && co.getValue().signum() > 0
+    );
+    if (ok) return;
+    await new Promise(r => setTimeout(r, delayMs));
+  }
+  throw new Error("No spendable BIG UTXO after fundKey");
+}
+
 /**
  * Test to debug the "truncated key bytes" error in MultiSignServiceCreate.
  * Compares KeyBundle serialization format between TypeScript and Java
@@ -46,7 +63,7 @@ describe("PQKeyBundleCompat", () => {
     // Fund both keys
     await fundKey(key);
     await fundKey(genesisKey);
-    await new Promise(r => setTimeout(r, 10000));
+    await waitForSpendableBig(wallet);
 
     // Create token
     const tokenid = Utils.HEX.encode(key.getPrefixedPublicKeyBytes());
@@ -94,7 +111,7 @@ describe("PQKeyBundleCompat", () => {
 
     // If we get here, token creation succeeded — verify it
     if (signed) {
-      await new Promise(r => setTimeout(r, 5000));
+      await waitForSpendableBig(wallet);
       const tokenResp = await httpPost("getTokenById", { tokenid });
       console.log("getTokenById response:", JSON.stringify(tokenResp).substring(0, 200));
     }
