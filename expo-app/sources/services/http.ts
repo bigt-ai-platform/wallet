@@ -483,6 +483,34 @@ export class HttpService {
   }
 
   /**
+   * Get a time series of price / executedQuantity for a token from the L1
+   * order chain over the given interval (minutes). Mirrors the chartdata
+   * `jsondata` endpoint: it calls getOrdersTicker in time-series mode
+   * (no `count`, with startDate/endDate/interval) and returns per-token
+   * data points [{ price, inserttime, executedQuantity }].
+   */
+  async getOrdersTickerSeries(
+    tokenid: string,
+    intervalMinutes: number,
+    baseToken: string,
+    endDateMs: number = Date.now()
+  ): Promise<ApiResponse<any>> {
+    const response = await this.requestL1<any>(
+      'getOrdersTicker',
+      'POST',
+      {
+        tokenids: [tokenid],
+        basetoken: baseToken,
+        interval: String(intervalMinutes),
+        startDate: endDateMs - intervalMinutes * 60 * 1000,
+        endDate: endDateMs,
+      }
+    );
+    if (response.success && response.data) return { success: true, data: response.data };
+    return { success: false, error: response.error || 'Failed to get ticker series' } as ApiResponse<any>;
+  }
+
+  /**
    * Submit an order transaction (raw hex) (L1)
    */
   async submitOrderTransaction(txHex: string): Promise<ApiResponse<string>> {

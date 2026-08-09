@@ -68,7 +68,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       items: [
         { label: t('sidebar.home'), key: 'transaction', icon: WalletIcon, route: '/' },
         { label: t('sidebar.exchange'), key: 'exchange', icon: MarketIcon, route: '/order', view: 'exchange' },
-        { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/order', view: 'chart' },
+        { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/chart' },
       ],
     },
     {
