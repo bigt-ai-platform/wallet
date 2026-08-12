@@ -142,7 +142,7 @@ export default function KeysScreen() {
       if (isWeb) {
         const blob = new Blob([encryptedContent], { type: "application/json" });
 
-        if ("showSaveFilePicker" in globalThis) {
+        if (typeof (globalThis as any).showSaveFilePicker === "function") {
           try {
             const handle = await (globalThis as any).showSaveFilePicker({
               suggestedName: fileName,

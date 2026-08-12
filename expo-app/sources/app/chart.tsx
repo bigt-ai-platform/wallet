@@ -44,7 +44,18 @@ const CHART_W = 360;
 const CHART_H = 220;
 const PAD = 8;
 
-function buildPoints(chart: ChartData | null): { line: string; bars: React.ReactNode[]; maxY: number; minY: number } {
+/** Formats an axis value: integers stay whole, fractions show at most 2 decimals. */
+function formatAxisValue(v: number): string {
+  if (Number.isInteger(v)) return String(v);
+  return v.toFixed(2);
+}
+
+function buildPoints(chart: ChartData | null, chartHeight: number): {
+  line: string;
+  bars: React.ReactNode[];
+  maxY: number;
+  minY: number;
+} {
   if (!chart || chart.datas.length === 0) {
     return { line: '', bars: [], maxY: 0, minY: 0 };
   }
@@ -58,16 +69,16 @@ function buildPoints(chart: ChartData | null): { line: string; bars: React.React
   const span = maxY - minY;
   const step = (CHART_W - PAD * 2) / Math.max(datas.length - 1, 1);
   const x = (i: number) => PAD + i * step;
-  const y = (v: number) => PAD + (1 - (v - minY) / span) * (CHART_H - PAD * 2);
+  const y = (v: number) => PAD + (1 - (v - minY) / span) * (chartHeight - PAD * 2);
 
   const linePts = datas.map((d, i) => `${x(i).toFixed(1)},${y(d.price).toFixed(1)}`).join(' ');
   const bars = datas.map((d, i) => {
-    const h = Math.max((d.executedQuantity / maxVol) * (CHART_H - PAD * 2), 1);
+    const h = Math.max((d.executedQuantity / maxVol) * (chartHeight - PAD * 2), 1);
     return (
       <Rect
         key={i}
         x={x(i) - step / 4}
-        y={CHART_H - PAD - h}
+        y={chartHeight - PAD - h}
         width={Math.max(step / 2, 1)}
         height={h}
         fill={d.price >= (i > 0 ? datas[i - 1].price : d.price) ? '#10B981' : '#EF4444'}
@@ -145,7 +156,9 @@ export default function ChartScreen() {
     if (selectedToken) loadChart(selectedToken.tokenid, interval);
   }, [selectedToken, interval]);
 
-  const { line, bars, maxY, minY } = buildPoints(chart);
+  const VOL_H = 140;
+  const { line, maxY, minY } = buildPoints(chart, CHART_H);
+  const { bars } = buildPoints(chart, VOL_H);
   const baseToken = 'bc';
 
   return (
@@ -205,13 +218,12 @@ export default function ChartScreen() {
           ) : (
             <>
               <Svg width={chartW} height={CHART_H} testID="chart-price">
-                {bars}
                 {chart && chart.datas.length > 0 && (
                   <>
                     <SvgLine x1={PAD} y1={PAD} x2={PAD} y2={CHART_H - PAD} stroke="#666" strokeWidth={1} />
                     <SvgLine x1={PAD} y1={CHART_H - PAD} x2={chartW - PAD} y2={CHART_H - PAD} stroke="#666" strokeWidth={1} />
-                    <SvgText x={PAD + 2} y={PAD + 10} fill="#999" fontSize={9}>{maxY.toFixed(4)}</SvgText>
-                    <SvgText x={PAD + 2} y={CHART_H - PAD - 4} fill="#999" fontSize={9}>{minY.toFixed(4)}</SvgText>
+                    <SvgText x={PAD + 2} y={PAD + 10} fill="#999" fontSize={9}>{formatAxisValue(maxY)}</SvgText>
+                    <SvgText x={PAD + 2} y={CHART_H - PAD - 4} fill="#999" fontSize={9}>{formatAxisValue(minY)}</SvgText>
                     <Polyline points={line} fill="none" stroke="#3B82F6" strokeWidth={2} />
                   </>
                 )}
@@ -224,7 +236,7 @@ export default function ChartScreen() {
         <View style={s.card}>
           <Text style={s.chartTitle}>{t('chart.volume')}</Text>
           {chart && chart.datas.length > 0 ? (
-            <Svg width={chartW} height={140} testID="chart-volume">
+            <Svg width={chartW} height={VOL_H} testID="chart-volume">
               {bars}
             </Svg>
           ) : (

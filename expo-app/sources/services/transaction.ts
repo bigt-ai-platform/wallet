@@ -4,7 +4,7 @@
  * Handles transaction creation, signing, and broadcasting
  */
 
-import { PQKey, TestParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder } from 'bigtangle-ts';
+import { PQKey, TestParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput } from 'bigtangle-ts';
 // @ts-ignore
 import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
 // @ts-ignore
@@ -143,8 +143,9 @@ export async function createAndSignTransaction(
     const amountValue = BigInt(amount);
     const feeValue = BigInt(fee);
 
-    // Fetch UTXOs for the address
-    const utxosResponse = await httpService.getOutputs(fromAddress, tokenId);
+    // Fetch UTXOs for the wallet (server expects pubkey hashes, derived from
+    // the private key).
+    const utxosResponse = await httpService.getOutputs(privateKeyHex);
     if (!utxosResponse.success || !utxosResponse.data) {
       return {
         success: false,
@@ -290,6 +291,94 @@ export async function broadcastTransaction(rawTx: string): Promise<ApiResponse<s
 }
 
 /**
+ * Pay a token transfer on Layer 0.
+ *
+ * Builds and signs the transaction with the SDK crypto primitives (no SDK
+ * Wallet HTTP layer — that uses Node's `http.Agent`/`jackson-js`, neither of
+ * which works in the web bundle). UTXOs come from the app's own fetch-based
+ * httpService (the server returns the Java UTXO JSON shape), and the raw tx is
+ * broadcast via the app's fetch-based `broadcastTransaction`.
+ */
+export async function payOnLayer0(params: {
+  privateKeyHex: string;
+  toAddress: string;
+  amount: bigint;
+  tokenId: string;
+  memo?: string;
+}): Promise<string> {
+  const { privateKeyHex, toAddress, amount, tokenId, memo } = params;
+  const testParams = getTestParams();
+
+  const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
+  const tokenBytes = hexToBytes(tokenId);
+
+  // 1. Fetch spendable UTXOs (correct pubkey-hash format).
+  const utxosResponse = await httpService.getOutputs(privateKeyHex);
+  if (!utxosResponse.success || !utxosResponse.data) {
+    throw new Error('Failed to fetch UTXOs');
+  }
+
+  // 2. Select confirmed UTXOs of the target token to cover amount + fee.
+  const fee = BigInt(1000);
+  const needed = amount + fee;
+  const utxos = (utxosResponse.data as any[])
+    .filter((u) => (u.tokenId || u.value?.tokenHex) === tokenId && u.confirmed !== false)
+    .map((u) => SdkUTXO.fromJSONObject(u))
+    .sort((a, b) => {
+      const av = a.getValue().getValue();
+      const bv = b.getValue().getValue();
+      return av < bv ? 1 : av > bv ? -1 : 0;
+    });
+
+  let total = BigInt(0);
+  const selected: any[] = [];
+  for (const u of utxos) {
+    selected.push(u);
+    total += u.getValue().getValue();
+    if (total >= needed) break;
+  }
+  if (total < needed) {
+    throw new Error('Insufficient funds');
+  }
+
+  // 3. Build the transaction (addInput2 wires the correct outpoint).
+  const tx = new Transaction(testParams);
+  if (memo) tx.setMemo(memo);
+
+  for (const u of selected) {
+    tx.addInput2(u.getBlockHash(), new FreeStandingTransactionOutput(testParams, u));
+  }
+
+  tx.addOutputAddress(new Coin(amount, tokenBytes), Address.fromBase58(testParams, toAddress));
+
+  const change = total - needed;
+  if (change > BigInt(0)) {
+    tx.addOutputAddress(new Coin(change, tokenBytes), Address.fromKey(testParams, pqKey));
+  }
+
+  // 4. Sign each input.
+  const inputs = tx.getInputs();
+  for (let i = 0; i < inputs.length; i++) {
+    const input = inputs[i];
+    const connected = input.getConnectedOutput();
+    const scriptBytes = connected?.getScriptBytes() ?? new Uint8Array(0);
+    const sigHashBytes = tx.hashForSignatureScript(i, new Script(scriptBytes), 1 as any, false);
+    const signatureBundle = await pqKey.signWithAesKey(sigHashBytes, null);
+    const scriptSig = ScriptBuilder.createInputScript(signatureBundle, pqKey);
+    input.setScriptSig(scriptSig!);
+  }
+
+  // 5. Broadcast the raw transaction to the L0 server.
+  const txHex = bytesToHex(tx.bitcoinSerialize());
+  const broadcastResult = await broadcastTransaction(txHex);
+  if (!broadcastResult.success) {
+    throw new Error(broadcastResult.error || 'Failed to broadcast transaction');
+  }
+
+  return tx.getHash().toString();
+}
+
+/**
  * Pay a token transfer on an L1 (order) chain.
  *
  * Uses the bigtangle-ts SDK Wallet pointed at the given L1 server URL, so the
@@ -308,13 +397,10 @@ export async function payOnLayer1(params: {
   const { privateKeyHex, l1Url, toAddress, amount, tokenId, memo } = params;
   const testParams = getTestParams();
 
-  // @ts-ignore - dynamic wallet import (matches WalletHelper.createBigtangleWallet)
-  const { Wallet: BtWallet } = await import('bigtangle-ts/dist/net/bigtangle/wallet/Wallet');
-
   const rawKey = hexToBytes(privateKeyHex);
   const pqKey = PQKey.fromPrivateKey(rawKey);
 
-  const wallet = await BtWallet.fromKeysURL(testParams, [pqKey], l1Url);
+  const wallet = await Wallet.fromKeysURL(testParams, [pqKey], l1Url);
   wallet.setFee(false);
 
   const giveMoneyResult = new Map<string, bigint>();
@@ -351,13 +437,10 @@ export async function orderOnLayer1(params: {
   const { side, privateKeyHex, l1Url, tokenId, price, amount, baseToken, decimals } = params;
   const testParams = getTestParams();
 
-  // @ts-ignore - dynamic wallet import (matches WalletHelper.createBigtangleWallet)
-  const { Wallet: BtWallet } = await import('bigtangle-ts/dist/net/bigtangle/wallet/Wallet');
-
   const rawKey = hexToBytes(privateKeyHex);
   const pqKey = PQKey.fromPrivateKey(rawKey);
 
-  const wallet = await BtWallet.fromKeysURL(testParams, [pqKey], l1Url);
+  const wallet = await Wallet.fromKeysURL(testParams, [pqKey], l1Url);
   wallet.setFee(false);
 
   const tx = side === 'buy'

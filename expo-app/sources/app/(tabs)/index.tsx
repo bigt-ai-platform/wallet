@@ -1,14 +1,14 @@
 import * as React from "react";
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert,
+  ActivityIndicator, Alert, Platform,
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { router } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "@/state/wallet";
 import { httpService } from "@/services/http";
-import { sendTransaction, payOnLayer1 } from "@/services/transaction";
+import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { WalletIcon } from "@/components/Icons";
 import SegmentedTabs from "@/components/SegmentedTabs";
@@ -50,16 +50,29 @@ export default function TransactionScreen() {
 
   const loadTokens = async () => {
     if (!publicInfo?.address) return;
+    const wallet = getUnlockedWallet();
+    if (!wallet) return;
     setLoadingTokens(true);
     try {
-      const res = await httpService.getMyValidTokenItemList(publicInfo.address);
-      if (res.success && res.data) {
-        setTokens(res.data);
-        if (res.data.length > 0 && !selectedToken) {
-          // Default to BIG (tokenid = bc) when present, otherwise the first token.
-          const big = res.data.find((t) => t.tokenid === 'bc');
-          setSelectedToken(big || res.data[0]);
-        }
+      const res = await httpService.getMyValidTokenItemList(wallet.wallet.privateKey);
+      const items: WalletAccountItem[] = res.success && res.data ? res.data : [];
+      // Always offer BIG (the base token) even when the wallet holds no
+      // balance yet, so a fresh wallet still defaults to a sendable token.
+      if (!items.some((t) => t.tokenid === 'bc')) {
+        items.unshift({
+          tokenid: 'bc',
+          tokenname: 'BIG',
+          balance: '0',
+          confirmedBalance: '0',
+          unconfirmedBalance: '0',
+          decimals: 8,
+        });
+      }
+      setTokens(items);
+      if (items.length > 0 && !selectedToken) {
+        // Default to BIG (tokenid = bc) when present, otherwise the first token.
+        const big = items.find((t) => t.tokenid === 'bc');
+        setSelectedToken(big || items[0]);
       }
     } catch (e) { console.error("Error loading tokens:", e); }
     finally { setLoadingTokens(false); }
@@ -67,10 +80,12 @@ export default function TransactionScreen() {
 
   const loadHistory = async () => {
     if (!publicInfo?.address) return;
+    const wallet = getUnlockedWallet();
+    if (!wallet) return;
     setLoadingHistory(true);
     try {
       const [outRes, statusRes] = await Promise.all([
-        httpService.getOutputs(publicInfo.address),
+        httpService.getOutputs(wallet.wallet.privateKey),
         httpService.getTransactionsStatusByAddress(publicInfo.address),
       ]);
       const outputs: any[] = outRes.success && outRes.data ? outRes.data : [];
@@ -81,11 +96,11 @@ export default function TransactionScreen() {
       }
       // Build history items from UTXOs joined with their on-chain lifecycle status.
       const items = outputs.map((u: any) => {
-        const st = statusByHash.get(String(u.txhash || u.txHash || '').toLowerCase());
+        const st = statusByHash.get(String(u.hashHex || u.txhash || u.txHash || '').toLowerCase());
         return {
-          txhash: u.txhash || u.txHash || '',
+          txhash: u.hashHex || u.txhash || u.txHash || '',
           tokenid: u.tokenid || u.tokenId || '',
-          value: u.value || u.balance || '',
+          value: u.value?.value != null ? String(u.value.value) : (u.value || u.balance || ''),
           address: u.address || '',
           layer: 0, // UTXO history currently comes from L0
           status: st?.status || 'UNKNOWN',
@@ -130,56 +145,72 @@ export default function TransactionScreen() {
     const decimals = selectedToken.decimals || 8;
     const satoshis = Math.floor(amountNum * Math.pow(10, decimals));
 
-    Alert.alert("Confirm Transaction", `Send ${amount} ${selectedToken.tokenname} to:\n${toAddress}`, [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Send", onPress: async () => {
-          setLoading(true);
-          try {
-            let result: { success: boolean; error?: string; data?: string };
-            if (selectedLayer === 0) {
-              // Layer 0: manual create/sign/broadcast.
-              result = await sendTransaction({
-                fromAddress: publicInfo!.address, toAddress,
-                amount: satoshis.toString(), tokenId: selectedToken.tokenid,
-                privateKeyHex: wallet.wallet.privateKey, memo: memo || undefined,
-              });
-            } else {
-              // L1 chain: use the SDK wallet pointed at the selected L1 server.
-              const chain = l1Chains[selectedLayer - 1];
-              if (!chain) throw new Error("No L1 chain selected");
-              const txHash = await payOnLayer1({
-                privateKeyHex: wallet.wallet.privateKey,
-                l1Url: chain.url,
-                toAddress,
-                amount: BigInt(satoshis),
-                tokenId: selectedToken.tokenid,
-                memo: memo || undefined,
-              });
-              result = { success: true, data: txHash };
-            }
-            if (!result.success) throw new Error(result.error || "Transaction failed");
-            const txHash = result.data || "";
-            recordPayment({
-              txHash,
-              tokenId: selectedToken.tokenid,
-              tokenName: selectedToken.tokenname,
-              amount,
-              decimals: selectedToken.decimals || 8,
-              fromAddress: publicInfo!.address,
-              toAddress,
-              memo: memo || undefined,
-              layer: selectedLayer,
-            });
-            setPayments(listPayments());
-            Alert.alert("Success", `Tx sent!\nTracking: ${txHash.slice(0, 12)}...`);
-            setToAddress(""); setAmount(""); setMemo(""); loadTokens(); loadHistory();
-          } catch (error) {
-            Alert.alert("Error", error instanceof Error ? error.message : "Failed");
-          } finally { setLoading(false); }
-        },
-      },
-    ]);
+    // Confirm the send. react-native-web's Alert.alert ignores the buttons
+    // array, so on web use window.confirm (which Playwright/browsers can drive);
+    // on native keep the Alert with Cancel/Send buttons.
+    const confirmed = await new Promise<boolean>((resolve) => {
+      if (Platform.OS === "web") {
+        resolve(
+          typeof window !== "undefined" && window.confirm(
+            `Send ${amount} ${selectedToken.tokenname} to:\n${toAddress}`,
+          ),
+        );
+      } else {
+        Alert.alert("Confirm Transaction", `Send ${amount} ${selectedToken.tokenname} to:\n${toAddress}`, [
+          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+          { text: "Send", onPress: () => resolve(true) },
+        ]);
+      }
+    });
+    if (!confirmed) return;
+
+    setLoading(true);
+    try {
+      let result: { success: boolean; error?: string; data?: string };
+      if (selectedLayer === 0) {
+        // Layer 0: use the SDK wallet (correct getOutputs format, fee
+        // included) so the wallet's funded UTXOs can be spent.
+        const txHash = await payOnLayer0({
+          privateKeyHex: wallet.wallet.privateKey,
+          toAddress,
+          amount: BigInt(satoshis),
+          tokenId: selectedToken.tokenid,
+          memo: memo || undefined,
+        });
+        result = { success: true, data: txHash };
+      } else {
+        // L1 chain: use the SDK wallet pointed at the selected L1 server.
+        const chain = l1Chains[selectedLayer - 1];
+        if (!chain) throw new Error("No L1 chain selected");
+        const txHash = await payOnLayer1({
+          privateKeyHex: wallet.wallet.privateKey,
+          l1Url: chain.url,
+          toAddress,
+          amount: BigInt(satoshis),
+          tokenId: selectedToken.tokenid,
+          memo: memo || undefined,
+        });
+        result = { success: true, data: txHash };
+      }
+      if (!result.success) throw new Error(result.error || "Transaction failed");
+      const txHash = result.data || "";
+      recordPayment({
+        txHash,
+        tokenId: selectedToken.tokenid,
+        tokenName: selectedToken.tokenname,
+        amount,
+        decimals: selectedToken.decimals || 8,
+        fromAddress: publicInfo!.address,
+        toAddress,
+        memo: memo || undefined,
+        layer: selectedLayer,
+      });
+      setPayments(listPayments());
+      Alert.alert("Success", `Tx sent!\nTracking: ${txHash.slice(0, 12)}...`);
+      setToAddress(""); setAmount(""); setMemo(""); loadTokens(); loadHistory();
+    } catch (error) {
+      Alert.alert("Error", error instanceof Error ? error.message : "Failed");
+    } finally { setLoading(false); }
   };
 
   const handlePayL1 = async () => {

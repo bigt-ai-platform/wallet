@@ -20,11 +20,13 @@ export async function configureServerUrl(page: Page, serverUrl: string, l1Url?: 
   await input.fill('');
   await input.fill(serverUrl);
   if (l1Url) {
-    const l1UrlInputs = page.locator('input[placeholder="https://..."]');
-    const count = await l1UrlInputs.count();
-    if (count > 0) {
-      await l1UrlInputs.first().fill('');
-      await l1UrlInputs.first().fill(l1Url);
+    // Update the FIRST L1 chain URL input. The server-url-input also has
+    // placeholder "https://...", so skip it (index 0) and use index 1.
+    const urlInputs = page.locator('input[placeholder="https://..."]');
+    const count = await urlInputs.count();
+    if (count > 1) {
+      await urlInputs.nth(1).fill('');
+      await urlInputs.nth(1).fill(l1Url);
     }
   }
   await page.locator('text=Save').first().click();

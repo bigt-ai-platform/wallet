@@ -12,7 +12,7 @@ import type { WalletAccountItem } from '@/types/api';
 export default function WalletScreen() {
   const { t } = useTranslation();
   const router = useRouter();
-  const { publicInfo, isUnlocked } = useWallet();
+  const { publicInfo, isUnlocked, getUnlockedWallet } = useWallet();
   const [assets, setAssets] = React.useState<WalletAccountItem[]>([]);
   const [loading, setLoading] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -30,9 +30,11 @@ export default function WalletScreen() {
 
   const loadAssets = async (isRefresh = false) => {
     if (!publicInfo?.address) return;
+    const wallet = getUnlockedWallet();
+    if (!wallet) return;
     if (isRefresh) setRefreshing(true); else setLoading(true);
     try {
-      const res = await httpService.getBalances(publicInfo.address);
+      const res = await httpService.getBalances(wallet.wallet.privateKey);
       if (res.success && res.data) setAssets(res.data);
     } catch (e) { console.error('Error loading assets:', e); }
     finally { setLoading(false); setRefreshing(false); }

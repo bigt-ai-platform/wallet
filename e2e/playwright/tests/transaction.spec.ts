@@ -1,4 +1,6 @@
 import { test, expect, Page } from '@playwright/test';
+import * as fs from 'fs';
+import * as path from 'path';
 import { waitForApp, clickTab, getElement, configureServerUrl } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
@@ -41,31 +43,29 @@ test.describe('Payment', () => {
   });
 
   test('alice sends big to bob', async ({ page, request }) => {
-    test.setTimeout(300000);
+    test.setTimeout(480000);
     test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set');
 
-    // 1. Generate Alice's PQ key in Node.js
-    const { PQKey, Utils } = await import(
+    // 1. Generate Alice's PQ key in Node.js. The network spends UTXOs via
+    //    classic base58 addresses (Address.fromKey(...).toString()), while the
+    //    app wallet file stores the PQ hex address — so fund/send here use the
+    //    base58 form.
+    const { PQKey, Address, TestParams } = await import(
       '../../../packages/bigtangle-ts/dist/index.js'
     );
 
     const aliceKey = PQKey.createNew();
-    const aliceAddress = aliceKey.toAddressHex();
+    const aliceAddress = Address.fromKey(TestParams.get(), aliceKey).toString();
     const alicePrivHex = aliceKey.getPrivateKeyHex();
 
-    // Prefixed pubkey (0x05 prefix required by server's fromPublicOnly)
-    const bundle = aliceKey.getPubKey();
-    const prefixedPubkey = new Uint8Array(1 + bundle.length);
-    prefixedPubkey[0] = 0x05;
-    prefixedPubkey.set(bundle, 1);
-
-    // 2. Fund Alice via fundAddresses with prefixed pubkey
+    // 2. Fund Alice via fundAddresses. The server derives the output script
+    //    from the base58 address (no pubkey needed); passing a pubkey here
+    //    requires a bundle version the Java server rejects.
     const fundResp = await request.post(`${E2E_SERVER_URL}fundAddresses`, {
       data: {
         addresses: [{
-          address: '1LLtbSLJJn1D2churfWG55aDYqQQTu4eqH',
+          address: aliceAddress,
           value: 10000000000,
-          pubkey: Utils.HEX.encode(prefixedPubkey),
         }],
       },
     });
@@ -89,50 +89,109 @@ test.describe('Payment', () => {
     await page.getByText('Unlock Wallet').click();
     await page.waitForTimeout(2000);
 
-    // 5. Create Bob wallet (in-memory) for his address
-    await clickTab(page, 'Wallet');
-    const manageLink = page.getByText('Manage Keys');
-    if (await manageLink.isVisible().catch(() => false)) {
-      await manageLink.click();
-    } else {
-      await page.getByText('Manage Wallet').click();
+    // 5. Bob's wallet (in-memory) for his base58 address
+    const bobKey = PQKey.createNew();
+    const bobAddress = Address.fromKey(TestParams.get(), bobKey).toString();
+    console.log('Bob', bobAddress);
+
+    // 6. Wait for Alice's fundAddresses coinbase to be CONFIRMED on L0 before
+    //    sending — spending an unconfirmed coinbase can leave the payment
+    //    stuck at BATCHED and never confirmed.
+    const { Wallet, TestParams: TP } = await import(
+      '../../../packages/bigtangle-ts/dist/index.js'
+    );
+    const aliceWallet = Wallet.fromKeysURL(TP.get(), [aliceKey], E2E_SERVER_URL);
+    let aliceReady = false;
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const cands = await aliceWallet.calculateAllSpendCandidates(null, false);
+      if (cands.some(
+        (c: any) => c.getUTXO()?.getTokenId() === 'bc' && c.getUTXO()?.isConfirmed(),
+      )) {
+        aliceReady = true;
+        break;
+      }
     }
-    await page.waitForURL('**/wallet/keys**', { timeout: 10000 });
-    await page.getByText('Create New Wallet').click();
-    await expect(page.getByText('New Wallet Created!')).toBeAttached({ timeout: 10000 });
-    const bobAddress = await getWalletAddress(page);
-    await page.getByText('Cancel').click();
-    await page.waitForTimeout(500);
+    expect(aliceReady).toBe(true);
+    console.log('Alice funding confirmed on L0');
 
     // 7. Send BIG to Bob
-    await page.goBack();
     await page.waitForTimeout(1000);
     await clickTab(page, 'Transaction');
     await page.waitForTimeout(3000);
 
     await page.getByPlaceholder('Recipient').fill(bobAddress);
     await page.getByPlaceholder('0.00').first().fill('0.001');
-    await page.locator('text=Send Payment').first().click();
-    await page.waitForTimeout(2000);
 
-    const confirmSend = page.getByText('Send').last();
-    if (await confirmSend.isVisible().catch(() => false)) {
-      const resultDlg = page.waitForEvent('dialog', { timeout: 30000 }).catch(() => null);
-      await confirmSend.click();
-      const dlg = await resultDlg;
-      if (dlg) {
-        const msg = dlg.message();
-        expect(msg === 'Transaction sent!' || /Insufficient/i.test(msg)).toBeTruthy();
-        await dlg.accept();
-      }
+    // window.confirm (web confirm dialog) — auto-accept so the send proceeds.
+    page.on('dialog', (d) => d.accept().catch(() => {}));
+    // The screen has a "Send Payment" heading AND button — click the button.
+    // The payment must actually be submitted: wait for the L0 submitTransaction
+    // request from the app's broadcastTransaction.
+    const submitReq = page
+      .waitForRequest(
+        (req) => req.url().includes(E2E_SERVER_URL) && req.url().includes('submitTransaction'),
+        { timeout: 30000 }
+      )
+      .catch(() => null);
+    await page.locator('text=Send Payment').last().click();
+    expect(await submitReq).not.toBeNull();
+    console.log('Payment submitted via UI');
+
+    // 8. Verify the payment is DONE on-chain and check its transaction status.
+    //    The L0 transactionstatus table keys records by the transaction's first
+    //    output (the recipient), so wait-check Bob's address until a CONFIRMED
+    //    transaction appears.
+    let confirmedTx: any = null;
+    for (let i = 0; i < 80; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const statusResp = await request.post(
+        `${E2E_SERVER_URL}getTransactionsStatusByAddress`,
+        { data: { address: bobAddress } }
+      );
+      const data = await statusResp.json();
+      confirmedTx = (data.transactions || []).find((t: any) => t.status === 'CONFIRMED');
+      if (confirmedTx) break;
     }
+    expect(confirmedTx).not.toBeNull();
+    expect(confirmedTx.txHash).toBeTruthy();
+    expect(confirmedTx.status).toBe('CONFIRMED');
+    console.log('Payment confirmed:', confirmedTx.txHash, confirmedTx.status);
 
-    // 8. Verify Bob's balance via API
-    await page.waitForTimeout(3000);
-    const balanceResp = await request.post(`${E2E_SERVER_URL}getBalance`, {
-      data: { address: bobAddress },
-    });
-    expect(balanceResp.ok()).toBeTruthy();
+    // Hand the confirmed payment to e2etest.sh so the harness can independently
+    // re-verify the transaction status via the L0 getTransactionStatus API
+    // (the test uses random wallets, so the script cannot know the txHash).
+    await fs.promises.writeFile(
+      path.join(process.cwd(), 'test-results', 'payment-verification.json'),
+      JSON.stringify(
+        {
+          txHash: confirmedTx.txHash,
+          status: confirmedTx.status,
+          address: bobAddress,
+          blockHash: confirmedTx.blockHash ?? null,
+          chainlength: confirmedTx.chainlength ?? null,
+        },
+        null,
+        2,
+      ),
+    );
+    console.log('Payment verification handoff written');
+
+    // 9. Bob's wallet on the L0 chain received the BIG payment.
+    const bobWallet = Wallet.fromKeysURL(TP.get(), [bobKey], E2E_SERVER_URL);
+    let received = false;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const cands = await bobWallet.calculateAllSpendCandidates(null, false);
+      const bc = cands.find(
+        (c: any) =>
+          c.getUTXO()?.getTokenId() === 'bc' &&
+          c.getUTXO()?.getValue()?.getValue() > BigInt(0),
+      );
+      if (bc) { received = true; break; }
+    }
+    expect(received).toBe(true);
+    console.log('Bob received BIG on L0');
   });
 });
 

@@ -80,10 +80,12 @@ async function getConfirmedTxHash(): Promise<string> {
   });
 
   let funded = false;
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 2000));
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
     const candidates = await wallet.calculateAllSpendCandidates(null, false);
-    if (candidates.some((c) => c.getUTXO().getTokenId() === 'bc')) {
+    if (candidates.some(
+      (c) => c.getUTXO().getTokenId() === 'bc' && c.getUTXO().isConfirmed(),
+    )) {
       funded = true;
       break;
     }
@@ -98,7 +100,9 @@ async function getConfirmedTxHash(): Promise<string> {
   giveMoney.set(recipientAddr, 100000000n);
   await wallet.payToList(null, giveMoney, Buffer.from(Utils.HEX.decode(NetworkParameters.BIGTANGLE_TOKENID_STRING)), 'track-test');
 
-  for (let i = 0; i < 40; i++) {
+  // Wait-check the transaction status until the payment is CONFIRMED on L0.
+  let confirmedTxHash: string | null = null;
+  for (let i = 0; i < 80; i++) {
     await new Promise((r) => setTimeout(r, 3000));
     const res = await fetch(E2E_SERVER_URL + 'getTransactionsStatusByAddress', {
       method: 'POST',
@@ -107,9 +111,23 @@ async function getConfirmedTxHash(): Promise<string> {
     });
     const data = await res.json();
     const tx = (data.transactions || []).find((t: any) => t.status === 'CONFIRMED');
-    if (tx) return tx.txHash;
+    if (tx) {
+      confirmedTxHash = tx.txHash;
+      break;
+    }
   }
-  throw new Error('No confirmed transaction found for funded address');
+  if (!confirmedTxHash) {
+    throw new Error('No confirmed transaction found for funded address');
+  }
+
+  // Cross-check the single-transaction status endpoint agrees.
+  const single = await fetch(E2E_SERVER_URL + 'getTransactionStatus', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ txHash: confirmedTxHash }),
+  }).then((r) => r.json());
+  expect(single.status).toBe('CONFIRMED');
+  return confirmedTxHash;
 }
 
 async function seedTracking(page: Page, records: any[]) {
@@ -226,7 +244,7 @@ test.describe('Payment Tracking', () => {
   });
 
   test('tracked payment renders and live status comes from L0 getTransactionStatus', async ({ page }) => {
-    test.setTimeout(240000);
+    test.setTimeout(480000);
     const confirmedTxHash = await getConfirmedTxHash();
     await seedTracking(page, [paymentRecord(confirmedTxHash)]);
 

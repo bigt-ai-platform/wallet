@@ -24,6 +24,7 @@ import {
   type L1ChainConfig,
   type OrderInfo,
 } from '@/types/api';
+import { PQKey, Utils } from 'bigtangle-ts';
 
 /**
  * Default API endpoints
@@ -32,6 +33,18 @@ const DEFAULT_MAINNET_URL = 'https://p.bigtangle.org:8088/';
 const DEFAULT_TESTNET_URL = 'https://testp.bigtangle.org:8088/';
 const DEFAULT_L1_MAINNET_URL = 'https://m.bigtangle.org';
 const DEFAULT_L1_TESTNET_URL = 'https://testm.bigtangle.org';
+
+/**
+ * Convert a hex string to a Uint8Array.
+ */
+function hexToBytes(hex: string): Uint8Array {
+  if (hex.startsWith('0x')) hex = hex.slice(2);
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+  }
+  return bytes;
+}
 
 /**
  * Storage keys
@@ -212,43 +225,51 @@ export class HttpService {
   }
 
   /**
-   * Get account balances
+   * Get account balances. The Java server's getBalances expects a JSON array
+   * of hex pubkey hashes (not an address), so the wallet's private key is
+   * required to derive the pubkey hash.
    */
-  async getBalances(address: string): Promise<ApiResponse<WalletAccountItem[]>> {
-    const response = await this.request<GetBalancesResponse>(
-      ReqCmd.GetBalances,
-      'POST',
-      { address }
-    );
+  async getBalances(privateKeyHex: string): Promise<ApiResponse<WalletAccountItem[]>> {
+    const items = await this.fetchAccountBalances(privateKeyHex);
+    return { success: true, data: items };
+  }
 
-    if (response.success && response.data) {
+  private async fetchAccountBalances(privateKeyHex: string): Promise<WalletAccountItem[]> {
+    const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
+    const pubKeyHash = Utils.HEX.encode(pqKey.getPubKeyHash());
+    const response = await this.request<any>(ReqCmd.GetBalances, 'POST', [pubKeyHash]);
+    if (!response.success || !response.data) return [];
+    const balances: any[] = response.data.balance || [];
+    const tokennames: Record<string, any> = response.data.tokennames || {};
+    return balances.map((c: any) => {
+      const tokenid: string = c.tokenHex || c.tokenid || 'bc';
+      const token = tokennames[tokenid] || {};
+      const decimals = typeof token.decimals === 'number' ? token.decimals : tokenid === 'bc' ? 8 : 0;
+      const value = BigInt(c.value || 0);
+      const human = Number(value) / Math.pow(10, decimals);
       return {
-        success: true,
-        data: response.data.balances,
+        tokenid,
+        tokenname: token.tokenname || (tokenid === 'bc' ? 'BIG' : tokenid),
+        balance: String(human),
+        confirmedBalance: String(human),
+        unconfirmedBalance: '0',
+        decimals,
       };
-    }
-
-    // Return a properly typed failure response
-    return {
-      success: false,
-      error: response.error || 'Failed to get balances',
-    } as ApiResponse<WalletAccountItem[]>;
+    });
   }
 
   /**
-   * Get UTXOs for an address
+   * Get UTXOs for a wallet. The Java server's getOutputs expects a JSON array
+   * of hex pubkey hashes (not an address).
    */
-  async getOutputs(address: string, tokenid?: string): Promise<ApiResponse<UTXO[]>> {
-    const response = await this.request<GetOutputsResponse>(
-      ReqCmd.GetOutputs,
-      'POST',
-      { address, tokenid }
-    );
-
+  async getOutputs(privateKeyHex: string): Promise<ApiResponse<UTXO[]>> {
+    const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
+    const pubKeyHash = Utils.HEX.encode(pqKey.getPubKeyHash());
+    const response = await this.request<any>(ReqCmd.GetOutputs, 'POST', [pubKeyHash]);
     if (response.success && response.data) {
       return {
         success: true,
-        data: response.data.outputs,
+        data: (response.data.outputs || []) as UTXO[],
       };
     }
 
@@ -381,25 +402,12 @@ export class HttpService {
   /**
    * Get user's tokens with balances
    */
-  async getMyValidTokenItemList(address: string): Promise<ApiResponse<WalletAccountItem[]>> {
-    const response = await this.request<GetBalancesResponse>(
-      ReqCmd.GetMyValidTokenItemList,
-      'POST',
-      { address }
-    );
-
-    if (response.success && response.data) {
-      return {
-        success: true,
-        data: response.data.balances,
-      };
-    }
-
-    // Return a properly typed failure response
+  async getMyValidTokenItemList(privateKeyHex: string): Promise<ApiResponse<WalletAccountItem[]>> {
+    const items = await this.fetchAccountBalances(privateKeyHex);
     return {
-      success: false,
-      error: response.error || 'Failed to get user token items',
-    } as ApiResponse<WalletAccountItem[]>;
+      success: true,
+      data: items,
+    };
   }
 
   /**

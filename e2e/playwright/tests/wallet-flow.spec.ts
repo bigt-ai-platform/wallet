@@ -18,6 +18,15 @@ test.describe('Wallet Flow', () => {
 
   test('creates wallet and saves with password — address is valid', async ({ page }) => {
     page.on('dialog', (d) => d.accept().catch(() => {}));
+    // showSaveFilePicker (File System Access API) is desktop-only, can be
+    // exposed as an undefined global, and opens a native dialog Playwright
+    // cannot drive. Remove it so the app uses the anchor-download fallback,
+    // which Playwright captures as a 'download' event.
+    await page.addInitScript(() => {
+      try {
+        delete (globalThis as any).showSaveFilePicker;
+      } catch {}
+    });
     await waitForApp(page);
     const address = await createWalletQuick(page);
     expect(address).toMatch(/^[0-9a-f]{70}$/);
@@ -30,7 +39,7 @@ test.describe('Wallet Flow', () => {
     const dl = page.waitForEvent('download', { timeout: 10000 }).catch(() => null);
     await page.getByText('Save Wallet').click();
     const d = await dl;
-    if (d) await d.saveAs('/dev/null');
+    if (d) await d.saveAs('/tmp/wallet-save-e2e.json');
     await page.waitForTimeout(2000);
   });
 

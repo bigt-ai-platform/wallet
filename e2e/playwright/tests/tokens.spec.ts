@@ -20,7 +20,7 @@ async function saveWallet(page: Page, password: string) {
   const dl = page.waitForEvent('download', { timeout: 15000 }).catch(() => null);
   await page.getByText('Save Wallet').click();
   const d = await dl;
-  if (d) await d.saveAs('/dev/null');
+  if (d) await d.saveAs('/tmp/tokens-wallet-e2e.json');
   const dlg = await page.waitForEvent('dialog', { timeout: 10000 }).catch(() => null);
   if (dlg) await dlg.accept();
   await page.waitForTimeout(1000);
@@ -102,78 +102,70 @@ test.describe('Tokens Screen', () => {
   test('fund wallet and send BIG payment via UI (requires server)', async ({ page, request }) => {
     test.setTimeout(120000);
     test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set');
-    page.on('dialog', (d) => d.accept().catch(() => {}));
 
     await waitForApp(page);
     await configureServerUrl(page, E2E_SERVER_URL, E2E_L1_URL);
 
-    // Create a new wallet via UI (generates PQ key internally)
+    // Generate the wallet key in Node so we can fund by base58 (the network
+    // spends classic base58 addresses; the app UI shows PQ hex).
+    const { PQKey, Address, TestParams } = await import(
+      '../../../packages/bigtangle-ts/dist/index.js'
+    );
+    const aliceKey = PQKey.createNew();
+    const aliceBase58 = Address.fromKey(TestParams.get(), aliceKey).toString();
+    const alicePrivHex = aliceKey.getPrivateKeyHex();
+
+    // Import the key into the app
     await clickTab(page, 'Wallet');
     await page.getByText('Manage Wallet').click();
-    await page.waitForTimeout(2000);
-    await page.getByText('Create New Wallet').click();
-    await page.waitForTimeout(2000);
-
-    // Read the generated address and pubkey from the screen
-    const addressText = await page.locator('body').innerText();
-    const addrMatch = addressText.match(/wallet address:\s*(\S+)/);
-    expect(addrMatch).not.toBeNull();
-    const walletAddressHex = addrMatch![1];
-    console.log('Wallet address:', walletAddressHex);
-
-    const pubkeyMatch = addressText.match(/public key:\s*(\S+)/);
-    const pubkeyHex = pubkeyMatch ? pubkeyMatch[1] : null;
-    if (pubkeyHex) console.log('Wallet pubkey:', pubkeyHex.substring(0, 60) + '...');
-
-    // Fund the wallet via API with pubkey
-    const fundBody = pubkeyHex
-      ? { addresses: [{ address: walletAddressHex, pubkey: pubkeyHex, value: 10000000000 }] }
-      : { addresses: [{ address: walletAddressHex, value: 10000000000 }] };
-
-    // Fund the wallet via API
-    const fundResp = await request.post(`${E2E_SERVER_URL}fundAddresses`, {
-      data: fundBody,
-    });
-    expect((await fundResp.json()).errorcode).toBe(0);
-    console.log('Funded wallet');
-
-    // Save with password — mock showSaveFilePicker to force download fallback
-    await page.getByText('Save with Password').click();
-    await page.waitForTimeout(1000);
-    await page.evaluate(() => {
-      (globalThis as any).showSaveFilePicker = undefined;
-    });
+    await page.waitForURL('**/wallet/keys**', { timeout: 10000 });
+    await importKey(page, alicePrivHex);
     await saveWallet(page, PASSWORD);
 
-    // Wallet is unlocked after save — go back to main screen
+    // Fund the wallet via API (base58 address; no pubkey — the server rejects
+    // the PQ bundle version)
+    const fundResp = await request.post(`${E2E_SERVER_URL}fundAddresses`, {
+      data: {
+        addresses: [{ address: aliceBase58, value: 10000000000 }],
+      },
+    });
+    expect((await fundResp.json()).errorcode).toBe(0);
+    console.log('Funded wallet', aliceBase58);
+
+    // Wallet is unlocked after save — reload and unlock
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
-    // Wallet state lost after reload — unlock
     await page.getByPlaceholder('Enter wallet password').fill(PASSWORD);
     await page.getByText('Unlock Wallet').click();
     await page.waitForTimeout(2000);
     await page.getByRole('tab', { name: /Transaction/ }).click();
     await page.waitForTimeout(3000);
 
-    // Fill send form and send
-    const bobKey = (await import('../../../packages/bigtangle-ts/dist/index.js')).PQKey.createNew();
-    const bobAddress = bobKey.toAddressHex();
+    // Fill send form and send to Bob's base58 address
+    const bobKey = PQKey.createNew();
+    const bobAddress = Address.fromKey(TestParams.get(), bobKey).toString();
+
+    let submitted = false;
+    // Auto-accept dialogs (the send uses window.confirm on web; accepting it
+    // resolves confirm to true so the send proceeds).
+    page.on('dialog', (d) => d.accept().catch(() => {}));
+    page.on('request', (req) => {
+      if (req.url().includes('submitTransaction')) submitted = true;
+    });
 
     await page.getByPlaceholder('Recipient').fill(bobAddress);
     await page.getByPlaceholder('0.00').first().fill('0.001');
-    await page.locator('text=Send').last().click();
-    await page.waitForTimeout(2000);
 
-    const resultDlg = page.waitForEvent('dialog', { timeout: 30000 }).catch(() => null);
-    const dlg = await resultDlg;
-    if (dlg) {
-      const msg = dlg.message();
-      expect(msg === 'Transaction sent!' || /Insufficient/i.test(msg)).toBeTruthy();
-      console.log('Send dialog:', msg);
-      await dlg.accept();
-    }
+    // The screen has a "Send Payment" heading AND button — click the button.
+    await page.getByText('Send Payment').last().click();
+    // Wait for the send to submit a transaction with the amount.
+    await page.waitForTimeout(4000);
+
+    // The send must actually submit a transaction with the amount.
+    expect(submitted).toBe(true);
+    console.log('UI send submitted transaction:', submitted);
 
     await page.waitForTimeout(3000);
     console.log('Payment flow completed');
