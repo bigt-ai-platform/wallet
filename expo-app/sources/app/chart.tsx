@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import Svg, { Polyline, Rect, Line as SvgLine, Text as SvgText } from 'react-native-svg';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
@@ -40,7 +40,6 @@ const INTERVALS: { label: string; minutes: number }[] = [
   { label: '1m', minutes: 43200 },
 ];
 
-const CHART_W = 360;
 const CHART_H = 220;
 const PAD = 8;
 
@@ -50,7 +49,13 @@ function formatAxisValue(v: number): string {
   return v.toFixed(2);
 }
 
-function buildPoints(chart: ChartData | null, chartHeight: number): {
+function buildPoints(
+  chart: ChartData | null,
+  chartHeight: number,
+  chartWidth: number,
+  posColor: string,
+  negColor: string,
+): {
   line: string;
   bars: React.ReactNode[];
   maxY: number;
@@ -67,7 +72,7 @@ function buildPoints(chart: ChartData | null, chartHeight: number): {
   if (maxY === minY) { maxY = minY + 1; }
   const maxVol = Math.max(...vols, 1);
   const span = maxY - minY;
-  const step = (CHART_W - PAD * 2) / Math.max(datas.length - 1, 1);
+  const step = (chartWidth - PAD * 2) / Math.max(datas.length - 1, 1);
   const x = (i: number) => PAD + i * step;
   const y = (v: number) => PAD + (1 - (v - minY) / span) * (chartHeight - PAD * 2);
 
@@ -81,7 +86,7 @@ function buildPoints(chart: ChartData | null, chartHeight: number): {
         y={chartHeight - PAD - h}
         width={Math.max(step / 2, 1)}
         height={h}
-        fill={d.price >= (i > 0 ? datas[i - 1].price : d.price) ? '#10B981' : '#EF4444'}
+        fill={d.price >= (i > 0 ? datas[i - 1].price : d.price) ? posColor : negColor}
         opacity={0.7}
       />
     );
@@ -92,9 +97,10 @@ function buildPoints(chart: ChartData | null, chartHeight: number): {
 export default function ChartScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  const { theme } = useUnistyles();
   const { isUnlocked, publicInfo } = useWallet();
   const { width } = useWindowDimensions();
-  const chartW = Math.max(Math.min(width - 32, CHART_W), 280);
+  const chartW = Math.max(Math.min(width - 32, 760), 280);
 
   const [tokenSearch, setTokenSearch] = React.useState('');
   const [tokenResults, setTokenResults] = React.useState<MarketPrice[]>([]);
@@ -157,8 +163,8 @@ export default function ChartScreen() {
   }, [selectedToken, interval]);
 
   const VOL_H = 140;
-  const { line, maxY, minY } = buildPoints(chart, CHART_H);
-  const { bars } = buildPoints(chart, VOL_H);
+  const { line, maxY, minY } = buildPoints(chart, CHART_H, chartW, theme.colors.positive, theme.colors.negative);
+  const { bars } = buildPoints(chart, VOL_H, chartW, theme.colors.positive, theme.colors.negative);
   const baseToken = 'bc';
 
   return (
@@ -220,11 +226,11 @@ export default function ChartScreen() {
               <Svg width={chartW} height={CHART_H} testID="chart-price">
                 {chart && chart.datas.length > 0 && (
                   <>
-                    <SvgLine x1={PAD} y1={PAD} x2={PAD} y2={CHART_H - PAD} stroke="#666" strokeWidth={1} />
-                    <SvgLine x1={PAD} y1={CHART_H - PAD} x2={chartW - PAD} y2={CHART_H - PAD} stroke="#666" strokeWidth={1} />
-                    <SvgText x={PAD + 2} y={PAD + 10} fill="#999" fontSize={9}>{formatAxisValue(maxY)}</SvgText>
-                    <SvgText x={PAD + 2} y={CHART_H - PAD - 4} fill="#999" fontSize={9}>{formatAxisValue(minY)}</SvgText>
-                    <Polyline points={line} fill="none" stroke="#3B82F6" strokeWidth={2} />
+                    <SvgLine x1={PAD} y1={PAD} x2={PAD} y2={CHART_H - PAD} stroke={theme.colors.divider} strokeWidth={1} />
+                    <SvgLine x1={PAD} y1={CHART_H - PAD} x2={chartW - PAD} y2={CHART_H - PAD} stroke={theme.colors.divider} strokeWidth={1} />
+                    <SvgText x={PAD + 2} y={PAD + 10} fill={theme.colors.text.secondary} fontSize={9}>{formatAxisValue(maxY)}</SvgText>
+                    <SvgText x={PAD + 2} y={CHART_H - PAD - 4} fill={theme.colors.text.secondary} fontSize={9}>{formatAxisValue(minY)}</SvgText>
+                    <Polyline points={line} fill="none" stroke={theme.colors.accent.blue} strokeWidth={2} />
                   </>
                 )}
               </Svg>
@@ -252,7 +258,7 @@ const s = StyleSheet.create((theme) => ({
   container: { flex: 1, backgroundColor: theme.colors.groupped.background },
   header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 14 },
   backBtn: { padding: 4 },
-  backText: { fontSize: 22, color: theme.colors.primary, fontWeight: '700' },
+  backText: { fontSize: 22, color: theme.colors.text.link, fontWeight: '700' },
   pageTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text.primary },
   content: { padding: 16, paddingBottom: 40 },
   card: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 14, marginBottom: 12 },
@@ -262,7 +268,7 @@ const s = StyleSheet.create((theme) => ({
   loader: { color: theme.colors.primary },
   chip: { backgroundColor: theme.colors.groupped.background, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.border },
   chipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  chipText: { fontSize: 12, fontWeight: '600', color: theme.colors.primary },
+  chipText: { fontSize: 12, fontWeight: '600', color: theme.colors.text.link },
   chipTextActive: { color: '#FFFFFF' },
   chipSub: { fontSize: 10, color: theme.colors.text.secondary, marginTop: 1 },
   selectedText: { fontSize: 13, color: theme.colors.text.primary, marginTop: 8 },

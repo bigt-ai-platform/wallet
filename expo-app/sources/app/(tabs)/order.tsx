@@ -12,6 +12,8 @@ import { orderOnLayer1 } from '@/services/transaction';
 import { listOrders, recordOrder, refreshAllStatuses } from '@/services/tracking';
 import { CloseIcon } from '@/components/Icons';
 import SegmentedTabs from '@/components/SegmentedTabs';
+import { statusBadgeColor } from '@/utils/status';
+import { MONO_FONT } from '@/constants/fonts';
 import type { MarketPrice, OrderInfo, TrackedRecord } from '@/types/api';
 
 export default function OrderScreen() {
@@ -178,14 +180,6 @@ export default function OrderScreen() {
   const fmtChange = (c: string) => { const n = parseFloat(c); return isNaN(n) ? '0%' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`; };
   const changeColor = (c: string) => { const n = parseFloat(c); return isNaN(n) || n === 0 ? s.neutral.color : n > 0 ? s.pos.color : s.neg.color; };
 
-  if (loading) {
-    return (
-      <View style={s.container} testID="order-screen">
-        <View style={s.centered}><ActivityIndicator size="large" color={s.loader.color} /></View>
-      </View>
-    );
-  }
-
   return (
     <View style={s.container} testID="order-screen">
       <SegmentedTabs
@@ -223,7 +217,9 @@ export default function OrderScreen() {
               </View>
             </View>
           )}
-          {prices.length === 0 ? (
+          {loading ? (
+            <ActivityIndicator size="large" color={s.loader.color} style={{ padding: 32 }} />
+          ) : prices.length === 0 ? (
             <View style={s.emptyCard}><Text style={s.emptyTitle}>{t('order.noData')}</Text></View>
           ) : (
             prices.map((item, i) => {
@@ -304,7 +300,7 @@ export default function OrderScreen() {
                       <>
                         <Text style={s.groupLabel}>Tracked (in-app)</Text>
                         {tracked.map((o) => {
-                          const badgeColor = o.status === 'confirmed' ? s.statusConfirmed.color : o.status === 'failed' || o.status === 'cancelled' ? s.statusFailed.color : s.statusPending.color;
+                          const badgeColor = statusBadgeColor(o.status, theme);
                           return (
                             <View key={o.id} style={s.orderCard}>
                               <Text style={[s.orderSide, { color: o.side === 'buy' ? s.pos.color : s.neg.color }]}>
@@ -333,7 +329,7 @@ export default function OrderScreen() {
                             <Text style={s.orderInfo}>{o.offerValue} {o.offerTokenid?.slice(0, 8)} @ {o.price} ({o.targetTokenid?.slice(0, 8)})</Text>
                             <Text style={s.orderSub}>{o.cancelPending ? 'CANCELLED' : 'OPEN'}</Text>
                           </View>
-                          <View style={[s.statusBadge, { backgroundColor: o.cancelPending ? s.statusFailed.color : s.statusPending.color }]}>
+                          <View style={[s.statusBadge, { backgroundColor: statusBadgeColor(o.cancelPending ? 'cancelled' : 'pending', theme) }]}>
                             <Text style={s.statusBadgeText} testID="live-order-status">{o.cancelPending ? 'cancelled' : 'pending'}</Text>
                           </View>
                         </View>
@@ -379,8 +375,8 @@ export default function OrderScreen() {
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }} testID="order-token-results">
                     {tokenResults.map((tk, i) => (
                       <TouchableOpacity key={i} style={[s.chip, selectedToken?.tokenid === tk.tokenid && s.chipActive]} onPress={() => selectSearchedToken(tk)} testID={`order-token-${i}`}>
-                        <Text style={s.chipText}>{tk.tokenname}</Text>
-                        <Text style={s.chipSub}>{tk.tokenid.slice(0, 10)}...</Text>
+                        <Text style={[s.chipText, selectedToken?.tokenid === tk.tokenid && s.chipTextActive]}>{tk.tokenname}</Text>
+                        <Text style={[s.chipSub, selectedToken?.tokenid === tk.tokenid && s.chipSubActive]}>{tk.tokenid.slice(0, 10)}...</Text>
                       </TouchableOpacity>
                     ))}
                   </ScrollView>
@@ -408,7 +404,7 @@ export default function OrderScreen() {
                 <Text style={s.totalValue}>{orderTotal || '0'} BIG</Text>
               </View>
 
-              <TouchableOpacity style={[s.submitBtn, { backgroundColor: orderSide === 'buy' ? s.pos.color : s.neg.color }]}
+              <TouchableOpacity style={[s.submitBtn, { backgroundColor: orderSide === 'buy' ? theme.colors.accent.emerald : theme.colors.accent.red }]}
                 onPress={submitOrder} disabled={submitting}>
                 <Text style={s.submitBtnText}>{submitting ? t('order.placing') : t('order.placeOrder', { side: orderSide === 'buy' ? t('order.buy') : t('order.sell') })}</Text>
               </TouchableOpacity>
@@ -434,11 +430,11 @@ const s = StyleSheet.create((theme) => ({
   priceLeft: { flex: 1 },
   priceCenter: { alignItems: 'flex-end', marginRight: 10 },
   tokenName: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
-  tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: 'monospace' },
+  tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: MONO_FONT },
   price: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
   change: { fontSize: 12, fontWeight: '600', marginTop: 1 },
-  pos: { color: theme.colors.accent?.emerald || '#10B981' },
-  neg: { color: theme.colors.accent?.red || '#EF4444' },
+  pos: { color: theme.colors.positive },
+  neg: { color: theme.colors.negative },
   neutral: { color: theme.colors.text.secondary },
   actionCol: { gap: 4 },
   chartCol: { alignItems: 'flex-end', justifyContent: 'center', width: 70, marginRight: 10 },
@@ -449,9 +445,9 @@ const s = StyleSheet.create((theme) => ({
   summaryItem: { alignItems: 'center', flex: 1 },
   summaryValue: { fontSize: 20, fontWeight: '800', color: theme.colors.text.primary },
   summaryLabel: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 4 },
-  buyBtn: { backgroundColor: theme.colors.accent?.emerald || '#10B981', borderRadius: 6, paddingHorizontal: 14, paddingVertical: 5, alignItems: 'center' },
+  buyBtn: { backgroundColor: theme.colors.accent.emerald, borderRadius: 6, paddingHorizontal: 14, paddingVertical: 5, alignItems: 'center' },
   buyBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
-  sellBtn: { backgroundColor: theme.colors.accent?.red || '#EF4444', borderRadius: 6, paddingHorizontal: 14, paddingVertical: 5, alignItems: 'center' },
+  sellBtn: { backgroundColor: theme.colors.accent.red, borderRadius: 6, paddingHorizontal: 14, paddingVertical: 5, alignItems: 'center' },
   sellBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
   orderCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 8, padding: 12, marginBottom: 6, flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border },
   orderSide: { fontSize: 13, fontWeight: '700', width: 40 },
@@ -459,13 +455,10 @@ const s = StyleSheet.create((theme) => ({
   orderInfoCol: { flex: 1 },
   orderSub: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 },
   sectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  refreshBtn: { fontSize: 14, color: theme.colors.primary, fontWeight: '600' },
+  refreshBtn: { fontSize: 14, color: theme.colors.text.link, fontWeight: '600' },
   groupLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 4 },
   statusBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, alignItems: 'center', marginLeft: 8 },
   statusBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
-  statusPending: { color: '#F59E0B' },
-  statusConfirmed: { color: '#10B981' },
-  statusFailed: { color: '#EF4444' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modal: { backgroundColor: theme.colors.groupped.surface, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 20, paddingBottom: 40, maxHeight: '85%' },
@@ -474,8 +467,8 @@ const s = StyleSheet.create((theme) => ({
   modalTitle: { fontSize: 18, fontWeight: '700', color: theme.colors.text.primary },
   sideToggle: { flexDirection: 'row', borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border, marginBottom: 16 },
   sideBtn: { flex: 1, paddingVertical: 10, alignItems: 'center' },
-  sideBuyActive: { backgroundColor: theme.colors.accent?.emerald || '#10B981' },
-  sideSellActive: { backgroundColor: theme.colors.accent?.red || '#EF4444' },
+  sideBuyActive: { backgroundColor: theme.colors.accent.emerald },
+  sideSellActive: { backgroundColor: theme.colors.accent.red },
   sideBtnText: { fontSize: 15, fontWeight: '600', color: theme.colors.text.secondary },
   sideBtnTextActive: { color: '#FFFFFF' },
   fieldGroup: { marginBottom: 14 },
@@ -488,8 +481,10 @@ const s = StyleSheet.create((theme) => ({
   submitBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   chip: { backgroundColor: theme.colors.groupped.background, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.border },
   chipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  chipText: { fontSize: 12, fontWeight: '600', color: theme.colors.primary },
+  chipText: { fontSize: 12, fontWeight: '600', color: theme.colors.text.link },
+  chipTextActive: { color: '#FFFFFF' },
   chipSub: { fontSize: 10, color: theme.colors.text.secondary, marginTop: 1 },
+  chipSubActive: { color: '#FFFFFF', opacity: 0.85 },
   selectedTokenText: { fontSize: 13, color: theme.colors.text.primary, marginTop: 8 },
   filterCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 12, marginBottom: 12 },
   filterLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },

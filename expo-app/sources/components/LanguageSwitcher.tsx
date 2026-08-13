@@ -110,7 +110,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   checkmark: {
     marginLeft: 'auto',
-    color: theme.colors.primary,
+    color: theme.colors.text.link,
     fontSize: 16,
   },
 }));

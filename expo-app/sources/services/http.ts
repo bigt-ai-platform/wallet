@@ -380,9 +380,12 @@ export class HttpService {
    * Get all available tokens
    */
   async getTokensItemList(): Promise<ApiResponse<TokenItem[]>> {
+    // The L0 server exposes the confirmed-token list via `searchTokens` (empty
+    // name returns all tokens); there is no `getTokensItemList` ReqCmd.
     const response = await this.request<GetTokensResponse>(
-      ReqCmd.GetTokensItemList,
-      'POST'
+      'searchTokens',
+      'POST',
+      { name: '' },
     );
 
     if (response.success && response.data) {

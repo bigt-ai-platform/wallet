@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, TextInput, Alert, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, ActivityIndicator, TextInput, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
@@ -7,6 +7,7 @@ import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { CloseIcon } from '@/components/Icons';
 import SegmentedTabs from '@/components/SegmentedTabs';
+import { MONO_FONT } from '@/constants/fonts';
 import type { WalletAccountItem } from '@/types/api';
 
 export default function WalletScreen() {
@@ -167,19 +168,19 @@ const s = StyleSheet.create((theme) => ({
   lockedSub: { fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
   addressCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 16, marginBottom: 20 },
   addressLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
-  address: { fontSize: 13, color: theme.colors.text.primary, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), lineHeight: 18 },
+  address: { fontSize: 13, color: theme.colors.text.primary, fontFamily: MONO_FONT, lineHeight: 18 },
   addressDivider: { height: 1, backgroundColor: theme.colors.border, marginVertical: 12 },
-  manageLink: { fontSize: 14, color: theme.colors.primary, fontWeight: '600' },
+  manageLink: { fontSize: 14, color: theme.colors.text.link, fontWeight: '600' },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text.primary },
-  refreshBtn: { fontSize: 14, color: theme.colors.primary, fontWeight: '600' },
+  refreshBtn: { fontSize: 14, color: theme.colors.text.link, fontWeight: '600' },
   loader: { color: theme.colors.primary },
   emptyText: { fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', padding: 24 },
   assetCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 14, marginBottom: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   assetLeft: { flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 },
   assetDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.primary },
   assetName: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
-  assetId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: 'monospace' },
+  assetId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: MONO_FONT },
   assetBalance: { fontSize: 16, fontWeight: '700', color: theme.colors.text.primary },
   primaryBtn: { backgroundColor: theme.colors.primary, borderRadius: 10, paddingVertical: 15, paddingHorizontal: 32, alignItems: 'center' },
   primaryBtnText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF' },
@@ -190,7 +191,7 @@ const s = StyleSheet.create((theme) => ({
   fieldInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 15 },
   placeholder: { color: theme.colors.text.secondary },
   chip: { backgroundColor: theme.colors.groupped.background, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.border },
-  chipText: { fontSize: 12, fontWeight: '600', color: theme.colors.primary },
-  bridgeBtn: { backgroundColor: theme.colors.accent?.purple || '#8B5CF6', borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
+  chipText: { fontSize: 12, fontWeight: '600', color: theme.colors.text.link },
+  bridgeBtn: { backgroundColor: theme.colors.accent.purple, borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
   bridgeBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 }));

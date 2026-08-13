@@ -9,11 +9,11 @@ SERVER_PORT="${SERVER_PORT:-18088}"
 L1_PORT="${L1_PORT:-18086}"
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | token | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" token "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, remaining, tests, demo";;
 esac
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -119,6 +119,17 @@ E2E_L1_URL="http://localhost:${L1_PORT}/" \
 log "Order e2e tests passed."
 fi
 
+# 4b3. Run the token tests (browse / search / SDK token creation).
+if [[ "$CMD" == "token" ]]; then
+info "Running token e2e tests..."
+cd "$E2E_DIR"
+APP_URL="http://localhost:${WEB_PORT}/" \
+E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
+E2E_L1_URL="http://localhost:${L1_PORT}/" \
+  npx playwright test --reporter=list tokens.spec.ts 2>&1
+log "Token e2e tests passed."
+fi
+
 # 4c. Run remaining specs (tokens, settings, order, wallet-flow, L1 Test Tab,
 #     desktop, demo-flow) not covered by the Payment/Tracking greps.
 if [[ "$CMD" == "all" || "$CMD" == "remaining" || "$CMD" == "tests" ]]; then
@@ -131,10 +142,10 @@ E2E_L1_URL="http://localhost:${L1_PORT}/" \
 log "Remaining e2e specs passed."
 fi
 
-# 5. Capture payment flow screenshots and generate payment-flow.pdf. Runs
-#    after the chosen test part(s) — part of the default e2etest output.
+# 5. Capture payment flow screenshots and generate payment-flow.pdf. Runs for
+#    the payment (or all/tests) part — part of the default e2etest output.
 #    Set NO_PDF=1 to skip.
-if [[ -z "${NO_PDF:-}" ]]; then
+if [[ -z "${NO_PDF:-}" ]] && [[ "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "payment" ]]; then
 info "Capturing payment flow screenshots and generating PDF..."
 cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
@@ -142,11 +153,12 @@ E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
   node capture-payment.mjs 2>&1
 log "PDF generated: demo-output/pdfs/payment-flow.pdf"
-
+fi
 
 # 5b. Capture order-flow screenshots (Order market list, buy/sell sheet,
 #     Chart) and generate order-flow.pdf. Creates a real matched trade on the
 #     L1 order chain so the screenshots show real market/chart data.
+if [[ -z "${NO_PDF:-}" ]] && [[ "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "order" ]]; then
 info "Capturing order flow screenshots and generating PDF..."
 cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
@@ -154,4 +166,17 @@ E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
   node capture-order.mjs 2>&1
 log "PDF generated: demo-output/pdfs/order-flow.pdf"
+fi
+
+# 5c. Capture token-flow screenshots (browse / search / create form / created
+#     token) and generate token-flow.pdf. Creates a real confirmed token on L0
+#     so the browse list and search show real data.
+if [[ -z "${NO_PDF:-}" ]] && [[ "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "token" ]]; then
+info "Capturing token flow screenshots and generating PDF..."
+cd "$E2E_DIR"
+APP_URL="http://localhost:${WEB_PORT}/" \
+E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
+E2E_L1_URL="http://localhost:${L1_PORT}/" \
+  node capture-token.mjs 2>&1
+log "PDF generated: demo-output/pdfs/token-flow.pdf"
 fi

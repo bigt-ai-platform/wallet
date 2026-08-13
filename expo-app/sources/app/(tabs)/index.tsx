@@ -3,7 +3,7 @@ import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
   ActivityIndicator, Alert, Platform,
 } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "@/state/wallet";
@@ -12,10 +12,13 @@ import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { WalletIcon } from "@/components/Icons";
 import SegmentedTabs from "@/components/SegmentedTabs";
+import { statusBadgeColor } from "@/utils/status";
+import { MONO_FONT } from "@/constants/fonts";
 import type { WalletAccountItem, L1ChainConfig, TrackedRecord } from "@/types/api";
 
 export default function TransactionScreen() {
   const { t } = useTranslation();
+  const { theme } = useUnistyles();
   const { publicInfo, isUnlocked, unlockWallet, getUnlockedWallet, getPassword } = useWallet();
   const [selectedToken, setSelectedToken] = React.useState<WalletAccountItem | null>(null);
   const [tokens, setTokens] = React.useState<WalletAccountItem[]>([]);
@@ -279,7 +282,7 @@ export default function TransactionScreen() {
     return (
       <View style={s.container} testID="transaction-screen">
         <View style={s.centered}>
-          <WalletIcon size={48} color="#999" />
+          <WalletIcon size={48} color={theme.colors.text.secondary} />
 
           {hasWallet ? (
             // Wallet exists but locked — inline unlock
@@ -511,7 +514,7 @@ export default function TransactionScreen() {
             </View>
           ) : (
             payments.map((p) => {
-              const badgeColor = p.status === 'confirmed' ? s.statusConfirmed.color : p.status === 'failed' || p.status === 'cancelled' ? s.statusFailed.color : s.statusPending.color;
+              const badgeColor = statusBadgeColor(p.status, theme);
               return (
                 <View key={p.id} style={s.txCard} testID={`payment-${p.id}`}>
                   <View style={s.txInfo}>
@@ -570,8 +573,7 @@ export default function TransactionScreen() {
               .filter((tx) => historyLayer === -1 || tx.layer === historyLayer)
               .filter((tx) => !historyToFilter.trim() || (tx.address || '').toLowerCase().includes(historyToFilter.trim().toLowerCase()))
               .map((tx, i) => {
-                const badgeColor = tx.status === 'CONFIRMED' ? s.statusConfirmed.color
-                  : tx.status === 'DROPPED' ? s.statusFailed.color : s.statusPending.color;
+                const badgeColor = statusBadgeColor(tx.status, theme);
                 return (
                   <View key={i} style={s.txCard} testID={`history-item-${i}`}>
                     <View style={s.txDot} />
@@ -603,7 +605,7 @@ const s = StyleSheet.create((theme) => ({
   lockedTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 8, marginTop: 12 },
   lockedSub: { fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
   hintText: { fontSize: 12, color: theme.colors.text.secondary, textAlign: 'center', marginTop: 16, paddingHorizontal: 20 },
-  walletLabel: { fontSize: 13, color: theme.colors.text.secondary, marginBottom: 12, fontFamily: 'monospace' },
+  walletLabel: { fontSize: 13, color: theme.colors.text.secondary, marginBottom: 12, fontFamily: MONO_FONT },
   unlockInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 15, width: '100%', maxWidth: 280, marginBottom: 12 },
   pageTitle: { fontSize: 22, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 16 },
   card: { backgroundColor: theme.colors.card?.background || theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.card?.border || theme.colors.border, padding: 16, marginBottom: 12 },
@@ -630,29 +632,26 @@ const s = StyleSheet.create((theme) => ({
   secondaryBtnText: { fontSize: 15, fontWeight: '600', color: theme.colors.text.secondary },
   btnDisabled: { opacity: 0.5 },
   txCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 14, marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
-  txDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent?.blue || '#3B82F6', marginRight: 12 },
+  txDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent.blue, marginRight: 12 },
   txInfo: { flex: 1 },
   txType: { fontSize: 13, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
-  txId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: 'monospace' },
+  txId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: MONO_FONT },
   txValue: { fontSize: 14, fontWeight: '700', color: theme.colors.text.primary },
   sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  refreshBtn: { fontSize: 14, color: theme.colors.primary, fontWeight: '600' },
+  refreshBtn: { fontSize: 14, color: theme.colors.text.link, fontWeight: '600' },
   payHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   statusBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, alignItems: 'center' },
   statusBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
   payDetail: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 },
-  statusPending: { color: '#F59E0B' },
-  statusConfirmed: { color: '#10B981' },
-  statusFailed: { color: '#EF4444' },
   desc: { fontSize: 13, color: theme.colors.text.secondary, lineHeight: 18, marginBottom: 16 },
   modeRow: { flexDirection: 'row', marginBottom: 12, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border },
   modeTab: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: theme.colors.groupped.surface },
-  modeTabActive: { backgroundColor: theme.colors.accent?.purple || '#8B5CF6' },
+  modeTabActive: { backgroundColor: theme.colors.accent.purple },
   modeTabText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.secondary },
   modeTabTextActive: { color: '#FFFFFF' },
   fieldGroup: { marginBottom: 14 },
   fieldLabel: { fontSize: 13, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 6 },
   sectionLabel: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 4 },
-  l1Btn: { backgroundColor: theme.colors.accent?.purple || '#8B5CF6', borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 4 },
+  l1Btn: { backgroundColor: theme.colors.accent.purple, borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 4 },
   l1BtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 }));

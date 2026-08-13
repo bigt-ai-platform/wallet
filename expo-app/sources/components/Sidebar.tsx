@@ -39,7 +39,7 @@ function NavItemRow({ item, onPress, isActive }: { item: NavItem; onPress: () =>
   const Icon = item.icon;
   return (
     <TouchableOpacity
-      style={[s.navItem, isActive && { backgroundColor: theme.colors.primary + '15' }]}
+      style={[s.navItem, isActive && { backgroundColor: theme.colors.primarySoft }]}
       onPress={onPress}
       activeOpacity={0.6}
       accessibilityRole="button"
@@ -140,14 +140,14 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
 
       <View style={[s.quickActions, { borderTopColor: theme.colors.border }]}>
         <TouchableOpacity
-          style={[s.buyBtn, { backgroundColor: theme.colors.accent?.emerald || '#0ECB81' }]}
+          style={[s.buyBtn, { backgroundColor: theme.colors.accent.emerald }]}
           onPress={() => navigate('/order', 'exchange')}
           activeOpacity={0.8}
         >
           <Text style={s.actionBtnText}>{t('sidebar.buy')}</Text>
         </TouchableOpacity>
         <TouchableOpacity
-          style={[s.sellBtn, { backgroundColor: theme.colors.accent?.red || '#F6465D' }]}
+          style={[s.sellBtn, { backgroundColor: theme.colors.accent.red }]}
           onPress={() => navigate('/order', 'exchange')}
           activeOpacity={0.8}
         >

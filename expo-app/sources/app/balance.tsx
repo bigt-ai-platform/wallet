@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, ActivityIndicator,
-  TextInput, Platform,
+  TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -9,6 +9,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import SegmentedTabs from '@/components/SegmentedTabs';
+import { MONO_FONT } from '@/constants/fonts';
 import type { UTXO } from '@/types/api';
 
 interface LayerUtxo extends UTXO {
@@ -202,7 +203,7 @@ const s = StyleSheet.create((theme) => ({
   container: { flex: 1, backgroundColor: theme.colors.groupped.background },
   header: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 14 },
   backBtn: { padding: 4 },
-  backText: { fontSize: 22, color: theme.colors.primary, fontWeight: '700' },
+  backText: { fontSize: 22, color: theme.colors.text.link, fontWeight: '700' },
   pageTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text.primary },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
   lockedTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 8 },
@@ -219,7 +220,7 @@ const s = StyleSheet.create((theme) => ({
   aggToggleText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.primary },
   aggToggleTextOn: { color: '#FFFFFF' },
   refreshBtn: { borderWidth: 1, borderColor: theme.colors.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
-  refreshText: { fontSize: 13, fontWeight: '600', color: theme.colors.primary },
+  refreshText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.link },
   countText: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 4 },
   content: { padding: 16, paddingTop: 8 },
   loader: { color: theme.colors.primary },
@@ -229,5 +230,5 @@ const s = StyleSheet.create((theme) => ({
   tokenName: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary },
   tokenValue: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
   tokenMeta: { fontSize: 12, color: theme.colors.text.secondary, marginBottom: 2 },
-  tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }) },
+  tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: MONO_FONT },
 }));

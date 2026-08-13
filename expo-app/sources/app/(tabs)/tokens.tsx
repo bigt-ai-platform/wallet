@@ -6,6 +6,7 @@ import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { CloseIcon } from '@/components/Icons';
 import SegmentedTabs from '@/components/SegmentedTabs';
+import { MONO_FONT } from '@/constants/fonts';
 import type { TokenItem } from '@/types/api';
 
 export default function TokensScreen() {
@@ -113,8 +114,7 @@ export default function TokensScreen() {
                   <View style={s.tokenDot} />
                   <View style={s.tokenInfo}>
                     <Text style={s.tokenName}>{token.tokenname || 'Unknown'}</Text>
-                    <Text style={s.tokenId}>{token.tokenid ? token.tokenid.slice(0, 16) + '...' : ''}</Text>
-                    {token.description ? <Text style={s.tokenDesc} numberOfLines={1}>{token.description}</Text> : null}
+                    <Text style={s.tokenId}>{token.tokenid ? token.tokenid.slice(0, 16) + '...' : ''}</Text>                    {token.description ? <Text style={s.tokenDesc} numberOfLines={1}>{token.description}</Text> : null}
                   </View>
                 </View>
               ))
@@ -180,10 +180,10 @@ const s = StyleSheet.create((theme) => ({
   emptyCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 32, alignItems: 'center' },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: theme.colors.text.secondary },
   tokenCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 14, marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
-  tokenDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent?.blue || '#3B82F6', marginRight: 12 },
+  tokenDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent.blue, marginRight: 12 },
   tokenInfo: { flex: 1 },
   tokenName: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
-  tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: 'monospace', marginBottom: 2 },
+  tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: MONO_FONT, marginBottom: 2 },
   tokenDesc: { fontSize: 12, color: theme.colors.text.secondary },
   formContent: { padding: 16, paddingBottom: 40 },
   formTitle: { fontSize: 22, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 6 },
@@ -193,6 +193,6 @@ const s = StyleSheet.create((theme) => ({
   fieldInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 15 },
   fieldArea: { minHeight: 72, textAlignVertical: 'top' },
   fieldRow: { flexDirection: 'row' },
-  createBtn: { backgroundColor: theme.colors.accent?.blue || '#3B82F6', borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
+  createBtn: { backgroundColor: theme.colors.accent.blue, borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
   createBtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 }));

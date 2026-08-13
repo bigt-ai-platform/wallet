@@ -3,6 +3,7 @@ import { View, Text, TextInput, Switch, ScrollView, TouchableOpacity, Alert } fr
 import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
+import { MONO_FONT } from '@/constants/fonts';
 import type { L1ChainConfig } from '@/types/api';
 
 export default function SettingsScreen() {
@@ -178,7 +179,7 @@ const s = StyleSheet.create((theme) => ({
   input: {
     borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8,
     backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary,
-    padding: 12, fontSize: 15, fontFamily: 'monospace',
+    padding: 12, fontSize: 15, fontFamily: MONO_FONT,
   },
   placeholder: { color: theme.colors.text.secondary },
   saveBtn: {
@@ -200,12 +201,12 @@ const s = StyleSheet.create((theme) => ({
   chainInput: {
     borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6,
     backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary,
-    padding: 8, fontSize: 13, fontFamily: 'monospace',
+    padding: 8, fontSize: 13, fontFamily: MONO_FONT,
   },
   chainInputSmall: {
     borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6,
     backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary,
-    padding: 8, fontSize: 13, fontFamily: 'monospace', flex: 1,
+    padding: 8, fontSize: 13, fontFamily: MONO_FONT, flex: 1,
   },
   removeBtn: {
     width: 32, height: 32, borderRadius: 16, backgroundColor: theme.colors.accent.red,
