@@ -19,6 +19,9 @@ import { ScriptException } from '../exception/ScriptException.js';
 import { Utils } from '../utils/Utils.js';
 import { ScriptChunk } from './ScriptChunk.js';
 import { SignatureBundle } from '../crypto/pq/SignatureBundle';
+import { ScriptUtils } from './ScriptUtils';
+import { ECKey } from '../core/ECKey';
+import { SigHash } from '../core/SigHash';
 import {
     OP_0, OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4, OP_1NEGATE, OP_1, OP_2, OP_3, OP_4, OP_5, OP_6, OP_7, OP_8, OP_9, OP_10, OP_11, OP_12, OP_13, OP_14, OP_15, OP_16,
     OP_NOP, OP_IF, OP_NOTIF, OP_VERIF, OP_VERNOTIF, OP_ELSE, OP_ENDIF, OP_VERIFY, OP_RETURN,
@@ -435,7 +438,7 @@ export class Script {
      * Having incomplete input script allows to pass around partially signed tx.
      * It is expected that this program later on will be updated with proper signatures.
      */
-    createEmptyInputScript(key: PQKey | null, redeemScript: Script | null): Script {
+    createEmptyInputScript(key: ECKey | PQKey | null, redeemScript: Script | null): Script {
         if (this.isSentToAddress()) {
             if (key == null) throw new Error("Key required to create pay-to-address input script");
             return Script.createInputScript(new Uint8Array(), key.getPubKey()); // Dummy signature
@@ -1448,14 +1451,20 @@ export class Script {
 
         let sigValid = false;
         try {
-            const sighashByte = sigBytes[sigBytes.length - 1];
-            const bundleBytes = sigBytes.slice(0, -1);
-            const sigBundle = SignatureBundle.deserialize(bundleBytes);
-
-            const hash = txContainingThis.hashForSignature(index, connectedScript, sighashByte & 0x1F, (sighashByte & 0x80) !== 0);
-            
-            if (hash !== null) {
-                sigValid = PQKey.verify(hash, sigBundle, pubKey);
+            // Detect PQ pubkey by prefix (0x05)
+            if (ScriptUtils.isPQPubkey(pubKey)) {
+                const baseHash = txContainingThis.hashForSignature(index, connectedScript, SigHash.ALL, false);
+                if (baseHash !== null) {
+                    const sigBundle = SignatureBundle.deserialize(sigBytes);
+                    sigValid = PQKey.verify(baseHash, sigBundle, pubKey);
+                }
+            } else {
+                const sig = TransactionSignature.decodeFromBitcoin(sigBytes, requireCanonical, verifyFlags.has(Script.VerifyFlag.LOW_S));
+                const sighashByte = sig.sighashFlags;
+                const hash = txContainingThis.hashForSignature(index, connectedScript, sighashByte & 0x1F, (sighashByte & 0x80) !== 0);
+                if (hash !== null) {
+                    sigValid = ECKey.verify(hash.getBytes(), sig, pubKey);
+                }
             }
         } catch (e) {
             if (e instanceof Error && !e.message.includes("Reached past end of ASN.1 stream")) {
@@ -1529,13 +1538,21 @@ export class Script {
             // We could reasonably move this out of the loop, but because signature verification is significantly
             // more expensive than hashing, its not a big deal.
             try {
-                const sighashByte = sigs[0][sigs[0].length - 1];
-                const bundleBytes = sigs[0].slice(0, -1);
-                const sigBundle = SignatureBundle.deserialize(bundleBytes);
-                const hash = txContainingThis.hashForSignature(index, connectedScript, sighashByte & 0x1F, (sighashByte & 0x80) !== 0);
-                
-                if (hash !== null && PQKey.verify(hash, sigBundle, pubKey)) {
-                    sigs.shift(); // Remove the used signature
+                if (ScriptUtils.isPQPubkey(pubKey)) {
+                    const baseHash = txContainingThis.hashForSignature(index, connectedScript, SigHash.ALL, false);
+                    if (baseHash !== null) {
+                        const sigBundle = SignatureBundle.deserialize(sigs[0]);
+                        if (PQKey.verify(baseHash, sigBundle, pubKey)) {
+                            sigs.shift(); // Remove the used signature
+                        }
+                    }
+                } else {
+                    const sig = TransactionSignature.decodeFromBitcoin(sigs[0], requireCanonical, false);
+                    const sighashByte = sig.sighashFlags;
+                    const hash = txContainingThis.hashForSignature(index, connectedScript, sighashByte & 0x1F, (sighashByte & 0x80) !== 0);
+                    if (hash !== null && ECKey.verify(hash.getBytes(), sig, pubKey)) {
+                        sigs.shift(); // Remove the used signature
+                    }
                 }
             } catch (e) {
                 // There is (at least) one exception that could be hit here (EOFException, if the sig is too short)

@@ -10,8 +10,8 @@ export { Address } from './net/bigtangle/core/Address';
 export { Block } from './net/bigtangle/core/Block';
 export { Coin } from './net/bigtangle/core/Coin';
 export { CoinConstants } from './net/bigtangle/core/CoinConstants';
-/** @deprecated Use PQKey instead */
-export { ECKey } from './net/bigtangle/core/ECKey';
+/** Legacy secp256k1 key. Prefer PQKey for new keys; ECKey is retained for legacy address compatibility. */
+export { ECKey, KeyType } from './net/bigtangle/core/ECKey';
 export { ECPoint } from './net/bigtangle/core/ECPoint';
 export { Sha256Hash } from './net/bigtangle/core/Sha256Hash';
 export { Transaction } from './net/bigtangle/core/Transaction';

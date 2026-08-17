@@ -400,7 +400,7 @@ export class WalletUtil {
                 // Find an appropriate UTXO to fund the transaction
                 let foundUtxo = false;
                 for (const utxo of utxos) {
-                    const beneficiary = await wallet.getECKey(aesKey, utxo.getAddress());
+                    const beneficiary = (await wallet.getECKey(aesKey, utxo.getAddress())) as PQKey;
                     tx.addInput2(utxo.getBlockHash(), new FreeStandingTransactionOutput(wallet.params, utxo));
 
                     // Add a small output for change if needed

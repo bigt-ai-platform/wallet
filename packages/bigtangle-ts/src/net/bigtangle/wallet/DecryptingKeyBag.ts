@@ -1,4 +1,5 @@
 import { PQKey } from '../crypto/pq/PQKey';
+import { ECKey } from '../core/ECKey';
 import { KeyParameter } from '../crypto/KeyCrypter';
 import { KeyBag } from './KeyBag';
 import { RedeemData } from './RedeemData';
@@ -17,7 +18,7 @@ export class DecryptingKeyBag implements KeyBag {
         this.aesKey = aesKey;
     }
 
-    public async maybeDecrypt(key: PQKey | null): Promise<PQKey | null> {
+    public async maybeDecrypt(key: ECKey | PQKey | null): Promise<ECKey | PQKey | null> {
         if (key === null) {
             return null;
         } else if (key.isEncrypted()) {
@@ -26,7 +27,10 @@ export class DecryptingKeyBag implements KeyBag {
             }
             // Use the key's crypter if available, otherwise use default implementation
             const crypter = (key as any).getKeyCrypter?.() || null;
-            return await key.decrypt(crypter, this.aesKey);
+            if (crypter) {
+                return await (key as any).decrypt(crypter, this.aesKey);
+            }
+            return await (key as any).decrypt(this.aesKey);
         } else {
             return key;
         }
@@ -34,23 +38,22 @@ export class DecryptingKeyBag implements KeyBag {
 
     private async maybeDecryptRedeemData(redeemData: RedeemData | null): Promise<RedeemData | null> {
         if (redeemData === null) return null;
-        const decryptedKeys: PQKey[] = [];
+        const decryptedKeys: (ECKey | PQKey)[] = [];
         for (const key of redeemData.keys) {
             const decryptedKey = await this.maybeDecrypt(key);
             if (decryptedKey) {
                 decryptedKeys.push(decryptedKey);
             }
         }
-        // Assuming RedeemData.of can take an array of PQKey and a Script
         return RedeemData.of(decryptedKeys, redeemData.redeemScript);
     }
 
-    public async findKeyFromPubHash(pubkeyHash: Uint8Array): Promise<PQKey | null> {
+    public async findKeyFromPubHash(pubkeyHash: Uint8Array): Promise<ECKey | PQKey | null> {
         const key = await this.target.findKeyFromPubHash(pubkeyHash);
         return await this.maybeDecrypt(key);
     }
 
-    public async findKeyFromPubKey(pubkey: Uint8Array): Promise<PQKey | null> {
+    public async findKeyFromPubKey(pubkey: Uint8Array): Promise<ECKey | PQKey | null> {
         const key = await this.target.findKeyFromPubKey(pubkey);
         return await this.maybeDecrypt(key);
     }

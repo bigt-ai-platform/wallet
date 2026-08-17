@@ -1,6 +1,7 @@
 import { KeyChainGroup } from './KeyChainGroup';
 import { NetworkParameters } from '../params/NetworkParameters';
 import { PQKey } from '../crypto/pq/PQKey';
+import { ECKey } from '../core/ECKey';
 import { KeyCrypter, KeyParameter } from '../crypto/KeyCrypter';
 import { KeyCrypterScrypt } from '../crypto/KeyCrypterScrypt';
 import { TransactionSigner } from '../signers/TransactionSigner';
@@ -54,7 +55,7 @@ export abstract class WalletBase implements KeyBag {
     }
 
   
-  public removeImportedKey(key: PQKey): boolean {
+  public removeImportedKey(key: ECKey | PQKey): boolean {
     this.keyChainGroupLock.lock();
     try {
       return this.keyChainGroup.removeImportedKey(key);
@@ -63,7 +64,24 @@ export abstract class WalletBase implements KeyBag {
     }
   }
 
+    /**
+     * Returns the imported PQ keys only (legacy EC keys excluded). Prefer
+     * {@link #getAllImportedKeys()} when both key types must be considered.
+     */
+    public getImportedPQKeys(): PQKey[] {
+        return this.getImportedKeys().filter(k => k instanceof PQKey);
+    }
+
+    /**
+     * @deprecated Ambiguous name — returns PQ keys only. Use
+     *             {@link #getImportedPQKeys()} (PQ only) or
+     *             {@link #getAllImportedKeys()} (both key types).
+     */
     public getImportedKeys(): PQKey[] {
+        return this.getImportedPQKeys();
+    }
+
+    public getAllImportedKeys(): (ECKey | PQKey)[] {
         this.keyChainGroupLock.lock();
         try {
             return this.keyChainGroup.getImportedKeys();
@@ -72,11 +90,11 @@ export abstract class WalletBase implements KeyBag {
         }
     }
 
-    public importKey(key: PQKey): boolean {
+    public importKey(key: ECKey | PQKey): boolean {
         return this.importKeys([key]) === 1;
     }
 
-    public importKeys(keys: PQKey[]): number {
+    public importKeys(keys: (ECKey | PQKey)[]): number {
         this.keyChainGroupLock.lock();
         let result: number;
         try {
@@ -88,7 +106,7 @@ export abstract class WalletBase implements KeyBag {
         return result;
     }
 
-    private checkNoDeterministicKeys(keys: PQKey[]): void {
+    private checkNoDeterministicKeys(keys: (ECKey | PQKey)[]): void {
         for (const key of keys) {
             if (key instanceof DeterministicKey) {
                 throw new Error("Cannot import HD keys back into the wallet");
@@ -120,7 +138,7 @@ export abstract class WalletBase implements KeyBag {
         }
     }
 
-    public async findKeyFromPubHash(pubkeyHash: Uint8Array): Promise<PQKey | null> {
+    public async findKeyFromPubHash(pubkeyHash: Uint8Array): Promise<ECKey | PQKey | null> {
         await this.keyChainGroupLock.lock();
         try {
             return this.keyChainGroup.findKeyFromPubHash(pubkeyHash);
@@ -129,7 +147,7 @@ export abstract class WalletBase implements KeyBag {
         }
     }
 
-    public async findKeyFromPubKey(pubkey: Uint8Array): Promise<PQKey | null> {
+    public async findKeyFromPubKey(pubkey: Uint8Array): Promise<ECKey | PQKey | null> {
         await this.keyChainGroupLock.lock();
         try {
             return this.keyChainGroup.findKeyFromPubKey(pubkey);
@@ -284,15 +302,32 @@ export abstract class WalletBase implements KeyBag {
     }
 
     public async walletKeys(aesKey: KeyParameter | null): Promise<PQKey[]> {
+        const all = await this.walletKeysAll(aesKey);
+        return all.filter(k => k instanceof PQKey);
+    }
+
+    /**
+     * @deprecated Ambiguous name — returns PQ keys only. Use
+     *             {@link #walletPQKeys(KeyParameter)} (PQ only) or
+     *             {@link #walletKeysAll(KeyParameter)} (both key types).
+     */
+    public async walletPQKeys(aesKey: KeyParameter | null): Promise<PQKey[]> {
+        return this.walletKeys(aesKey);
+    }
+
+    /**
+     * Returns all keys in the wallet (both legacy EC and PQ), matching Java
+     * WalletBase.walletKeysAll(KeyParameter).
+     */
+    public async walletKeysAll(aesKey: KeyParameter | null): Promise<(ECKey | PQKey)[]> {
         const maybeDecryptingKeyBag = new DecryptingKeyBag(this, aesKey);
-        const walletKeys: PQKey[] = [];
-        for (const key of this.getImportedKeys()) {
-            const ecKey = await maybeDecryptingKeyBag.maybeDecrypt(key);
-            if (ecKey) {
-                walletKeys.push(ecKey);
+        const walletKeys: (ECKey | PQKey)[] = [];
+        for (const key of this.getAllImportedKeys()) {
+            const decrypted = await maybeDecryptingKeyBag.maybeDecrypt(key);
+            if (decrypted) {
+                walletKeys.push(decrypted);
             }
         }
-        // Remove getDeterministicKeyChains usage if not present on KeyChainGroup
         return walletKeys;
     }
 

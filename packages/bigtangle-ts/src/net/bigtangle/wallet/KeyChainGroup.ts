@@ -9,6 +9,8 @@ import { KeyParameter } from "../utils/KeyParameter"; // Assuming this is where 
 import { Address } from "../core/Address";
 import { BloomFilter } from "../core/BloomFilter";
 import { PQKey } from "../crypto/pq/PQKey";
+import { ECKey } from "../core/ECKey";
+import { Utils } from "../utils/Utils";
 import { RedeemData } from "./RedeemData";
 
 // Correctly import the 'Key' message interface and alias it to avoid name clashes.
@@ -30,7 +32,7 @@ export class KeyChainGroup implements KeyBag {
   protected readonly lock = {}; // Simplified lock
 
   protected readonly chains: DeterministicKeyChain[] = [];
-  protected readonly keys: PQKey[] = [];
+  protected readonly keys: (ECKey | PQKey)[] = [];
   protected currentKeys = new Map<KeyPurpose, DeterministicKey>();
   protected currentAddresses = new Map<KeyPurpose, Address>();
   public keyCrypter: KeyCrypter | null = null;
@@ -64,7 +66,7 @@ export class KeyChainGroup implements KeyBag {
     return this.lookaheadThreshold;
   }
 
-  public importKeys(...keys: PQKey[]): number {
+  public importKeys(...keys: (ECKey | PQKey)[]): number {
     let count = 0;
     for (const key of keys) {
       if (!this.hasKey(key)) {
@@ -75,8 +77,9 @@ export class KeyChainGroup implements KeyBag {
     return count;
   }
 
-  public removeImportedKey(key: PQKey): boolean {
-    const index = this.keys.findIndex(k => k.equals(key));
+  public removeImportedKey(key: ECKey | PQKey): boolean {
+    const index = this.keys.findIndex(k => Utils.arraysEqual(
+      new Uint8Array(k.getPublicKeyBytes()), new Uint8Array(key.getPublicKeyBytes())));
     if (index > -1) {
       this.keys.splice(index, 1);
       return true;
@@ -84,9 +87,9 @@ export class KeyChainGroup implements KeyBag {
     return false;
   }
 
-  public findKeyFromPubKey(pubkey: Uint8Array): PQKey | null {
+  public findKeyFromPubKey(pubkey: Uint8Array): (ECKey | PQKey) | null {
     for (const key of this.keys) {
-      // Ensure key is an PQKey instance and has the getPubKey method
+      // Ensure key has the getPubKey method
       if (key && typeof key.getPubKey === 'function') {
         if (key.getPubKey().every((v, i) => v === pubkey[i])) {
           return key;
@@ -96,7 +99,7 @@ export class KeyChainGroup implements KeyBag {
     return null;
   }
 
-  public currentKey(purpose: KeyPurpose): PQKey {
+  public currentKey(purpose: KeyPurpose): ECKey | PQKey {
     if (this.keys.length > 0) {
       return this.keys[this.keys.length - 1];
     }
@@ -121,7 +124,7 @@ export class KeyChainGroup implements KeyBag {
 
   public async encrypt(keyCrypter: KeyCrypter, aesKey: KeyParameter): Promise<void> {
     this.keyCrypter = keyCrypter;
-    const newKeys: PQKey[] = [];
+    const newKeys: (ECKey | PQKey)[] = [];
     for (const key of this.keys) {
       newKeys.push(await key.encrypt(keyCrypter, aesKey));
     }
@@ -133,7 +136,7 @@ export class KeyChainGroup implements KeyBag {
     if (!this.keyCrypter) {
       return;
     }
-    const newKeys: PQKey[] = [];
+    const newKeys: (ECKey | PQKey)[] = [];
     for (const key of this.keys) {
       newKeys.push(await key.decrypt(this.keyCrypter, aesKey));
     }
@@ -146,7 +149,7 @@ export class KeyChainGroup implements KeyBag {
     return this.keyCrypter !== null;
   }
   
-  public getImportedKeys(): PQKey[] {
+  public getImportedKeys(): (ECKey | PQKey)[] {
     return this.keys;
   }
 
@@ -171,9 +174,9 @@ export class KeyChainGroup implements KeyBag {
   public markP2SHAddressAsUsed(address: Address): void {
     /* TODO: Implement */
   }
-  public findKeyFromPubHash(pubkeyHash: Uint8Array): PQKey | null {
+  public findKeyFromPubHash(pubkeyHash: Uint8Array): (ECKey | PQKey) | null {
     for (const key of this.keys) {
-      // Ensure key is an PQKey instance and has the getPubKeyHash method
+      // Ensure key has the getPubKeyHash method
       if (key && typeof key.getPubKeyHash === 'function') {
         if (key.getPubKeyHash().every((v, i) => v === pubkeyHash[i])) {
           return key;
@@ -185,8 +188,9 @@ export class KeyChainGroup implements KeyBag {
   public markPubKeyHashAsUsed(pubkeyHash: Uint8Array): void {
     /* TODO: Implement */
   }
-  public hasKey(key: PQKey): boolean {
-    return this.keys.some(k => k.equals(key));
+  public hasKey(key: ECKey | PQKey): boolean {
+    return this.keys.some(k => Utils.arraysEqual(
+      new Uint8Array(k.getPublicKeyBytes()), new Uint8Array(key.getPublicKeyBytes())));
   }
   public markPubKeyAsUsed(pubkey: Uint8Array): void {
     /* TODO: Implement */

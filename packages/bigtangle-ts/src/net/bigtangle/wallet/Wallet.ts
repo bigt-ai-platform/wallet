@@ -3,6 +3,7 @@ import { Block } from "../core/Block";
 import { Coin } from "../core/Coin";
 import { CoinConstants } from "../core/CoinConstants";
 import { PQKey } from "../crypto/pq/PQKey";
+import { ECKey } from "../core/ECKey";
 import { SignatureBundle } from "../crypto/pq/SignatureBundle";
 import { NetworkParameters } from "../params/NetworkParameters";
 import { Token } from "../core/Token";
@@ -37,6 +38,7 @@ import { MultiSignAddress } from "../core/MultiSignAddress";
 import { MultiSignBy } from "../core/MultiSignBy";
 import { MultiSignByRequest } from "../response/MultiSignByRequest";
 import { PermissionedAddressesResponse } from "../response/PermissionedAddressesResponse";
+import { TransactionSignature } from "../crypto/TransactionSignature";
 import { KeyPurpose } from "../wallet/KeyChain";
 import { Script } from "../script/Script";
 import { ScriptBuilder } from "../script/ScriptBuilder";
@@ -54,7 +56,10 @@ export class Wallet extends WalletBase {
   keyChainGroup: KeyChainGroup;
   url: string | null = null;
 
-  static fromKeys(params: NetworkParameters, keys: PQKey[]): Wallet {
+  static fromKeys(params: NetworkParameters, keys: (ECKey | PQKey)[]): Wallet;
+  static fromKeys(params: NetworkParameters, key: ECKey | PQKey): Wallet;
+  static fromKeys(params: NetworkParameters, keyOrKeys: (ECKey | PQKey) | (ECKey | PQKey)[]): Wallet {
+    const keys = Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys];
     for (const key of keys) {
       if (key instanceof DeterministicKey) {
         throw new Error("DeterministicKey not allowed");
@@ -67,7 +72,7 @@ export class Wallet extends WalletBase {
 
   static fromKeysURL(
     params: NetworkParameters,
-    keys: PQKey[],
+    keys: (ECKey | PQKey)[],
     url: string
   ): Wallet {
     for (const key of keys) {
@@ -80,11 +85,11 @@ export class Wallet extends WalletBase {
     return new Wallet(params, group, url);
   }
 
-  static fromKeysSingle(params: NetworkParameters, key: PQKey, url?: string): Wallet {
+  static fromKeysSingle(params: NetworkParameters, key: ECKey | PQKey, url?: string): Wallet {
     if (key instanceof DeterministicKey) {
       throw new Error("DeterministicKey not allowed");
     }
-    const keys: PQKey[] = [key];
+    const keys: (ECKey | PQKey)[] = [key];
     const group = new KeyChainGroup(params);
     group.importKeys(...keys);
     return url ? new Wallet(params, group, url) : new Wallet(params, group);
@@ -465,17 +470,40 @@ export class Wallet extends WalletBase {
     toAddress: string,
     coin: Coin,
     memoInfo?: MemoInfo
-  ): Promise<Transaction | null> {
-    const giveMoneyResult = new Map<string, bigint>();
-    giveMoneyResult.set(toAddress, coin.getValue());
-    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
-    return this.payMoneyToECKeyList(
-      aesKey,
-      giveMoneyResult,
-      coin.getTokenid(),
-      memoInfo ? memoInfo.toString() : "",
-      coinList
-    );
+  ): Promise<Transaction | null>;
+  async pay(
+    aesKey: any,
+    destination: ECKey | PQKey,
+    amount: Coin,
+    memo: MemoInfo | string
+  ): Promise<Transaction[]>;
+  async pay(
+    aesKey: any,
+    destOrAddress: ECKey | PQKey | string,
+    coin: Coin,
+    memo: MemoInfo | string | undefined
+  ): Promise<Transaction[] | Transaction | null> {
+    if (typeof destOrAddress === 'string') {
+      const giveMoneyResult = new Map<string, bigint>();
+      giveMoneyResult.set(destOrAddress, coin.getValue());
+      const coinList = await this.calculateAllSpendCandidates(aesKey, false);
+      return this.payMoneyToECKeyList(
+        aesKey,
+        giveMoneyResult,
+        coin.getTokenid(),
+        memo ? (memo as MemoInfo).toString() : "",
+        coinList
+      );
+    }
+    const tx = await this.payToKey(aesKey, destOrAddress, coin, memo instanceof MemoInfo ? memo : new MemoInfo(memo));
+    if (!tx) {
+      return [];
+    }
+    await this.submitTransaction(tx);
+    if (this.getFee() && !coin.isBIG()) {
+      await this.submitTransaction(await this.feeTransaction(aesKey, await this.calculateAllSpendCandidates(aesKey, false)));
+    }
+    return [tx];
   }
 
   async payToList(
@@ -548,7 +576,7 @@ export class Wallet extends WalletBase {
     for (const spendableOutput of coinListTokenid) {
       const utxo = spendableOutput.getUTXO();
       if (utxo) {
-        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
+        beneficiary = (await this.getECKey(aesKey, utxo.getAddress())) as PQKey;
         amount = amount.add(utxo.getValue());
         multispent.addInput2(utxo.getBlockHash(), spendableOutput);
         if (!amount.isNegative()) {
@@ -651,7 +679,7 @@ export class Wallet extends WalletBase {
     for (const spendableOutput of coinTokenList) {
       const utxo = spendableOutput.getUTXO();
       if (utxo) {
-        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
+        beneficiary = (await this.getECKey(aesKey, utxo.getAddress())) as PQKey;
         restAmount = spendableOutput.getValue().add(restAmount);
         multispent.addInput2(utxo.getBlockHash(), spendableOutput);
         if (!restAmount.isNegative()) {
@@ -673,6 +701,52 @@ export class Wallet extends WalletBase {
     return multispent;
   }
 
+  /**
+   * Creates a single transaction paying {@code amount} to the given key (EC or
+   * PQ) from the wallet's spend candidates.
+   */
+  async payToKey(
+    aesKey: any,
+    destination: ECKey | PQKey,
+    amount: Coin,
+    memo: MemoInfo | string,
+    coinList?: FreeStandingTransactionOutput[]
+  ): Promise<Transaction> {
+    const tx = new Transaction(this.params);
+    tx.setMemo(memo instanceof MemoInfo ? memo.toJson() : memo);
+    tx.addOutput(amount, destination);
+    let restAmount = amount.negate();
+    let beneficiary: ECKey | PQKey | null = null;
+    if (this.getFee() && amount.isBIG()) {
+      restAmount = restAmount.add(CoinConstants.FEE_DEFAULT.negate());
+    }
+    const list = coinList ?? await this.calculateAllSpendCandidates(aesKey, false);
+    const coinTokenList = this.filterTokenid(restAmount.getTokenid(), list);
+    for (const spendableOutput of coinTokenList) {
+      const utxo = spendableOutput.getUTXO();
+      if (utxo) {
+        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
+        restAmount = spendableOutput.getValue().add(restAmount);
+        tx.addInput2(utxo.getBlockHash(), spendableOutput);
+        if (!restAmount.isNegative()) {
+          if (restAmount.isPositive()) {
+            tx.addOutput(restAmount, beneficiary as ECKey | PQKey);
+          }
+          break;
+        }
+      }
+    }
+    if (beneficiary == null || restAmount.isNegative()) {
+      const deficit = restAmount.isNegative() ? restAmount.negate() : restAmount;
+      const info = "destination key payment requested=" + amount + " remaining=" + restAmount
+        + " deficit=" + deficit + " inputs=" + coinTokenList.length;
+      this.logInsufficientMoney("payToKey", info, aesKey, coinTokenList);
+      throw new InsufficientMoneyException(amount + " outputs size= " + coinTokenList.length);
+    }
+    await this.signTransaction(tx, aesKey, "THROW");
+    return tx;
+  }
+
   async payToScript(
     aesKey: any,
     amount: Coin,
@@ -692,7 +766,7 @@ export class Wallet extends WalletBase {
     for (const spendableOutput of coinTokenList) {
       const utxo = spendableOutput.getUTXO();
       if (utxo) {
-        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
+        beneficiary = (await this.getECKey(aesKey, utxo.getAddress())) as PQKey;
         restAmount = restAmount.add(utxo.getValue());
         multispent.addInput2(utxo.getBlockHash(), spendableOutput);
         if (!restAmount.isNegative()) {
@@ -742,7 +816,7 @@ export class Wallet extends WalletBase {
     for (const spendableOutput of coinListTokenid) {
       const utxo = spendableOutput.getUTXO();
       if (utxo) {
-        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
+        beneficiary = (await this.getECKey(aesKey, utxo.getAddress())) as PQKey;
         amount = spendableOutput.getValue().add(amount);
         spent.addInput2(utxo.getBlockHash(), spendableOutput);
         if (!amount.isNegative()) {
@@ -856,7 +930,7 @@ export class Wallet extends WalletBase {
 
     for (const spendableOutput of candidates) {
       if (orderBaseToken === spendableOutput.getUTXO().getTokenId()) {
-        beneficiary = await this.getECKey(aesKey, spendableOutput.getUTXO().getAddress());
+        beneficiary = (await this.getECKey(aesKey, spendableOutput.getUTXO().getAddress())) as PQKey;
         toBePaid = spendableOutput.getValue().add(toBePaid);
         tx.addInput2(spendableOutput.getUTXO().getBlockHash(), spendableOutput);
         if (!toBePaid.isNegative()) {
@@ -939,7 +1013,7 @@ export class Wallet extends WalletBase {
 
     for (const spendableOutput of candidates) {
       if (t.getTokenid() === spendableOutput.getUTXO().getTokenId()) {
-        beneficiary = await this.getECKey(aesKey, spendableOutput.getUTXO().getAddress());
+        beneficiary = (await this.getECKey(aesKey, spendableOutput.getUTXO().getAddress())) as PQKey;
         myCoin = spendableOutput.getValue().add(myCoin);
         tx.addInput2(spendableOutput.getUTXO().getBlockHash(), spendableOutput);
         if (!myCoin.isNegative()) {
@@ -1063,7 +1137,7 @@ export class Wallet extends WalletBase {
     for (const spendableOutput of this.filterTokenid(amount.getTokenid(), coinList)) {
       const utxo = spendableOutput.getUTXO();
       if (utxo) {
-        beneficiary = await this.getECKey(aesKey, utxo.getAddress());
+        beneficiary = (await this.getECKey(aesKey, utxo.getAddress())) as PQKey;
         amount.add(utxo.getValue());
         tx.addInput2(utxo.getBlockHash(), spendableOutput);
         if (!amount.isNegative()) {
@@ -1150,7 +1224,7 @@ export class Wallet extends WalletBase {
   async paySubtangle(
     aesKey: any,
     outputStr: string,
-    connectKey: PQKey,
+    connectKey: ECKey | PQKey,
     toAddressInSubtangle: Address,
     coin: Coin,
     address: Address
@@ -1171,8 +1245,13 @@ export class Wallet extends WalletBase {
     transaction.setToAddressInSubtangle(toAddressInSubtangle.getHash160());
     const input = transaction.addInput2(findOutput.getBlockHash(), spendableOutput);
     const sighash = transaction.hashForSignature(0, spendableOutput.getScriptBytes(), 1 as any, false);
-    const sigBundle = await connectKey.signWithAesKey(sighash, aesKey);
-    const inputScript = new ScriptBuilder().data(sigBundle.serialize()).build();
+    let tsrecsig: TransactionSignature;
+    if (connectKey instanceof DeterministicKey) {
+      tsrecsig = await (connectKey as DeterministicKey).ecSign(sighash, aesKey);
+    } else {
+      tsrecsig = await (connectKey as ECKey).signWithAesKey(sighash, aesKey);
+    }
+    const inputScript = new ScriptBuilder().data(tsrecsig.encodeToBitcoin()).build();
     input.setScriptSig(inputScript);
     await this.submitTransaction(transaction);
     return transaction;
@@ -1182,14 +1261,19 @@ export class Wallet extends WalletBase {
    * Signing / Keys
    * ================================================================= */
 
-  async getECKey(aesKey: any, address: string | null): Promise<PQKey> {
+  async getECKey(aesKey: any, address: string | null): Promise<ECKey | PQKey> {
     if (address === null) {
       throw new Error("Address cannot be null");
     }
-    const keys = await this.walletKeys(aesKey);
-    for (const ecKey of keys) {
-      if (address === Address.fromKey(this.params, ecKey).toBase58()) {
-        return ecKey;
+    const keys = await this.walletKeysAll(aesKey);
+    for (const key of keys) {
+      // Match the key's own address string (legacy base58 for EC, PQ hex for PQ)
+      if (address === (key as any).toAddressString?.(this.params)) {
+        return key;
+      }
+      // Also accept the base58-encoded hash160 (matching Address.fromHash160().toBase58())
+      if (address === Address.fromKey(this.params, key).toBase58()) {
+        return key;
       }
     }
     throw new Error("no key in wallet is found for this address " + address);

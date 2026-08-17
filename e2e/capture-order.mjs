@@ -379,6 +379,11 @@ async function main() {
     throw e;
   });
   await page.waitForTimeout(1500);
+  // The chart cards sit far below the fold (token/interval selectors above), so
+  // scroll the price chart into view before screenshotting — otherwise the shot
+  // captures the top of the screen (form fields) instead of the actual chart.
+  await page.getByTestId('chart-price').scrollIntoViewIfNeeded();
+  await page.waitForTimeout(1500);
   await page.screenshot({ path: `${SHOTS}/order-06-chart.png` });
   console.log('ok order-06-chart');
 

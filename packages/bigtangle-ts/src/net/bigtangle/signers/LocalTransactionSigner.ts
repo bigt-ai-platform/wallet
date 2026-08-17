@@ -1,6 +1,7 @@
 import { StatelessTransactionSigner } from './StatelessTransactionSigner';
 import { Transaction } from '../core/Transaction';
 import { PQKey } from '../crypto/pq/PQKey';
+import { ECKey } from '../core/ECKey';
 import { Script } from '../script/Script';
 import { KeyBag } from '../wallet/KeyBag'; // Placeholder
 import { SignatureBundle } from '../crypto/pq/SignatureBundle';
@@ -92,12 +93,12 @@ export class LocalTransactionSigner extends StatelessTransactionSigner {
             // For P2SH inputs we need to share derivation path of the signing key with other signers, so that they
             // use correct key to calculate their signatures.
             // Married keys all have the same derivation path, so we can safely just take first one here.
-            const pubKey: PQKey = redeemData.keys[0];
+            const pubKey: ECKey | PQKey = redeemData.keys[0];
             if (pubKey instanceof DeterministicKey) {
                 propTx.keyPaths.set(scriptPubKey, (pubKey as DeterministicKey).getPath());
             }
 
-            let key: PQKey | null;
+            let key: ECKey | PQKey | null;
             // locate private key in redeem data. For pay-to-address and pay-to-key inputs RedeemData will always contain
             // only one key (with private bytes). For P2SH inputs RedeemData will contain multiple keys, one of which MAY
             // have private bytes

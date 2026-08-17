@@ -3,6 +3,7 @@ import { ScriptChunk } from './ScriptChunk';
 import type { Script } from './Script';
 import { Address } from '../core/Address';
 import { PQKey } from '../crypto/pq/PQKey';
+import { ECKey } from '../core/ECKey';
 import { Utils } from '../utils/Utils';
 import { TransactionSignature } from '../crypto/TransactionSignature';
 import { SignatureBundle } from '../crypto/pq/SignatureBundle';
@@ -151,7 +152,7 @@ export class ScriptBuilder {
         return new ScriptClass(this.chunks);
     }
 
-    static createOutputScript(to: Address | PQKey): Script {
+    static createOutputScript(to: Address | ECKey | PQKey): Script {
         if (to instanceof Address) {
             if (to.isP2SHAddress()) {
                 return new ScriptBuilder()
@@ -168,7 +169,7 @@ export class ScriptBuilder {
                     .op(ScriptOpCodes.OP_CHECKSIG)
                     .build();
             }
-        } else if (to instanceof PQKey) {
+        } else if (to instanceof PQKey || to instanceof ECKey) {
             return new ScriptBuilder()
                 .op(ScriptOpCodes.OP_DUP)
                 .op(ScriptOpCodes.OP_HASH160)
@@ -180,7 +181,7 @@ export class ScriptBuilder {
         throw new Error("Invalid type for createOutputScript");
     }
 
-    static createInputScript(signature: TransactionSignature | SignatureBundle | null, pubKey?: PQKey): Script {
+    static createInputScript(signature: TransactionSignature | SignatureBundle | null, pubKey?: ECKey | PQKey): Script {
         // For PQ signatures, use serialize() (no sighash byte) matching Java's
         // createInputScriptForPQ. The encodeToBitcoin() variant would append a
         // sighash byte that Java's LocalTransactionSigner does not include.
@@ -189,12 +190,12 @@ export class ScriptBuilder {
             : new Uint8Array();
         const builder = new ScriptBuilder().data(sigBytes);
         if (pubKey) {
-            builder.data(pubKey.getPrefixedPublicKeyBytes());
+            builder.data(pubKey.getPubKey());
         }
         return builder.build();
     }
 
-    static createMultiSigOutputScript(threshold: number, pubkeys: PQKey[]): Script {
+    static createMultiSigOutputScript(threshold: number, pubkeys: (ECKey | PQKey)[]): Script {
         if (threshold <= 0 || threshold > pubkeys.length || pubkeys.length > 16) {
             throw new Error("Invalid threshold or number of public keys for multisig.");
         }
@@ -319,12 +320,12 @@ export class ScriptBuilder {
         return ScriptBuilder.createP2SHOutputScript(hash);
     }
 
-    static createP2SHOutputScriptWithKeys(threshold: number, pubkeys: PQKey[]): Script {
+    static createP2SHOutputScriptWithKeys(threshold: number, pubkeys: (ECKey | PQKey)[]): Script {
         const redeemScript = ScriptBuilder.createRedeemScript(threshold, pubkeys);
         return ScriptBuilder.createP2SHOutputScriptFromScript(redeemScript);
     }
 
-    static createRedeemScript(threshold: number, pubkeys: PQKey[]): Script {
+    static createRedeemScript(threshold: number, pubkeys: (ECKey | PQKey)[]): Script {
         const sortedPubkeys = [...pubkeys].sort((a, b) => {
             const pubA = a.getPubKey();
             const pubB = b.getPubKey();
@@ -345,7 +346,7 @@ export class ScriptBuilder {
         return new ScriptBuilder().op(ScriptOpCodes.OP_RETURN).data(data).build();
     }
 
-    static createCLTVPaymentChannelOutput(time: bigint, from: PQKey, to: PQKey): Script {
+    static createCLTVPaymentChannelOutput(time: bigint, from: ECKey | PQKey, to: ECKey | PQKey): Script {
         const timeBytes = Utils.encodeMPI(time, false);
         if (timeBytes.length > 5) {
             throw new Error("Time too large to encode as 5-byte int");

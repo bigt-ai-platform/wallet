@@ -32,6 +32,8 @@ import { CoinConstants } from "./CoinConstants";
 import { Address } from "./Address";
 import { PQKey } from "../crypto/pq/PQKey";
 import { SignatureBundle } from "../crypto/pq/SignatureBundle";
+import { DeterministicKey } from "../crypto/DeterministicKey";
+import { ECKey, KeyType } from "./ECKey";
 
 import { Script } from "../script/Script";
 import * as ScriptOpCodes from "../script/ScriptOpCodes";
@@ -889,21 +891,48 @@ export class Transaction extends ChildMessage {
   public async addSignedInput(
     prevOut: TransactionOutPoint,
     scriptPubKey: Script,
-    sigKey: PQKey,
-    sigHash: SigHash,
-    anyoneCanPay: boolean
+    sigKey: ECKey | PQKey,
+    sigHash: SigHash = SigHash.ALL,
+    anyoneCanPay: boolean = false
   ): Promise<TransactionInput> {
-    // TODO: Implement this method properly
-    throw new Error("addSignedInput not implemented");
+    // Verify the API user didn't try to do operations out of order.
+    if (this.outputs.length === 0) {
+      throw new Error("Attempting to sign tx without outputs.");
+    }
+    const input = TransactionInput.fromOutpoint4(this.params!, this, new Uint8Array(), prevOut);
+    this.addInput(input);
+    const hash = this.hashForSignature2(this.inputs.length - 1, scriptPubKey, sigHash, anyoneCanPay);
+    const txSig = await this.signEc(sigKey, hash, sigHash, anyoneCanPay);
+    if (scriptPubKey.isSentToAddress()) {
+      input.setScriptSig(ScriptBuilder.createInputScript(txSig, sigKey));
+    } else if (scriptPubKey.isSentToMultiSig()) {
+      input.setScriptSig(ScriptBuilder.createInputScript(txSig));
+    } else {
+      throw new Error(`Don't know how to sign for this kind of scriptPubKey: ${scriptPubKey}`);
+    }
+    return input;
   }
 
   public async signInputs(
     prevOut: TransactionOutPoint,
     scriptPubKey: Script,
-    sigKey: PQKey
+    sigKey: ECKey | PQKey
   ): Promise<void> {
-    // TODO: Implement this method properly
-    throw new Error("signInputs not implemented");
+    const hash = this.hashForSignature2(this.inputs.length - 1, scriptPubKey, SigHash.ALL, false);
+    const txSig = await this.signEc(sigKey, hash, SigHash.ALL, false);
+    for (const input of this.inputs) {
+      // TODO only sign if valid signature can be created
+      if (input.getScriptBytes().length !== 0) {
+        continue;
+      }
+      if (scriptPubKey.isSentToAddress()) {
+        input.setScriptSig(ScriptBuilder.createInputScript(txSig, sigKey));
+      } else if (scriptPubKey.isSentToMultiSig()) {
+        input.setScriptSig(ScriptBuilder.createInputScript(txSig));
+      } else {
+        throw new Error(`Don't know how to sign for this kind of scriptPubKey: ${scriptPubKey}`);
+      }
+    }
   }
 
   /**
@@ -915,10 +944,21 @@ export class Transaction extends ChildMessage {
   public async addSignedInputDefault(
     prevOut: TransactionOutPoint,
     scriptPubKey: Script,
-    sigKey: PQKey
+    sigKey: ECKey | PQKey
   ): Promise<TransactionInput> {
-    // TODO: Implement this method properly
-    throw new Error("addSignedInputDefault not implemented");
+    return this.addSignedInput(prevOut, scriptPubKey, sigKey, SigHash.ALL, false);
+  }
+
+  private async signEc(sigKey: ECKey | PQKey, hash: Sha256Hash, sigHash: SigHash, anyoneCanPay: boolean): Promise<TransactionSignature> {
+    let txSig: TransactionSignature;
+    if (sigKey instanceof DeterministicKey) {
+      txSig = await sigKey.ecSign(hash, null);
+    } else if (sigKey instanceof ECKey) {
+      txSig = sigKey.sign(hash);
+    } else {
+      throw new Error(`EC signing requires an EC key, got ${sigKey.constructor.name}`);
+    }
+    return new TransactionSignature(txSig.r, txSig.s, TransactionSignature.calcSigHashValue(sigHash, anyoneCanPay));
   }
 
   /**
@@ -964,7 +1004,21 @@ export class Transaction extends ChildMessage {
    * Adds the given output to this transaction. The output must be completely
    * initialized. Returns the given output.
    */
-  public addOutput(to: TransactionOutput): TransactionOutput {
+  public addOutput(to: TransactionOutput): TransactionOutput;
+  /**
+   * Creates an output paying to the given key, dispatching to the legacy
+   * address form for EC keys and the PQ key form for PQ keys.
+   */
+  public addOutput(value: Coin, key: ECKey | PQKey): TransactionOutput;
+  public addOutput(toOrValue: TransactionOutput | Coin, key?: ECKey | PQKey): TransactionOutput {
+    if (key !== undefined) {
+      const value = toOrValue as Coin;
+      if (key.getKeyType() === KeyType.PQ) {
+        return this.addOutputEckey(value, key as PQKey);
+      }
+      return this.addOutputAddress(value, (key as ECKey).toAddress(this.params!));
+    }
+    const to = toOrValue as TransactionOutput;
     this.unCache();
     to.setParent(this);
     this.outputs.push(to);
@@ -1003,23 +1057,49 @@ export class Transaction extends ChildMessage {
    */
   public async calculateSignature(
     inputIndex: number,
-    key: PQKey,
+    key: ECKey | PQKey,
     redeemScript: Uint8Array,
     hashType: SigHash,
     anyoneCanPay: boolean
-  ): Promise<SignatureBundle> {
-    const hash = this.hashForSignature(
-      inputIndex,
-      redeemScript,
-      hashType,
-      anyoneCanPay
-    );
-    const sigBundle = await key.signWithAesKey(hash, null);
+  ): Promise<TransactionSignature | SignatureBundle> {
+    const hash = this.hashForSignature(inputIndex, redeemScript, hashType, anyoneCanPay);
+    if (key.getKeyType() === KeyType.EC) {
+      return this.ecSign(key, hash, hashType, anyoneCanPay);
+    }
+    const sigBundle = await (key as PQKey).signWithAesKey(hash, null);
     // Store PQ signature for later serialization (matching Java Wallet behavior)
     if (this.version >= PQConstants.TX_PQ_VERSION) {
       this.pqSignatureBundle = sigBundle.serialize();
     }
-    return sigBundle;
+    return new TransactionSignature(1n, 1n, TransactionSignature.calcSigHashValue(hashType, anyoneCanPay));
+  }
+
+  public async calculateSignature2(
+    inputIndex: number,
+    key: ECKey | PQKey,
+    redeemScript: Script,
+    hashType: SigHash,
+    anyoneCanPay: boolean
+  ): Promise<TransactionSignature | SignatureBundle> {
+    const hash = this.hashForSignature2(inputIndex, redeemScript, hashType, anyoneCanPay);
+    if (key.getKeyType() === KeyType.EC) {
+      return this.ecSign(key, hash, hashType, anyoneCanPay);
+    }
+    const sigBundle = await (key as PQKey).signWithAesKey(hash, null);
+    if (this.version >= PQConstants.TX_PQ_VERSION) {
+      this.pqSignatureBundle = sigBundle.serialize();
+    }
+    return new TransactionSignature(1n, 1n, TransactionSignature.calcSigHashValue(hashType, anyoneCanPay));
+  }
+
+  private async ecSign(key: ECKey | PQKey, hash: Sha256Hash, hashType: SigHash, anyoneCanPay: boolean): Promise<TransactionSignature> {
+    let ts: TransactionSignature;
+    if (key instanceof DeterministicKey) {
+      ts = await key.ecSign(hash, null);
+    } else {
+      ts = (key as ECKey).sign(hash);
+    }
+    return new TransactionSignature(ts.r, ts.s, TransactionSignature.calcSigHashValue(hashType, anyoneCanPay));
   }
 
  

@@ -2,7 +2,7 @@ import { ECPoint } from '../core/ECPoint';
 import { Digest } from './ConcatKDFBytesGenerator';
 import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha256';
-import * as aes from '@noble/ciphers/aes';
+import * as aes from '@noble/ciphers/aes.js';
 
 
 // --- Interfaces --- //

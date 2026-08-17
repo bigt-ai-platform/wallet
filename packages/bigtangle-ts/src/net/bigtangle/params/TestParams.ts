@@ -41,7 +41,7 @@ export class TestParams extends NetworkParameters {
     }
 
     getDumpedPrivateKeyHeader(): number {
-        return 239; // Testnet dumped private key header
+        return 128; // Testnet dumped private key header (matches Java)
     }
 
     serverSeeds(): string[] {

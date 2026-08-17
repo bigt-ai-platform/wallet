@@ -24,6 +24,7 @@ import { Sha256Hash } from './Sha256Hash';
 import { Utils } from './Utils';
 import { NetworkParameters } from '../params/NetworkParameters';
 import { PQKey } from '../crypto/pq/PQKey';
+import { ECKey } from './ECKey';
 import { KeyBag } from '../wallet/KeyBag';
 import { Transaction } from './Transaction';
 import { TransactionOutput } from './TransactionOutput';
@@ -186,15 +187,15 @@ export class TransactionOutPoint extends ChildMessage {
     }
 
     /**
-     * Returns the PQKey identified in the connected output, for either
+     * Returns the key identified in the connected output, for either
      * pay-to-address scripts or pay-to-key scripts. For P2SH scripts you can use
      * {@link #getConnectedRedeemData(net.bigtangle.wallet.KeyBag)} and then get the
      * key from RedeemData. If the script form cannot be understood, throws
      * ScriptException.
      *
-     * @return an PQKey or null if the connected key cannot be found in the wallet.
+     * @return a key or null if the connected key cannot be found in the wallet.
      */
-    public async getConnectedKey(keyBag: KeyBag): Promise<PQKey | null> {
+    public async getConnectedKey(keyBag: KeyBag): Promise<ECKey | PQKey | null> {
         const connectedOutput = this.getConnectedOutput();
         if (connectedOutput === null) {
             throw new Error("Input is not connected so cannot retrieve key");
@@ -204,12 +205,12 @@ export class TransactionOutPoint extends ChildMessage {
             const addressBytes = connectedScript.getPubKeyHash();
             // This method might return a Promise, so we need to await it
             const key = await keyBag.findKeyFromPubHash(addressBytes);
-            return key as PQKey | null;
+            return key;
         } else if (connectedScript.isSentToRawPubKey()) {
             const pubkeyBytes = connectedScript.getPubKey();
             // This method might return a Promise, so we need to await it
             const key = await keyBag.findKeyFromPubKey(pubkeyBytes);
-            return key as PQKey | null;
+            return key;
         } else if (connectedScript.isSentToMultiSig()) {
             const key = await this.getConnectedKeyFromMultiSig(keyBag, connectedScript.getPubKeys());
             return key;
@@ -218,12 +219,12 @@ export class TransactionOutPoint extends ChildMessage {
         }
     }
 
-    private async getConnectedKeyFromMultiSig(keyBag: KeyBag, ecs: PQKey[]): Promise<PQKey | null> {
+    private async getConnectedKeyFromMultiSig(keyBag: KeyBag, ecs: (ECKey | PQKey)[]): Promise<ECKey | PQKey | null> {
         for (const ec of ecs) {
             // This method might return a Promise, so we need to await it
             const a = await keyBag.findKeyFromPubKey(ec.getPubKey());
             if (a !== null)
-                return a as PQKey | null;
+                return a;
         }
         throw new Error("Could not understand form of connected output script: " + ecs);
     }

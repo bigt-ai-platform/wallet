@@ -12,6 +12,9 @@ import { KeyCrypter, KeyParameter } from './KeyCrypter';
 import { EncryptedData } from './EncryptedData';
 import { SignatureBundle, SignatureBundleEntry } from './pq/SignatureBundle';
 import { PQConstants } from './pq/PQConstants';
+import { TransactionSignature } from './TransactionSignature';
+import { KeyType } from '../core/ECKey';
+import { Address } from '../core/Address';
 
 export class DeterministicKey extends PQKey {
     public static readonly CHILDNUM_ORDER = (k1: PQKey, k2: PQKey) => {
@@ -236,6 +239,42 @@ export class DeterministicKey extends PQKey {
 
     public getPublicKeyBytes(): Uint8Array {
         return this.getPubKeyBytes();
+    }
+
+    public getKeyType(): KeyType {
+        return KeyType.EC;
+    }
+
+    public getPublicKeyAsHex(): string {
+        return Utils.HEX.encode(this.getPubKey());
+    }
+
+    public toAddressString(params: NetworkParameters): string {
+        return Address.fromP2PKH(params, this.getPubKeyHash()).toBase58();
+    }
+
+    /**
+     * Signs the given hash with this key's ECDSA private key, returning a
+     * TransactionSignature. Supports encrypted keys when an AES key is supplied.
+     */
+    public async ecSign(input: Sha256Hash, aesKey: KeyParameter | null): Promise<TransactionSignature> {
+        if (this.isEncrypted()) {
+            if (!aesKey) {
+                throw new MissingPrivateKeyException('AES key required for encrypted key');
+            }
+            const decrypted = await this.decrypt(aesKey) as unknown as DeterministicKey;
+            return decrypted.ecSign(input, null);
+        }
+        const privateKey = this.findOrDerivePrivateKey();
+        if (privateKey === null) {
+            throw new MissingPrivateKeyException();
+        }
+        const privBytes = DeterministicKey.bigIntegerToBytes(privateKey, 32);
+        const secp256k1 = require('secp256k1');
+        const { signature } = secp256k1.ecdsaSign(input.getBytes(), privBytes);
+        const r = BigInt('0x' + Utils.HEX.encode(signature.subarray(0, 32)));
+        const s = BigInt('0x' + Utils.HEX.encode(signature.subarray(32, 64)));
+        return new TransactionSignature(r, s).toCanonicalised();
     }
 
     public getSecretBytes(): Uint8Array | null {

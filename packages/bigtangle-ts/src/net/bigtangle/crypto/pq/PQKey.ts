@@ -13,6 +13,7 @@ import { NetworkParameters } from '../../params/NetworkParameters';
 import { KeyCrypter, KeyParameter } from '../KeyCrypter';
 import { EncryptedData } from '../EncryptedData';
 import { EncryptionType, EncryptableItem } from '../EncryptableItem';
+import { KeyType } from '../../core/ECKey';
 
 const MLDSA_SEED_BYTES = 32;
 const SLHDSA_SEED_BYTES = 96;
@@ -25,6 +26,8 @@ export class PQKey implements EncryptableItem {
   protected creationTimeSeconds: number;
   protected keyCrypter: KeyCrypter | null = null;
   protected encryptedPrivateKey: EncryptedData | null = null;
+  protected mlDsaSeed: Uint8Array | null = null;
+  protected slhDsaSeed: Uint8Array | null = null;
 
   protected constructor();
   protected constructor(
@@ -32,6 +35,8 @@ export class PQKey implements EncryptableItem {
     slhDsaPrivateKey: Uint8Array,
     keyBundle: KeyBundle,
     network: number,
+    mlDsaSeed?: Uint8Array | null,
+    slhDsaSeed?: Uint8Array | null,
   );
   protected constructor(...args: any[]) {
     if (args.length === 0) {
@@ -44,8 +49,15 @@ export class PQKey implements EncryptableItem {
       this.slhDsaPrivateKey = args[1];
       this.keyBundle = args[2];
       this.network = args[3];
+      if (args.length > 4) this.mlDsaSeed = args[4] ?? null;
+      if (args.length > 5) this.slhDsaSeed = args[5] ?? null;
     }
     this.creationTimeSeconds = Utils.currentTimeSeconds();
+  }
+
+  /** Legacy key-type discriminator, matching {@link KeyType#PQ}. */
+  public getKeyType(): KeyType {
+    return KeyType.PQ;
   }
 
   static createNew(network: number = PQConstants.NETWORK_TESTNET): PQKey {
@@ -71,7 +83,7 @@ export class PQKey implements EncryptableItem {
     ];
     const bundle = new KeyBundle(entries);
 
-    return new PQKey(mlKp.secretKey, new Uint8Array(0), bundle, network);
+    return new PQKey(mlKp.secretKey, new Uint8Array(0), bundle, network, mlDsaSeed, null);
   }
 
   static fromSeeds(
@@ -97,7 +109,24 @@ export class PQKey implements EncryptableItem {
     ];
     const bundle = new KeyBundle(entries);
 
-    return new PQKey(mlKp.secretKey, slhKp.secretKey, bundle, network);
+    return new PQKey(mlKp.secretKey, slhKp.secretKey, bundle, network, mlDsaSeed, slhDsaSeed);
+  }
+
+  /**
+   * Imports a seed-based PQ key from hex, compatible with
+   * {@link #getPrivateKeySeedAsHex()}: 64 hex chars (32-byte ML-DSA seed) for
+   * ML-DSA-only keys, or 128 hex chars (64-byte dual seed) for dual keys.
+   * Matches Java PQKey.fromPrivateKeyHex(String).
+   */
+  static fromPrivateKeyHex(hex: string, network: number = PQConstants.NETWORK_TESTNET): PQKey {
+    const seed = Utils.HEX.decode(hex);
+    if (seed.length === 64) {
+      return PQKey.fromSeeds(seed.slice(0, 32), seed.slice(32, 64), network);
+    }
+    if (seed.length === 32) {
+      return PQKey.fromMLDSA(seed, network);
+    }
+    throw new Error(`Expected 64 or 128 hex chars (32-byte ML-DSA-only or 64-byte dual seed), got ${hex.length}`);
   }
 
   static fromKeyMaterial(keyMaterial: Uint8Array, network: number = PQConstants.NETWORK_TESTNET): PQKey {
@@ -308,6 +337,28 @@ export class PQKey implements EncryptableItem {
   /** Convenience method matching ECKey's toAddress(params) pattern */
   toAddressWithParams(params: NetworkParameters): PQAddress {
     return this.toAddress();
+  }
+
+  /** Matches Java PQKey.toAddressString(params), which returns the PQ address hex. */
+  toAddressString(params: NetworkParameters): string {
+    return this.toAddress().toHex();
+  }
+
+  /**
+   * Returns the compact seed-based private key in hex, compatible with
+   * {@link #fromPrivateKeyHex(String)}: 64 hex chars (32-byte ML-DSA seed) for
+   * ML-DSA-only keys, or 128 hex chars (64-byte dual seed) for dual keys. This
+   * is the WIF-equivalent "PQ key file" for backup/import. Returns {@code null}
+   * for public-only or bundle-imported keys that carry no seed. Matches Java
+   * PQKey.getPrivateKeySeedAsHex().
+   */
+  getPrivateKeySeedAsHex(): string | null {
+    if (this.mlDsaSeed === null) return null;
+    if (this.slhDsaSeed === null) return Utils.HEX.encode(this.mlDsaSeed);
+    const combined = new Uint8Array(64);
+    combined.set(this.mlDsaSeed, 0);
+    combined.set(this.slhDsaSeed, 32);
+    return Utils.HEX.encode(combined);
   }
 
   toAddressHex(): string {

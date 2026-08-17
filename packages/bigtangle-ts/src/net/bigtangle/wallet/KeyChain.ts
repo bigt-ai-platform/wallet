@@ -1,4 +1,5 @@
 import { PQKey } from '../crypto/pq/PQKey';
+import { ECKey } from '../core/ECKey';
 import { BloomFilter } from '../core/BloomFilter';
 import * as Protos from './Protos';
 
@@ -22,13 +23,13 @@ export enum KeyPurpose {
  */
 export interface KeyChain {
     /** Returns true if the given key is in the chain. */
-    hasKey(key: PQKey): boolean;
+    hasKey(key: ECKey | PQKey): boolean;
 
     /** Obtains a number of key/s intended for the given purpose. The chain may create new key/s, derive, or re-use an old one. */
-    getKeys(purpose: KeyPurpose, numberOfKeys: number): PQKey[];
+    getKeys(purpose: KeyPurpose, numberOfKeys: number): (ECKey | PQKey)[];
 
     /** Obtains a key intended for the given purpose. The chain may create a new key, derive one, or re-use an old one. */
-    getKey(purpose: KeyPurpose): PQKey;
+    getKey(purpose: KeyPurpose): ECKey | PQKey;
 
     /** Returns a list of keys serialized to the bitcoinj protobuf format. */
     serializeToProtobuf(): Protos.Key[];

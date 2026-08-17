@@ -67,15 +67,32 @@ async function main() {
   await waitBc();
   console.log('genesis funded + confirmed');
 
+  // Wait for a few confirmed beacon (reward) blocks so a token-creation block
+  // isn't built on an unstable, still-reorganising chain tip and orphaned.
+  const waitChainStable = async (minBeacons = 4) => {
+    for (let i = 0; i < 40; i++) {
+      const resp = await postJson('getAllConfirmedReward', {});
+      const rewards = resp.txReward || [];
+      if (rewards.length >= minBeacons) return rewards.length;
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    console.log('WARNING: chain not stable after wait, continuing anyway');
+    return 0;
+  };
+  await waitChainStable();
+  console.log('chain stable (confirmed reward blocks)');
+
   // Create + confirm a token. The L0 chain occasionally orphans a token-creation
-  // block (fork), so retry with a fresh key until one confirms. The token is
-  // named "Demo Token" so the browse/search/list screenshots match the create
-  // form (which is pre-filled with the same name/symbol/decimals/supply).
-  const tokenName = 'Demo Token';
+  // block (fork), so retry with a fresh key until one confirms. Each mint is
+  // named "Demo Token <id-tail>" — unique per run so repeated runs against a
+  // persistent chain don't pile up several identical "Demo Token" cards, and
+  // the browse/search/list screenshots match the create form (which is filled
+  // with this same name below).
   const createConfirmedToken = async () => {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       const tokenKey = sdk.PQKey.createNew();
       const tokenid = sdk.Utils.HEX.encode(tokenKey.getPrefixedPublicKeyBytes());
+      const tokenName = `Demo Token ${tokenid.slice(-4).toUpperCase()}`;
       const token = new sdk.Token(tokenid, tokenName);
       token.setDescription('A demo token for the e2e flow');
       token.setDecimals(2);
@@ -110,7 +127,8 @@ async function main() {
     throw new Error('No token confirmed after retries');
   };
 
-  await createConfirmedToken();
+  const { tokenName } = await createConfirmedToken();
+  console.log(`Capturing token flow for ${tokenName}`);
 
   // ---- 2. App UI: browse / search / create form ----
   const browser = await chromium.launch({ headless: true });
@@ -137,10 +155,11 @@ async function main() {
   await page.screenshot({ path: `${SHOTS}/token-02-search.png` });
   console.log('ok token-02-search');
 
-  // Screenshot 3: token creation form (the "how to create" guide, filled).
+  // Screenshot 3: token creation form (the "how to create" guide, filled with
+  // the same name as the token that was actually minted above).
   await page.getByTestId('tokens-screen').getByText('Create', { exact: true }).click();
   await page.waitForTimeout(800);
-  await page.getByPlaceholder('e.g. USD Coin').fill('Demo Token');
+  await page.getByPlaceholder('e.g. USD Coin').fill(tokenName);
   await page.getByPlaceholder('e.g. USDC').fill('DEMO');
   await page.getByPlaceholder('6').fill('2');
   await page.getByPlaceholder('1000000').fill('1000000');
