@@ -2,14 +2,14 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-REMOTE_SH="$ROOT/../blockchain/layer0-mcmc/src/test/java/net/bigtangle/mcmc/remote/remote.sh"
+REMOTE_SH="$ROOT/../blockchain/helper/fulltest/remote.sh"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()   { echo -e "${GREEN}[OK]${NC} $1"; }
 fail()  { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
 info()  { echo -e "${YELLOW}[INFO]${NC} $1"; }
 
-if [ ! -x "$REMOTE_SH" ]; then
+if [ ! -f "$REMOTE_SH" ] && [ ! -x "$REMOTE_SH" ]; then
   fail "remote.sh not found at $REMOTE_SH"
 fi
 
@@ -26,11 +26,11 @@ case "$CMD" in
     # remote.sh infra builds the modules, starts L0/L1/MCMC, registers the
     # PoS validator, and keeps everything running until Ctrl+C. Env overrides
     # (L0_PORT, L1_PORT, MCMC_PORT, PG_PORT, ...) are forwarded through.
-    exec "$REMOTE_SH" infra
+    exec bash "$REMOTE_SH" infra
     ;;
   down|stop)
     info "Stopping blockchain infra via remote.sh..."
-    exec "$REMOTE_SH" stop
+    exec bash "$REMOTE_SH" stop
     ;;
   *)
     fail "Usage: $0 [up|down]"

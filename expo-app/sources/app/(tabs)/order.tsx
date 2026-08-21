@@ -12,6 +12,7 @@ import { orderOnLayer1 } from '@/services/transaction';
 import { listOrders, recordOrder, refreshAllStatuses } from '@/services/tracking';
 import { CloseIcon } from '@/components/Icons';
 import SegmentedTabs from '@/components/SegmentedTabs';
+import ChainBadge from '@/components/ChainBadge';
 import { statusBadgeColor } from '@/utils/status';
 import { MONO_FONT } from '@/constants/fonts';
 import type { MarketPrice, OrderInfo, TrackedRecord } from '@/types/api';
@@ -37,7 +38,14 @@ export default function OrderScreen() {
   const [activeTab, setActiveTab] = React.useState<'prices' | 'orders'>('prices');
   const [historyFromDate, setHistoryFromDate] = React.useState('');
   const [historyToDate, setHistoryToDate] = React.useState('');
-  const l1Url = React.useMemo(() => httpService.getL1Url(), []);
+  // The active L1 chain is the app-wide single source of truth; re-render on
+  // change so orders always come from the chain selected in Send/Settings.
+  const [l1Url, setL1Url] = React.useState(() => httpService.getL1Url());
+  const [activeChainName, setActiveChainName] = React.useState(() => httpService.getActiveL1Chain()?.name ?? '');
+  React.useEffect(() => httpService.subscribeL1Change(() => {
+    setL1Url(httpService.getL1Url());
+    setActiveChainName(httpService.getActiveL1Chain()?.name ?? '');
+  }), []);
   const { view } = useLocalSearchParams<{ view?: string }>();
   const router = useRouter();
 
@@ -318,7 +326,10 @@ export default function OrderScreen() {
                         })}
                       </>
                     )}
-                    <Text style={s.groupLabel}>Live on chain</Text>
+                    <View style={s.liveChainRow}>
+                      <Text style={s.groupLabel}>Live on</Text>
+                      <ChainBadge layer={1} name={activeChainName} />
+                    </View>
                     {live.length === 0 ? (
                       <View style={s.emptyCard}><Text style={s.emptySub}>{t('order.noOpenOrders')}</Text></View>
                     ) : (
@@ -457,6 +468,7 @@ const s = StyleSheet.create((theme) => ({
   sectionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   refreshBtn: { fontSize: 14, color: theme.colors.text.link, fontWeight: '600' },
   groupLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8, marginTop: 4 },
+  liveChainRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8, marginTop: 4 },
   statusBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, alignItems: 'center', marginLeft: 8 },
   statusBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
 

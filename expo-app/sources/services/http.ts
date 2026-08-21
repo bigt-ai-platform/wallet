@@ -25,6 +25,7 @@ import {
   type OrderInfo,
 } from '@/types/api';
 import { PQKey, Utils } from 'bigtangle-ts';
+import { DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET } from '@/constants/app';
 
 /**
  * Default API endpoints
@@ -54,7 +55,15 @@ const STORAGE_KEYS = {
   L1_URL: ['settings', 'l1Url'],
   USE_TESTNET: ['settings', 'useTestnet'],
   L1_CHAINS: ['settings', 'l1Chains'],
+  ACTIVE_L1: ['settings', 'activeL1Index'],
 };
+
+/**
+ * Subscribers notified whenever the L1 chain configuration or the active L1
+ * chain changes, so every screen can re-render from one source of truth.
+ */
+type L1Listener = () => void;
+const l1Listeners = new Set<L1Listener>();
 
 /**
  * HTTP Service class
@@ -92,12 +101,12 @@ export class HttpService {
   }
 
   /**
-   * Get the L1 (Order Match) server URL
+   * Get the L1 (Order Match) server URL — the ACTIVE chain's URL.
    */
   getL1Url(): string {
-    const chains = this.getL1Chains();
-    if (chains.length > 0 && chains[0].url) {
-      return chains[0].url;
+    const active = this.getActiveL1Chain();
+    if (active?.url) {
+      return active.url;
     }
     const savedUrl = device.get(STORAGE_KEYS.L1_URL);
     if (savedUrl) {
@@ -108,6 +117,50 @@ export class HttpService {
   }
 
   /**
+   * Index of the currently active L1 chain (single source of truth for all
+   * screens). Clamped to the configured chain list.
+   */
+  getActiveL1Index(): number {
+    const count = this.getL1Chains().length;
+    if (count === 0) return -1;
+    const stored = Number(device.get(STORAGE_KEYS.ACTIVE_L1));
+    const idx = Number.isFinite(stored) ? Math.floor(stored) : 0;
+    return Math.min(Math.max(idx, 0), count - 1);
+  }
+
+  /**
+   * Set the active L1 chain by index and notify subscribers.
+   */
+  setActiveL1Index(index: number): void {
+    device.set(STORAGE_KEYS.ACTIVE_L1, String(index));
+    this.notifyL1Change();
+  }
+
+  /**
+   * The currently active L1 chain config (or null when none configured).
+   */
+  getActiveL1Chain(): L1ChainConfig | null {
+    const chains = this.getL1Chains();
+    const idx = this.getActiveL1Index();
+    return idx >= 0 && idx < chains.length ? chains[idx] : null;
+  }
+
+  /**
+   * Subscribe to L1 chain config / active-chain changes.
+   * Returns an unsubscribe function.
+   */
+  subscribeL1Change(listener: L1Listener): () => void {
+    l1Listeners.add(listener);
+    return () => l1Listeners.delete(listener);
+  }
+
+  private notifyL1Change(): void {
+    for (const fn of Array.from(l1Listeners)) {
+      try { fn(); } catch { /* listener errors must not break others */ }
+    }
+  }
+
+  /**
    * Set the L1 (Order Match) server URL
    */
   setL1Url(url: string): void {
@@ -115,10 +168,14 @@ export class HttpService {
   }
 
   /**
-   * Set testnet mode — resets both L0 and L1 URLs to defaults
+   * Set testnet mode — resets the L0 URL AND swaps the L1 chain set to the
+   * matching network defaults, so the layer display always follows network.
    */
   setTestnet(useTestnet: boolean): void {
     device.set(STORAGE_KEYS.USE_TESTNET, useTestnet.toString());
+    this.setL1Chains(useTestnet ? DEFAULT_L1_CHAINS_TESTNET.slice() : DEFAULT_L1_CHAINS_MAINNET.slice());
+    this.setActiveL1Index(0);
+    this.notifyL1Change();
   }
 
   /**
@@ -145,6 +202,7 @@ export class HttpService {
    */
   setL1Chains(chains: L1ChainConfig[]): void {
     device.set(STORAGE_KEYS.L1_CHAINS, JSON.stringify(chains));
+    this.notifyL1Change();
   }
 
   /**
@@ -154,6 +212,7 @@ export class HttpService {
     const chains = this.getL1Chains();
     chains.push({ name, url });
     this.setL1Chains(chains);
+    this.notifyL1Change();
   }
 
   /**
@@ -164,6 +223,11 @@ export class HttpService {
     if (index >= 0 && index < chains.length) {
       chains.splice(index, 1);
       this.setL1Chains(chains);
+      // Keep the active index pointing at a valid chain.
+      if (index === this.getActiveL1Index()) {
+        this.setActiveL1Index(Math.max(0, Math.min(this.getActiveL1Index(), chains.length - 1)));
+      }
+      this.notifyL1Change();
     }
   }
 
@@ -175,6 +239,7 @@ export class HttpService {
     if (index >= 0 && index < chains.length) {
       chains[index] = { name, url };
       this.setL1Chains(chains);
+      this.notifyL1Change();
     }
   }
 

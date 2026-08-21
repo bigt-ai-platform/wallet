@@ -11,6 +11,8 @@ import {
   ChartIcon, OrderIcon, DataIcon,
 } from './Icons';
 import LanguageSwitcher from './LanguageSwitcher';
+import ChainBadge from './ChainBadge';
+import { httpService } from '@/services/http';
 import { useTranslation } from 'react-i18next';
 
 interface NavItem {
@@ -61,6 +63,11 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useTranslation();
+  const [activeChainName, setActiveChainName] = React.useState(
+    () => httpService.getActiveL1Chain()?.name ?? '');
+  React.useEffect(() => httpService.subscribeL1Change(() => {
+    setActiveChainName(httpService.getActiveL1Chain()?.name ?? '');
+  }), []);
 
   const navSections: NavSection[] = [
     {
@@ -156,6 +163,12 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       </View>
 
       <View style={[s.footer, { borderTopColor: theme.colors.border }]}>
+        <View style={s.layerStatusRow} testID="sidebar-layer-status">
+          <ChainBadge layer={0} />
+          <Text style={[s.layerStatusText, { color: theme.colors.text.secondary }]}>Settlement</Text>
+          <ChainBadge layer={1} name={activeChainName} />
+          <Text style={[s.layerStatusText, { color: theme.colors.text.secondary }]}>Orders</Text>
+        </View>
         <View style={s.langRow}><LanguageSwitcher /></View>
         <TouchableOpacity
           style={s.settingsRow}
@@ -233,6 +246,8 @@ const s = StyleSheet.create({
     flex: 1, borderRadius: 6, paddingVertical: 10, alignItems: 'center',
   },
   actionBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
+  layerStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
+  layerStatusText: { fontSize: 11, fontWeight: '500' },
   footer: {
     borderTopWidth: 1, paddingVertical: 10, paddingHorizontal: 16,
   },

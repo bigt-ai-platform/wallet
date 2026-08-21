@@ -225,19 +225,25 @@ test.describe('L1 Test Tab', () => {
     await page.waitForLoadState('networkidle');
   }
 
-  test('L1 Test tab is present after wallet unlock', async ({ page }) => {
+
+  // L1 Test now lives in Settings → Developer (collapsed by default).
+  async function openL1Test(page: Page) {
+    await clickTab(page, 'Settings');
+    await page.getByTestId('developer-toggle').click();
+    await page.waitForTimeout(300);
+  }
+
+  test('L1 Test harness is available under Settings after wallet unlock', async ({ page }) => {
     test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
     await ensureWallet(page);
-    const l1Tab = page.getByText('L1 Test');
-    await expect(l1Tab).toBeAttached({ timeout: 10000 });
-    await l1Tab.click();
-    await expect(page.getByText('Test paying L1 chain')).toBeAttached({ timeout: 5000 });
+    await openL1Test(page);
+    await expect(page.getByText('Test paying L1 chain and paying back from L1 to Layer 0')).toBeAttached({ timeout: 10000 });
   });
 
   test('shows L1 chain selector after clicking L1 Test tab', async ({ page }) => {
     test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
     await ensureWallet(page);
-    await page.getByText('L1 Test').click();
+    await openL1Test(page);
     await page.waitForTimeout(1000);
     await expect(page.getByText('Select L1 Chain')).toBeAttached({ timeout: 5000 });
   });
@@ -245,7 +251,7 @@ test.describe('L1 Test Tab', () => {
   test('shows Pay L1 form by default', async ({ page }) => {
     test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
     await ensureWallet(page);
-    await page.getByText('L1 Test').click();
+    await openL1Test(page);
     await page.waitForTimeout(1000);
     await expect(page.getByText('Pay L1 Chain').first()).toBeAttached({ timeout: 5000 });
     await expect(page.getByPlaceholder('e.g. bc for BIG').first()).toBeAttached({ timeout: 5000 });
@@ -256,7 +262,7 @@ test.describe('L1 Test Tab', () => {
   test('switches to Pay Back form', async ({ page }) => {
     test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
     await ensureWallet(page);
-    await page.getByText('L1 Test').click();
+    await openL1Test(page);
     await page.waitForTimeout(1000);
     await page.getByText('Pay Back L1→L0').click();
     await page.waitForTimeout(500);
@@ -267,7 +273,7 @@ test.describe('L1 Test Tab', () => {
   test('can fill Pay L1 form', async ({ page }) => {
     test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
     await ensureWallet(page);
-    await page.getByText('L1 Test').click();
+    await openL1Test(page);
     await page.waitForTimeout(1000);
     await page.getByPlaceholder('e.g. bc for BIG').first().fill('bc');
     await page.getByPlaceholder('0.00').first().fill('0.001');
@@ -278,7 +284,7 @@ test.describe('L1 Test Tab', () => {
   test('can fill Pay Back form', async ({ page }) => {
     test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
     await ensureWallet(page);
-    await page.getByText('L1 Test').click();
+    await openL1Test(page);
     await page.waitForTimeout(1000);
     await page.getByText('Pay Back L1→L0').click();
     await page.waitForTimeout(500);
@@ -291,7 +297,7 @@ test.describe('L1 Test Tab', () => {
   test('L1 chain chips appear when chains configured', async ({ page }) => {
     test.skip(!process.env.E2E_SERVER_URL, 'E2E_SERVER_URL not set');
     await ensureWallet(page);
-    await page.getByText('L1 Test').click();
+    await openL1Test(page);
     await page.waitForTimeout(1000);
     const chips = page.locator('[data-testid^="l1-chain-chip-"]');
     const count = await chips.count();

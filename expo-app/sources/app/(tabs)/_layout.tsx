@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Tabs } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import Sidebar from '@/components/Sidebar';
-import { MenuIcon, WalletIcon, MarketIcon, TokensIcon, SettingsIcon } from '@/components/Icons';
+import { MenuIcon, WalletIcon, MarketIcon, TokensIcon, SettingsIcon, SendIcon } from '@/components/Icons';
 import { useTranslation } from 'react-i18next';
 
 const DESKTOP_BREAKPOINT = 768;
@@ -52,7 +52,7 @@ export default function TabsLayout() {
               headerLeft: isDesktop ? undefined : headerLeft,
             }}
           >
-            <Tabs.Screen name="index" options={{ title: t('nav.transaction'), tabBarLabel: t('nav.transaction'), tabBarIcon: ({ color, size }) => <WalletIcon size={size} color={color} /> }} />
+            <Tabs.Screen name="index" options={{ title: t('nav.transaction'), tabBarLabel: t('nav.transaction'), tabBarIcon: ({ color, size }) => <SendIcon size={size} color={color} /> }} />
             <Tabs.Screen name="wallet" options={{ title: t('nav.wallet'), tabBarLabel: t('nav.wallet'), tabBarIcon: ({ color, size }) => <WalletIcon size={size} color={color} /> }} />
             <Tabs.Screen name="order" options={{ title: t('nav.order'), tabBarLabel: t('nav.order'), tabBarIcon: ({ color, size }) => <MarketIcon size={size} color={color} /> }} />
             <Tabs.Screen name="tokens" options={{ title: t('nav.tokens'), tabBarLabel: t('nav.tokens'), tabBarIcon: ({ color, size }) => <TokensIcon size={size} color={color} /> }} />

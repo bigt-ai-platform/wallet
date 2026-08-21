@@ -11,6 +11,7 @@ import { httpService } from "@/services/http";
 import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { WalletIcon } from "@/components/Icons";
+import ChainBadge from "@/components/ChainBadge";
 import SegmentedTabs from "@/components/SegmentedTabs";
 import { statusBadgeColor } from "@/utils/status";
 import { MONO_FONT } from "@/constants/fonts";
@@ -27,7 +28,7 @@ export default function TransactionScreen() {
   const [memo, setMemo] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [loadingTokens, setLoadingTokens] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'send' | 'history' | 'l1test' | 'payments'>('send');
+  const [activeTab, setActiveTab] = React.useState<'send' | 'history' | 'payments'>('send');
   const [txHistory, setTxHistory] = React.useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = React.useState(false);
   const [historyLayer, setHistoryLayer] = React.useState(-1); // -1 = all, 0 = L0, 1..N = L1 chains
@@ -38,14 +39,19 @@ export default function TransactionScreen() {
   const [unlocking, setUnlocking] = React.useState(false);
 
   const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
-  const [selectedL1Chain, setSelectedL1Chain] = React.useState(0);
+  const [activeL1Index, setActiveL1Index] = React.useState(() => httpService.getActiveL1Index());
   // Layer to pay through: 0 = Layer 0 (L0), 1..N = the configured L1 chains.
-  const [selectedLayer, setSelectedLayer] = React.useState(0);
-  const [l1TestToken, setL1TestToken] = React.useState("");
-  const [l1TestAmount, setL1TestAmount] = React.useState("");
-  const [l1TestDest, setL1TestDest] = React.useState("");
-  const [l1TestSub, setL1TestSub] = React.useState(false);
-  const [l1TestMode, setL1TestMode] = React.useState<'pay' | 'payback'>('pay');
+  // Selection IS the app-wide active L1 chain (single source of truth).
+  const [selectedLayer, setSelectedLayerState] = React.useState(0);
+  React.useEffect(() => httpService.subscribeL1Change(() => {
+    setL1Chains(httpService.getL1Chains());
+    setActiveL1Index(httpService.getActiveL1Index());
+    setSelectedLayerState(httpService.getActiveL1Index() + 1);
+  }), []);
+  const setSelectedLayer = (layer: number) => {
+    setSelectedLayerState(layer);
+    if (layer > 0) httpService.setActiveL1Index(layer - 1);
+  };
 
   React.useEffect(() => {
     if (publicInfo && isUnlocked) { loadTokens(); loadHistory(); }
@@ -216,67 +222,6 @@ export default function TransactionScreen() {
     } finally { setLoading(false); }
   };
 
-  const handlePayL1 = async () => {
-    const wallet = getUnlockedWallet();
-    if (!wallet || !isUnlocked) { Alert.alert("Error", "Please unlock your wallet first"); return; }
-    if (!l1TestToken.trim()) { Alert.alert("Error", "Enter a token ID"); return; }
-    if (!l1TestAmount || parseFloat(l1TestAmount) <= 0) { Alert.alert("Error", "Enter valid amount"); return; }
-    if (!l1TestDest.trim()) { Alert.alert("Error", "Enter L1 destination address"); return; }
-
-    setL1TestSub(true);
-    try {
-      const payload = {
-        tokenid: l1TestToken.trim(),
-        amount: l1TestAmount,
-        l1address: l1TestDest.trim(),
-        fromAddress: publicInfo?.address,
-      };
-      const res = await httpService.request('regSubtangle', 'POST', payload);
-      if (res.success) {
-        Alert.alert("Success", `Bridged ${l1TestAmount} to L1 chain`);
-        setL1TestAmount(""); setL1TestDest("");
-      } else {
-        Alert.alert("Error", res.error || "Bridge failed");
-      }
-    } catch (e: any) {
-      Alert.alert("Error", e.message);
-    } finally {
-      setL1TestSub(false);
-    }
-  };
-
-  const handlePayBackL1 = async () => {
-    const wallet = getUnlockedWallet();
-    if (!wallet || !isUnlocked) { Alert.alert("Error", "Please unlock your wallet first"); return; }
-    if (!l1TestToken.trim()) { Alert.alert("Error", "Enter a token ID"); return; }
-    if (!l1TestAmount || parseFloat(l1TestAmount) <= 0) { Alert.alert("Error", "Enter valid amount"); return; }
-    if (!l1TestDest.trim()) { Alert.alert("Error", "Enter L0 destination address"); return; }
-
-    const chain = l1Chains[selectedL1Chain];
-    if (!chain) { Alert.alert("Error", "No L1 chain selected"); return; }
-
-    setL1TestSub(true);
-    try {
-      const payload = {
-        tokenid: l1TestToken.trim(),
-        amount: l1TestAmount,
-        toAddress: l1TestDest.trim(),
-        fromAddress: publicInfo?.address,
-      };
-      const res = await httpService.requestL1ByIndex(selectedL1Chain, 'withdrawTransaction', 'POST', payload);
-      if (res.success) {
-        Alert.alert("Success", `Withdrawal of ${l1TestAmount} from L1 initiated`);
-        setL1TestAmount(""); setL1TestDest("");
-      } else {
-        Alert.alert("Error", res.error || "Withdrawal failed");
-      }
-    } catch (e: any) {
-      Alert.alert("Error", e.message);
-    } finally {
-      setL1TestSub(false);
-    }
-  };
-
   if (!isUnlocked) {
     const hasWallet = publicInfo?.hasEncryptedWallet;
     return (
@@ -338,7 +283,6 @@ export default function TransactionScreen() {
       <SegmentedTabs
         tabs={[
           { key: 'send', label: 'Send' },
-          { key: 'l1test', label: 'L1 Test' },
           { key: 'history', label: 'History' },
           { key: 'payments', label: 'Payments' },
         ]}
@@ -357,8 +301,8 @@ export default function TransactionScreen() {
                 onPress={() => setSelectedLayer(0)}
                 testID="layer-chip-0"
               >
-                <Text style={[s.tokenChipName, selectedLayer === 0 && s.tokenChipNameActive]}>Layer 0</Text>
-                <Text style={[s.tokenChipBal, selectedLayer === 0 && s.tokenChipBalActive]}>L0</Text>
+                <ChainBadge layer={0} />
+                <Text style={[s.tokenChipName, selectedLayer === 0 && s.tokenChipNameActive]}>Settlement</Text>
               </TouchableOpacity>
               {l1Chains.map((chain, i) => (
                 <TouchableOpacity
@@ -367,12 +311,12 @@ export default function TransactionScreen() {
                   onPress={() => setSelectedLayer(i + 1)}
                   testID={`layer-chip-${i + 1}`}
                 >
+                  <ChainBadge layer={i + 1} />
                   <Text style={[s.tokenChipName, selectedLayer === i + 1 && s.tokenChipNameActive]}>{chain.name}</Text>
-                  <Text style={[s.tokenChipBal, selectedLayer === i + 1 && s.tokenChipBalActive]}>L1</Text>
                 </TouchableOpacity>
               ))}
             </ScrollView>
-            <Text style={s.hint}>Layer 0 submits to the L0 chain; L1 chains submit to the selected order chain.</Text>
+            <Text style={s.hint}>Payments on Settlement settle on Layer 0; payments on an L1 chain submit to that order chain.</Text>
           </View>
           <View style={s.card}>
             <Text style={s.cardLabel}>{t('transaction.selectToken')}</Text>
@@ -415,89 +359,6 @@ export default function TransactionScreen() {
             <Text style={s.primaryBtnText}>{loading ? t('transaction.sending') : t('transaction.send')}</Text>
           </TouchableOpacity>
         </ScrollView>
-      ) : activeTab === 'l1test' ? (
-        <ScrollView contentContainerStyle={s.content}>
-          <Text style={s.pageTitle}>L1 Test</Text>
-          <Text style={s.desc}>Test paying L1 chain and paying back from L1 to Layer 0</Text>
-
-          <View style={s.card}>
-            <Text style={s.cardLabel}>Select L1 Chain</Text>
-            {l1Chains.length === 0 ? (
-              <Text style={s.emptySmall}>No L1 chains configured. Go to Settings to add one.</Text>
-            ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} testID="l1-chain-list">
-                {l1Chains.map((chain, i) => (
-                  <TouchableOpacity key={i} style={[s.tokenChip, selectedL1Chain === i && s.tokenChipActive]}
-                    onPress={() => setSelectedL1Chain(i)} testID={`l1-chain-chip-${i}`}>
-                    <Text style={[s.tokenChipName, selectedL1Chain === i && s.tokenChipNameActive]}>{chain.name}</Text>
-                    <Text style={[s.tokenChipBal, selectedL1Chain === i && s.tokenChipBalActive]}>{chain.url}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-          </View>
-
-          <View style={s.modeRow} testID="l1-mode-tabs">
-            <TouchableOpacity style={[s.modeTab, l1TestMode === 'pay' && s.modeTabActive]} onPress={() => setL1TestMode('pay')} testID="l1-mode-pay">
-              <Text style={[s.modeTabText, l1TestMode === 'pay' && s.modeTabTextActive]}>Pay L1</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.modeTab, l1TestMode === 'payback' && s.modeTabActive]} onPress={() => setL1TestMode('payback')} testID="l1-mode-payback">
-              <Text style={[s.modeTabText, l1TestMode === 'payback' && s.modeTabTextActive]}>Pay Back L1→L0</Text>
-            </TouchableOpacity>
-          </View>
-
-          {l1TestMode === 'pay' ? (
-            <>
-              <View style={s.card} testID="l1-pay-section">
-                <Text style={s.sectionLabel}>Pay L1 Chain</Text>
-                <Text style={s.desc}>Bridge tokens from Layer 0 to the selected L1 chain.</Text>
-                <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>Token ID</Text>
-                  <TextInput style={s.input} value={l1TestToken} onChangeText={setL1TestToken}
-                    placeholder="e.g. bc for BIG" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-pay-token-input" />
-                </View>
-                <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>Amount</Text>
-                  <TextInput style={s.input} value={l1TestAmount} onChangeText={setL1TestAmount}
-                    placeholder="0.00" keyboardType="decimal-pad" testID="l1-pay-amount-input" />
-                </View>
-                <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>L1 Destination Address</Text>
-                  <TextInput style={s.input} value={l1TestDest} onChangeText={setL1TestDest}
-                    placeholder="L1 address on order chain" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-pay-dest-input" />
-                </View>
-                <TouchableOpacity style={s.l1Btn} onPress={handlePayL1} disabled={l1TestSub} testID="l1-pay-button">
-                  <Text style={s.l1BtnText}>{l1TestSub ? 'Processing...' : 'Pay L1 Chain'}</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          ) : (
-            <>
-              <View style={s.card} testID="l1-payback-section">
-                <Text style={s.sectionLabel}>Pay Back from L1 to L0</Text>
-                <Text style={s.desc}>Withdraw tokens from the selected L1 chain back to Layer 0.</Text>
-                <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>Token ID</Text>
-                  <TextInput style={s.input} value={l1TestToken} onChangeText={setL1TestToken}
-                    placeholder="e.g. bc for BIG" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-payback-token-input" />
-                </View>
-                <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>Amount</Text>
-                  <TextInput style={s.input} value={l1TestAmount} onChangeText={setL1TestAmount}
-                    placeholder="0.00" keyboardType="decimal-pad" testID="l1-payback-amount-input" />
-                </View>
-                <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>L0 Destination Address</Text>
-                  <TextInput style={s.input} value={l1TestDest} onChangeText={setL1TestDest}
-                    placeholder="L0 address" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-payback-dest-input" />
-                </View>
-                <TouchableOpacity style={s.l1Btn} onPress={handlePayBackL1} disabled={l1TestSub} testID="l1-payback-button">
-                  <Text style={s.l1BtnText}>{l1TestSub ? 'Processing...' : 'Pay Back to L0'}</Text>
-                </TouchableOpacity>
-              </View>
-            </>
-          )}
-        </ScrollView>
       ) : activeTab === 'payments' ? (
         <ScrollView contentContainerStyle={s.content} testID="payments-tab">
           <View style={s.sectionHeader}>
@@ -524,7 +385,10 @@ export default function TransactionScreen() {
                         <Text style={s.statusBadgeText} testID="payment-status">{p.status}</Text>
                       </View>
                     </View>
-                    <Text style={s.txId}>to {p.toAddress?.slice(0, 12)}... · layer {p.layer === undefined || p.layer === 0 ? 'L0' : `L1-${p.layer}`}</Text>
+                    <View style={s.payMetaRow}>
+                      <ChainBadge layer={p.layer ?? 0} size="sm" />
+                      <Text style={s.txId}>to {p.toAddress?.slice(0, 12)}...</Text>
+                    </View>
                     <Text style={s.txId} testID="payment-txhash">{p.txHash}</Text>
                     {p.statusDetail && <Text style={s.payDetail}>{p.statusDetail}</Text>}
                   </View>
@@ -545,11 +409,11 @@ export default function TransactionScreen() {
                 <Text style={[s.tokenChipName, historyLayer === -1 && s.tokenChipNameActive]}>All</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[s.tokenChip, historyLayer === 0 && s.tokenChipActive]} onPress={() => setHistoryLayer(0)} testID="history-layer-0">
-                <Text style={[s.tokenChipName, historyLayer === 0 && s.tokenChipNameActive]}>Layer 0</Text>
+                <ChainBadge layer={0} />
               </TouchableOpacity>
               {l1Chains.map((chain, i) => (
                 <TouchableOpacity key={i} style={[s.tokenChip, historyLayer === i + 1 && s.tokenChipActive]} onPress={() => setHistoryLayer(i + 1)} testID={`history-layer-${i + 1}`}>
-                  <Text style={[s.tokenChipName, historyLayer === i + 1 && s.tokenChipNameActive]}>{chain.name}</Text>
+                  <ChainBadge layer={i + 1} name={chain.name} />
                 </TouchableOpacity>
               ))}
             </ScrollView>
@@ -584,7 +448,10 @@ export default function TransactionScreen() {
                           <Text style={s.statusBadgeText}>{tx.status}</Text>
                         </View>
                       </View>
-                      <Text style={s.txId}>layer {tx.layer === 0 ? 'L0' : `L1-${tx.layer}`} · to {tx.address ? tx.address.slice(0, 16) : '...'}</Text>
+                      <View style={s.payMetaRow}>
+                        <ChainBadge layer={tx.layer ?? 0} />
+                        <Text style={s.txId}>to {tx.address ? tx.address.slice(0, 16) : '...'}</Text>
+                      </View>
                       <Text style={s.txId}>{tx.txhash?.slice(0, 20) || '...'}</Text>
                     </View>
                     <Text style={s.txValue}>{tx.value || ''}</Text>
@@ -643,6 +510,7 @@ const s = StyleSheet.create((theme) => ({
   statusBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, alignItems: 'center' },
   statusBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
   payDetail: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 },
+  payMetaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
   desc: { fontSize: 13, color: theme.colors.text.secondary, lineHeight: 18, marginBottom: 16 },
   modeRow: { flexDirection: 'row', marginBottom: 12, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border },
   modeTab: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: theme.colors.groupped.surface },

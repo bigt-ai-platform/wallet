@@ -4,6 +4,8 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
 import { MONO_FONT } from '@/constants/fonts';
+import { APP_VERSION, DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET } from '@/constants/app';
+import ChainBadge from '@/components/ChainBadge';
 import type { L1ChainConfig } from '@/types/api';
 
 export default function SettingsScreen() {
@@ -14,9 +16,22 @@ export default function SettingsScreen() {
   });
   const [serverUrl, setServerUrl] = React.useState(httpService.getServerUrl());
   const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
+  const [activeL1Index, setActiveL1Index] = React.useState(() => httpService.getActiveL1Index());
+  const [showDev, setShowDev] = React.useState(false);
+  // Moved here from the Transaction tab: the L1 bridge/withdraw test harness.
+  const [l1TestToken, setL1TestToken] = React.useState('');
+  const [l1TestAmount, setL1TestAmount] = React.useState('');
+  const [l1TestDest, setL1TestDest] = React.useState('');
+  const [l1TestSub, setL1TestSub] = React.useState(false);
+  const [l1TestMode, setL1TestMode] = React.useState<'pay' | 'payback'>('pay');
   const [newChainName, setNewChainName] = React.useState('');
   const [newChainUrl, setNewChainUrl] = React.useState('');
-  const appVersion = '1.2.0';
+
+  React.useEffect(() => httpService.subscribeL1Change(() => {
+    setL1Chains(httpService.getL1Chains());
+    setActiveL1Index(httpService.getActiveL1Index());
+  }), []);
+  const appVersion = APP_VERSION;
 
   const toggleTestnet = (val: boolean) => {
     setUseTestnet(val);
@@ -65,16 +80,72 @@ export default function SettingsScreen() {
     saveL1Chain(index, updated[index].name, url);
   };
 
+  const handlePayL1 = async () => {
+    if (!l1TestToken.trim()) { Alert.alert('', 'Enter a token ID'); return; }
+    if (!l1TestAmount || parseFloat(l1TestAmount) <= 0) { Alert.alert('', 'Enter valid amount'); return; }
+    if (!l1TestDest.trim()) { Alert.alert('', 'Enter L1 destination address'); return; }
+
+    setL1TestSub(true);
+    try {
+      const payload = {
+        tokenid: l1TestToken.trim(),
+        amount: l1TestAmount,
+        l1address: l1TestDest.trim(),
+        fromAddress: undefined,
+      };
+      const res = await httpService.request('regSubtangle', 'POST', payload);
+      if (res.success) {
+        Alert.alert('Success', `Bridged ${l1TestAmount} to L1 chain`);
+        setL1TestAmount(''); setL1TestDest('');
+      } else {
+        Alert.alert('Error', res.error || 'Bridge failed');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setL1TestSub(false);
+    }
+  };
+
+  const handlePayBackL1 = async () => {
+    if (!l1TestToken.trim()) { Alert.alert('', 'Enter a token ID'); return; }
+    if (!l1TestAmount || parseFloat(l1TestAmount) <= 0) { Alert.alert('', 'Enter valid amount'); return; }
+    if (!l1TestDest.trim()) { Alert.alert('', 'Enter L0 destination address'); return; }
+
+    const chain = l1Chains[activeL1Index];
+    if (!chain) { Alert.alert('Error', 'No L1 chain selected'); return; }
+
+    setL1TestSub(true);
+    try {
+      const payload = {
+        tokenid: l1TestToken.trim(),
+        amount: l1TestAmount,
+        toAddress: l1TestDest.trim(),
+        fromAddress: undefined,
+      };
+      const res = await httpService.requestL1ByIndex(activeL1Index, 'withdrawTransaction', 'POST', payload);
+      if (res.success) {
+        Alert.alert('Success', `Withdrawal of ${l1TestAmount} from L1 initiated`);
+        setL1TestAmount(''); setL1TestDest('');
+      } else {
+        Alert.alert('Error', res.error || 'Withdrawal failed');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setL1TestSub(false);
+    }
+  };
+
   const resetDefaults = () => {
     setUseTestnet(false);
     setServerUrl('https://p.bigtangle.org:8088/');
     httpService.setTestnet(false);
     httpService.setServerUrl('https://p.bigtangle.org:8088/');
-    httpService.setL1Chains([
-      { name: 'Main', url: 'https://m.bigtangle.org' },
-      { name: 'Test', url: 'https://testm.bigtangle.org' },
-    ]);
+    httpService.setL1Chains(DEFAULT_L1_CHAINS_TESTNET.slice());
+    httpService.setActiveL1Index(0);
     setL1Chains(httpService.getL1Chains());
+    setActiveL1Index(httpService.getActiveL1Index());
     Alert.alert('', t('settings.resetDone'));
   };
 
@@ -109,7 +180,9 @@ export default function SettingsScreen() {
         <Text style={s.settingDesc}>Configure L1 order match chains</Text>
 
         {l1Chains.map((chain, i) => (
-          <View key={i} style={s.chainRow}>
+          <TouchableOpacity key={i} style={[s.chainRow, activeL1Index === i && s.chainRowActive]}
+            onPress={() => httpService.setActiveL1Index(i)} testID={`l1-chain-row-${i}`}>
+            <View style={s.chainRadio}>{activeL1Index === i && <View style={s.chainRadioDot} />}</View>
             <View style={s.chainFields}>
               <TextInput style={s.chainInput} value={chain.name}
                 onChangeText={(v) => updateChainName(i, v)}
@@ -120,10 +193,11 @@ export default function SettingsScreen() {
                 placeholder="https://..." placeholderTextColor={s.placeholder.color}
                 autoCapitalize="none" autoCorrect={false} keyboardType="url" />
             </View>
+            <ChainBadge layer={1} name="active" />
             <TouchableOpacity style={s.removeBtn} onPress={() => removeL1Chain(i)}>
               <Text style={s.removeBtnText}>X</Text>
             </TouchableOpacity>
-          </View>
+          </TouchableOpacity>
         ))}
 
         <View style={s.addChainRow}>
@@ -149,6 +223,98 @@ export default function SettingsScreen() {
           <Text style={s.aboutLabel}>{t('settings.network')}</Text>
           <Text style={s.aboutValue}>{useTestnet ? t('settings.testnet_') : t('settings.mainnet')}</Text>
         </View>
+      </View>
+
+      <View style={s.card}>
+        <TouchableOpacity style={s.settingRow} onPress={() => setShowDev(!showDev)} testID="developer-toggle">
+          <View style={s.settingLeft}>
+            <Text style={s.settingLabel}>Developer</Text>
+            <Text style={s.settingDesc}>L1 bridge &amp; withdrawal test harness</Text>
+          </View>
+          <Text style={s.devChevron}>{showDev ? '▾' : '▸'}</Text>
+        </TouchableOpacity>
+
+        {showDev && (
+          <>
+            <Text style={s.settingDesc} testID="l1-test-desc">
+              Test paying L1 chain and paying back from L1 to Layer 0
+            </Text>
+            <View style={[s.card, s.devInner]}>
+              <Text style={s.cardLabel}>Select L1 Chain</Text>
+              {l1Chains.length === 0 ? (
+                <Text style={s.settingDesc}>No L1 chains configured.</Text>
+              ) : (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} testID="l1-chain-list">
+                  {l1Chains.map((chain, i) => (
+                    <TouchableOpacity key={i} style={[s.tokenChip, activeL1Index === i && s.tokenChipActive]}
+                      onPress={() => httpService.setActiveL1Index(i)} testID={`l1-chain-chip-${i}`}>
+                      <ChainBadge layer={1} />
+                      <Text style={[s.tokenChipName, activeL1Index === i && s.tokenChipNameActive]}>{chain.name}</Text>
+                      <Text style={[s.tokenChipBal, activeL1Index === i && s.tokenChipBalActive]}>{chain.url}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+
+            <View style={s.modeRow} testID="l1-mode-tabs">
+              <TouchableOpacity style={[s.modeTab, l1TestMode === 'pay' && s.modeTabActive]} onPress={() => setL1TestMode('pay')} testID="l1-mode-pay">
+                <Text style={[s.modeTabText, l1TestMode === 'pay' && s.modeTabTextActive]}>Pay L1</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[s.modeTab, l1TestMode === 'payback' && s.modeTabActive]} onPress={() => setL1TestMode('payback')} testID="l1-mode-payback">
+                <Text style={[s.modeTabText, l1TestMode === 'payback' && s.modeTabTextActive]}>Pay Back L1→L0</Text>
+              </TouchableOpacity>
+            </View>
+
+            {l1TestMode === 'pay' ? (
+              <View style={[s.card, s.devInner]} testID="l1-pay-section">
+                <Text style={s.sectionLabel}>Pay L1 Chain</Text>
+                <Text style={s.settingDesc}>Bridge tokens from Layer 0 to the selected L1 chain.</Text>
+                <View style={s.fieldGroup}>
+                  <Text style={s.fieldLabel}>Token ID</Text>
+                  <TextInput style={s.input} value={l1TestToken} onChangeText={setL1TestToken}
+                    placeholder="e.g. bc for BIG" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-pay-token-input" />
+                </View>
+                <View style={s.fieldGroup}>
+                  <Text style={s.fieldLabel}>Amount</Text>
+                  <TextInput style={s.input} value={l1TestAmount} onChangeText={setL1TestAmount}
+                    placeholder="0.00" keyboardType="decimal-pad" testID="l1-pay-amount-input" />
+                </View>
+                <View style={s.fieldGroup}>
+                  <Text style={s.fieldLabel}>L1 Destination Address</Text>
+                  <TextInput style={s.input} value={l1TestDest} onChangeText={setL1TestDest}
+                    placeholder="L1 address on order chain" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-pay-dest-input" />
+                </View>
+                <TouchableOpacity style={s.l1Btn} onPress={handlePayL1} disabled={l1TestSub} testID="l1-pay-button">
+                  <Text style={s.l1BtnText}>{l1TestSub ? 'Processing...' : 'Pay L1 Chain'}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={[s.card, s.devInner]} testID="l1-payback-section">
+                <Text style={s.sectionLabel}>Pay Back from L1 to L0</Text>
+                <Text style={s.settingDesc}>Withdraw tokens from the selected L1 chain back to Layer 0.</Text>
+                <View style={s.fieldGroup}>
+                  <Text style={s.fieldLabel}>Token ID</Text>
+                  <TextInput style={s.input} value={l1TestToken} onChangeText={setL1TestToken}
+                    placeholder="e.g. bc for BIG" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-payback-token-input" />
+                </View>
+                <View style={s.fieldGroup}>
+                  <Text style={s.fieldLabel}>Amount</Text>
+                  <TextInput style={s.input} value={l1TestAmount} onChangeText={setL1TestAmount}
+                    placeholder="0.00" keyboardType="decimal-pad" testID="l1-payback-amount-input" />
+                </View>
+                <View style={s.fieldGroup}>
+                  <Text style={s.fieldLabel}>L0 Destination Address</Text>
+                  <TextInput style={s.input} value={l1TestDest} onChangeText={setL1TestDest}
+                    placeholder="L0 address" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-payback-dest-input" />
+                </View>
+                <TouchableOpacity style={s.l1Btn} onPress={handlePayBackL1} disabled={l1TestSub} testID="l1-payback-button">
+                  <Text style={s.l1BtnText}>{l1TestSub ? 'Processing...' : 'Pay Back to L0'}</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </>
+        )}
       </View>
 
       <TouchableOpacity style={s.resetBtn} onPress={resetDefaults} testID="reset-settings-button">
@@ -219,4 +385,28 @@ const s = StyleSheet.create((theme) => ({
     justifyContent: 'center', alignItems: 'center',
   },
   addBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 18 },
+  chainRowActive: { borderColor: theme.colors.primary, borderRadius: 8, borderWidth: 1, padding: 4 },
+  chainRadio: {
+    width: 18, height: 18, borderRadius: 9, borderWidth: 2,
+    borderColor: theme.colors.border, alignItems: 'center', justifyContent: 'center',
+  },
+  chainRadioDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.primary },
+  devChevron: { fontSize: 14, color: theme.colors.text.secondary },
+  devInner: { marginTop: 10, marginBottom: 8 },
+  tokenChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8, backgroundColor: theme.colors.groupped.background, borderWidth: 1, borderColor: theme.colors.border, alignItems: 'center' },
+  tokenChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  tokenChipName: { fontSize: 13, fontWeight: '600', color: theme.colors.text.primary, marginTop: 2 },
+  tokenChipNameActive: { color: '#FFFFFF' },
+  tokenChipBal: { fontSize: 10, color: theme.colors.text.secondary },
+  tokenChipBalActive: { color: '#FFFFFF', opacity: 0.85 },
+  modeRow: { flexDirection: 'row', marginBottom: 10, borderRadius: 10, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border },
+  modeTab: { flex: 1, paddingVertical: 10, alignItems: 'center', backgroundColor: theme.colors.groupped.surface },
+  modeTabActive: { backgroundColor: theme.colors.accent.purple },
+  modeTabText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.secondary },
+  modeTabTextActive: { color: '#FFFFFF' },
+  fieldGroup: { marginBottom: 12 },
+  fieldLabel: { fontSize: 13, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 6 },
+  sectionLabel: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 4 },
+  l1Btn: { backgroundColor: theme.colors.accent.purple, borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 4 },
+  l1BtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
 }));
