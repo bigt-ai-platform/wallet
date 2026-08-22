@@ -171,7 +171,15 @@ describe("RemoteTokenIT", () => {
     console.log("createToken returned block");
 
     const walletKeys = await wallet.walletKeys(null);
-    const signed = await wallet.multiSign(tokenid, walletKeys[0], null);
+    // The server inserts the multisign request asynchronously after the
+    // creation block lands, so a single immediate multiSign can race it and
+    // return null - then nobody ever signs and the block stays unconfirmed
+    // forever. Retry like remoteorder.test.ts does.
+    let signed: any = null;
+    for (let attempt = 0; attempt < 10 && signed == null; attempt++) {
+      signed = await wallet.multiSign(tokenid, walletKeys[0], null);
+      if (signed == null) await new Promise((r) => setTimeout(r, 2000));
+    }
     if (signed != null) {
       console.log("multiSign succeeded");
     }
@@ -197,7 +205,15 @@ describe("RemoteTokenIT", () => {
     expect(block).toBeDefined();
 
     const walletKeys = await wallet.walletKeys(null);
-    const signed = await wallet.multiSign(tokenid, walletKeys[0], null);
+    // The server inserts the multisign request asynchronously after the
+    // creation block lands, so a single immediate multiSign can race it and
+    // return null - then nobody ever signs and the block stays unconfirmed
+    // forever. Retry like remoteorder.test.ts does.
+    let signed: any = null;
+    for (let attempt = 0; attempt < 10 && signed == null; attempt++) {
+      signed = await wallet.multiSign(tokenid, walletKeys[0], null);
+      if (signed == null) await new Promise((r) => setTimeout(r, 2000));
+    }
     if (signed != null) {
       console.log("multiSign succeeded");
     }
@@ -221,7 +237,15 @@ describe("RemoteTokenIT", () => {
     expect(block).toBeDefined();
 
     const walletKeys = await wallet.walletKeys(null);
-    const signed = await wallet.multiSign(tokenid, walletKeys[0], null);
+    // The server inserts the multisign request asynchronously after the
+    // creation block lands, so a single immediate multiSign can race it and
+    // return null - then nobody ever signs and the block stays unconfirmed
+    // forever. Retry like remoteorder.test.ts does.
+    let signed: any = null;
+    for (let attempt = 0; attempt < 10 && signed == null; attempt++) {
+      signed = await wallet.multiSign(tokenid, walletKeys[0], null);
+      if (signed == null) await new Promise((r) => setTimeout(r, 2000));
+    }
     if (signed != null) {
       console.log("multiSign succeeded");
     }

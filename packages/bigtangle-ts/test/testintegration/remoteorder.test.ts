@@ -162,7 +162,10 @@ class RemoteOrderTests extends RemoteTest {
     const remainingOrders = ordersAfter!.getAllOrdersSorted();
     expect(remainingOrders == null || remainingOrders.length === 0).toBe(true);
 
-    // 8. Verify issuer received BC from the trade
+    // 8. Verify issuer received BC from the trade. The match executes on the
+    // L1 beacon cadence, so the payout needs its own confirmation cycle —
+    // wait for it instead of racing the assert right after orders drain.
+    await this.waitForConfirmedBalance(bcToken, [issuer]);
     const issuerBalance = await this.getBalanceByKey(false, issuer);
     console.log(`Issuer has ${issuerBalance.length} UTXOs after trade`);
     let hasBcTrade = false;

@@ -39,7 +39,12 @@ export INCLUDE_INTEGRATION_TESTS=1
 if [ "${QUICK:-0}" = "1" ]; then
   export STABLE_BEACONS="${STABLE_BEACONS:-3}"
 else
-  export STABLE_BEACONS="${STABLE_BEACONS:-6}"
+  # 6 is too low: right after 6 beacons the chain still reorganises often
+  # enough that freshly submitted token/transfer blocks land on orphaned
+  # branches, get marked solid=-1 and never confirm (TS suites submit within
+  # seconds of startup). 20 confirmed beacons give the validator set a calm
+  # window; see ServiceVerifyReward handleNewBestChain reorg logs.
+  export STABLE_BEACONS="${STABLE_BEACONS:-20}"
 fi
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
