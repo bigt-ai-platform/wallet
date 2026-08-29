@@ -12,6 +12,7 @@ import { PQKey } from "../crypto/pq/PQKey";
 import { ECKey } from "../core/ECKey";
 import { Utils } from "../utils/Utils";
 import { RedeemData } from "./RedeemData";
+import { UnreadableWalletException } from "./UnreadableWalletException";
 
 // Correctly import the 'Key' message interface and alias it to avoid name clashes.
 import { Key as ProtoKey, KeyType } from "../wallet/Protos";
@@ -240,7 +241,9 @@ export class KeyChainGroup implements KeyBag {
     keys: ProtoKey[],
     factory: KeyChainFactory
   ): KeyChainGroup {
-    throw new Error("Protobuf deserialization removed");
+    const group = new KeyChainGroup(params);
+    group.deserializeKeysFromProtobuf(keys, null);
+    return group;
   }
 
   /**
@@ -252,7 +255,56 @@ export class KeyChainGroup implements KeyBag {
     crypter: KeyCrypter,
     factory: KeyChainFactory
   ): KeyChainGroup {
-    throw new Error("Protobuf deserialization removed");
+    const group = new KeyChainGroup(params);
+    group.keyCrypter = crypter;
+    group.deserializeKeysFromProtobuf(keys, crypter);
+    return group;
+  }
+
+  /**
+   * Reconstructs the imported EC keys from the old `.wallet` (protobuf) key
+   * messages. Mirrors Java BasicKeyChain.deserializeFromProtobuf(): only
+   * ORIGINAL and ENCRYPTED_SCRYPT_AES key types are recognised, all others are
+   * ignored.
+   */
+  private deserializeKeysFromProtobuf(keys: ProtoKey[], crypter: KeyCrypter | null): void {
+    const imported: ECKey[] = [];
+    for (const key of keys) {
+      if (key.type !== KeyType.ORIGINAL && key.type !== KeyType.ENCRYPTED_SCRYPT_AES) {
+        continue;
+      }
+      const encrypted = key.type === KeyType.ENCRYPTED_SCRYPT_AES;
+      const priv = key.secret_bytes !== undefined ? key.secret_bytes : null;
+      if (!key.public_key) {
+        throw new UnreadableWalletException("Public key missing");
+      }
+      const pub = key.public_key;
+      let ecKey: ECKey;
+      if (encrypted) {
+        if (!crypter) {
+          throw new UnreadableWalletException(
+            "This wallet is encrypted but encrypt() was not called prior to deserialization"
+          );
+        }
+        if (!key.encrypted_data) {
+          throw new UnreadableWalletException("Encrypted private key data missing");
+        }
+        const proto = key.encrypted_data;
+        const encryptedData = new EncryptedData(proto.initialisation_vector, proto.encrypted_private_key);
+        ecKey = ECKey.fromEncrypted(encryptedData, crypter, pub);
+      } else {
+        if (priv !== null) {
+          ecKey = ECKey.fromPrivateAndPrecalculatedPublic(priv, pub);
+        } else {
+          ecKey = ECKey.fromPublicOnly(pub);
+        }
+      }
+      if (key.creation_timestamp !== undefined) {
+        ecKey.setCreationTimeSeconds(Math.floor(key.creation_timestamp / 1000));
+      }
+      imported.push(ecKey);
+    }
+    this.importKeys(...imported);
   }
 
   public isDeterministicUpgradeRequired(): boolean { return false; }

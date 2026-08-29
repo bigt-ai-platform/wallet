@@ -77,6 +77,7 @@ export { Base58 } from './net/bigtangle/utils/Base58';
 
 // Wallet functionality
 export { Wallet } from './net/bigtangle/wallet/Wallet';
+export { WalletProtobufSerializer } from './net/bigtangle/wallet/WalletProtobufSerializer';
 
 // Crypto functionality
 export { KeyCrypterScrypt } from './net/bigtangle/crypto/KeyCrypterScrypt';
