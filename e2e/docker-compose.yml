@@ -49,7 +49,7 @@ services:
       SYNCBLOCKS: 1000
       POS_ENABLED: "true"
       POS_VALIDATOR_KEY: ${POS_VALIDATOR_KEY}
-      POS_SLOT_INTERVAL_MS: 2000
+      POS_SLOT_INTERVAL_MS: 6000
     depends_on:
       postgres:
         condition: service_healthy
@@ -87,7 +87,7 @@ services:
       CREATETABLE: "false"
       POS_ENABLED: "true"
       POS_VALIDATOR_KEY: ${POS_VALIDATOR_KEY}
-      POS_SLOT_INTERVAL_MS: 2000
+      POS_SLOT_INTERVAL_MS: 6000
     depends_on:
       l0-server:
         condition: service_started
@@ -145,7 +145,7 @@ services:
       SYNCBLOCKS: 1000
       POS_ENABLED: "true"
       POS_VALIDATOR_KEY: ${L1_POS_VALIDATOR_KEY}
-      POS_SLOT_INTERVAL_MS: 2000
+      POS_SLOT_INTERVAL_MS: 6000
     depends_on:
       postgres-l1-order:
         condition: service_healthy

@@ -24,6 +24,13 @@ export L1_VALIDATOR_KEY="${L1_VALIDATOR_KEY:-05050505050505050505050505050505050
 export L0_PORT="${L0_PORT:-18088}"
 export L1_PORT="${L1_PORT:-18086}"
 export MCMC_PORT="${MCMC_PORT:-18091}"
+# Postgres port: auto-detect from whichever container is running. This dev
+# machine's test-bigtangle-postgres listens on 21532 (host AND container);
+# helper/docker-compose-base.yml / l0-pg-0 publish 5432.
+if [ -z "${PG_PORT:-}" ] && command -v docker >/dev/null 2>&1 \
+   && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^test-bigtangle-postgres$'; then
+  export PG_PORT=21532
+fi
 export PG_PORT="${PG_PORT:-5432}"
 
 export SERVER_PORT="$L0_PORT"

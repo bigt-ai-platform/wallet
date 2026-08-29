@@ -91,15 +91,15 @@ async function main() {
       console.log(`skip ${lang.code} (no screenshots)`);
       continue;
     }
-    const htmlPath = `${OUTPUT_DIR}/bapp-wallet-${lang.code}.html`;
+    const htmlPath = `${OUTPUT_DIR}/wallet-${lang.code}.html`;
     writeFileSync(htmlPath, html);
 
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "networkidle" });
-    const pdfPath = `${OUTPUT_DIR}/bapp-wallet-${lang.code}.pdf`;
+    const pdfPath = `${OUTPUT_DIR}/wallet-${lang.code}.pdf`;
     await page.pdf({ path: pdfPath, format: "A4", printBackground: true });
     await page.close();
-    console.log(`ok bapp-wallet-${lang.code}.pdf`);
+    console.log(`ok wallet-${lang.code}.pdf`);
   }
 
   await browser.close();

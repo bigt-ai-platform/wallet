@@ -10,7 +10,8 @@ L1_PORT="${L1_PORT:-24086}"
 L0_URL="http://127.0.0.1:${L0_PORT}/"
 L1_URL="http://127.0.0.1:${L1_PORT}/"
 # Override the dev command, e.g. DEV_CMD="yarn web" ./dev.sh
-DEV_CMD="${DEV_CMD:-yarn start}"
+# Default starts the blockchain infra and the Expo web client.
+DEV_CMD="${DEV_CMD:-yarn web}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 log()   { echo -e "${GREEN}[OK]${NC} $1"; }
@@ -75,12 +76,28 @@ done
 [ "$READY" = "1" ] || fail "Timed out waiting for infrastructure."
 log "Infrastructure ready."
 
-# 3. Start the Expo dev server (foreground). Press 'w' for web, 'a' for
-#    Android, or scan the QR code with Expo Go for manual testing.
+# 3. Start the Expo dev server (foreground) in web mode by default. Press 'a'
+#    for Android or scan the QR code with Expo Go for manual testing.
 info "Starting dev server: '$DEV_CMD'"
 cd "$EXPO_DIR"
 bash -c "$DEV_CMD" &
 DEV_PID=$!
+
+# 4. Wait until the web dev server is actually serving before showing the URL.
+WEB_PORT="${WEB_PORT:-8081}"
+WEB_URL="http://localhost:${WEB_PORT}/"
+info "Waiting for the web dev server on $WEB_URL..."
+for i in $(seq 1 60); do
+  if ! kill -0 "$DEV_PID" 2>/dev/null; then
+    fail "Dev server exited unexpectedly."
+  fi
+  if curl -sf "$WEB_URL" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 2
+done
+curl -sf "$WEB_URL" >/dev/null 2>&1 || fail "Timed out waiting for $WEB_URL"
 log "Dev server started (PID $DEV_PID). Press Ctrl+C to stop everything."
+log "Open the web app at: $WEB_URL"
 
 wait "$DEV_PID"
