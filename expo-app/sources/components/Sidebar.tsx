@@ -11,8 +11,6 @@ import {
   ChartIcon, OrderIcon, DataIcon,
 } from './Icons';
 import LanguageSwitcher from './LanguageSwitcher';
-import ChainBadge from './ChainBadge';
-import { httpService } from '@/services/http';
 import { useTranslation } from 'react-i18next';
 
 interface NavItem {
@@ -63,31 +61,21 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useTranslation();
-  const [activeChainName, setActiveChainName] = React.useState(
-    () => httpService.getActiveL1Chain()?.name ?? '');
-  React.useEffect(() => httpService.subscribeL1Change(() => {
-    setActiveChainName(httpService.getActiveL1Chain()?.name ?? '');
-  }), []);
 
   const navSections: NavSection[] = [
     {
-      titleKey: 'sidebar.trade',
+      titleKey: '',
       items: [
         { label: t('sidebar.home'), key: 'transaction', icon: WalletIcon, route: '/' },
-        { label: t('sidebar.exchange'), key: 'exchange', icon: MarketIcon, route: '/order', view: 'exchange' },
-        { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/chart' },
       ],
     },
     {
-      titleKey: 'sidebar.orders',
+      titleKey: 'sidebar.trade',
       items: [
+        { label: t('sidebar.buy'), key: 'buy', icon: MarketIcon, route: '/buy' },
+        { label: t('sidebar.sell'), key: 'sell', icon: MarketIcon, route: '/sell' },
         { label: t('sidebar.order'), key: 'order', icon: OrderIcon, route: '/order', view: 'orders' },
-      ],
-    },
-    {
-      titleKey: 'sidebar.market',
-      items: [
-        { label: t('sidebar.marketData'), key: 'marketData', icon: DataIcon, route: '/order', view: 'market' },
+        { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/chart' },
       ],
     },
     {
@@ -131,8 +119,10 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
 
       <ScrollView style={s.navScroll} showsVerticalScrollIndicator={false}>
         {navSections.map((section) => (
-          <View key={section.titleKey} style={s.section}>
-            <Text style={[s.sectionTitle, { color: theme.colors.text.secondary }]}>{t(section.titleKey)}</Text>
+          <View key={section.titleKey || section.items[0].key} style={s.section}>
+            {section.titleKey ? (
+              <Text style={[s.sectionTitle, { color: theme.colors.text.secondary }]}>{t(section.titleKey)}</Text>
+            ) : null}
             {section.items.map((item) => (
               <NavItemRow
                 key={item.key}
@@ -145,30 +135,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
         ))}
       </ScrollView>
 
-      <View style={[s.quickActions, { borderTopColor: theme.colors.border }]}>
-        <TouchableOpacity
-          style={[s.buyBtn, { backgroundColor: theme.colors.accent.emerald }]}
-          onPress={() => navigate('/order', 'exchange')}
-          activeOpacity={0.8}
-        >
-          <Text style={s.actionBtnText}>{t('sidebar.buy')}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[s.sellBtn, { backgroundColor: theme.colors.accent.red }]}
-          onPress={() => navigate('/order', 'exchange')}
-          activeOpacity={0.8}
-        >
-          <Text style={s.actionBtnText}>{t('sidebar.sell')}</Text>
-        </TouchableOpacity>
-      </View>
-
       <View style={[s.footer, { borderTopColor: theme.colors.border }]}>
-        <View style={s.layerStatusRow} testID="sidebar-layer-status">
-          <ChainBadge layer={0} />
-          <Text style={[s.layerStatusText, { color: theme.colors.text.secondary }]}>Settlement</Text>
-          <ChainBadge layer={1} name={activeChainName} />
-          <Text style={[s.layerStatusText, { color: theme.colors.text.secondary }]}>Orders</Text>
-        </View>
         <View style={s.langRow}><LanguageSwitcher /></View>
         <TouchableOpacity
           style={s.settingsRow}
@@ -236,18 +203,6 @@ const s = StyleSheet.create({
     borderTopRightRadius: 2, borderBottomRightRadius: 2,
   },
   navLabel: { fontSize: 14, fontWeight: '500' },
-  quickActions: {
-    flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 12, borderTopWidth: 1,
-  },
-  buyBtn: {
-    flex: 1, borderRadius: 6, paddingVertical: 10, alignItems: 'center',
-  },
-  sellBtn: {
-    flex: 1, borderRadius: 6, paddingVertical: 10, alignItems: 'center',
-  },
-  actionBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '600' },
-  layerStatusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8 },
-  layerStatusText: { fontSize: 11, fontWeight: '500' },
   footer: {
     borderTopWidth: 1, paddingVertical: 10, paddingHorizontal: 16,
   },

@@ -20,8 +20,11 @@ import { t } from "@/text";
 import {
   createWallet,
   importPrivateKey,
+  importOldWalletFile,
   loadWallet,
+  parseOldWalletFile,
   saveKeyToFile,
+  base64ToBytes,
   type WalletFile,
 } from "./WalletHelper";
 
@@ -33,6 +36,12 @@ type CreateWalletStep =
   | "done";
 type ImportKeyStep = "idle" | "enterKey" | "enterPassword" | "saving" | "done";
 type LoadFileStep = "idle" | "enterPassword" | "loading" | "done";
+type OldWalletStep =
+  | "idle"
+  | "enterOldPassword"
+  | "enterNewPassword"
+  | "saving"
+  | "done";
 
 const isWeb = Platform.OS === "web";
 
@@ -74,6 +83,11 @@ export default function KeysScreen() {
   const [loadFileStep, setLoadFileStep] = useState<LoadFileStep>("idle");
   const [loadFilePassword, setLoadFilePassword] = useState("");
   const [loadedFileContent, setLoadedFileContent] = useState<string>("");
+
+  // State for importing an old-format .wallet file (legacy protobuf)
+  const [oldWalletStep, setOldWalletStep] = useState<OldWalletStep>("idle");
+  const [oldWalletBytes, setOldWalletBytes] = useState<Uint8Array | null>(null);
+  const [oldWalletPassword, setOldWalletPassword] = useState("");
 
   // Create a new wallet
   const handleCreateWallet = useCallback(async () => {
@@ -252,6 +266,9 @@ export default function KeysScreen() {
     setLoadFileStep("idle");
     setLoadFilePassword("");
     setLoadedFileContent("");
+    setOldWalletStep("idle");
+    setOldWalletBytes(null);
+    setOldWalletPassword("");
     setUnlockPassword("");
     setIsUnlocking(false);
   }, []);
@@ -439,6 +456,152 @@ export default function KeysScreen() {
     }
   }, [importedWallet, password, confirmPassword, storeEncryptedWallet]);
 
+  // Start import of an old-format .wallet (legacy protobuf) file
+  const handleStartOldWalletImport = useCallback(async () => {
+    setErrorMessage("");
+
+    const readBytes = async (fileUriOrBuffer: any): Promise<Uint8Array> => {
+      if (isWeb) return new Uint8Array(fileUriOrBuffer);
+      const b64 = await (FileSystem as any).readAsStringAsync(fileUriOrBuffer, {
+        encoding: (FileSystem as any).EncodingType.Base64,
+      });
+      return base64ToBytes(b64);
+    };
+
+    const processBytes = async (bytes: Uint8Array) => {
+      try {
+        const meta = await parseOldWalletFile(bytes);
+        setOldWalletBytes(bytes);
+        if (meta.encrypted) {
+          setOldWalletPassword("");
+          setOldWalletStep("enterOldPassword");
+        } else {
+          const walletFile = await importOldWalletFile(bytes);
+          setImportedWallet(walletFile);
+          setWalletAddress(walletFile.wallet.address);
+          setPassword("");
+          setConfirmPassword("");
+          setOldWalletStep("enterNewPassword");
+        }
+      } catch (error) {
+        console.error("Error parsing old wallet:", error);
+        setErrorMessage(`Not a valid wallet file: ${(error as Error).message}`);
+        Alert.alert(
+          "Error",
+          `Not a valid wallet file: ${(error as Error).message}`,
+        );
+      }
+    };
+
+    try {
+      if (isWeb) {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".wallet,application/octet-stream";
+        input.onchange = (e: any) => {
+          const file = e.target?.files?.[0];
+          if (!file) return;
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            processBytes(new Uint8Array(event.target?.result as ArrayBuffer));
+          };
+          reader.onerror = () => {
+            setErrorMessage("Failed to read file");
+            Alert.alert("Error", "Failed to read file");
+          };
+          reader.readAsArrayBuffer(file);
+        };
+        input.click();
+      } else {
+        const result = await DocumentPicker.getDocumentAsync({
+          copyToCacheDirectory: true,
+        });
+        if (result.canceled) return;
+        const fileUri = result.assets[0].uri;
+        processBytes(await readBytes(fileUri));
+      }
+    } catch (error) {
+      console.error("Error loading old wallet file:", error);
+      setErrorMessage(`Failed to load file: ${(error as Error).message}`);
+      Alert.alert("Error", `Failed to load file: ${(error as Error).message}`);
+    }
+  }, []);
+
+  // Decrypt an encrypted old .wallet file with its original password
+  const handleDecryptOldWallet = useCallback(async () => {
+    if (!oldWalletBytes) {
+      setErrorMessage("No file loaded");
+      return;
+    }
+    if (!oldWalletPassword) {
+      setErrorMessage("Please enter the old wallet password");
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage("");
+    try {
+      const walletFile = await importOldWalletFile(
+        oldWalletBytes,
+        oldWalletPassword,
+      );
+      setImportedWallet(walletFile);
+      setWalletAddress(walletFile.wallet.address);
+      setPassword("");
+      setConfirmPassword("");
+      setOldWalletStep("enterNewPassword");
+    } catch (error) {
+      console.error("Error decrypting old wallet:", error);
+      setErrorMessage(
+        `Failed to decrypt wallet: ${(error as Error).message}. Please check your password.`,
+      );
+      Alert.alert(
+        "Error",
+        `Failed to decrypt wallet: ${(error as Error).message}. Please check your password.`,
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [oldWalletBytes, oldWalletPassword]);
+
+  // Save the imported old wallet with a new password
+  const handleSaveOldWallet = useCallback(async () => {
+    if (!importedWallet) return;
+
+    if (!password || password !== confirmPassword) {
+      setErrorMessage("Passwords do not match");
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMessage("Password must be at least 6 characters");
+      return;
+    }
+
+    setIsLoading(true);
+    setErrorMessage("");
+    setOldWalletStep("saving");
+
+    try {
+      const encryptedContent = await saveKeyToFile(importedWallet, password);
+      await storeEncryptedWallet(
+        encryptedContent,
+        importedWallet.wallet.address,
+        password,
+      );
+
+      setOldWalletStep("done");
+      Alert.alert("Success", "Old wallet imported and saved successfully!");
+    } catch (error) {
+      console.error("Error saving old wallet:", error);
+      setErrorMessage(`Failed to save wallet: ${(error as Error).message}`);
+      setOldWalletStep("enterNewPassword");
+      Alert.alert("Error", `Failed to save wallet: ${(error as Error).message}`);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [importedWallet, password, confirmPassword, storeEncryptedWallet]);
+
   // Render functions
   const renderIdleState = () => (
     <View style={styles.container}>
@@ -524,6 +687,16 @@ export default function KeysScreen() {
         disabled={isLoading}
       >
         <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Load from File</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.button, styles.buttonPrimary]}
+        onPress={handleStartOldWalletImport}
+        disabled={isLoading}
+      >
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+          Import Old Wallet (.wallet)
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -810,6 +983,116 @@ export default function KeysScreen() {
     </View>
   );
 
+  const renderOldWalletOldPasswordState = () => (
+    <View style={styles.container}>
+      <Text style={styles.title}>Enter Old Wallet Password</Text>
+
+      <Text style={styles.description}>
+        This old wallet file is encrypted. Enter the password that was used to
+        encrypt it so the keys can be imported.
+      </Text>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Old Wallet Password</Text>
+        <TextInput
+          style={styles.input}
+          value={oldWalletPassword}
+          onChangeText={setOldWalletPassword}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Enter old wallet password"
+        />
+      </View>
+
+      {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+
+      <View style={styles.buttonRow}>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonPrimary, styles.buttonFlex]}
+          onPress={handleDecryptOldWallet}
+          disabled={isLoading}
+        >
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+            {isLoading ? "Decrypting..." : "Continue"}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonFlex]}
+          onPress={handleReset}
+          disabled={isLoading}
+        >
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
+  const renderOldWalletNewPasswordState = () => (
+    <View style={styles.container}>
+      <Text style={styles.title}>Set Wallet Password</Text>
+
+      <View style={styles.walletInfo}>
+        <Text style={styles.label}>Imported wallet address:</Text>
+        <Text style={styles.address} selectable>
+          {walletAddress}
+        </Text>
+      </View>
+
+      <Text style={styles.description}>
+        Choose a strong password to encrypt your wallet. You will need this
+        password to access your wallet.
+      </Text>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Password</Text>
+        <TextInput
+          style={styles.input}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Enter password (min 6 characters)"
+        />
+      </View>
+
+      <View style={styles.inputGroup}>
+        <Text style={styles.inputLabel}>Confirm Password</Text>
+        <TextInput
+          style={styles.input}
+          value={confirmPassword}
+          onChangeText={setConfirmPassword}
+          secureTextEntry
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="Confirm password"
+        />
+      </View>
+
+      {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+
+      <View style={styles.buttonRow}>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonPrimary, styles.buttonFlex]}
+          onPress={handleSaveOldWallet}
+          disabled={isLoading}
+        >
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+            {isLoading ? "Saving..." : "Save Wallet"}
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.button, styles.buttonFlex]}
+          onPress={handleReset}
+          disabled={isLoading}
+        >
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  );
+
   return (
     <ScrollView style={styles.scrollView}>
       <View style={styles.header}>
@@ -823,6 +1106,13 @@ export default function KeysScreen() {
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" />
         </View>
+      ) : oldWalletStep === "enterOldPassword" ? (
+        renderOldWalletOldPasswordState()
+      ) : oldWalletStep === "enterNewPassword" ||
+        oldWalletStep === "saving" ? (
+        renderOldWalletNewPasswordState()
+      ) : oldWalletStep === "done" ? (
+        renderDoneState()
       ) : loadFileStep === "enterPassword" || loadFileStep === "loading" ? (
         renderLoadFilePasswordState()
       ) : loadFileStep === "done" ? (

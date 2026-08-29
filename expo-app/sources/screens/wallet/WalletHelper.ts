@@ -4,13 +4,15 @@
  * Uses imports from bigtangle-ts to work in both Node.js and webpack environments.
  */
 
-import { PQKey, Utils } from 'bigtangle-ts';
+import { PQKey, Utils, ECKey, MainNetParams, TestParams } from 'bigtangle-ts';
 // @ts-ignore - These are not exported in index but exist in dist
 import { KeyCrypterScrypt } from 'bigtangle-ts/dist/net/bigtangle/crypto/KeyCrypterScrypt';
 // @ts-ignore
 import { EncryptedData } from 'bigtangle-ts/dist/net/bigtangle/crypto/EncryptedData';
 // @ts-ignore
 import { Wallet } from 'bigtangle-ts/dist/net/bigtangle/wallet/Wallet';
+// @ts-ignore
+import { WalletProtobufSerializer } from 'bigtangle-ts/dist/net/bigtangle/wallet/WalletProtobufSerializer';
 
 export interface CredentialEntry {
   url: string;
@@ -22,6 +24,10 @@ export interface Key {
   readonly address: string;
   readonly pubkey: string;
   readonly privateKey: string;
+  /** Key algorithm: post-quantum (default) or legacy secp256k1 (old .wallet import). */
+  readonly keyType?: 'PQ' | 'EC';
+  /** Network the address was derived on (EC keys only). */
+  readonly network?: string;
 }
 
 export interface WalletFile {
@@ -30,7 +36,13 @@ export interface WalletFile {
 }
 
 export interface SerializedWallet {
-  keys: Array<{ address: string; pubkey: string; privateKey: string }>;
+  keys: Array<{
+    address: string;
+    pubkey: string;
+    privateKey: string;
+    keyType?: string;
+    network?: string;
+  }>;
   credentials: CredentialEntry;
 }
 
@@ -86,6 +98,8 @@ export async function saveKeyToFile(
         address: walletFile.wallet.address,
         pubkey: walletFile.wallet.pubkey,
         privateKey: walletFile.wallet.privateKey,
+        keyType: walletFile.wallet.keyType ?? 'PQ',
+        network: walletFile.wallet.network,
       },
     ],
     credentials: walletFile.credentials,
@@ -154,15 +168,33 @@ export async function loadWallet(
 
   const keyData = parsed.keys[0];
 
-  // Recreate PQKey and address from the stored private key
-  const rawKey = Utils.HEX.decode(keyData.privateKey);
-  const pqKey = PQKey.fromPrivateKey(rawKey);
+  let wallet: Key;
+  if (keyData.keyType === 'EC') {
+    // Legacy secp256k1 key imported from an old-format .wallet file.
+    const ecKey = ECKey.fromPrivate(Utils.HEX.decode(keyData.privateKey), true);
+    const params =
+      keyData.network === 'Test' || keyData.network === 'test'
+        ? TestParams.get()
+        : MainNetParams.get();
+    wallet = {
+      address: ecKey.toAddressString(params),
+      pubkey: Utils.HEX.encode(ecKey.getPubKey()),
+      privateKey: keyData.privateKey,
+      keyType: 'EC',
+      network: keyData.network,
+    };
+  } else {
+    // Recreate PQKey and address from the stored private key
+    const rawKey = Utils.HEX.decode(keyData.privateKey);
+    const pqKey = PQKey.fromPrivateKey(rawKey);
 
-  const wallet: Key = {
-    address: pqKey.toAddressHex(),
-    pubkey: pqKey.getPublicKeyAsHex(),
-    privateKey: pqKey.getPrivateKeyHex(),
-  };
+    wallet = {
+      address: pqKey.toAddressHex(),
+      pubkey: pqKey.getPublicKeyAsHex(),
+      privateKey: pqKey.getPrivateKeyHex(),
+      keyType: 'PQ',
+    };
+  }
 
   return {
     wallet,
@@ -197,6 +229,121 @@ export async function importPrivateKey(
   };
 
   return { wallet, credentials };
+}
+
+/**
+ * Read an old-format `.wallet` protobuf file (as produced by the legacy Java
+ * bigtangle clients) and report whether it is password-encrypted. This never
+ * requires the password.
+ */
+export async function parseOldWalletFile(
+  fileData: Uint8Array,
+): Promise<{ encrypted: boolean; address?: string }> {
+  const serializer = new WalletProtobufSerializer();
+  const wallet = serializer.readWallet(fileData);
+  const encrypted = wallet.isEncrypted();
+  if (encrypted) {
+    return { encrypted };
+  }
+  const keys = await wallet.walletKeysAll(null);
+  const ecKey = findLegacyKey(keys);
+  return {
+    encrypted,
+    address: ecKey ? ecKey.toAddressString(wallet.getParams()) : undefined,
+  };
+}
+
+/**
+ * Import an old-format `.wallet` protobuf file. The legacy wallet contains
+ * secp256k1 (EC) keys; if the file is encrypted, the wallet password must be
+ * supplied so the private key can be recovered.
+ */
+export async function importOldWalletFile(
+  fileData: Uint8Array,
+  password?: string,
+): Promise<WalletFile> {
+  const serializer = new WalletProtobufSerializer();
+  const wallet = serializer.readWallet(fileData);
+
+  let keys: Array<ECKey | any>;
+  if (wallet.isEncrypted()) {
+    if (!password) {
+      throw new Error('This old wallet file is encrypted. Please enter its password.');
+    }
+    const crypter = wallet.getKeyCrypter();
+    if (!crypter) {
+      throw new Error('Encrypted wallet is missing its key crypter');
+    }
+    const aesKey = await crypter.deriveKey(password);
+    keys = await wallet.walletKeysAll(aesKey);
+  } else {
+    keys = await wallet.walletKeysAll(null);
+  }
+
+  const ecKey = findLegacyKey(keys);
+  if (!ecKey) {
+    throw new Error('No usable EC private key found in wallet file');
+  }
+
+  const params = wallet.getParams();
+  const address = ecKey.toAddressString(params);
+
+  return {
+    wallet: {
+      address,
+      pubkey: Utils.HEX.encode(ecKey.getPubKey()),
+      privateKey: Utils.HEX.encode(ecKey.getPrivKeyBytes()),
+      keyType: 'EC',
+      network: params.getId(),
+    },
+    credentials: {
+      url: 'https://wallet.bigt.ai',
+      user: address + '@bigt.ai',
+      password: Utils.HEX.encode(getRandomBytes(32)),
+    },
+  };
+}
+
+function findLegacyKey(keys: Array<ECKey | any>): ECKey | null {
+  for (const key of keys) {
+    if (
+      key &&
+      typeof key.getKeyType === 'function' &&
+      key.getKeyType() === 'EC' &&
+      typeof key.hasPrivKey === 'function' &&
+      key.hasPrivKey()
+    ) {
+      return key as ECKey;
+    }
+  }
+  return null;
+}
+
+/**
+ * Decode a base64 string into bytes (works in React Native and the browser
+ * without relying on platform globals).
+ */
+export function base64ToBytes(b64: string): Uint8Array {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const lookup: number[] = new Array(256).fill(0);
+  for (let i = 0; i < chars.length; i++) {
+    lookup[chars.charCodeAt(i)] = i;
+  }
+  const out: number[] = [];
+  let buffer = 0;
+  let bits = 0;
+  for (const ch of b64) {
+    if (ch === '=' || ch === '\n' || ch === '\r') continue;
+    const v = lookup[ch.charCodeAt(0)];
+    if (v === undefined && ch !== '=') continue;
+    buffer = (buffer << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((buffer >> bits) & 0xff);
+    }
+  }
+  return Uint8Array.from(out);
 }
 
 /**
