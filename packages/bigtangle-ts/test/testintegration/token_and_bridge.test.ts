@@ -25,22 +25,9 @@ const L1_URL = process.env.L1_ORDER_URL || "http://localhost:8086/";
 const TEST_PRIV = "ec1d240521f7f254c52aea69fca3f28d754d1b89f310f42b0fb094d16814317f";
 const TEST_PUB = "02721b5eb0282e4bc86aab3380e2bba31d935cba386741c15447973432c61bc975";
 
-/** Fund a wallet's keys via fundAddresses so candidate queries always have UTXOs. */
-async function fundWallet(w: Wallet): Promise<void> {
-  for (const key of await w.walletKeys(null)) {
-    await OkHttp3Util.post(
-      L0_URL + "fundAddresses",
-      new TextEncoder().encode(Json.jsonmapper().stringify({
-        addresses: [{
-          address: key.toAddressHex(),
-          value: 1000000000000,
-          pubkey: Utils.HEX.encode(key.getPrefixedPublicKeyBytes()),
-        }],
-      })),
-    );
-  }
-  await new Promise(r => setTimeout(r, 3000));
-}
+// The /fundAddresses faucet was removed from the Java server; fund wallets
+// on-chain from the genesis wallet instead.
+import { fundWallet } from "./funding";
 
 describe("Token creation and bridge transfer", () => {
   let wallet: Wallet;
@@ -139,7 +126,7 @@ describe("Token creation and bridge transfer", () => {
   });
 
   test("bridge transfer submits to L0 via submitTransaction", async () => {
-    await fundWallet(wallet);
+    await fundWallet(L0_URL, wallet);
     const candidates = await wallet.calculateAllSpendCandidates(null, false);
     expect(candidates.length).toBeGreaterThan(0);
     console.log(`Found ${candidates.length} UTXOs for bridge transfer`);
@@ -157,7 +144,7 @@ describe("Token creation and bridge transfer", () => {
   });
 
   test("can build transaction from UTXOs (no submission)", async () => {
-    await fundWallet(wallet);
+    await fundWallet(L0_URL, wallet);
     const candidates = await wallet.calculateAllSpendCandidates(null, false);
     expect(candidates.length).toBeGreaterThan(0);
     const utxo = candidates[0].getUTXO();

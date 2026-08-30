@@ -20,17 +20,6 @@ async function httpPost(path: string, body: any): Promise<any> {
   return res.json();
 }
 
-async function fundKey(k: PQKey, value: number = 10000000000): Promise<void> {
-  const fundRes = await httpPost("fundAddresses", {
-    addresses: [{
-      address: k.toAddressHex(),
-      value,
-      pubkey: Utils.HEX.encode(k.getPrefixedPublicKeyBytes()),
-    }],
-  });
-  expect(fundRes.errorcode).toBe(0);
-}
-
 /** Poll until the wallet sees a spendable BIG UTXO (replaces a fixed 10s sleep). */
 async function waitForSpendableBig(
   wallet: Wallet,
@@ -56,13 +45,14 @@ async function waitForSpendableBig(
 describe("PQKeyBundleCompat", () => {
   test("createToken and capture full multiSign server error", { timeout: 120000 }, async () => {
     const key = PQKey.createNew();
-    const genesisKey = PQKey.createNew();
+    // The wallet must include the real genesis key (ML-DSA-87 seed 0x01) so it
+    // starts with confirmed BIG (genesis CSV; the /fundAddresses faucet was
+    // removed from the Java server) and multiSign uses the root domain signer.
+    const genesisKey = PQKey.fromMLDSA(new Uint8Array(32).fill(0x01));
     const wallet = Wallet.fromKeysURL(TestParams.get(), [genesisKey, key], L0_URL);
     wallet.setFee(false);
 
-    // Fund both keys
-    await fundKey(key);
-    await fundKey(genesisKey);
+    // Wait for the genesis wallet's confirmed BIG (no funding needed).
     await waitForSpendableBig(wallet);
 
     // Create token

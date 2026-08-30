@@ -21,19 +21,9 @@ async function httpPost(path: string, body: any): Promise<any> {
   return res.json();
 }
 
-/** Fund a key using fundAddresses with prefixed pubkey (same as e2e pattern). */
-async function fundKey(k: PQKey): Promise<void> {
-  const fundRes = await httpPost("fundAddresses", {
-    addresses: [{
-      address: k.toAddressHex(),
-      value: 10000000000,
-      pubkey: Utils.HEX.encode(k.getPrefixedPublicKeyBytes()),
-    }],
-  });
-  expect(fundRes.errorcode).toBe(0);
-}
-
-/** Poll for a token by ID until it appears or max retries. */
+/**
+ * Poll for a token by ID until it appears or max retries.
+ */
 async function pollToken(tokenid: string, maxRetries = 40, delayMs = 2000): Promise<any> {
   for (let i = 0; i < maxRetries; i++) {
     const resp = await httpPost("getTokenById", { tokenid });
@@ -44,9 +34,10 @@ async function pollToken(tokenid: string, maxRetries = 40, delayMs = 2000): Prom
 }
 
 /**
- * Wait until the wallet has a spendable BIG UTXO (used after fundKey in
- * beforeAll). Replaces a fixed sleep so tests start as soon as the funded
- * coin is queryable.
+ * Wait until the wallet has a spendable BIG UTXO. The genesis wallet starts
+ * with confirmed BIG from the genesis CSV (the /fundAddresses faucet was
+ * removed from the Java server), so this returns as soon as the chain is up.
+ * Replaces a fixed sleep so tests start as soon as the chain is queryable.
  */
 async function waitForSpendableBig(
   wallet: Wallet,
@@ -62,7 +53,7 @@ async function waitForSpendableBig(
     if (ok) return;
     if (i < maxRetries - 1) await new Promise((r) => setTimeout(r, delayMs));
   }
-  throw new Error("Genesis wallet has no spendable BIG UTXO after fundKey");
+  throw new Error("Genesis wallet has no spendable BIG UTXO at startup");
 }
 
 /**
@@ -131,8 +122,7 @@ describe("RemoteTokenIT", () => {
     wallet = Wallet.fromKeys(TestParams.get(), [genesisKey]);
     wallet.setServerURL(L0_URL);
     wallet.setFee(false);
-    await fundKey(genesisKey);
-    // Wait for the funded BIG UTXO to become spendable instead of a fixed 10s.
+    // The genesis wallet holds confirmed BIG from the genesis CSV (no faucet).
     await waitForSpendableBig(wallet);
   }, 30000);
 
@@ -163,7 +153,6 @@ describe("RemoteTokenIT", () => {
   test("create token via signToken (TokenType.identity)", { timeout: 120000 }, async () => {
     const k = PQKey.createNew();
     const tokenid = Utils.HEX.encode(k.getPrefixedPublicKeyBytes());
-    await fundKey(k);
 
     const block = await createToken(wallet, k, "testtoken", 0, "", "test",
       BigInt(1000000), true, null, TokenType.identity, tokenid);
@@ -198,7 +187,6 @@ describe("RemoteTokenIT", () => {
   test("create token via wallet (TokenType.token)", { timeout: 120000 }, async () => {
     const k = PQKey.createNew();
     const tokenid = Utils.HEX.encode(k.getPrefixedPublicKeyBytes());
-    await fundKey(k);
 
     const block = await createToken(wallet, k, "wallettoken", 0, "", "wallet test",
       BigInt(500000), true, null, TokenType.token, tokenid);
@@ -229,8 +217,6 @@ describe("RemoteTokenIT", () => {
     const tokenName = "paytoken";
     const tokenid = Utils.HEX.encode(issuer.getPrefixedPublicKeyBytes());
     const supply = BigInt(10000000);
-
-    await fundKey(issuer);
 
     const block = await createToken(wallet, issuer, tokenName, 0, "", "token for payment test",
       supply, true, null, TokenType.token, tokenid);

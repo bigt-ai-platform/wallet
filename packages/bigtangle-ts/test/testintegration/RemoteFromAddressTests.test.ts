@@ -43,10 +43,11 @@ class RemoteFromAddressTests extends RemoteTest {
     this.userkeys.push(k1);
     this.userkeys.push(k2);
 
-    // Fund the wallet key so payBigTo can send BC
+    // The genesis wallet (this.wallet) is pre-funded with confirmed BIG via the
+    // genesis CSV (the /fundAddresses faucet was removed from the Java server),
+    // so payBigTo below can send BC on-chain to the yuan + user keys.
     const walletKeys = await this.wallet.walletKeys(null);
     if (walletKeys.length > 0) {
-      await this.fundKey(walletKeys[0]);
       await this.waitForConfirmedBalance(
         NetworkParameters.BIGTANGLE_TOKENID_STRING,
         walletKeys,

@@ -17,20 +17,9 @@ async function httpPost(path: string, body: any): Promise<any> {
   return res.json();
 }
 
-/**
- * Fund a PQ key using fundAddresses with prefixed pubkey.
- * The Java server stores the UTXO under Base58( sha256hash160(0x05 || keyBundle) ).
- */
-async function fundKey(k: PQKey, value: number = 10000000000): Promise<void> {
-  const fundRes = await httpPost("fundAddresses", {
-    addresses: [{
-      address: "1LLtbSLJJn1D2churfWG55aDYqQQTu4eqH",
-      value,
-      pubkey: Utils.HEX.encode(k.getPrefixedPublicKeyBytes()),
-    }],
-  });
-  expect(fundRes.errorcode).toBe(0);
-}
+// The /fundAddresses faucet was removed from the Java server; fund keys
+// on-chain from the genesis wallet instead.
+import { fundKey } from "./funding";
 
 /** Returns the Base58 address that the Java server derives for a PQ key (prefixed hash). */
 function javaAddress(key: PQKey): string {
@@ -59,7 +48,7 @@ describe("RemoteTransactionIT", () => {
     const addr = javaAddress(key);
 
     // Fund using the PQ path (pubkey with 0x05 prefix)
-    await fundKey(key);
+    await fundKey(L0_URL, key);
 
     // Wait for the funded UTXO to be queryable
     await waitForFundedUtxos(key);
@@ -88,8 +77,8 @@ describe("RemoteTransactionIT", () => {
     const alice = PQKey.createNew();
     const bob = PQKey.createNew();
 
-    await fundKey(alice);
-    await fundKey(bob);
+    await fundKey(L0_URL, alice);
+    await fundKey(L0_URL, bob);
     await waitForFundedUtxos(alice);
     await waitForFundedUtxos(bob);
 

@@ -12,10 +12,11 @@ if [ -f "$VALIDATOR_ENV" ]; then
 fi
 export POS_VALIDATOR_KEY VALIDATOR_PUBKEY
 
-# L1-order runs its own ordermatch chain, so it needs its own validator
-# (ML-DSA-87 seed 0x05). Matches remote.sh. Its key is read by remote.sh from
-# ../blockchain/.l1validatorpub.
-export L1_VALIDATOR_KEY="${L1_VALIDATOR_KEY:-0505050505050505050505050505050505050505050505050505050505050505}"
+# L1-order runs its own ordermatch chain, but the current Java design makes L1
+# propose beacons with the L0 validator key (seed 0x04) via the phantom deposit
+# the L1 imports from L0's STAKE block (see remote.sh Step 7c + layers.md §5.2).
+# The L1 validator must therefore NOT be overridden here — leave remote.sh's
+# default (seed 0x04, same as L0) in effect so the L1 beacon chain starts.
 
 # Ports matching the TS remote tests (must match remote.sh L0_PORT/L1_PORT and
 # the postgres container's exposed port). remote.sh's defaults are tuned to
@@ -144,6 +145,27 @@ for i in $(seq 1 60); do
   fi
   if [ $i -eq 60 ]; then
     info "WARNING: L0 beacon chain not stable after 180s (confirmed=${STABLE_COUNT:-0}), continuing anyway..."
+  fi
+  sleep 3
+done
+sleep 3
+
+# === Step 5b: Wait for a stable L1-order beacon chain ===
+# remote.sh bootstraps the L1 validator + first L1 beacons asynchronously AFTER
+# its HTTP port opens, and the first test file (remoteorder, which runs on L1)
+# races that bootstrap: its genesis funding transactions are submitted before
+# the L1 beacon chain exists and never confirm. Mirror the L0 wait against the
+# L1 database (info_order) so tests only start once L1 can confirm blocks.
+info "Waiting for a stable L1-order beacon chain (>= $STABLE_BEACONS confirmed beacons)..."
+for i in $(seq 1 60); do
+  L1_STABLE_COUNT=$(docker exec "$PG_CONTAINER" psql -U root -d info_order -t -A -c \
+    "SELECT count(*) FROM blocks WHERE confirmed AND chainlength > 0;" 2>/dev/null || echo "0")
+  if [ -n "$L1_STABLE_COUNT" ] && [ "${L1_STABLE_COUNT//[^0-9]/}" -ge "$STABLE_BEACONS" ] 2>/dev/null; then
+    log "L1-order beacon chain stable: $L1_STABLE_COUNT confirmed beacons"
+    break
+  fi
+  if [ $i -eq 60 ]; then
+    info "WARNING: L1-order beacon chain not stable after 180s (confirmed=${L1_STABLE_COUNT:-0}), continuing anyway..."
   fi
   sleep 3
 done

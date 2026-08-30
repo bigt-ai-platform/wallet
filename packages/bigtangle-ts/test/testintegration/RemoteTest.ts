@@ -49,18 +49,18 @@ export abstract class RemoteTest {
 
   networkParameters: NetworkParameters = TestParams.get();
 
-  /** Fund a key via fundAddresses (PQ key path with prefixed pubkey). */
+  /**
+   * Fund a key with BIG via an on-chain transfer from the genesis wallet (the
+   * /fundAddresses faucet was removed from the Java server). Mirrors Java's
+   * RemoteTestBase.payBigTo.
+   */
   protected async fundKey(key: PQKey, value: number = 10000000000): Promise<void> {
-    const body = {
-      addresses: [{
-        address: key.toAddressHex(),
-        value,
-        pubkey: Utils.HEX.encode(key.getPrefixedPublicKeyBytes()),
-      }],
-    };
-    await OkHttp3Util.post(
-      this.contextRoot + "fundAddresses",
-      new TextEncoder().encode(Json.jsonmapper().stringify(body)),
+    await this.payBigTo([key], BigInt(value), []);
+    await this.waitForConfirmedBalance(
+      NetworkParameters.BIGTANGLE_TOKENID_STRING,
+      [key],
+      60000,
+      1000
     );
   }
 

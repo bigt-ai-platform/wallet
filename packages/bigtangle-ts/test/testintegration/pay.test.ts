@@ -7,19 +7,9 @@ import { Address } from "../../src/net/bigtangle/core/Address";
 import { TestParams } from "../../src/net/bigtangle/params/TestParams";
 import { PQKey } from "../../src/net/bigtangle/crypto/pq/PQKey";
 
-async function fundKey(k: PQKey, url: string): Promise<void> {
-  await fetch(url + "fundAddresses", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      addresses: [{
-        address: k.toAddressHex(),
-        value: 10000000000,
-        pubkey: Utils.HEX.encode(k.getPrefixedPublicKeyBytes()),
-      }],
-    }),
-  });
-}
+// The /fundAddresses faucet was removed from the Java server; fund keys
+// on-chain from the genesis wallet instead.
+import { fundKey } from "./funding";
 
 type Token = {
   tokenid: string;
@@ -60,7 +50,7 @@ describe('bigtangle wallet pay', () => {
     // Fund the wallet key and wait for the BC to be spendable
     const keys = await wallet.walletKeys(null);
     if (keys.length > 0) {
-      await fundKey(keys[0], serverUrl);
+      await fundKey(serverUrl, keys[0]);
       let funded = false;
       for (let i = 0; i < 30; i++) {
         await new Promise(r => setTimeout(r, 2000));

@@ -28,20 +28,6 @@ class RemoteOrderTests extends RemoteTest {
     this.contextRoot = this.l1Url;
   }
 
-  private async fundKey(key: PQKey, value: bigint = BigInt(10000000000)): Promise<void> {
-    const body = {
-      addresses: [{
-        address: key.toAddressHex(),
-        value: Number(value),
-        pubkey: Utils.HEX.encode(key.getPrefixedPublicKeyBytes()),
-      }],
-    };
-    await OkHttp3Util.post(
-      this.contextRoot + "fundAddresses",
-      new TextEncoder().encode(Json.jsonmapper().stringify(body))
-    );
-  }
-
   async testCreateTokenAndTrade() {
     // 1. Create keys and wallets
     const issuer = PQKey.createNew();
