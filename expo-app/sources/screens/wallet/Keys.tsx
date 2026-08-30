@@ -21,6 +21,7 @@ import {
   createWallet,
   importPrivateKey,
   importOldWalletFile,
+  isPlainWalletJson,
   loadWallet,
   parseOldWalletFile,
   saveKeyToFile,
@@ -314,7 +315,9 @@ export default function KeysScreen() {
             reader.onload = (event) => {
               const content = event.target?.result as string;
               setLoadedFileContent(content);
-              setLoadFileStep("enterPassword");
+              // Unencrypted wallet files (plain SerializedWallet) need no
+              // password — go straight to loading.
+              setLoadFileStep(isPlainWalletJson(content) ? "loading" : "enterPassword");
             };
             reader.onerror = () => {
               setErrorMessage("Failed to read file");
@@ -339,7 +342,7 @@ export default function KeysScreen() {
         const fileUri = result.assets[0].uri;
         const content = await FileSystem.readAsStringAsync(fileUri);
         setLoadedFileContent(content);
-        setLoadFileStep("enterPassword");
+        setLoadFileStep(isPlainWalletJson(content) ? "loading" : "enterPassword");
       }
     } catch (error) {
       console.error("Error loading file:", error);
@@ -355,7 +358,9 @@ export default function KeysScreen() {
       return;
     }
 
-    if (!loadFilePassword) {
+    // Unencrypted wallet files need no password; encrypted ones do.
+    const needsPassword = !isPlainWalletJson(loadedFileContent);
+    if (needsPassword && !loadFilePassword) {
       setErrorMessage("Please enter password");
       return;
     }
@@ -939,26 +944,36 @@ export default function KeysScreen() {
     </View>
   );
 
-  const renderLoadFilePasswordState = () => (
+  const renderLoadFilePasswordState = () => {
+    const isPlain = isPlainWalletJson(loadedFileContent ?? "");
+    return (
     <View style={styles.container}>
-      <Text style={styles.title}>Enter Wallet Password</Text>
+      {isPlain ? (
+        <Text style={styles.title}>Load Wallet</Text>
+      ) : (
+        <Text style={styles.title}>Enter Wallet Password</Text>
+      )}
 
       <Text style={styles.description}>
-        Enter the password to decrypt your wallet file.
+        {isPlain
+          ? "This wallet file is not encrypted — no password is needed."
+          : "Enter the password to decrypt your wallet file."}
       </Text>
 
-      <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Password</Text>
-        <TextInput
-          style={styles.input}
-          value={loadFilePassword}
-          onChangeText={setLoadFilePassword}
-          secureTextEntry
-          autoCapitalize="none"
-          autoCorrect={false}
-          placeholder="Enter wallet password"
-        />
-      </View>
+      {!isPlain && (
+        <View style={styles.inputGroup}>
+          <Text style={styles.inputLabel}>Password</Text>
+          <TextInput
+            style={styles.input}
+            value={loadFilePassword}
+            onChangeText={setLoadFilePassword}
+            secureTextEntry
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="Enter wallet password"
+          />
+        </View>
+      )}
 
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
 
@@ -981,7 +996,8 @@ export default function KeysScreen() {
         </TouchableOpacity>
       </View>
     </View>
-  );
+    );
+  };
 
   const renderOldWalletOldPasswordState = () => (
     <View style={styles.container}>

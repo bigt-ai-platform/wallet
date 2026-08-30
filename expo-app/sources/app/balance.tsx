@@ -8,13 +8,14 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
-import SegmentedTabs from '@/components/SegmentedTabs';
 import { MONO_FONT } from '@/constants/fonts';
 import type { UTXO } from '@/types/api';
 
 interface LayerUtxo extends UTXO {
   layer: number; // 0 = L0, 1..N = L1 chains
   layerName: string;
+  /** Server URL this UTXO lives on (L0 undefined = default, or an L1 chain). */
+  baseUrl?: string;
 }
 
 interface Aggregated {
@@ -43,7 +44,10 @@ export default function BalanceScreen() {
   const [fromDate, setFromDate] = React.useState('');
   const [toDate, setToDate] = React.useState('');
   const [aggregate, setAggregate] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'all' | 'l0' | 'l1'>('all');
+  const [activeLayer, setActiveLayer] = React.useState<'all' | number>('all');
+  // Per-UTXO detail fetched on demand by the "… more" button (key = hash:index).
+  const [detailData, setDetailData] = React.useState<Record<string, { detail?: any; finalized?: boolean }>>({});
+  const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (publicInfo?.address && isUnlocked) loadAll();
@@ -63,14 +67,61 @@ export default function BalanceScreen() {
     const fromTime = parseDate(fromDate);
     const toTime = parseDate(toDate);
     // getOutputsHistory is exposed on both L0 and L1 (BaseDispatcherController).
+    // Query by toAddress: the outputs the wallet owns (getOutputsHistory matches
+    // outputs.fromaddress AND toaddress, so the wallet goes in the to slot).
     const res = await httpService.getOutputsHistory({
-      address: publicInfo?.address,
+      toAddress: publicInfo?.address,
       fromTime: fromTime ?? undefined,
       toTime: toTime ?? undefined,
       baseUrl,
     });
     if (!res.success || !res.data) return [];
-    return res.data.map((u: UTXO) => ({ ...u, layer, layerName }));
+    // getOutputsHistory returns `value` as a Coin object {value, tokenid,
+    // tokenHex, big}, the token id as `tokenId` (camelCase), and no
+    // `spendable` flag — normalize to the UTXO shape the screen renders
+    // (spendable = confirmed + unspent + not spend-pending). Per-UTXO block
+    // detail (chainlength/finalized/height) is fetched on demand via "…".
+    return res.data.map((u: any): LayerUtxo => ({
+      ...u,
+      value:
+        u.value && typeof u.value === 'object'
+          ? String((u.value as any).value ?? 0)
+          : u.value,
+      tokenid: u.tokenId || (u.value && (u.value as any).tokenHex) || u.tokenid,
+      spendable:
+        u.spendable ??
+        (!!u.confirmed && !u.spent && !u.spendPending),
+      layer,
+      layerName,
+      baseUrl,
+    }));
+  };
+
+  // Fetch one output's detail + its containing block info and the chain's
+  // finalized checkpoint; expand the card to show them (balance "… for more").
+  const showDetail = async (u: LayerUtxo, key: string) => {
+    if (expandedKey === key) {
+      setExpandedKey(null);
+      return;
+    }
+    setExpandedKey(key);
+    if (detailData[key]) return;
+    try {
+      const [detail, chainNum]: [any, any] = await Promise.all([
+        httpService.getOutputDetail(`${u.hashHex ?? u.txhash}:${u.index}`, u.baseUrl),
+        httpService.getChainNumber(u.baseUrl).catch(() => ({ success: false })),
+      ]);
+      const d = detail?.success ? detail.data : null;
+      const finalizedCl = chainNum?.success
+        ? Number(chainNum.data?.finalizedChainLength)
+        : undefined;
+      const chainlength = d?.blockChainlength != null ? Number(d.blockChainlength) : undefined;
+      const finalized =
+        chainlength != null && finalizedCl != null && chainlength <= finalizedCl;
+      setDetailData((prev) => ({ ...prev, [key]: { detail: d, finalized } }));
+    } catch {
+      setDetailData((prev) => ({ ...prev, [key]: { detail: undefined, finalized: false } }));
+    }
   };
 
   const loadAll = async () => {
@@ -90,8 +141,15 @@ export default function BalanceScreen() {
   };
 
   const filtered = utxos.filter((u) =>
-    activeTab === 'all' ? true : activeTab === 'l0' ? u.layer === 0 : u.layer > 0
+    activeLayer === 'all' ? true : u.layer === activeLayer
   );
+
+  // Every layer as a list entry: All Layers, L0, then one per L1 chain.
+  const layerList: Array<{ key: 'all' | number; label: string }> = [
+    { key: 'all', label: 'All Layers' },
+    { key: 0, label: 'L0' },
+    ...l1Chains.map((c, i) => ({ key: i + 1, label: c.name || `L1-${i + 1}` })),
+  ];
 
   const agg = React.useMemo(() => {
     const map = new Map<string, Aggregated>();
@@ -151,15 +209,24 @@ export default function BalanceScreen() {
         <Text style={s.countText}>{totalCount} UTXO{totalCount === 1 ? '' : 's'}</Text>
       </View>
 
-      <SegmentedTabs
-        tabs={[
-          { key: 'all', label: 'All Layers' },
-          { key: 'l0', label: 'Layer 0' },
-          { key: 'l1', label: 'L1-*' },
-        ]}
-        active={activeTab}
-        onChange={(k) => setActiveTab(k as typeof activeTab)}
-      />
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={s.layerRow}
+        contentContainerStyle={s.layerRowContent}
+      >
+        {layerList.map((l) => (
+          <TouchableOpacity
+            key={String(l.key)}
+            style={[s.layerChip, activeLayer === l.key && s.layerChipActive]}
+            onPress={() => setActiveLayer(l.key)}
+            accessibilityRole="button"
+            accessibilityLabel={`layer-${l.key}`}
+          >
+            <Text style={[s.layerChipText, activeLayer === l.key && s.layerChipTextActive]}>{l.label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
 
       <ScrollView contentContainerStyle={s.content}>
         {loading ? (
@@ -182,8 +249,12 @@ export default function BalanceScreen() {
         ) : filtered.length === 0 ? (
           <Text style={s.emptyText}>No UTXOs found for the selected filters.</Text>
         ) : (
-          filtered.map((u, i) => (
-            <View key={i} style={s.card}>
+          filtered.map((u, i) => {
+            const key = `${u.hashHex ?? u.txhash}:${u.index}`;
+            const entry = detailData[key];
+            const d = entry?.detail;
+            return (
+            <View key={key} style={s.card}>
               <View style={s.aggHeader}>
                 <Text style={s.tokenName}>{u.tokenname || u.tokenid?.slice(0, 8) || 'token'}</Text>
                 <Text style={s.tokenValue}>{formatValue(toBigInt(u.value))}</Text>
@@ -191,8 +262,32 @@ export default function BalanceScreen() {
               <Text style={s.tokenMeta}>layer {u.layerName} · {u.confirmed ? 'confirmed' : 'pending'} · {u.spendable ? 'spendable' : 'locked'}</Text>
               <Text style={s.tokenMeta}>to {u.address ? u.address.slice(0, 18) : '...'}{u.time ? ` · ${new Date(u.time * 1000).toISOString().slice(0, 10)}` : ''}</Text>
               <Text style={s.tokenId}>{(u.txhash || '').slice(0, 20)}</Text>
+              {expandedKey === key && (
+                <View style={s.detailBox}>
+                  {d ? (
+                    <>
+                      <Text style={s.tokenMeta}>Block: {(d.blockHash || '').slice(0, 20)}…</Text>
+                      <Text style={s.tokenMeta}>Height: {d.blockHeight ?? '?'} · Chainlength: {d.blockChainlength ?? '?'}</Text>
+                      <Text style={s.tokenMeta}>Confirmed: {d.blockConfirmed ? 'yes' : 'no'} · Finalized: {entry?.finalized ? 'yes' : 'no'}</Text>
+                      {d.output?.fromaddress ? <Text style={s.tokenMeta}>From: {d.output.fromaddress}</Text> : null}
+                      {d.output?.memo ? <Text style={s.tokenMeta}>Memo: {d.output.memo}</Text> : null}
+                    </>
+                  ) : (
+                    <Text style={s.tokenMeta}>Loading…</Text>
+                  )}
+                </View>
+              )}
+              <TouchableOpacity
+                style={s.moreBtn}
+                onPress={() => showDetail(u, key)}
+                accessibilityRole="button"
+                accessibilityLabel={`more-details-${i}`}
+              >
+                <Text style={s.moreText}>{expandedKey === key ? '−' : '⋯'}</Text>
+              </TouchableOpacity>
             </View>
-          ))
+            );
+          })
         )}
       </ScrollView>
     </View>
@@ -231,4 +326,13 @@ const s = StyleSheet.create((theme) => ({
   tokenValue: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
   tokenMeta: { fontSize: 12, color: theme.colors.text.secondary, marginBottom: 2 },
   tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: MONO_FONT },
+  moreBtn: { alignSelf: 'flex-start', marginTop: 6, paddingVertical: 4, paddingHorizontal: 10, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8 },
+  moreText: { fontSize: 12, fontWeight: '600', color: theme.colors.text.link },
+  detailBox: { marginTop: 8, padding: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, backgroundColor: theme.colors.groupped.background, borderRadius: 8 },
+  layerRow: { flexGrow: 0, marginHorizontal: 16, marginBottom: 8 },
+  layerRowContent: { gap: 8, paddingVertical: 2 },
+  layerChip: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  layerChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  layerChipText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.secondary },
+  layerChipTextActive: { color: '#FFFFFF' },
 }));

@@ -23,6 +23,8 @@ import {
   type ContactInfo,
   type L1ChainConfig,
   type OrderInfo,
+  type ChainNumberInfo,
+  type OutputDetail,
 } from '@/types/api';
 import { PQKey, Utils } from 'bigtangle-ts';
 import { DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET } from '@/constants/app';
@@ -253,7 +255,10 @@ export class HttpService {
     baseUrl?: string
   ): Promise<ApiResponse<T>> {
     try {
-      const url = baseUrl ? `${baseUrl}${endpoint}` : `${this.getServerUrl()}${endpoint}`;
+      const base = baseUrl ? baseUrl : this.getServerUrl();
+      // Base URLs may be configured without a trailing slash (settings input,
+      // L1 chain URL, defaults) — normalize so `${base}${endpoint}` is valid.
+      const url = `${base.endsWith('/') ? base : base + '/'}${endpoint}`;
 
       const options: RequestInit = {
         method,
@@ -374,6 +379,22 @@ export class HttpService {
       success: false,
       error: response.error || 'Failed to get outputs history',
     } as ApiResponse<UTXO[]>;
+  }
+
+  /**
+   * Get the chain's justified/finalized Casper checkpoints (finalizedChainLength
+   * is used to mark UTXOs as finalized on the balance screen).
+   */
+  async getChainNumber(baseUrl?: string): Promise<ApiResponse<ChainNumberInfo>> {
+    return this.request<ChainNumberInfo>(ReqCmd.GetChainNumber, 'POST', {}, baseUrl);
+  }
+
+  /**
+   * Fetch one output's detail + its containing block info (balance "… for more").
+   * `hex` is "blockHashHex:outputIndex" (same format as getOutputByKey).
+   */
+  async getOutputDetail(hex: string, baseUrl?: string): Promise<ApiResponse<OutputDetail>> {
+    return this.request<OutputDetail>(ReqCmd.GetOutputDetail, 'POST', { hex }, baseUrl);
   }
 
   /**

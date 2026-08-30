@@ -4,7 +4,7 @@
  * Uses imports from bigtangle-ts to work in both Node.js and webpack environments.
  */
 
-import { PQKey, Utils, ECKey, MainNetParams, TestParams } from 'bigtangle-ts';
+import { PQKey, Utils, ECKey, Address, MainNetParams, TestParams } from 'bigtangle-ts';
 // @ts-ignore - These are not exported in index but exist in dist
 import { KeyCrypterScrypt } from 'bigtangle-ts/dist/net/bigtangle/crypto/KeyCrypterScrypt';
 // @ts-ignore
@@ -46,6 +46,19 @@ export interface SerializedWallet {
   credentials: CredentialEntry;
 }
 
+/**
+ * True for an unencrypted wallet JSON ({@link SerializedWallet} with `keys[]`
+ * and no `salt`/`data`). Such wallets need no password to load/unlock.
+ */
+export function isPlainWalletJson(content: string): boolean {
+  try {
+    const root = JSON.parse(content);
+    return !!root?.keys?.length && root.salt === undefined && root.data === undefined;
+  } catch {
+    return false;
+  }
+}
+
 // Default context root for bigtangle network
 const DEFAULT_CONTEXT_ROOT = 'http://localhost:8088/';
 
@@ -65,11 +78,20 @@ function getRandomBytes(length: number): Uint8Array {
   return bytes;
 }
 
+/**
+ * Base58 on-chain address of a PQ key (the format the server stores/expects —
+ * e.g. getOutputsHistory). Test-net encoding matches the local test infra and
+ * the TestKeys addresses (m…/n… prefix).
+ */
+function pqKeyAddress(pqKey: PQKey): string {
+  return Address.fromP2PKH(TestParams.get(), pqKey.getPubKeyHash()).toBase58();
+}
+
 // Use bigtangle-ts PQKey for wallet creation
 export async function createWallet(): Promise<WalletFile> {
   const pqKey = PQKey.createNew();
 
-  const address = pqKey.toAddressHex();
+  const address = pqKeyAddress(pqKey);
   const pubkey = Utils.HEX.encode(pqKey.getPrefixedPublicKeyBytes());
   const privateKey = pqKey.getPrivateKeyHex();
 
@@ -133,34 +155,44 @@ export async function loadWallet(
   fileData: string,
   _password: string,
 ): Promise<WalletFile> {
-  // Parse the encrypted file format
-  const encrypted = JSON.parse(fileData);
+  const parsedRoot = JSON.parse(fileData);
 
-  // Reconstruct scrypt parameters with the saved salt
-  const keyCrypter = new KeyCrypterScrypt({
-    salt: Utils.HEX.decode(encrypted.salt),
-    N: encrypted.N,
-    r: encrypted.r,
-    p: encrypted.p,
-  });
+  let parsed: SerializedWallet;
+  if (parsedRoot.salt !== undefined && parsedRoot.data !== undefined) {
+    // Encrypted wallet-file format (saveKeyToFile output): salt/iv/data/N/r/p.
+    const encrypted = parsedRoot;
 
-  // Derive the key using the same parameters
-  const tmpkey = await keyCrypter.deriveKey(_password);
+    // Reconstruct scrypt parameters with the saved salt
+    const keyCrypter = new KeyCrypterScrypt({
+      salt: Utils.HEX.decode(encrypted.salt),
+      N: encrypted.N,
+      r: encrypted.r,
+      p: encrypted.p,
+    });
 
-  // Reconstruct the EncryptedData object
-  const encryptedData = new EncryptedData(
-    Utils.HEX.decode(encrypted.iv),
-    Utils.HEX.decode(encrypted.data),
-  );
+    // Derive the key using the same parameters
+    const tmpkey = await keyCrypter.deriveKey(_password);
 
-  // Decrypt the data
-  const decryptedBytes = await keyCrypter.decrypt(encryptedData, tmpkey);
+    // Reconstruct the EncryptedData object
+    const encryptedData = new EncryptedData(
+      Utils.HEX.decode(encrypted.iv),
+      Utils.HEX.decode(encrypted.data),
+    );
 
-  // Convert Uint8Array back to string
-  const decoder = new TextDecoder();
-  const raw = decoder.decode(decryptedBytes);
+    // Decrypt the data
+    const decryptedBytes = await keyCrypter.decrypt(encryptedData, tmpkey);
 
-  const parsed: SerializedWallet = JSON.parse(raw);
+    // Convert Uint8Array back to string
+    const decoder = new TextDecoder();
+    const raw = decoder.decode(decryptedBytes);
+
+    parsed = JSON.parse(raw);
+  } else if (parsedRoot.keys?.length) {
+    // Plain SerializedWallet JSON (already unencrypted) — accept it directly.
+    parsed = parsedRoot;
+  } else {
+    throw new Error('Unrecognized wallet file format');
+  }
 
   if (!parsed.keys?.length) {
     throw new Error('No key found in wallet file');
@@ -189,7 +221,7 @@ export async function loadWallet(
     const pqKey = PQKey.fromPrivateKey(rawKey);
 
     wallet = {
-      address: pqKey.toAddressHex(),
+      address: pqKeyAddress(pqKey),
       pubkey: pqKey.getPublicKeyAsHex(),
       privateKey: pqKey.getPrivateKeyHex(),
       keyType: 'PQ',
@@ -213,7 +245,7 @@ export async function importPrivateKey(
 
   const pqKey = PQKey.fromPrivateKey(raw);
 
-  const address = pqKey.toAddressHex();
+  const address = pqKeyAddress(pqKey);
   const privateKey = pqKey.getPrivateKeyHex();
 
   const wallet: Key = {

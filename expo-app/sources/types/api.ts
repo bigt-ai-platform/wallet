@@ -12,12 +12,14 @@ export enum ReqCmd {
   GetBalances = 'getBalances',
   GetOutputs = 'getOutputs',
   GetOutputsHistory = 'getOutputsHistory',
+  GetOutputDetail = 'getOutputDetail',
   GetUserData = 'getUserData',
   GetTokensItemList = 'getTokensItemList',
   GetMyValidTokenItemList = 'getMyValidTokenItemList',
   GetTransactionStatus = 'getTransactionStatus',
   GetTransactionsStatusByAddress = 'getTransactionsStatusByAddress',
   SubmitTransaction = 'submitTransaction',
+  GetChainNumber = 'getChainNumber',
 }
 
 /**
@@ -109,6 +111,34 @@ export interface UTXO {
   memo?: string;
   /** Block time in epoch seconds (present on confirmed history outputs). */
   time?: number;
+  /** Chainlength of the containing block (for finalized-status display). */
+  chainlength?: number;
+  /** Whether this UTXO is below the chain's Casper-finalized checkpoint. */
+  finalized?: boolean;
+  /** Hex of the containing block (for the getOutputDetail "… more" lookup). */
+  blockHashHex?: string;
+  /** Hex of the transaction (outputs.hash) — the output key for detail lookup. */
+  hashHex?: string;
+}
+
+/** Response of `getChainNumber`: the justified/finalized Casper checkpoints. */
+export interface ChainNumberInfo {
+  txReward?: any;
+  justifiedBlockHash?: string;
+  finalizedBlockHash?: string;
+  justifiedEpoch?: number;
+  finalizedEpoch?: number;
+  finalizedChainLength?: number;
+}
+
+/** Response of `getOutputDetail` (per-UTXO detail + its containing block). */
+export interface OutputDetail {
+  output?: UTXO;
+  blockHeight?: number;
+  blockChainlength?: number;
+  blockConfirmed?: boolean;
+  blockTime?: number;
+  blockHash?: string;
 }
 
 /**

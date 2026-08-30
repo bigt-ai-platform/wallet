@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useMemo } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 
-import { loadWallet, type WalletFile } from '@/screens/wallet/WalletHelper';
+import { loadWallet, isPlainWalletJson, type WalletFile } from '@/screens/wallet/WalletHelper';
 import { device } from '@/storage';
 
 /**
@@ -72,8 +72,24 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const passwordRef = React.useRef<string | null>(null);
 
   const [state, setState] = React.useState<WalletStateContext>(() => {
-    const address = device.get(['device', WALLET_ADDRESS_KEY]);
-    const hasEncrypted = !!device.get(['device', WALLET_ENCRYPTED_CONTENT_KEY]);
+    const encryptedContent = device.get(['device', WALLET_ENCRYPTED_CONTENT_KEY]);
+    const hasEncrypted = !!encryptedContent;
+
+    // An unencrypted wallet file needs no password — treat it as unlocked.
+    // Re-derive the address from the stored file so a stale saved address
+    // (e.g. an older PQ-hex one) self-heals.
+    const isPlain = hasEncrypted && isPlainWalletJson(String(encryptedContent));
+    let address = device.get(['device', WALLET_ADDRESS_KEY]);
+    if (isPlain) {
+      try {
+        const keys = JSON.parse(String(encryptedContent)).keys;
+        if (keys?.length && typeof keys[0]?.address === 'string') {
+          address = keys[0].address;
+        }
+      } catch {
+        // keep the stored address
+      }
+    }
 
     return {
       publicInfo:
@@ -83,7 +99,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
               hasEncryptedWallet: true,
             }
           : null,
-      isUnlocked: false,
+      isUnlocked: isPlain,
       isLoading: false,
     };
   });
@@ -123,12 +139,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           passwordRef.current = password;
         }
 
+        // Unencrypted wallets are never locked.
+        const unlocked = !!password || isPlainWalletJson(encryptedContent);
+
         setState({
           publicInfo: {
             address,
             hasEncryptedWallet: true,
           },
-          isUnlocked: !!password,
+          isUnlocked: unlocked,
           isLoading: false,
         });
       } catch (error) {
