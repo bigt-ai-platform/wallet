@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   View, Text, TouchableOpacity, ScrollView, ActivityIndicator,
-  TextInput,
+  TextInput, Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -32,6 +32,39 @@ function toBigInt(v: any): bigint {
 
 function formatValue(v: bigint): string {
   return v.toString();
+}
+
+function LayerDropdown({ value, options, onChange }: {
+  value: 'all' | number;
+  options: Array<{ key: 'all' | number; label: string }>;
+  onChange: (key: 'all' | number) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const current = options.find((o) => o.key === value);
+  return (
+    <>
+      <TouchableOpacity style={s.dropdown} onPress={() => setOpen(true)} testID="balance-layer-select">
+        <Text style={s.dropdownText}>{current?.label ?? 'All Layers'}</Text>
+        <Text style={s.dropdownChevron}>▾</Text>
+      </TouchableOpacity>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setOpen(false)}>
+          <View style={s.modalSheet}>
+            <Text style={s.modalTitle}>Layer</Text>
+            {options.map((o) => (
+              <TouchableOpacity
+                key={String(o.key)}
+                style={[s.modalOption, o.key === value && s.modalOptionActive]}
+                onPress={() => { onChange(o.key); setOpen(false); }}
+              >
+                <Text style={[s.modalOptionText, o.key === value && s.modalOptionTextActive]}>{o.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
 }
 
 export default function BalanceScreen() {
@@ -169,7 +202,7 @@ export default function BalanceScreen() {
       <View style={s.container} testID="balance-screen">
         <View style={s.centered}>
           <Text style={s.lockedTitle}>{t('wallet.locked')}</Text>
-          <TouchableOpacity style={s.primaryBtn} onPress={() => router.push('/wallet/keys')}>
+          <TouchableOpacity style={s.primaryBtn} onPress={() => router.push('/home/keys')}>
             <Text style={s.primaryBtnText}>{t('wallet.manageWallet')}</Text>
           </TouchableOpacity>
         </View>
@@ -206,27 +239,10 @@ export default function BalanceScreen() {
             <Text style={s.refreshText}>{loading ? '...' : 'Apply / Refresh'}</Text>
           </TouchableOpacity>
         </View>
+        <Text style={s.cardLabel}>Layer</Text>
+        <LayerDropdown value={activeLayer} options={layerList} onChange={setActiveLayer} />
         <Text style={s.countText}>{totalCount} UTXO{totalCount === 1 ? '' : 's'}</Text>
       </View>
-
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={s.layerRow}
-        contentContainerStyle={s.layerRowContent}
-      >
-        {layerList.map((l) => (
-          <TouchableOpacity
-            key={String(l.key)}
-            style={[s.layerChip, activeLayer === l.key && s.layerChipActive]}
-            onPress={() => setActiveLayer(l.key)}
-            accessibilityRole="button"
-            accessibilityLabel={`layer-${l.key}`}
-          >
-            <Text style={[s.layerChipText, activeLayer === l.key && s.layerChipTextActive]}>{l.label}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
 
       <ScrollView contentContainerStyle={s.content}>
         {loading ? (
@@ -335,4 +351,14 @@ const s = StyleSheet.create((theme) => ({
   layerChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
   layerChipText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.secondary },
   layerChipTextActive: { color: '#FFFFFF' },
+  dropdown: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.background, paddingHorizontal: 12, paddingVertical: 10, marginTop: 4 },
+  dropdownText: { fontSize: 14, color: theme.colors.text.primary },
+  dropdownChevron: { fontSize: 14, color: theme.colors.text.secondary },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
+  modalSheet: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: theme.colors.border },
+  modalTitle: { fontSize: 14, fontWeight: '700', color: theme.colors.text.secondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
+  modalOption: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8 },
+  modalOptionActive: { backgroundColor: theme.colors.primarySoft },
+  modalOptionText: { fontSize: 14, color: theme.colors.text.primary },
+  modalOptionTextActive: { color: theme.colors.primary, fontWeight: '600' },
 }));

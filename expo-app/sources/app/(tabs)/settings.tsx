@@ -36,11 +36,7 @@ export default function SettingsScreen() {
   const toggleTestnet = (val: boolean) => {
     setUseTestnet(val);
     httpService.setTestnet(val);
-    if (val) {
-      setServerUrl('https://testp.bigtangle.org:8088/');
-    } else {
-      setServerUrl('https://p.bigtangle.org:8088/');
-    }
+    setServerUrl(httpService.getDefaultServerUrl());
   };
 
   const saveServer = () => {
@@ -139,13 +135,13 @@ export default function SettingsScreen() {
 
   const resetDefaults = () => {
     setUseTestnet(false);
-    setServerUrl('https://p.bigtangle.org:8088/');
     httpService.setTestnet(false);
-    httpService.setServerUrl('https://p.bigtangle.org:8088/');
+    httpService.setServerUrl(httpService.getDefaultServerUrl());
     httpService.setL1Chains(DEFAULT_L1_CHAINS_TESTNET.slice());
     httpService.setActiveL1Index(0);
     setL1Chains(httpService.getL1Chains());
     setActiveL1Index(httpService.getActiveL1Index());
+    setServerUrl(httpService.getDefaultServerUrl());
     Alert.alert('', t('settings.resetDone'));
   };
 

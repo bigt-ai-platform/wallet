@@ -4,7 +4,7 @@
  * Handles transaction creation, signing, and broadcasting
  */
 
-import { PQKey, TestParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput } from 'bigtangle-ts';
+import { PQKey, TestParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigtangle-ts';
 // @ts-ignore
 import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
 // @ts-ignore
@@ -291,6 +291,49 @@ export async function broadcastTransaction(rawTx: string): Promise<ApiResponse<s
 }
 
 /**
+ * Broadcast a peg-in transaction to the L0 `processPegIn` endpoint (raw bytes,
+ * same shape as `submitTransaction`).
+ */
+export async function broadcastPegIn(rawTx: string): Promise<ApiResponse<string>> {
+  try {
+    const serverUrl = httpService.getServerUrl();
+    const url = `${serverUrl}${ReqCmd.ProcessPegIn}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/octet-stream',
+      },
+      body: hexToBytes(rawTx) as unknown as BodyInit,
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+
+    if (result.error || (result.errorcode !== undefined && result.errorcode !== 0)) {
+      return {
+        success: false,
+        error: result.message || result.error || 'Peg-in rejected',
+      };
+    }
+
+    return {
+      success: true,
+      data: 'Peg-in submitted',
+    };
+  } catch (error) {
+    console.error('[Transaction] Error submitting peg-in:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to submit peg-in',
+    };
+  }
+}
+
+/**
  * Pay a token transfer on Layer 0.
  *
  * Builds and signs the transaction with the SDK crypto primitives (no SDK
@@ -373,6 +416,86 @@ export async function payOnLayer0(params: {
   const broadcastResult = await broadcastTransaction(txHex);
   if (!broadcastResult.success) {
     throw new Error(broadcastResult.error || 'Failed to broadcast transaction');
+  }
+
+  return tx.getHash().toString();
+}
+
+/**
+ * Bridge (peg-in) tokens from L0 to an L1 order chain.
+ *
+ * Ports the Java {@code PegInTool} / {@code BridgeServiceTest.createRealVault}:
+ * builds a SIGNED 1-input/1-output transaction that locks a whole confirmed,
+ * unspent UTXO of the token to the vault script 1:1, declares the L1
+ * beneficiary (toAddressInSubtangle) and the destination chain id
+ * ({@code PegInInfo{chainId}}), then POSTs the raw tx to L0
+ * {@code processPegIn}. The vault script comes from the L0 {@code getBridgeInfo}
+ * endpoint (single source of truth for what "the vault" is).
+ */
+export async function pegInToL1(params: {
+  privateKeyHex: string;
+  l1Address: string;
+  tokenId: string;
+  chainId: string;
+}): Promise<string> {
+  const { privateKeyHex, l1Address, tokenId, chainId } = params;
+  const testParams = getTestParams();
+  const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
+
+  const bridge = await httpService.getBridgeInfo();
+  if (!bridge.success || !bridge.data) {
+    throw new Error('Failed to fetch bridge info');
+  }
+  if (!bridge.data.active) {
+    throw new Error('Bridge is not active on L0');
+  }
+  const vaultScriptHex = bridge.data.vaultScriptHex;
+  if (!vaultScriptHex) {
+    throw new Error('L0 bridge returned no vault script');
+  }
+
+  // 1. Fetch spendable UTXOs and pick one confirmed, unspent UTXO of the token
+  //    to lock 1:1 (processPegIn requires exactly one input and one output).
+  const utxosResponse = await httpService.getOutputs(privateKeyHex);
+  if (!utxosResponse.success || !utxosResponse.data) {
+    throw new Error('Failed to fetch UTXOs');
+  }
+  const candidates = (utxosResponse.data as any[])
+    .filter((u) => (u.tokenId || u.value?.tokenHex) === tokenId
+      && u.confirmed !== false && !u.spent && !u.spendPending)
+    .map((u) => SdkUTXO.fromJSONObject(u))
+    .sort((a, b) => {
+      const av = a.getValue().getValue();
+      const bv = b.getValue().getValue();
+      return av < bv ? 1 : av > bv ? -1 : 0;
+    });
+  if (candidates.length === 0) {
+    throw new Error('No spendable UTXO of the selected token to bridge');
+  }
+  const source = candidates[0];
+
+  // 2. Build the peg-in transaction (version 2 = PQ witness data).
+  const tx = new Transaction(testParams);
+  tx.version = PQConstants.TX_PQ_VERSION;
+  tx.setToAddressInSubtangle(Address.fromBase58(testParams, l1Address).getHash160());
+  tx.setDataClassName('PegInInfo');
+  tx.setData(new TextEncoder().encode(JSON.stringify({ chainId })));
+  tx.addInput2(source.getBlockHash(), new FreeStandingTransactionOutput(testParams, source));
+  tx.addOutputScript(source.getValue(), new Script(hexToBytes(vaultScriptHex)));
+
+  // 3. Sign the single input with the UTXO owner's key.
+  const input = tx.getInput(0);
+  const connected = input.getConnectedOutput();
+  const scriptBytes = connected?.getScriptBytes() ?? new Uint8Array(0);
+  const sighash = tx.hashForSignatureScript(0, new Script(scriptBytes), 1 as any, false);
+  const signatureBundle = await pqKey.signWithAesKey(sighash, null);
+  input.setScriptSig(ScriptBuilder.createInputScript(signatureBundle, pqKey)!);
+
+  // 4. Submit the raw transaction to processPegIn.
+  const txHex = bytesToHex(tx.bitcoinSerialize());
+  const broadcastResult = await broadcastPegIn(txHex);
+  if (!broadcastResult.success) {
+    throw new Error(broadcastResult.error || 'Failed to submit peg-in transaction');
   }
 
   return tx.getHash().toString();

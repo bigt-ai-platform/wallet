@@ -1,18 +1,12 @@
 import { test, expect, Page } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
-import { waitForApp, clickTab, getElement, configureServerUrl } from '../helpers';
+import { waitForApp, clickTab, configureServerUrl, goToKeys, goToPayment } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
 const HAS_SERVER = !!E2E_SERVER_URL;
 const PASSWORD = 'TestPass123!';
-
-async function getWalletAddress(page: Page): Promise<string> {
-  const addressEl = page.locator('text=/^[0-9a-f]{70}$/').first();
-  await expect(addressEl).toBeAttached({ timeout: 10000 });
-  return (await addressEl.textContent())!;
-}
 
 async function importKey(page: Page, privKeyHex: string) {
   await page.getByText('Import Private Key').click();
@@ -73,10 +67,8 @@ test.describe('Payment', () => {
     expect(fundBody.errorcode).toBe(0);
     console.log('Funded', aliceAddress);
 
-    // 3. Import Alice key into the app
-    await clickTab(page, 'Wallet');
-    await (await getElement(page, 'wallet-screen')).getByText('Manage Wallet').click();
-    await page.waitForURL('**/wallet/keys**');
+    // 3. Import Alice key into the app (Keys screen at /home/keys).
+    await goToKeys(page);
     await importKey(page, alicePrivHex);
     await saveWallet(page, PASSWORD);
 
@@ -117,7 +109,7 @@ test.describe('Payment', () => {
 
     // 7. Send BIG to Bob
     await page.waitForTimeout(1000);
-    await clickTab(page, 'Transaction');
+    await goToPayment(page);
     await page.waitForTimeout(3000);
 
     await page.getByPlaceholder('Recipient').fill(bobAddress);
@@ -197,32 +189,19 @@ test.describe('Payment', () => {
 
 test.describe('L1 Test Tab', () => {
   async function ensureWallet(page: Page) {
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
     const { PQKey } = await import('../../../packages/bigtangle-ts/dist/index.js');
     const key = PQKey.createNew();
     const privHex = key.getPrivateKeyHex();
-    await clickTab(page, 'Wallet');
-    const manageBtn = page.getByText('Manage Wallet');
-    if (await manageBtn.isVisible().catch(() => false)) {
-      await manageBtn.click();
-      await page.waitForURL('**/wallet/keys**', { timeout: 10000 }).catch(() => {});
-      await importKey(page, privHex);
-      await saveWallet(page, 'Test123!');
-      await page.goto('/');
-      await page.waitForLoadState('networkidle');
-      await clickTab(page, 'Transaction');
+    await goToKeys(page);
+    await importKey(page, privHex);
+    await saveWallet(page, 'Test123!');
+    await goToPayment(page);
+    const unlockPwd = page.getByPlaceholder('Enter wallet password');
+    if (await unlockPwd.isVisible().catch(() => false)) {
+      await unlockPwd.fill('Test123!');
+      await page.getByText('Unlock Wallet').click();
       await page.waitForTimeout(2000);
-      const unlockPwd = page.getByPlaceholder('Enter wallet password');
-      if (await unlockPwd.isVisible().catch(() => false)) {
-        await unlockPwd.fill('Test123!');
-        await page.getByText('Unlock Wallet').click();
-        await page.waitForTimeout(2000);
-      }
-      return;
     }
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
   }
 
 

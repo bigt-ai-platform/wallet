@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp, clickTab, getElement } from '../helpers';
+import { waitForApp, clickTab, getElement, goToKeys, goToPayment } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
@@ -34,14 +34,9 @@ async function setupUnlockedWallet(page: Page) {
   const key = PQKey.createNew();
   const privHex = key.getPrivateKeyHex();
 
-  await clickTab(page, 'Wallet');
-  const manageBtn = page.getByText('Manage Wallet');
-  if (await manageBtn.isVisible().catch(() => false)) {
-    await manageBtn.click();
-    await page.waitForURL('**/wallet/keys**', { timeout: 10000 });
-    await importKey(page, privHex);
-    await saveWallet(page, PASSWORD);
-  }
+  await goToKeys(page);
+  await importKey(page, privHex);
+  await saveWallet(page, PASSWORD);
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1500);
@@ -236,7 +231,7 @@ test.describe('Payment Tracking', () => {
   });
 
   test('Payments tab shows empty state before any tracked payment', async ({ page }) => {
-    await clickTab(page, 'Transaction');
+    await goToPayment(page);
     await page.getByText('Payments', { exact: true }).click();
     await expect(await getElement(page, 'payments-tab')).toBeAttached({ timeout: 10000 });
     await expect(page.getByText('Payment Tracking')).toBeAttached({ timeout: 5000 });
@@ -248,7 +243,7 @@ test.describe('Payment Tracking', () => {
     const confirmedTxHash = await getConfirmedTxHash();
     await seedTracking(page, [paymentRecord(confirmedTxHash)]);
 
-    await clickTab(page, 'Transaction');
+    await goToPayment(page);
     await page.getByText('Payments', { exact: true }).click();
 
     // The recorded payment appears with a pending status initially.

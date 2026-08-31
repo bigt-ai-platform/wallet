@@ -34,4 +34,22 @@ test.describe('Settings Screen', () => {
     await clickTab(page, 'Settings');
     await expect(page.getByText('Reset to Defaults').first()).toBeAttached({ timeout: 10000 });
   });
+
+  test('saves the server URL and persists it to storage', async ({ page }) => {
+    page.on('dialog', (d) => d.accept().catch(() => {}));
+    await waitForApp(page);
+    await clickTab(page, 'Settings');
+
+    const input = page.locator('[data-testid="server-url-input"]');
+    await input.fill('');
+    await input.fill('http://127.0.0.1:24089/');
+    await page.getByText('Save').first().click();
+    await page.waitForTimeout(1000);
+
+    // The saved URL must round-trip into the app's settings storage.
+    const saved = await page.evaluate(() =>
+      localStorage.getItem('mmkv.default\\settings.serverUrl'),
+    );
+    expect(saved).toBe('http://127.0.0.1:24089/');
+  });
 });

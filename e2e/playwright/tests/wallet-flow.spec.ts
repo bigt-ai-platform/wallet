@@ -1,15 +1,14 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp, getElement, clickTab } from '../helpers';
+import { waitForApp, getElement, goToKeys } from '../helpers';
 
-/** Lightweight wallet creation — creates a new wallet in the keys modal.
+/** Lightweight wallet creation — creates a new wallet in the keys screen.
  *  Does NOT save with password (that step is tested once separately). */
 async function createWalletQuick(page: Page): Promise<string> {
-  await clickTab(page, 'Wallet');
-  await (await getElement(page, 'wallet-screen')).getByText('Manage Wallet').click();
-  await page.waitForURL('**/wallet/keys**');
+  await goToKeys(page);
   await page.getByText('Create New Wallet').click();
   await expect(page.getByText('New Wallet Created!')).toBeAttached({ timeout: 10000 });
-  const addressEl = page.locator('text=/^[0-9a-f]{70}$/').first();
+  // Wallet addresses are testnet base58 (e.g. m…/n…), not PQ hex.
+  const addressEl = page.locator('text=/^[mn][1-9A-HJ-NP-Za-km-z]{25,34}$/').first();
   await expect(addressEl).toBeAttached({ timeout: 10000 });
   return (await addressEl.textContent())!;
 }
@@ -29,7 +28,7 @@ test.describe('Wallet Flow', () => {
     });
     await waitForApp(page);
     const address = await createWalletQuick(page);
-    expect(address).toMatch(/^[0-9a-f]{70}$/);
+    expect(address).toMatch(/^[mn][1-9A-HJ-NP-Za-km-z]{25,34}$/);
 
     // Save with password (tested once)
     await page.getByText('Save with Password').click();

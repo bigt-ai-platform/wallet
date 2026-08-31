@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp, getElement, clickTab } from '../helpers';
+import { waitForApp, getElement, clickTab, goToKeys } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
@@ -182,9 +182,7 @@ test.describe('Order Screen', () => {
     //    L0 + L1, import the seller key, save with password, unlock.
     await waitForApp(page);
     await configureUrlsDirect(page, E2E_SERVER_URL, E2E_L1_URL);
-    await clickTab(page, 'Wallet');
-    await (await getElement(page, 'wallet-screen')).getByText('Manage Wallet').click();
-    await page.waitForURL('**/wallet/keys**');
+    await goToKeys(page);
     await importKey(page, issuer.getPrivateKeyHex());
     await saveWallet(page, PASSWORD);
 

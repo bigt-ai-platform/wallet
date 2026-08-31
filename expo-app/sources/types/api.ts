@@ -20,6 +20,8 @@ export enum ReqCmd {
   GetTransactionsStatusByAddress = 'getTransactionsStatusByAddress',
   SubmitTransaction = 'submitTransaction',
   GetChainNumber = 'getChainNumber',
+  ProcessPegIn = 'processPegIn',
+  GetBridgeInfo = 'getBridgeInfo',
 }
 
 /**
@@ -246,6 +248,18 @@ export interface OrderOpenParams {
 export interface L1ChainConfig {
   name: string;
   url: string;
+  /** L1 destination chain id for the bridge peg-in (e.g. "ordermatch"). */
+  chainId?: string;
+}
+
+/**
+ * L0 bridge info returned by the `getBridgeInfo` endpoint: the vault script a
+ * peg-in must pay and whether the bridge is active.
+ */
+export interface BridgeInfo {
+  active: boolean;
+  vaultAddress: string;
+  vaultScriptHex: string;
 }
 
 /**

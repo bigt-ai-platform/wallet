@@ -22,20 +22,50 @@ import {
   type MarketPrice,
   type ContactInfo,
   type L1ChainConfig,
+  type BridgeInfo,
   type OrderInfo,
   type ChainNumberInfo,
   type OutputDetail,
 } from '@/types/api';
-import { PQKey, Utils } from 'bigtangle-ts';
-import { DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET } from '@/constants/app';
+import { PQKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
+import { DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET, IS_DEV, DEV_L0_URL, DEV_L1_URL } from '@/constants/app';
 
 /**
- * Default API endpoints
+ * Default API endpoints.
+ *
+ * The L0 (main chain) server URL is discovered from the network seeds defined
+ * in the blockchain params (Java `RequesterSeedDiscovery`): each
+ * `serverSeeds()` entry is an "host:port" HTTP seed server. DNS enrtree seeds
+ * and UDP-discovered peers are added server-side; the browser client only
+ * needs the static HTTP seed list.
+ *
+ * Development builds point at the local dev-server endpoints instead
+ * (dev.sh: L0 :24089, L1 :24086).
+ *
+ * The L1 (order match) chains carry no seed list of their own, so they keep
+ * the well-known configured defaults below.
  */
-const DEFAULT_MAINNET_URL = 'https://p.bigtangle.org:8088/';
-const DEFAULT_TESTNET_URL = 'https://testp.bigtangle.org:8088/';
+function discoverL0Url(useTestnet: boolean): string {
+  if (IS_DEV) {
+    return DEV_L0_URL;
+  }
+  const params = useTestnet ? TestParams.get() : MainNetParams.get();
+  const seeds = params.serverSeeds();
+  if (seeds && seeds.length > 0) {
+    return `http://${seeds[0].trim()}/`;
+  }
+  return '';
+}
 const DEFAULT_L1_MAINNET_URL = 'https://m.bigtangle.org';
 const DEFAULT_L1_TESTNET_URL = 'https://testm.bigtangle.org';
+
+/** The default L1 order-match URL for the given network (local in dev). */
+function defaultL1Url(useTestnet: boolean): string {
+  if (IS_DEV) {
+    return DEV_L1_URL;
+  }
+  return useTestnet ? DEFAULT_L1_TESTNET_URL : DEFAULT_L1_MAINNET_URL;
+}
 
 /**
  * Convert a hex string to a Uint8Array.
@@ -91,8 +121,16 @@ export class HttpService {
       return savedUrl;
     }
 
+    return this.getDefaultServerUrl();
+  }
+
+  /**
+   * The network default L0 URL — discovered from the seeds for the currently
+   * selected network. Ignored when a URL is explicitly saved in settings.
+   */
+  getDefaultServerUrl(): string {
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
-    return useTestnet ? DEFAULT_TESTNET_URL : DEFAULT_MAINNET_URL;
+    return discoverL0Url(useTestnet);
   }
 
   /**
@@ -115,7 +153,7 @@ export class HttpService {
       return savedUrl;
     }
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
-    return useTestnet ? DEFAULT_L1_TESTNET_URL : DEFAULT_L1_MAINNET_URL;
+    return defaultL1Url(useTestnet);
   }
 
   /**
@@ -195,7 +233,7 @@ export class HttpService {
     }
     const savedUrl = device.get(STORAGE_KEYS.L1_URL);
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
-    const singleUrl = savedUrl || (useTestnet ? DEFAULT_L1_TESTNET_URL : DEFAULT_L1_MAINNET_URL);
+    const singleUrl = savedUrl || defaultL1Url(useTestnet);
     return [{ name: 'Default', url: singleUrl }];
   }
 
@@ -304,10 +342,37 @@ export class HttpService {
     return { success: true, data: items };
   }
 
-  private async fetchAccountBalances(privateKeyHex: string): Promise<WalletAccountItem[]> {
+  /**
+   * Get account balances from a specific chain URL (e.g. an L1 order chain),
+   * not just the default L0 server.
+   */
+  async getBalancesOn(baseUrl: string, privateKeyHex: string): Promise<ApiResponse<WalletAccountItem[]>> {
+    const items = await this.fetchAccountBalances(privateKeyHex, baseUrl);
+    return { success: true, data: items };
+  }
+
+  /**
+   * Fetch L0 bridge info (vault script + active flag) for the peg-in flow.
+   */
+  async getBridgeInfo(): Promise<ApiResponse<BridgeInfo>> {
+    const response = await this.request<any>(ReqCmd.GetBridgeInfo, 'POST', {});
+    if (!response.success || !response.data) {
+      return { success: false, error: 'Failed to fetch bridge info' };
+    }
+    return {
+      success: true,
+      data: {
+        active: !!response.data.active,
+        vaultAddress: response.data.vaultAddress || '',
+        vaultScriptHex: response.data.vaultScriptHex || '',
+      },
+    };
+  }
+
+  private async fetchAccountBalances(privateKeyHex: string, baseUrl?: string): Promise<WalletAccountItem[]> {
     const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
     const pubKeyHash = Utils.HEX.encode(pqKey.getPubKeyHash());
-    const response = await this.request<any>(ReqCmd.GetBalances, 'POST', [pubKeyHash]);
+    const response = await this.request<any>(ReqCmd.GetBalances, 'POST', [pubKeyHash], baseUrl);
     if (!response.success || !response.data) return [];
     const balances: any[] = response.data.balance || [];
     const tokennames: Record<string, any> = response.data.tokennames || {};

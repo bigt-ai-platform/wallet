@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp, getElement, clickTab, configureServerUrl } from '../helpers';
+import { waitForApp, getElement, clickTab, configureServerUrl, goToKeys, goToPayment } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
@@ -116,9 +116,7 @@ test.describe('Tokens Screen', () => {
     const alicePrivHex = aliceKey.getPrivateKeyHex();
 
     // Import the key into the app
-    await clickTab(page, 'Wallet');
-    await page.getByText('Manage Wallet').click();
-    await page.waitForURL('**/wallet/keys**', { timeout: 10000 });
+    await goToKeys(page);
     await importKey(page, alicePrivHex);
     await saveWallet(page, PASSWORD);
 
@@ -140,7 +138,7 @@ test.describe('Tokens Screen', () => {
     await page.getByPlaceholder('Enter wallet password').fill(PASSWORD);
     await page.getByText('Unlock Wallet').click();
     await page.waitForTimeout(2000);
-    await page.getByRole('tab', { name: /Transaction/ }).click();
+    await goToPayment(page);
     await page.waitForTimeout(3000);
 
     // Fill send form and send to Bob's base58 address

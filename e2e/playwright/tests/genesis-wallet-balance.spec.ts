@@ -27,8 +27,8 @@ test.describe('Genesis wallet balance (helper/test/wallet/genesis-wallet.json)',
     await waitForApp(page);
     await configureServerUrl(page, L0_URL, L1_URL);
 
-    // 1) Open Manage Keys and load the unencrypted genesis wallet file.
-    await page.goto('/wallet/keys');
+    // 1) Open the Keys screen and load the unencrypted genesis wallet file.
+    await page.goto('/home/keys');
 
     // The app creates a detached <input type=file> and calls input.click(),
     // which opens the OS picker — captured by Playwright as a filechooser.
@@ -68,8 +68,8 @@ test.describe('Genesis wallet balance (helper/test/wallet/genesis-wallet.json)',
     const parsed = parseInt((count || '').replace(/\D+/g, ''), 10);
     expect(parsed).toBeGreaterThan(0);
 
-    // The genesis address shows in the loaded wallet info (Manage Keys).
-    await page.goto('/wallet/keys');
+    // The genesis address shows in the loaded wallet info (Keys screen).
+    await page.goto('/home/keys');
     await expect(page.getByText(GENESIS_ADDRESS).first()).toBeAttached({ timeout: 10000 });
   });
 });

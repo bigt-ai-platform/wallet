@@ -8,7 +8,7 @@ import { useRouter, usePathname, useGlobalSearchParams } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   WalletIcon, MarketIcon, TokensIcon, SettingsIcon, CloseIcon,
-  ChartIcon, OrderIcon, DataIcon,
+  ChartIcon, OrderIcon, DataIcon, SendIcon,
 } from './Icons';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useTranslation } from 'react-i18next';
@@ -64,9 +64,13 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
 
   const navSections: NavSection[] = [
     {
-      titleKey: '',
+      titleKey: 'sidebar.home',
       items: [
-        { label: t('sidebar.home'), key: 'transaction', icon: WalletIcon, route: '/' },
+        { label: t('sidebar.payment'), key: 'payment', icon: SendIcon, route: '/home/payment' },
+        { label: t('sidebar.balance'), key: 'balance', icon: DataIcon, route: '/balance' },
+        { label: t('sidebar.tokens'), key: 'tokens', icon: TokensIcon, route: '/tokens' },
+        { label: t('sidebar.keys'), key: 'keys', icon: WalletIcon, route: '/home/keys' },
+        { label: t('sidebar.settings'), key: 'settings', icon: SettingsIcon, route: '/settings' },
       ],
     },
     {
@@ -78,20 +82,11 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
         { label: t('sidebar.chart'), key: 'chart', icon: ChartIcon, route: '/chart' },
       ],
     },
-    {
-      titleKey: 'sidebar.portfolio',
-      items: [
-        { label: t('sidebar.wallet'), key: 'wallet', icon: WalletIcon, route: '/wallet' },
-        { label: t('sidebar.tokens'), key: 'tokens', icon: TokensIcon, route: '/tokens' },
-        { label: t('sidebar.balance'), key: 'balance', icon: DataIcon, route: '/balance' },
-      ],
-    },
   ];
 
   const { view } = useGlobalSearchParams<{ view?: string }>();
 
   const isActive = (route: string, itemView?: string) => {
-    if (route === '/') return pathname === '/';
     if (itemView) return pathname === route && view === itemView;
     return pathname?.startsWith(route) ?? false;
   };
@@ -137,14 +132,6 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
 
       <View style={[s.footer, { borderTopColor: theme.colors.border }]}>
         <View style={s.langRow}><LanguageSwitcher /></View>
-        <TouchableOpacity
-          style={s.settingsRow}
-          onPress={() => navigate('/settings')}
-          activeOpacity={0.6}
-        >
-          <SettingsIcon size={16} color={theme.colors.text.secondary} />
-          <Text style={[s.settingsText, { color: theme.colors.text.secondary }]}>{t('sidebar.settings')}</Text>
-        </TouchableOpacity>
       </View>
     </>
   );

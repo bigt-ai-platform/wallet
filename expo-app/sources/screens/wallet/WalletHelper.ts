@@ -235,6 +235,52 @@ export async function loadWallet(
 }
 
 /**
+ * Synchronously load a PLAIN (unencrypted) wallet JSON. Unlike
+ * {@link loadWallet}, this never performs scrypt derivation, so the whole
+ * parse is synchronous — safe to call from a getter without awaiting.
+ */
+export function loadPlainWalletSync(fileData: string): WalletFile {
+  const parsedRoot = JSON.parse(fileData);
+  const parsed = parsedRoot as SerializedWallet;
+
+  if (!parsed.keys?.length) {
+    throw new Error('No key found in wallet file');
+  }
+
+  const keyData = parsed.keys[0];
+
+  let wallet: Key;
+  if (keyData.keyType === 'EC') {
+    const ecKey = ECKey.fromPrivate(Utils.HEX.decode(keyData.privateKey), true);
+    const params =
+      keyData.network === 'Test' || keyData.network === 'test'
+        ? TestParams.get()
+        : MainNetParams.get();
+    wallet = {
+      address: ecKey.toAddressString(params),
+      pubkey: Utils.HEX.encode(ecKey.getPubKey()),
+      privateKey: keyData.privateKey,
+      keyType: 'EC',
+      network: keyData.network,
+    };
+  } else {
+    const rawKey = Utils.HEX.decode(keyData.privateKey);
+    const pqKey = PQKey.fromPrivateKey(rawKey);
+    wallet = {
+      address: pqKeyAddress(pqKey),
+      pubkey: pqKey.getPublicKeyAsHex(),
+      privateKey: pqKey.getPrivateKeyHex(),
+      keyType: 'PQ',
+    };
+  }
+
+  return {
+    wallet,
+    credentials: parsed.credentials,
+  };
+}
+
+/**
  * Import a wallet from a PQ private key hex string
  */
 export async function importPrivateKey(

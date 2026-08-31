@@ -1,14 +1,14 @@
 import * as React from "react";
 import {
   View, Text, TextInput, TouchableOpacity, ScrollView,
-  ActivityIndicator, Alert, Platform,
+  ActivityIndicator, Alert, Platform, Modal,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { router } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "@/state/wallet";
 import { httpService } from "@/services/http";
-import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
+import { payOnLayer1, payOnLayer0, pegInToL1 } from "@/services/transaction";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { WalletIcon } from "@/components/Icons";
 import ChainBadge from "@/components/ChainBadge";
@@ -17,18 +17,106 @@ import { statusBadgeColor } from "@/utils/status";
 import { MONO_FONT } from "@/constants/fonts";
 import type { WalletAccountItem, L1ChainConfig, TrackedRecord } from "@/types/api";
 
+interface LayerOption {
+  value: number;
+  label: string;
+}
+
+interface LayerToken extends WalletAccountItem {
+  layer: number;
+}
+
+function LayerSelect({ label, value, options, onChange, testID }: {
+  label: string;
+  value: number;
+  options: LayerOption[];
+  onChange: (value: number) => void;
+  testID?: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const current = options.find((o) => o.value === value);
+  return (
+    <>
+      <TouchableOpacity style={s.dropdown} onPress={() => setOpen(true)} testID={testID}>
+        <View style={s.dropdownValue}>
+          <ChainBadge layer={value} />
+          <Text style={s.dropdownText}>{current?.label ?? options[0]?.label ?? ''}</Text>
+        </View>
+        <Text style={s.dropdownChevron}>▾</Text>
+      </TouchableOpacity>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setOpen(false)}>
+          <View style={s.modalSheet}>
+            <Text style={s.modalTitle}>{label}</Text>
+            {options.map((o) => (
+              <TouchableOpacity
+                key={o.value}
+                style={[s.modalOption, o.value === value && s.modalOptionActive]}
+                onPress={() => { onChange(o.value); setOpen(false); }}
+              >
+                <ChainBadge layer={o.value} />
+                <Text style={[s.modalOptionText, o.value === value && s.modalOptionTextActive]}>{o.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+}
+
+function TokenSelect({ value, options, onChange, testID }: {
+  value: LayerToken | null;
+  options: LayerToken[];
+  onChange: (token: LayerToken) => void;
+  testID?: string;
+}) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <TouchableOpacity style={s.dropdown} onPress={() => setOpen(true)} testID={testID}>
+        <View style={s.dropdownValue}>
+          {value && <ChainBadge layer={value.layer} />}
+          <Text style={s.dropdownText}>{value ? `${value.tokenname} (${value.balance})` : 'Select token'}</Text>
+        </View>
+        <Text style={s.dropdownChevron}>▾</Text>
+      </TouchableOpacity>
+      <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setOpen(false)}>
+          <View style={s.modalSheet}>
+            <Text style={s.modalTitle}>Select Token</Text>
+            {options.map((t) => (
+              <TouchableOpacity
+                key={`${t.layer}-${t.tokenid}`}
+                style={[s.modalOption, value?.tokenid === t.tokenid && value?.layer === t.layer && s.modalOptionActive]}
+                onPress={() => { onChange(t); setOpen(false); }}
+              >
+                <ChainBadge layer={t.layer} />
+                <View style={s.modalOptionTextWrap}>
+                  <Text style={[s.modalOptionText, value?.tokenid === t.tokenid && value?.layer === t.layer && s.modalOptionTextActive]}>{t.tokenname}</Text>
+                  <Text style={s.modalOptionSub}>{t.balance}</Text>
+                </View>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+}
+
 export default function TransactionScreen() {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { publicInfo, isUnlocked, unlockWallet, getUnlockedWallet, getPassword } = useWallet();
-  const [selectedToken, setSelectedToken] = React.useState<WalletAccountItem | null>(null);
-  const [tokens, setTokens] = React.useState<WalletAccountItem[]>([]);
+  const [selectedToken, setSelectedToken] = React.useState<LayerToken | null>(null);
+  const [tokens, setTokens] = React.useState<LayerToken[]>([]);
   const [toAddress, setToAddress] = React.useState("");
   const [amount, setAmount] = React.useState("");
   const [memo, setMemo] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [loadingTokens, setLoadingTokens] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'send' | 'history' | 'payments'>('send');
+  const [activeTab, setActiveTab] = React.useState<'send' | 'history' | 'payments' | 'bridge'>('send');
   const [txHistory, setTxHistory] = React.useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = React.useState(false);
   const [historyLayer, setHistoryLayer] = React.useState(-1); // -1 = all, 0 = L0, 1..N = L1 chains
@@ -38,20 +126,19 @@ export default function TransactionScreen() {
   const [unlockPwd, setUnlockPwd] = React.useState("");
   const [unlocking, setUnlocking] = React.useState(false);
 
+  // Bridge (L0 -> L1 peg-in) form
+  const [bridgeToken, setBridgeToken] = React.useState("bc");
+  const [bridgeDest, setBridgeDest] = React.useState("");
+  const [bridgeSub, setBridgeSub] = React.useState(false);
+
   const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
-  const [activeL1Index, setActiveL1Index] = React.useState(() => httpService.getActiveL1Index());
-  // Layer to pay through: 0 = Layer 0 (L0), 1..N = the configured L1 chains.
-  // Selection IS the app-wide active L1 chain (single source of truth).
-  const [selectedLayer, setSelectedLayerState] = React.useState(0);
+  // Payment routing layers: 0 = Layer 0 (L0/settlement), 1..N = the configured
+  // L1 chains. Both the source and destination default to L0.
+  const [fromLayer, setFromLayer] = React.useState(0);
+  const [toLayer, setToLayer] = React.useState(0);
   React.useEffect(() => httpService.subscribeL1Change(() => {
     setL1Chains(httpService.getL1Chains());
-    setActiveL1Index(httpService.getActiveL1Index());
-    setSelectedLayerState(httpService.getActiveL1Index() + 1);
   }), []);
-  const setSelectedLayer = (layer: number) => {
-    setSelectedLayerState(layer);
-    if (layer > 0) httpService.setActiveL1Index(layer - 1);
-  };
 
   React.useEffect(() => {
     if (publicInfo && isUnlocked) { loadTokens(); loadHistory(); }
@@ -63,25 +150,36 @@ export default function TransactionScreen() {
     if (!wallet) return;
     setLoadingTokens(true);
     try {
-      const res = await httpService.getMyValidTokenItemList(wallet.wallet.privateKey);
-      const items: WalletAccountItem[] = res.success && res.data ? res.data : [];
+      const privateKeyHex = wallet.wallet.privateKey;
+      const all: LayerToken[] = [];
+      // Layer 0 tokens.
+      const l0 = await httpService.getBalances(privateKeyHex);
+      (l0.success && l0.data ? l0.data : []).forEach((t) => all.push({ ...t, layer: 0 }));
+      // Tokens on each configured L1 chain.
+      for (let i = 0; i < l1Chains.length; i++) {
+        try {
+          const l1 = await httpService.getBalancesOn(l1Chains[i].url, privateKeyHex);
+          (l1.success && l1.data ? l1.data : []).forEach((t) => all.push({ ...t, layer: i + 1 }));
+        } catch (e) { /* L1 unreachable — skip */ }
+      }
       // Always offer BIG (the base token) even when the wallet holds no
       // balance yet, so a fresh wallet still defaults to a sendable token.
-      if (!items.some((t) => t.tokenid === 'bc')) {
-        items.unshift({
+      if (!all.some((t) => t.tokenid === 'bc')) {
+        all.unshift({
           tokenid: 'bc',
           tokenname: 'BIG',
           balance: '0',
           confirmedBalance: '0',
           unconfirmedBalance: '0',
           decimals: 8,
+          layer: 0,
         });
       }
-      setTokens(items);
-      if (items.length > 0 && !selectedToken) {
+      setTokens(all);
+      if (all.length > 0 && !selectedToken) {
         // Default to BIG (tokenid = bc) when present, otherwise the first token.
-        const big = items.find((t) => t.tokenid === 'bc');
-        setSelectedToken(big || items[0]);
+        const big = all.find((t) => t.tokenid === 'bc');
+        setSelectedToken(big || all[0]);
       }
     } catch (e) { console.error("Error loading tokens:", e); }
     finally { setLoadingTokens(false); }
@@ -176,7 +274,7 @@ export default function TransactionScreen() {
     setLoading(true);
     try {
       let result: { success: boolean; error?: string; data?: string };
-      if (selectedLayer === 0) {
+      if (toLayer === 0) {
         // Layer 0: use the SDK wallet (correct getOutputs format, fee
         // included) so the wallet's funded UTXOs can be spent.
         const txHash = await payOnLayer0({
@@ -189,7 +287,7 @@ export default function TransactionScreen() {
         result = { success: true, data: txHash };
       } else {
         // L1 chain: use the SDK wallet pointed at the selected L1 server.
-        const chain = l1Chains[selectedLayer - 1];
+        const chain = l1Chains[toLayer - 1];
         if (!chain) throw new Error("No L1 chain selected");
         const txHash = await payOnLayer1({
           privateKeyHex: wallet.wallet.privateKey,
@@ -212,7 +310,7 @@ export default function TransactionScreen() {
         fromAddress: publicInfo!.address,
         toAddress,
         memo: memo || undefined,
-        layer: selectedLayer,
+        layer: toLayer,
       });
       setPayments(listPayments());
       Alert.alert("Success", `Tx sent!\nTracking: ${txHash.slice(0, 12)}...`);
@@ -221,6 +319,32 @@ export default function TransactionScreen() {
       Alert.alert("Error", error instanceof Error ? error.message : "Failed");
     } finally { setLoading(false); }
   };
+
+  const handleBridge = async () => {
+    const wallet = getUnlockedWallet();
+    if (!wallet || !isUnlocked) { Alert.alert("Error", "Please unlock your wallet first"); return; }
+    if (!bridgeToken.trim()) { Alert.alert("Error", "Please enter a token ID"); return; }
+    if (!bridgeDest.trim()) { Alert.alert("Error", "Please enter an L1 destination address"); return; }
+    const chain = httpService.getActiveL1Chain();
+    const chainId = chain?.chainId || "ordermatch";
+    setBridgeSub(true);
+    try {
+      const txHash = await pegInToL1({
+        privateKeyHex: wallet.wallet.privateKey,
+        l1Address: bridgeDest.trim(),
+        tokenId: bridgeToken.trim(),
+        chainId,
+      });
+      Alert.alert("Bridge Submitted", `Locked a ${bridgeToken.trim()} UTXO to the vault for L1 chain "${chainId}".\nTx: ${txHash.slice(0, 12)}...`);
+      setBridgeDest("");
+    } catch (e: any) { Alert.alert("Error", e.message); }
+    finally { setBridgeSub(false); }
+  };
+
+  const layerOptions: LayerOption[] = [
+    { value: 0, label: 'Settlement' },
+    ...l1Chains.map((chain, i) => ({ value: i + 1, label: chain.name })),
+  ];
 
   if (!isUnlocked) {
     const hasWallet = publicInfo?.hasEncryptedWallet;
@@ -265,10 +389,10 @@ export default function TransactionScreen() {
             <>
               <Text style={s.lockedTitle}>No Wallet Found</Text>
               <Text style={s.lockedSub}>Create or import a wallet to start sending payments</Text>
-              <TouchableOpacity style={s.primaryBtn} onPress={() => router.push("/wallet/keys")}>
+              <TouchableOpacity style={s.primaryBtn} onPress={() => router.push("/home/keys")}>
                 <Text style={s.primaryBtnText}>Create Wallet</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={s.secondaryBtn} onPress={() => router.push("/wallet/keys")}>
+              <TouchableOpacity style={s.secondaryBtn} onPress={() => router.push("/home/keys")}>
                 <Text style={s.secondaryBtnText}>Import Existing Wallet</Text>
               </TouchableOpacity>
             </>
@@ -285,6 +409,7 @@ export default function TransactionScreen() {
           { key: 'send', label: 'Send' },
           { key: 'history', label: 'History' },
           { key: 'payments', label: 'Payments' },
+          { key: 'bridge', label: 'Bridge' },
         ]}
         active={activeTab}
         onChange={(k) => setActiveTab(k as typeof activeTab)}
@@ -294,46 +419,11 @@ export default function TransactionScreen() {
         <ScrollView contentContainerStyle={s.content}>
           <Text style={s.pageTitle}>{t('transaction.title')}</Text>
           <View style={s.card}>
-            <Text style={s.cardLabel}>Pay via Layer</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} testID="layer-list">
-              <TouchableOpacity
-                style={[s.tokenChip, selectedLayer === 0 && s.tokenChipActive]}
-                onPress={() => setSelectedLayer(0)}
-                testID="layer-chip-0"
-              >
-                <ChainBadge layer={0} />
-                <Text style={[s.tokenChipName, selectedLayer === 0 && s.tokenChipNameActive]}>Settlement</Text>
-              </TouchableOpacity>
-              {l1Chains.map((chain, i) => (
-                <TouchableOpacity
-                  key={i}
-                  style={[s.tokenChip, selectedLayer === i + 1 && s.tokenChipActive]}
-                  onPress={() => setSelectedLayer(i + 1)}
-                  testID={`layer-chip-${i + 1}`}
-                >
-                  <ChainBadge layer={i + 1} />
-                  <Text style={[s.tokenChipName, selectedLayer === i + 1 && s.tokenChipNameActive]}>{chain.name}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-            <Text style={s.hint}>Payments on Settlement settle on Layer 0; payments on an L1 chain submit to that order chain.</Text>
-          </View>
-          <View style={s.card}>
             <Text style={s.cardLabel}>{t('transaction.selectToken')}</Text>
             {loadingTokens ? (
               <ActivityIndicator size="small" color={s.loader.color} />
-            ) : tokens.length === 0 ? (
-              <Text style={s.emptySmall}>{t('transaction.noTokens')}</Text>
             ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-                {tokens.map((token) => (
-                  <TouchableOpacity key={token.tokenid} style={[s.tokenChip, selectedToken?.tokenid === token.tokenid && s.tokenChipActive]}
-                    onPress={() => setSelectedToken(token)}>
-                    <Text style={[s.tokenChipName, selectedToken?.tokenid === token.tokenid && s.tokenChipNameActive]}>{token.tokenname}</Text>
-                    <Text style={[s.tokenChipBal, selectedToken?.tokenid === token.tokenid && s.tokenChipBalActive]}>{token.balance}</Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
+              <TokenSelect value={selectedToken} options={tokens} onChange={setSelectedToken} testID="token-select" />
             )}
           </View>
           <View style={s.card}>
@@ -354,6 +444,16 @@ export default function TransactionScreen() {
             <TextInput style={[s.input, s.textArea]} value={memo} onChangeText={setMemo}
               placeholder={t('transaction.memo')} placeholderTextColor={s.placeholder.color}
               multiline numberOfLines={3} testID="memo-input" />
+          </View>
+          <View style={s.card}>
+            <Text style={s.cardLabel}>From Layer</Text>
+            <LayerSelect label="From Layer" value={fromLayer} options={layerOptions} onChange={setFromLayer} testID="from-layer-select" />
+            <Text style={s.hint}>Layer holding the funds being sent.</Text>
+          </View>
+          <View style={s.card}>
+            <Text style={s.cardLabel}>To Layer</Text>
+            <LayerSelect label="To Layer" value={toLayer} options={layerOptions} onChange={setToLayer} testID="to-layer-select" />
+            <Text style={s.hint}>Layer the payment is submitted to. Payments on Settlement settle on Layer 0; payments on an L1 chain submit to that order chain.</Text>
           </View>
           <TouchableOpacity style={[s.primaryBtn, (loading || !selectedToken) && s.btnDisabled]} onPress={handleSend} disabled={loading || !selectedToken}>
             <Text style={s.primaryBtnText}>{loading ? t('transaction.sending') : t('transaction.send')}</Text>
@@ -396,6 +496,29 @@ export default function TransactionScreen() {
               );
             })
           )}
+        </ScrollView>
+      ) : activeTab === 'bridge' ? (
+        <ScrollView contentContainerStyle={s.content} testID="bridge-tab">
+          <Text style={s.pageTitle}>Bridge to L1</Text>
+          <Text style={s.desc}>Lock a Layer 0 token UTXO to the bridge vault; the L1 order chain mints wrapped tokens 1:1 to the destination address. One whole UTXO is locked per bridge.</Text>
+
+          <View style={s.card}>
+            <Text style={s.cardLabel}>Token ID</Text>
+            <TextInput style={s.input} value={bridgeToken} onChangeText={setBridgeToken}
+              placeholder="bc for BIG" placeholderTextColor={s.placeholder.color}
+              autoCapitalize="none" autoCorrect={false} testID="bridge-token-input" />
+          </View>
+
+          <View style={s.card}>
+            <Text style={s.cardLabel}>L1 Destination Address</Text>
+            <TextInput style={s.input} value={bridgeDest} onChangeText={setBridgeDest}
+              placeholder="L1 address on order chain" placeholderTextColor={s.placeholder.color}
+              autoCapitalize="none" autoCorrect={false} testID="bridge-dest-input" />
+          </View>
+
+          <TouchableOpacity style={s.l1Btn} onPress={handleBridge} disabled={bridgeSub} testID="bridge-submit-button">
+            <Text style={s.l1BtnText}>{bridgeSub ? 'Bridging...' : 'Bridge to L1'}</Text>
+          </TouchableOpacity>
         </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={s.content} testID="history-tab">
@@ -522,4 +645,17 @@ const s = StyleSheet.create((theme) => ({
   sectionLabel: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 4 },
   l1Btn: { backgroundColor: theme.colors.accent.purple, borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 4 },
   l1BtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  dropdown: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, paddingHorizontal: 12, paddingVertical: 10 },
+  dropdownValue: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  dropdownText: { fontSize: 14, color: theme.colors.text.primary },
+  dropdownChevron: { fontSize: 14, color: theme.colors.text.secondary },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 24 },
+  modalSheet: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, padding: 16, borderWidth: 1, borderColor: theme.colors.border },
+  modalTitle: { fontSize: 14, fontWeight: '700', color: theme.colors.text.secondary, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 },
+  modalOption: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, paddingHorizontal: 8, borderRadius: 8 },
+  modalOptionActive: { backgroundColor: theme.colors.primarySoft },
+  modalOptionText: { fontSize: 14, color: theme.colors.text.primary },
+  modalOptionTextActive: { color: theme.colors.primary, fontWeight: '600' },
+  modalOptionTextWrap: { flex: 1 },
+  modalOptionSub: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 1 },
 }));

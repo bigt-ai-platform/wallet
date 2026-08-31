@@ -10,7 +10,29 @@ export async function getElement(page: Page, testId: string) {
 }
 
 export async function clickTab(page: Page, label: string) {
-  await page.getByRole('tab', { name: label }).click();
+  // The bottom tab bar is only visible on tab screens, and several screens are
+  // no longer tabs at all — so navigate through the sidebar, which works on
+  // both mobile (drawer) and desktop (persistent) and preserves in-memory
+  // state (e.g. an unlocked wallet).
+  const menu = page.getByRole('button', { name: 'Open navigation menu' });
+  if (await menu.isVisible().catch(() => false)) {
+    await menu.click();
+    await page.waitForTimeout(400);
+  }
+  await page.getByRole('button', { name: label, exact: true }).first().click();
+  await page.waitForTimeout(1500);
+}
+
+// The Payment (send) and Keys (wallet management) screens are no longer tabs —
+// they live at their own routes reachable through the sidebar. Navigate
+// directly to keep the tests independent of the sidebar/tab-bar layout.
+export async function goToPayment(page: Page) {
+  await page.goto('/home/payment', { waitUntil: 'load' });
+  await page.waitForTimeout(2000);
+}
+
+export async function goToKeys(page: Page) {
+  await page.goto('/home/keys', { waitUntil: 'load' });
   await page.waitForTimeout(2000);
 }
 

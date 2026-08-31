@@ -5,7 +5,11 @@ import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-c
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
+import { View, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { WalletProvider } from '@/state/wallet';
+import Sidebar from '@/components/Sidebar';
+import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
+import { MenuIcon } from '@/components/Icons';
 import '../unistyles';
 import '../lib/i18n';
 
@@ -18,6 +22,50 @@ SplashScreen.setOptions({
     duration: 300,
 });
 SplashScreen.preventAutoHideAsync();
+
+const DESKTOP_BREAKPOINT = 768;
+
+function AppShell() {
+    const { theme } = useUnistyles();
+    const { width } = useWindowDimensions();
+    const isDesktop = width >= DESKTOP_BREAKPOINT;
+    const { setOpen } = useSidebar();
+
+    const headerLeft = () => (
+        <TouchableOpacity onPress={() => setOpen(true)} style={{ paddingLeft: 16, paddingRight: 8, paddingVertical: 4 }}
+            accessibilityRole="button" accessibilityLabel="Open navigation menu">
+            <MenuIcon size={22} color={theme.colors.text.primary} />
+        </TouchableOpacity>
+    );
+
+    return (
+        <View style={{ flex: 1, flexDirection: 'row', backgroundColor: theme.colors.groupped.background }}>
+            {isDesktop && <Sidebar visible onClose={() => setOpen(false)} persistent />}
+            <View style={{ flex: 1, alignItems: isDesktop ? 'center' : undefined }}>
+                <View style={{ flex: 1, width: '100%', maxWidth: isDesktop ? 820 : undefined }}>
+                    <Stack
+                        screenOptions={{
+                            headerLeft: isDesktop ? undefined : headerLeft,
+                            headerStyle: { backgroundColor: theme.colors.groupped.background },
+                            headerTintColor: theme.colors.text.primary,
+                        }}
+                    >
+                        <Stack.Screen name="home/payment" options={{ title: 'Payment' }} />
+                        <Stack.Screen name="home/keys" options={{ title: 'Keys' }} />
+                        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                        <Stack.Screen name="balance" options={{ headerShown: false }} />
+                        <Stack.Screen name="chart" options={{ headerShown: false }} />
+                    </Stack>
+                </View>
+            </View>
+        </View>
+    );
+}
+
+function MobileSidebar() {
+    const { open, setOpen } = useSidebar();
+    return <Sidebar visible={open} onClose={() => setOpen(false)} />;
+}
 
 export default function RootLayout() {
     const { theme } = useUnistyles();
@@ -43,10 +91,8 @@ export default function RootLayout() {
     }, [theme.dark]);
 
     React.useEffect(() => {
-        // Initialize app
         (async () => {
             try {
-                // Add any initialization logic here (fonts, etc.)
                 setIsReady(true);
             } catch (error) {
                 console.error('Error initializing:', error);
@@ -71,33 +117,10 @@ export default function RootLayout() {
             <GestureHandlerRootView style={{ flex: 1 }}>
                 <ThemeProvider value={navigationTheme}>
                     <WalletProvider>
-                        <Stack>
-                            <Stack.Screen
-                                name="(tabs)"
-                                options={{
-                                    headerShown: false,
-                                }}
-                            />
-                            <Stack.Screen
-                                name="balance"
-                                options={{
-                                    headerShown: false,
-                                }}
-                            />
-                            <Stack.Screen
-                                name="chart"
-                                options={{
-                                    headerShown: false,
-                                }}
-                            />
-                            <Stack.Screen
-                                name="wallet/keys"
-                                options={{
-                                    title: 'Manage Keys',
-                                    presentation: 'modal',
-                                }}
-                            />
-                        </Stack>
+                        <SidebarProvider>
+                            <AppShell />
+                            <MobileSidebar />
+                        </SidebarProvider>
                     </WalletProvider>
                 </ThemeProvider>
             </GestureHandlerRootView>

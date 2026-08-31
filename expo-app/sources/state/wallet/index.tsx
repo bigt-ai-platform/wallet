@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useMemo } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 
-import { loadWallet, isPlainWalletJson, type WalletFile } from '@/screens/wallet/WalletHelper';
+import { loadWallet, loadPlainWalletSync, isPlainWalletJson, type WalletFile } from '@/screens/wallet/WalletHelper';
 import { device } from '@/storage';
 
 /**
@@ -218,6 +218,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const getUnlockedWallet = useCallback(() => {
+    if (decryptedWalletRef.current) {
+      return decryptedWalletRef.current;
+    }
+    // A plain (unencrypted) wallet is stored directly and never goes through
+    // unlockWallet(), so load it lazily on demand — synchronously, since no
+    // scrypt derivation is involved.
+    const encryptedContent = device.get([
+      'device',
+      WALLET_ENCRYPTED_CONTENT_KEY,
+    ]);
+    if (encryptedContent && isPlainWalletJson(String(encryptedContent))) {
+      try {
+        decryptedWalletRef.current = loadPlainWalletSync(String(encryptedContent));
+      } catch {
+        return null;
+      }
+    }
     return decryptedWalletRef.current;
   }, []);
 
