@@ -42,15 +42,24 @@ verify_payment_status() {
   fi
   info "Payment handoff: txHash=$txhash status=$status address=$address"
 
+  # The single-validator test beacon chain can reorg in the seconds between the
+  # test confirming the payment and this harness re-checking it (a confirmed
+  # block on a competing branch drops the tx back to BATCHED). Poll until it
+  # re-confirms (the orphaned tx re-enters the mempool and confirms again), up
+  # to ~90s.
   local body api_status
-  body=$(curl -sf -X POST "http://localhost:${SERVER_PORT}/getTransactionStatus" \
-    -H 'Content-Type: application/json' \
-    -d "{\"txHash\":\"$txhash\"}") || fail "L0 getTransactionStatus request failed for $txhash"
-  api_status=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).status||'')" "$body" 2>/dev/null)
-  if [[ "$api_status" != "CONFIRMED" ]]; then
-    fail "On-chain verification FAILED: L0 getTransactionStatus=$api_status (expected CONFIRMED) for txHash=$txhash"
-  fi
-  log "Payment verified on-chain: txHash=$txhash status=$api_status"
+  for i in $(seq 1 30); do
+    body=$(curl -sf -X POST "http://localhost:${SERVER_PORT}/getTransactionStatus" \
+      -H 'Content-Type: application/json' \
+      -d "{\"txHash\":\"$txhash\"}" 2>/dev/null || true)
+    api_status=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).status||'')" "$body" 2>/dev/null)
+    if [[ "$api_status" == "CONFIRMED" ]]; then
+      log "Payment verified on-chain: txHash=$txhash status=$api_status"
+      return 0
+    fi
+    sleep 3
+  done
+  fail "On-chain verification FAILED: L0 getTransactionStatus=$api_status (expected CONFIRMED) for txHash=$txhash"
 }
 
 cleanup() {
@@ -74,10 +83,16 @@ else
   info "Web build already exists, skipping build."
 fi
 
-# 3. Start web server
+# 3. Start web server (use the workspace binary directly — plain `npx` can
+# stall on registry resolution and the old fixed 2s sleep raced the bind).
 info "Starting web server..."
-npx http-server "$WEB_BUILD" -p "$WEB_PORT" --silent &
-sleep 2
+"$ROOT/node_modules/.bin/http-server" "$WEB_BUILD" -p "$WEB_PORT" --silent &
+for i in $(seq 1 15); do
+  if curl -sf "http://localhost:$WEB_PORT/" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
 curl -sf "http://localhost:$WEB_PORT/" >/dev/null 2>&1 || fail "Web server not ready"
 log "Web server on http://localhost:$WEB_PORT"
 
@@ -87,7 +102,7 @@ info "Running payment transaction test..."
 cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
-  npx playwright test --reporter=list --grep "Payment" 2>&1
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep "Payment" 2>&1
 log "Payment test passed."
 
 # 4a. Verify the payment is DONE on-chain and its transaction status:
@@ -102,7 +117,7 @@ cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
-  npx playwright test --reporter=list --grep "Tracking" 2>&1
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep "Tracking" 2>&1
 log "Tracking tests passed."
 fi
 
@@ -115,7 +130,7 @@ cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
-  npx playwright test --reporter=list order.spec.ts chart.spec.ts 2>&1
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list order.spec.ts chart.spec.ts 2>&1
 log "Order e2e tests passed."
 fi
 
@@ -126,7 +141,7 @@ cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
-  npx playwright test --reporter=list tokens.spec.ts 2>&1
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list tokens.spec.ts 2>&1
 log "Token e2e tests passed."
 fi
 
@@ -138,7 +153,7 @@ cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
-  npx playwright test --reporter=list --grep-invert "Payment|Tracking" 2>&1
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep-invert "Payment|Tracking" 2>&1
 log "Remaining e2e specs passed."
 fi
 

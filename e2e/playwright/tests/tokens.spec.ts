@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp, getElement, clickTab, configureServerUrl, goToKeys, goToPayment } from '../helpers';
+import { waitForApp, getElement, clickTab, configureServerUrl, goToKeys, goToPayment, fundFromGenesisWallet, waitForConfirmedBc } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
@@ -69,38 +69,90 @@ test.describe('Tokens Screen', () => {
     console.log('BIG token verified via searchTokens and getTokenById');
   });
 
-  test('create a token and sign via SDK (requires server)', async ({ request }) => {
-    test.setTimeout(60000);
+  test('create a token and sign via SDK (requires server)', async () => {
+    test.setTimeout(300000);
     test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set');
 
     const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
 
-    const tokenId = 'aa' + Date.now().toString(16).padStart(14, '0');
+    // Mirrors RemoteTokenIT.testCreateToken: the genesis wallet (ML-DSA-87
+    // seed 0x01, root domain signer) creates the token and pays the fee from
+    // its real on-chain BC — the same creation path the order/chart specs use
+    // (tokenid = prefixed pubkey, increment=true, permissioned address, then
+    // multiSign by the genesis key). fundAddresses coinbases are virtual and
+    // cannot pay the L0 fee, so the issuer is NOT funded here.
+    const genesisKey = sdk.PQKey.fromMLDSA(new Uint8Array(32).fill(0x01));
+    const wallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [genesisKey], E2E_SERVER_URL);
+    wallet.setServerURL(E2E_SERVER_URL);
+
+    const issuer = sdk.PQKey.createNew();
+    const tokenId = issuer.getPublicKeyAsHex(); // prefixed pubkey
     const tokenName = 'E2ETest_' + Date.now().toString(36);
-    const key = sdk.PQKey.createNew();
-    const prefixed = key.getPrefixedPublicKeyBytes();
 
-    const fundResp = await request.post(`${E2E_SERVER_URL}fundAddresses`, {
-      data: { addresses: [{ address: key.toAddressHex(), value: 10000000000, pubkey: sdk.Utils.HEX.encode(prefixed) }] },
-    });
-    expect((await fundResp.json()).errorcode).toBe(0);
-
-    const { MemoInfo } = await import('../../../packages/bigtangle-ts/dist/net/bigtangle/core/MemoInfo.js');
     const token = new sdk.Token(tokenId, tokenName);
     token.setDescription('E2E token creation test');
     token.setDecimals(2);
     token.setAmount(1000000n);
     token.setTokenstop(true);
+    token.setTokenindex(0);
+    token.setSignnumber(0);
+    token.setDomainNameBlockHash('');
+    token.setPrevblockhash(sdk.Sha256Hash.ZERO_HASH);
+    token.setTokentype(sdk.TokenType.token);
 
-    const wallet = sdk.Wallet.fromKeysSingle(new sdk.TestParams(), key, E2E_SERVER_URL);
-    wallet.setFee(false);
-    const block = await wallet.createToken(key, '', false, token, [], key.getPubKey(), new MemoInfo('coinbase'));
+    const addr = new sdk.MultiSignAddress(
+      tokenId, '', issuer.getPublicKeyAsHex(), 0,
+    );
+    const block = await wallet.createToken(
+      issuer, '', true, token, [addr], issuer.getPubKey(), new sdk.MemoInfo('coinbase'),
+    );
     expect(block).toBeDefined();
     console.log('Token block submitted, hash:', block.getHashAsString());
+
+    // Multisig: the genesis wallet signs the token creation (RemoteTokenIT →
+    // wallet.multiSign(tokenId, genesisKey, aesKey)).
+    const signed = await wallet.multiSign(tokenId, genesisKey, null);
+    if (signed) {
+      // Java bakes the reward block (makeRewardBlock → 2s sleep) so the signed
+      // block can confirm on the chain's own schedule.
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+
+    // Verify on-chain (mirrors RemoteTokenIT.testCreateToken): the created
+    // token must become queryable via getTokenById once confirmed.
+    let found: any = null;
+    for (let i = 0; i < 20; i++) {
+      try {
+        found = await wallet.checkTokenId(tokenId);
+        break;
+      } catch (e) {
+        await new Promise((r) => setTimeout(r, 3000));
+      }
+    }
+    expect(found).not.toBeNull();
+    expect(found.getTokenname()).toBe(tokenName);
+    expect(found.getTokenid()).toBe(tokenId);
+    expect(found.getDecimals()).toBe(2);
+    console.log('Token queryable on-chain:', tokenId);
+
+    // The issuer must hold the minted token UTXOs (confirmed & spendable).
+    const issuerWallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [issuer], E2E_SERVER_URL);
+    let minted = false;
+    for (let i = 0; i < 20; i++) {
+      const cands = await issuerWallet.calculateAllSpendCandidates(null, false);
+      if (cands.some(
+        (c: any) =>
+          c.getUTXO()?.getTokenId() === tokenId &&
+          c.getUTXO()?.getValue()?.getValue() > BigInt(0),
+      )) { minted = true; break; }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    expect(minted).toBe(true);
+    console.log('Token minted UTXOs confirmed for issuer');
   });
 
   test('fund wallet and send BIG payment via UI (requires server)', async ({ page, request }) => {
-    test.setTimeout(120000);
+    test.setTimeout(360000);
     test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set');
 
     await waitForApp(page);
@@ -120,14 +172,11 @@ test.describe('Tokens Screen', () => {
     await importKey(page, alicePrivHex);
     await saveWallet(page, PASSWORD);
 
-    // Fund the wallet via API (base58 address; no pubkey — the server rejects
-    // the PQ bundle version)
-    const fundResp = await request.post(`${E2E_SERVER_URL}fundAddresses`, {
-      data: {
-        addresses: [{ address: aliceBase58, value: 10000000000 }],
-      },
-    });
-    expect((await fundResp.json()).errorcode).toBe(0);
+    // Fund the wallet with real on-chain BC from the genesis wallet (the Java
+    // server removed the fundAddresses faucet — bootstrap is via genesis CSV).
+    await fundFromGenesisWallet(E2E_SERVER_URL, [aliceKey], BigInt(10000000000));
+    // The payment needs a confirmed BC source to spend.
+    await waitForConfirmedBc(aliceKey, E2E_SERVER_URL);
     console.log('Funded wallet', aliceBase58);
 
     // Wallet is unlocked after save — reload and unlock
@@ -165,7 +214,42 @@ test.describe('Tokens Screen', () => {
     expect(submitted).toBe(true);
     console.log('UI send submitted transaction:', submitted);
 
-    await page.waitForTimeout(3000);
-    console.log('Payment flow completed');
+    // Verify on-chain (same flow as the transaction.spec.ts payment test): the
+    // L0 transactionstatus table keys records by the first output (recipient),
+    // so poll Bob's address until a CONFIRMED transaction appears.
+    const { Wallet, TestParams: TP } = await import(
+      '../../../packages/bigtangle-ts/dist/index.js'
+    );
+    let confirmedTx: any = null;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const statusResp = await request.post(
+        `${E2E_SERVER_URL}getTransactionsStatusByAddress`,
+        { data: { address: bobAddress } }
+      );
+      const data = await statusResp.json();
+      confirmedTx = (data.transactions || []).find(
+        (t: any) => t.status === 'CONFIRMED'
+      );
+      if (confirmedTx) break;
+    }
+    expect(confirmedTx).not.toBeNull();
+    expect(confirmedTx.status).toBe('CONFIRMED');
+    console.log('UI send confirmed on-chain:', confirmedTx.txHash);
+
+    // Bob's wallet must actually hold the received BIG UTXO on L0.
+    const bobWallet = Wallet.fromKeysURL(TP.get(), [bobKey], E2E_SERVER_URL);
+    let received = false;
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
+      const cands = await bobWallet.calculateAllSpendCandidates(null, false);
+      if (cands.some(
+        (c: any) =>
+          c.getUTXO()?.getTokenId() === 'bc' &&
+          c.getUTXO()?.getValue()?.getValue() > BigInt(0),
+      )) { received = true; break; }
+    }
+    expect(received).toBe(true);
+    console.log('Bob received BIG on L0 via UI send');
   });
 });

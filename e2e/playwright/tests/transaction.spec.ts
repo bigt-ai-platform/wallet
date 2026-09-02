@@ -1,7 +1,7 @@
 import { test, expect, Page } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
-import { waitForApp, clickTab, configureServerUrl, goToKeys, goToPayment } from '../helpers';
+import { waitForApp, clickTab, configureServerUrl, goToKeys, goToPayment, fundFromGenesisWallet } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
@@ -37,7 +37,7 @@ test.describe('Payment', () => {
   });
 
   test('alice sends big to bob', async ({ page, request }) => {
-    test.setTimeout(480000);
+    test.setTimeout(360000);
     test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set');
 
     // 1. Generate Alice's PQ key in Node.js. The network spends UTXOs via
@@ -52,19 +52,10 @@ test.describe('Payment', () => {
     const aliceAddress = Address.fromKey(TestParams.get(), aliceKey).toString();
     const alicePrivHex = aliceKey.getPrivateKeyHex();
 
-    // 2. Fund Alice via fundAddresses. The server derives the output script
-    //    from the base58 address (no pubkey needed); passing a pubkey here
-    //    requires a bundle version the Java server rejects.
-    const fundResp = await request.post(`${E2E_SERVER_URL}fundAddresses`, {
-      data: {
-        addresses: [{
-          address: aliceAddress,
-          value: 10000000000,
-        }],
-      },
-    });
-    const fundBody = await fundResp.json();
-    expect(fundBody.errorcode).toBe(0);
+    // 2. Fund Alice with real on-chain BC from the genesis wallet (the Java
+    //    server removed the fundAddresses faucet — wallets are bootstrapped via
+    //    the genesis CSV, so tests pay beneficiaries like RemoteTestBase.payBigTo).
+    await fundFromGenesisWallet(E2E_SERVER_URL, [aliceKey], BigInt(10000000000));
     console.log('Funded', aliceAddress);
 
     // 3. Import Alice key into the app (Keys screen at /home/keys).
@@ -94,8 +85,8 @@ test.describe('Payment', () => {
     );
     const aliceWallet = Wallet.fromKeysURL(TP.get(), [aliceKey], E2E_SERVER_URL);
     let aliceReady = false;
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 3000));
+    for (let i = 0; i < 25; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
       const cands = await aliceWallet.calculateAllSpendCandidates(null, false);
       if (cands.some(
         (c: any) => c.getUTXO()?.getTokenId() === 'bc' && c.getUTXO()?.isConfirmed(),
@@ -135,8 +126,8 @@ test.describe('Payment', () => {
     //    output (the recipient), so wait-check Bob's address until a CONFIRMED
     //    transaction appears.
     let confirmedTx: any = null;
-    for (let i = 0; i < 80; i++) {
-      await new Promise((r) => setTimeout(r, 3000));
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
       const statusResp = await request.post(
         `${E2E_SERVER_URL}getTransactionsStatusByAddress`,
         { data: { address: bobAddress } }
@@ -172,8 +163,8 @@ test.describe('Payment', () => {
     // 9. Bob's wallet on the L0 chain received the BIG payment.
     const bobWallet = Wallet.fromKeysURL(TP.get(), [bobKey], E2E_SERVER_URL);
     let received = false;
-    for (let i = 0; i < 20; i++) {
-      await new Promise((r) => setTimeout(r, 3000));
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 2000));
       const cands = await bobWallet.calculateAllSpendCandidates(null, false);
       const bc = cands.find(
         (c: any) =>
@@ -189,6 +180,10 @@ test.describe('Payment', () => {
 
 test.describe('L1 Test Tab', () => {
   async function ensureWallet(page: Page) {
+    // These tests run standalone (no beforeEach) — load the app first; the
+    // keys/payment screens are reached via the sidebar (direct /home/* URLs
+    // 404 against http-server).
+    await waitForApp(page);
     const { PQKey } = await import('../../../packages/bigtangle-ts/dist/index.js');
     const key = PQKey.createNew();
     const privHex = key.getPrivateKeyHex();

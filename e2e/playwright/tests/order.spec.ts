@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp, getElement, clickTab, goToKeys } from '../helpers';
+import { waitForApp, getElement, clickTab, goToKeys, fundFromGenesisWallet, waitForConfirmedBc } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
@@ -75,7 +75,7 @@ test.describe('Order Screen', () => {
    * genesis wallet) for the order transaction to be accepted — fundAddresses
    * coinbases are virtual and cannot be spent on the L1 order chain.
    */
-  test('place sell order via Order UI after wallet setup (requires server)', async ({ page, request }) => {
+  test('place sell order via Order UI after wallet setup (requires server)', async ({ page }) => {
     test.setTimeout(480000);
     test.skip(!HAS_SERVER || !E2E_L1_URL, 'E2E_SERVER_URL / E2E_L1_URL not set');
 
@@ -170,12 +170,11 @@ test.describe('Order Screen', () => {
     console.log('Token UTXOs confirmed');
 
     // 3. Payment base (same as the payment test): fund the seller's L0 address
-    //    via fundAddresses so the app wallet is funded on the L0 payment base.
+    //    from the genesis wallet (real on-chain BC — the Java server removed
+    //    the fundAddresses faucet) so the app wallet is funded on L0.
     const sellerAddress = sdk.Address.fromKey(sdk.TestParams.get(), issuer).toString();
-    const fundResp = await request.post(`${E2E_SERVER_URL}fundAddresses`, {
-      data: { addresses: [{ address: sellerAddress, value: 10000000000 }] },
-    });
-    expect((await fundResp.json()).errorcode).toBe(0);
+    await fundFromGenesisWallet(E2E_SERVER_URL, [issuer], BigInt(10000000000));
+    await waitForConfirmedBc(issuer, E2E_SERVER_URL);
     console.log('Funded seller on L0 payment base', sellerAddress);
 
     // 4. App UI wallet setup (same base as the payment test): point the app at

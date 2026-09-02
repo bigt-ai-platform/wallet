@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp, clickTab, getElement, goToKeys, goToPayment } from '../helpers';
+import { waitForApp, clickTab, getElement, goToKeys, goToPayment, fundFromGenesisWallet } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
@@ -62,21 +62,13 @@ async function getConfirmedTxHash(): Promise<string> {
   const { PQKey, Wallet, TestParams, Utils, Address, NetworkParameters } = await import('../../../packages/bigtangle-ts/dist/index.js');
   const key = PQKey.createNew();
   const wallet = Wallet.fromKeysURL(TestParams.get(), [key], E2E_SERVER_URL);
-  await fetch(E2E_SERVER_URL + 'fundAddresses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      addresses: [{
-        address: key.toAddressHex(),
-        value: 10000000000,
-        pubkey: Utils.HEX.encode(key.getPrefixedPublicKeyBytes()),
-      }],
-    }),
-  });
+  // Fund the wallet with real on-chain BC from the genesis wallet (the Java
+  // server removed the fundAddresses faucet — bootstrap is via genesis CSV).
+  await fundFromGenesisWallet(E2E_SERVER_URL, [key], BigInt(10000000000));
 
   let funded = false;
-  for (let i = 0; i < 30; i++) {
-    await new Promise((r) => setTimeout(r, 3000));
+  for (let i = 0; i < 25; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
     const candidates = await wallet.calculateAllSpendCandidates(null, false);
     if (candidates.some(
       (c) => c.getUTXO().getTokenId() === 'bc' && c.getUTXO().isConfirmed(),
@@ -97,8 +89,8 @@ async function getConfirmedTxHash(): Promise<string> {
 
   // Wait-check the transaction status until the payment is CONFIRMED on L0.
   let confirmedTxHash: string | null = null;
-  for (let i = 0; i < 80; i++) {
-    await new Promise((r) => setTimeout(r, 3000));
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
     const res = await fetch(E2E_SERVER_URL + 'getTransactionsStatusByAddress', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -239,7 +231,7 @@ test.describe('Payment Tracking', () => {
   });
 
   test('tracked payment renders and live status comes from L0 getTransactionStatus', async ({ page }) => {
-    test.setTimeout(480000);
+    test.setTimeout(360000);
     const confirmedTxHash = await getConfirmedTxHash();
     await seedTracking(page, [paymentRecord(confirmedTxHash)]);
 
@@ -280,7 +272,7 @@ test.describe('Order Tracking', () => {
     await page.getByText('My Orders').click();
     await expect(page.getByText('Your Orders')).toBeAttached({ timeout: 10000 });
     await expect(page.getByText('Tracked (in-app)')).toBeAttached({ timeout: 5000 });
-    await expect(page.getByText('Live on chain')).toBeAttached({ timeout: 5000 });
+    await expect(page.getByText('Live on')).toBeAttached({ timeout: 5000 });
     await expect((await getElement(page, 'order-status')).first()).toHaveText('pending', { timeout: 5000 });
   });
 

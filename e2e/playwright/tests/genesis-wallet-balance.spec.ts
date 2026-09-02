@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { waitForApp, configureServerUrl } from '../helpers';
+import { waitForApp, configureServerUrl, clickTab } from '../helpers';
 import path from 'node:path';
 
 // e2e test for the test-net genesis wallet:
@@ -27,8 +27,10 @@ test.describe('Genesis wallet balance (helper/test/wallet/genesis-wallet.json)',
     await waitForApp(page);
     await configureServerUrl(page, L0_URL, L1_URL);
 
-    // 1) Open the Keys screen and load the unencrypted genesis wallet file.
-    await page.goto('/home/keys');
+    // 1) Open the Keys screen (via the sidebar — http-server has no SPA
+    //    fallback, so direct /home/keys URLs 404) and load the unencrypted
+    //    genesis wallet file.
+    await clickTab(page, 'Keys');
 
     // The app creates a detached <input type=file> and calls input.click(),
     // which opens the OS picker — captured by Playwright as a filechooser.
@@ -52,7 +54,7 @@ test.describe('Genesis wallet balance (helper/test/wallet/genesis-wallet.json)',
     await expect(page.getByText('Unlocked').first()).toBeAttached({ timeout: 10000 });
 
     // 2) Balance screen: should show the genesis wallet's bc UTXOs.
-    await page.goto('/balance');
+    await clickTab(page, 'Balance');
     await expect(page.getByTestId('balance-screen')).toBeAttached({ timeout: 10000 });
 
     // Wait for the balance to load; assert it is populated (not empty).
@@ -69,7 +71,7 @@ test.describe('Genesis wallet balance (helper/test/wallet/genesis-wallet.json)',
     expect(parsed).toBeGreaterThan(0);
 
     // The genesis address shows in the loaded wallet info (Keys screen).
-    await page.goto('/home/keys');
+    await clickTab(page, 'Keys');
     await expect(page.getByText(GENESIS_ADDRESS).first()).toBeAttached({ timeout: 10000 });
   });
 });
