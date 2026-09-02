@@ -14,9 +14,9 @@ import * as FileSystem from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import * as DocumentPicker from "expo-document-picker";
 import { StyleSheet } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
 
 import { useWallet } from "@/state/wallet";
-import { t } from "@/text";
 import {
   createWallet,
   importPrivateKey,
@@ -47,6 +47,7 @@ type OldWalletStep =
 const isWeb = Platform.OS === "web";
 
 export default function KeysScreen() {
+  const { t } = useTranslation();
   const {
     publicInfo,
     isUnlocked,
@@ -102,15 +103,13 @@ export default function KeysScreen() {
       setStep("created");
     } catch (error) {
       console.error("Error creating wallet:", error);
-      setErrorMessage(`Failed to create wallet: ${(error as Error).message}`);
-      Alert.alert(
-        "Error",
-        `Failed to create wallet: ${(error as Error).message}`,
-      );
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.errCreate", { message: msg }));
+      Alert.alert(t("keys.errorHead"), t("keys.errCreate", { message: msg }));
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [t]);
 
   // Proceed to password entry
   const handleProceedToPassword = useCallback(() => {
@@ -120,22 +119,22 @@ export default function KeysScreen() {
   // Save wallet with password
   const handleSaveWallet = useCallback(async () => {
     if (!newWallet) {
-      setErrorMessage("No wallet to save");
+      setErrorMessage(t("keys.errNoWallet"));
       return;
     }
 
     if (!password) {
-      setErrorMessage("Please enter a password");
+      setErrorMessage(t("keys.errEnterPassword"));
       return;
     }
 
     if (password !== confirmPassword) {
-      setErrorMessage("Passwords do not match");
+      setErrorMessage(t("keys.errMismatch"));
       return;
     }
 
     if (password.length < 6) {
-      setErrorMessage("Password must be at least 6 characters");
+      setErrorMessage(t("keys.errShortPassword"));
       return;
     }
 
@@ -173,14 +172,11 @@ export default function KeysScreen() {
             await writable.close();
 
             setStep("done");
-            Alert.alert(
-              "Success",
-              "Wallet saved successfully. Keep your password safe!",
-            );
+            Alert.alert(t("keys.successHead"), t("keys.walletSavedMsg"));
           } catch (pickerError: any) {
             if (pickerError.name === "AbortError") {
               setStep("enterPassword");
-              setErrorMessage("Save cancelled. Please try again.");
+              setErrorMessage(t("keys.errSaveCancelled"));
               setIsLoading(false);
               return;
             }
@@ -197,7 +193,7 @@ export default function KeysScreen() {
           URL.revokeObjectURL(url);
 
           setStep("done");
-          Alert.alert("Success", "Wallet created and downloaded successfully!");
+          Alert.alert(t("keys.successHead"), t("keys.createdDownloaded"));
         }
       } else {
         const documentsDir = (FileSystem as any).documentDirectory;
@@ -215,15 +211,15 @@ export default function KeysScreen() {
 
         if (sharingAvailable) {
           Alert.alert(
-            "Wallet Created",
-            "Your encrypted wallet file is ready. Use the share sheet to save it.",
+            t("keys.created"),
+            t("keys.walletCreatedFile"),
             [
               {
-                text: "Save Wallet File",
+                text: t("keys.saveWalletFile"),
                 onPress: () => {
                   Sharing.shareAsync(filePath, {
                     mimeType: "application/json",
-                    dialogTitle: "Save your encrypted wallet file",
+                    dialogTitle: t("keys.shareSheetTitle"),
                     UTI: "public.json",
                   })
                     .then(() => setStep("done"))
@@ -234,21 +230,19 @@ export default function KeysScreen() {
           );
         } else {
           setStep("done");
-          Alert.alert("Wallet Saved", `Wallet saved as "${fileName}".`);
+          Alert.alert(t("keys.saved"), t("keys.savedAs", { fileName }));
         }
       }
     } catch (error) {
       console.error("Error saving wallet:", error);
-      setErrorMessage(`Failed to save wallet: ${(error as Error).message}`);
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.errSave", { message: msg }));
       setStep("enterPassword");
-      Alert.alert(
-        "Error",
-        `Failed to save wallet: ${(error as Error).message}`,
-      );
+      Alert.alert(t("keys.errorHead"), t("keys.errSave", { message: msg }));
     } finally {
       setIsLoading(false);
     }
-  }, [newWallet, password, confirmPassword, storeEncryptedWallet]);
+  }, [newWallet, password, confirmPassword, storeEncryptedWallet, t]);
 
   // Reset to start over
   const handleReset = useCallback(() => {
@@ -277,7 +271,7 @@ export default function KeysScreen() {
   // Unlock existing wallet
   const handleUnlockWallet = useCallback(async () => {
     if (!unlockPassword) {
-      setErrorMessage("Please enter your password");
+      setErrorMessage(t("keys.errEnterYourPassword"));
       return;
     }
 
@@ -287,15 +281,15 @@ export default function KeysScreen() {
     try {
       await unlockWallet(unlockPassword);
       setUnlockPassword("");
-      Alert.alert("Success", "Wallet unlocked successfully!");
+      Alert.alert(t("keys.successHead"), t("keys.unlockSuccess"));
     } catch (error) {
       console.error("Error unlocking wallet:", error);
-      setErrorMessage("Incorrect password. Please try again.");
-      Alert.alert("Error", "Incorrect password. Please try again.");
+      setErrorMessage(t("keys.wrongPassword"));
+      Alert.alert(t("keys.errorHead"), t("keys.wrongPassword"));
     } finally {
       setIsUnlocking(false);
     }
-  }, [unlockPassword, unlockWallet]);
+  }, [unlockPassword, unlockWallet, t]);
 
   // Start load from file flow
   const handleLoadFromFile = useCallback(async () => {
@@ -320,8 +314,8 @@ export default function KeysScreen() {
               setLoadFileStep(isPlainWalletJson(content) ? "loading" : "enterPassword");
             };
             reader.onerror = () => {
-              setErrorMessage("Failed to read file");
-              Alert.alert("Error", "Failed to read file");
+              setErrorMessage(t("keys.failReadFile"));
+              Alert.alert(t("keys.errorHead"), t("keys.failReadFile"));
             };
             reader.readAsText(file);
           }
@@ -346,22 +340,23 @@ export default function KeysScreen() {
       }
     } catch (error) {
       console.error("Error loading file:", error);
-      setErrorMessage(`Failed to load file: ${(error as Error).message}`);
-      Alert.alert("Error", `Failed to load file: ${(error as Error).message}`);
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.failLoadFile", { message: msg }));
+      Alert.alert(t("keys.errorHead"), t("keys.failLoadFile", { message: msg }));
     }
-  }, []);
+  }, [t]);
 
   // Load wallet from file with password
   const handleLoadWalletFromFile = useCallback(async () => {
     if (!loadedFileContent) {
-      setErrorMessage("No file loaded");
+      setErrorMessage(t("keys.errNoFileLoaded"));
       return;
     }
 
     // Unencrypted wallet files need no password; encrypted ones do.
     const needsPassword = !isPlainWalletJson(loadedFileContent);
     if (needsPassword && !loadFilePassword) {
-      setErrorMessage("Please enter password");
+      setErrorMessage(t("keys.errEnterPassword"));
       return;
     }
 
@@ -378,19 +373,17 @@ export default function KeysScreen() {
       );
 
       setLoadFileStep("done");
-      Alert.alert("Success", "Wallet loaded successfully!");
+      Alert.alert(t("keys.successHead"), t("keys.loadSuccess"));
     } catch (error) {
       console.error("Error loading wallet:", error);
-      setErrorMessage(`Failed to load wallet: ${(error as Error).message}`);
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.failLoadWallet", { message: msg }));
       setLoadFileStep("enterPassword");
-      Alert.alert(
-        "Error",
-        `Failed to load wallet: ${(error as Error).message}. Please check your password.`,
-      );
+      Alert.alert(t("keys.errorHead"), t("keys.failLoadWallet", { message: msg }));
     } finally {
       setIsLoading(false);
     }
-  }, [loadedFileContent, loadFilePassword, storeEncryptedWallet]);
+  }, [loadedFileContent, loadFilePassword, storeEncryptedWallet, t]);
 
   // Start import private key flow
   const handleStartImport = useCallback(() => {
@@ -401,7 +394,7 @@ export default function KeysScreen() {
   // Import private key
   const handleImportKey = useCallback(async () => {
     if (!privateKeyInput.trim()) {
-      setErrorMessage("Please enter a private key");
+      setErrorMessage(t("keys.errPrivateKey"));
       return;
     }
 
@@ -415,24 +408,25 @@ export default function KeysScreen() {
       setImportStep("enterPassword");
     } catch (error) {
       console.error("Error importing private key:", error);
-      setErrorMessage(`Failed to import key: ${(error as Error).message}`);
-      Alert.alert("Error", `Failed to import key: ${(error as Error).message}`);
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.failImportKey", { message: msg }));
+      Alert.alert(t("keys.errorHead"), t("keys.failImportKey", { message: msg }));
     } finally {
       setIsLoading(false);
     }
-  }, [privateKeyInput]);
+  }, [privateKeyInput, t]);
 
   // Save imported wallet
   const handleSaveImportedWallet = useCallback(async () => {
     if (!importedWallet) return;
 
     if (!password || password !== confirmPassword) {
-      setErrorMessage("Passwords do not match");
+      setErrorMessage(t("keys.errMismatch"));
       return;
     }
 
     if (password.length < 6) {
-      setErrorMessage("Password must be at least 6 characters");
+      setErrorMessage(t("keys.errShortPassword"));
       return;
     }
 
@@ -448,18 +442,16 @@ export default function KeysScreen() {
       );
 
       setImportStep("done");
-      Alert.alert("Success", "Imported wallet saved successfully!");
+      Alert.alert(t("keys.successHead"), t("keys.importSaved"));
     } catch (error) {
-      setErrorMessage(`Failed to save wallet: ${(error as Error).message}`);
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.errSave", { message: msg }));
       setImportStep("enterPassword");
-      Alert.alert(
-        "Error",
-        `Failed to save wallet: ${(error as Error).message}`,
-      );
+      Alert.alert(t("keys.errorHead"), t("keys.errSave", { message: msg }));
     } finally {
       setIsLoading(false);
     }
-  }, [importedWallet, password, confirmPassword, storeEncryptedWallet]);
+  }, [importedWallet, password, confirmPassword, storeEncryptedWallet, t]);
 
   // Start import of an old-format .wallet (legacy protobuf) file
   const handleStartOldWalletImport = useCallback(async () => {
@@ -490,11 +482,9 @@ export default function KeysScreen() {
         }
       } catch (error) {
         console.error("Error parsing old wallet:", error);
-        setErrorMessage(`Not a valid wallet file: ${(error as Error).message}`);
-        Alert.alert(
-          "Error",
-          `Not a valid wallet file: ${(error as Error).message}`,
-        );
+        const msg = (error as Error).message;
+        setErrorMessage(t("keys.notValidWallet", { message: msg }));
+        Alert.alert(t("keys.errorHead"), t("keys.notValidWallet", { message: msg }));
       }
     };
 
@@ -511,8 +501,8 @@ export default function KeysScreen() {
             processBytes(new Uint8Array(event.target?.result as ArrayBuffer));
           };
           reader.onerror = () => {
-            setErrorMessage("Failed to read file");
-            Alert.alert("Error", "Failed to read file");
+            setErrorMessage(t("keys.failReadFile"));
+            Alert.alert(t("keys.errorHead"), t("keys.failReadFile"));
           };
           reader.readAsArrayBuffer(file);
         };
@@ -527,19 +517,20 @@ export default function KeysScreen() {
       }
     } catch (error) {
       console.error("Error loading old wallet file:", error);
-      setErrorMessage(`Failed to load file: ${(error as Error).message}`);
-      Alert.alert("Error", `Failed to load file: ${(error as Error).message}`);
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.failLoadFile", { message: msg }));
+      Alert.alert(t("keys.errorHead"), t("keys.failLoadFile", { message: msg }));
     }
-  }, []);
+  }, [t]);
 
   // Decrypt an encrypted old .wallet file with its original password
   const handleDecryptOldWallet = useCallback(async () => {
     if (!oldWalletBytes) {
-      setErrorMessage("No file loaded");
+      setErrorMessage(t("keys.errNoFileLoaded"));
       return;
     }
     if (!oldWalletPassword) {
-      setErrorMessage("Please enter the old wallet password");
+      setErrorMessage(t("keys.errOldPassword"));
       return;
     }
 
@@ -557,29 +548,25 @@ export default function KeysScreen() {
       setOldWalletStep("enterNewPassword");
     } catch (error) {
       console.error("Error decrypting old wallet:", error);
-      setErrorMessage(
-        `Failed to decrypt wallet: ${(error as Error).message}. Please check your password.`,
-      );
-      Alert.alert(
-        "Error",
-        `Failed to decrypt wallet: ${(error as Error).message}. Please check your password.`,
-      );
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.failDecrypt", { message: msg }));
+      Alert.alert(t("keys.errorHead"), t("keys.failDecrypt", { message: msg }));
     } finally {
       setIsLoading(false);
     }
-  }, [oldWalletBytes, oldWalletPassword]);
+  }, [oldWalletBytes, oldWalletPassword, t]);
 
   // Save the imported old wallet with a new password
   const handleSaveOldWallet = useCallback(async () => {
     if (!importedWallet) return;
 
     if (!password || password !== confirmPassword) {
-      setErrorMessage("Passwords do not match");
+      setErrorMessage(t("keys.errMismatch"));
       return;
     }
 
     if (password.length < 6) {
-      setErrorMessage("Password must be at least 6 characters");
+      setErrorMessage(t("keys.errShortPassword"));
       return;
     }
 
@@ -596,23 +583,24 @@ export default function KeysScreen() {
       );
 
       setOldWalletStep("done");
-      Alert.alert("Success", "Old wallet imported and saved successfully!");
+      Alert.alert(t("keys.successHead"), t("keys.oldImported"));
     } catch (error) {
       console.error("Error saving old wallet:", error);
-      setErrorMessage(`Failed to save wallet: ${(error as Error).message}`);
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.errSave", { message: msg }));
       setOldWalletStep("enterNewPassword");
-      Alert.alert("Error", `Failed to save wallet: ${(error as Error).message}`);
+      Alert.alert(t("keys.errorHead"), t("keys.errSave", { message: msg }));
     } finally {
       setIsLoading(false);
     }
-  }, [importedWallet, password, confirmPassword, storeEncryptedWallet]);
+  }, [importedWallet, password, confirmPassword, storeEncryptedWallet, t]);
 
   // Render functions
   const renderIdleState = () => (
     <View style={styles.container}>
       {hasExistingWallet && (
         <View style={styles.walletInfo}>
-          <Text style={styles.label}>Current Wallet:</Text>
+          <Text style={styles.label}>{t("keys.currentWallet")}</Text>
           <Text style={styles.address} selectable>
             {publicInfo?.address}
           </Text>
@@ -621,14 +609,14 @@ export default function KeysScreen() {
               style={[styles.statusDot, isUnlocked && styles.statusDotUnlocked]}
             />
             <Text style={styles.statusText}>
-              {isUnlocked ? "Unlocked" : "Locked"}
+              {isUnlocked ? t("keys.unlocked") : t("keys.locked")}
             </Text>
           </View>
 
           {!isUnlocked && (
             <>
               <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Password</Text>
+                <Text style={styles.inputLabel}>{t("keys.password")}</Text>
                 <TextInput
                   style={styles.input}
                   value={unlockPassword}
@@ -636,7 +624,7 @@ export default function KeysScreen() {
                   secureTextEntry
                   autoCapitalize="none"
                   autoCorrect={false}
-                  placeholder="Enter wallet password"
+                  placeholder={t("wallet.passwordPlaceholder")}
                 />
               </View>
 
@@ -650,7 +638,7 @@ export default function KeysScreen() {
                 disabled={isUnlocking}
               >
                 <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-                  {isUnlocking ? "Unlocking..." : "Unlock Wallet"}
+                  {isUnlocking ? t("keys.unlocking") : t("keys.unlock")}
                 </Text>
               </TouchableOpacity>
             </>
@@ -658,14 +646,14 @@ export default function KeysScreen() {
 
           {isUnlocked && (
             <TouchableOpacity style={[styles.button, styles.buttonPrimary]} onPress={lockWallet}>
-              <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Lock Wallet</Text>
+              <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.lock")}</Text>
             </TouchableOpacity>
           )}
         </View>
       )}
 
       <Text style={styles.description}>
-        Create a new wallet or load an existing one.
+        {t("keys.subtitle")}
       </Text>
 
       <TouchableOpacity
@@ -674,7 +662,7 @@ export default function KeysScreen() {
         disabled={isLoading}
       >
         <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-          Create New Wallet
+          {t("keys.create")}
         </Text>
       </TouchableOpacity>
 
@@ -683,7 +671,7 @@ export default function KeysScreen() {
         onPress={handleStartImport}
         disabled={isLoading}
       >
-        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Import Private Key</Text>
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.importKey")}</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
@@ -691,7 +679,7 @@ export default function KeysScreen() {
         onPress={handleLoadFromFile}
         disabled={isLoading}
       >
-        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Load from File</Text>
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.loadFile")}</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
@@ -700,7 +688,7 @@ export default function KeysScreen() {
         disabled={isLoading}
       >
         <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-          Import Old Wallet (.wallet)
+          {t("keys.loadOldWallet")}
         </Text>
       </TouchableOpacity>
     </View>
@@ -708,22 +696,21 @@ export default function KeysScreen() {
 
   const renderCreatedState = () => (
     <View style={styles.container}>
-      <Text style={styles.title}>New Wallet Created!</Text>
+      <Text style={styles.title}>{t("keys.created")}</Text>
 
       <View style={styles.walletInfo}>
-        <Text style={styles.label}>Your wallet address:</Text>
+        <Text style={styles.label}>{t("keys.yourAddress")}</Text>
         <Text style={styles.address} selectable>
           {walletAddress}
         </Text>
-        <Text style={styles.label}>Your public key:</Text>
+        <Text style={styles.label}>{t("keys.yourPublicKey")}</Text>
         <Text style={styles.address} selectable>
           {newWallet?.wallet.pubkey ?? ""}
         </Text>
       </View>
 
       <Text style={styles.warning}>
-        Important: You must save this wallet with a secure password. Without the
-        password, you won't be able to access your funds.
+        {t("keys.important")}
       </Text>
 
       <View style={styles.buttonRow}>
@@ -732,14 +719,14 @@ export default function KeysScreen() {
           onPress={handleProceedToPassword}
         >
           <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-            Save with Password
+            {t("keys.saveWithPassword")}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={[styles.button, styles.buttonPrimary, styles.buttonFlex]}
           onPress={handleReset}
         >
-          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.cancel")}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -747,15 +734,14 @@ export default function KeysScreen() {
 
   const renderPasswordState = () => (
     <View style={styles.container}>
-      <Text style={styles.title}>Set Wallet Password</Text>
+      <Text style={styles.title}>{t("keys.setPassword")}</Text>
 
       <Text style={styles.description}>
-        This password will encrypt your wallet file. Make sure to remember it -
-        there is no way to recover your wallet without it!
+        {t("keys.passwordNote")}
       </Text>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Password</Text>
+        <Text style={styles.inputLabel}>{t("keys.password")}</Text>
         <TextInput
           style={styles.input}
           value={password}
@@ -763,12 +749,12 @@ export default function KeysScreen() {
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="Enter password (min 6 characters)"
+          placeholder={t("keys.enterPassword")}
         />
       </View>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Confirm Password</Text>
+        <Text style={styles.inputLabel}>{t("keys.confirmPassword")}</Text>
         <TextInput
           style={styles.input}
           value={confirmPassword}
@@ -776,7 +762,7 @@ export default function KeysScreen() {
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="Confirm password"
+          placeholder={t("keys.confirmPassword2")}
         />
       </View>
 
@@ -789,7 +775,7 @@ export default function KeysScreen() {
           disabled={isLoading}
         >
           <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-            {isLoading ? "Saving..." : "Save Wallet"}
+            {isLoading ? t("keys.saving") : t("keys.saveWallet")}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -797,7 +783,7 @@ export default function KeysScreen() {
           onPress={() => setStep("created")}
           disabled={isLoading}
         >
-          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Back</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.back")}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -806,43 +792,39 @@ export default function KeysScreen() {
   const renderDoneState = () => (
     <View style={styles.container}>
       <Text style={[styles.title, styles.successText]}>
-        Wallet Saved Successfully!
+        {t("keys.saved")}
       </Text>
 
       <View style={styles.walletInfo}>
-        <Text style={styles.label}>Wallet address:</Text>
+        <Text style={styles.label}>{t("keys.yourAddress")}</Text>
         <Text style={styles.address} selectable>
           {walletAddress}
         </Text>
       </View>
 
       <Text style={styles.description}>
-        Your wallet has been encrypted and saved. Make sure to:{"\n"}• Keep your
-        password safe
-        {"\n"}• Backup your wallet file{"\n"}• Never share your password or
-        wallet file
+        {t("keys.savedSub")}
       </Text>
 
       <TouchableOpacity
         style={[styles.button, styles.buttonPrimary]}
         onPress={handleReset}
       >
-        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Done</Text>
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.done")}</Text>
       </TouchableOpacity>
     </View>
   );
 
   const renderImportEnterKeyState = () => (
     <View style={styles.container}>
-      <Text style={styles.title}>Import Private Key</Text>
+      <Text style={styles.title}>{t("keys.importKey")}</Text>
 
       <Text style={styles.description}>
-        Enter your private key in hex format (64 characters) or WIF format. Your
-        key will be encrypted with a password before saving.
+        {t("keys.importKeyDesc")}
       </Text>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Private Key</Text>
+        <Text style={styles.inputLabel}>{t("keys.privateKey")}</Text>
         <TextInput
           style={[styles.input, styles.inputMultiline]}
           value={privateKeyInput}
@@ -852,7 +834,7 @@ export default function KeysScreen() {
           secureTextEntry
           multiline
           numberOfLines={3}
-          placeholder="Enter private key (hex or WIF)"
+          placeholder={t("keys.privateKeyPh")}
         />
       </View>
 
@@ -865,7 +847,7 @@ export default function KeysScreen() {
           disabled={isLoading}
         >
           <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-            {isLoading ? "Importing..." : "Import Key"}
+            {isLoading ? t("keys.importing") : t("keys.importKeyBtn")}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -873,7 +855,7 @@ export default function KeysScreen() {
           onPress={handleReset}
           disabled={isLoading}
         >
-          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.cancel")}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -881,22 +863,21 @@ export default function KeysScreen() {
 
   const renderImportPasswordState = () => (
     <View style={styles.container}>
-      <Text style={styles.title}>Set Wallet Password</Text>
+      <Text style={styles.title}>{t("keys.setPassword")}</Text>
 
       <View style={styles.walletInfo}>
-        <Text style={styles.label}>Imported wallet address:</Text>
+        <Text style={styles.label}>{t("keys.yourAddress")}</Text>
         <Text style={styles.address} selectable>
           {walletAddress}
         </Text>
       </View>
 
       <Text style={styles.description}>
-        Choose a strong password to encrypt your wallet. You will need this
-        password to access your wallet.
+        {t("keys.passwordNote")}
       </Text>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Password</Text>
+        <Text style={styles.inputLabel}>{t("keys.password")}</Text>
         <TextInput
           style={styles.input}
           value={password}
@@ -904,12 +885,12 @@ export default function KeysScreen() {
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="Enter password (min 6 characters)"
+          placeholder={t("keys.enterPassword")}
         />
       </View>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Confirm Password</Text>
+        <Text style={styles.inputLabel}>{t("keys.confirmPassword")}</Text>
         <TextInput
           style={styles.input}
           value={confirmPassword}
@@ -917,7 +898,7 @@ export default function KeysScreen() {
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="Confirm password"
+          placeholder={t("keys.confirmPassword2")}
         />
       </View>
 
@@ -930,7 +911,7 @@ export default function KeysScreen() {
           disabled={isLoading}
         >
           <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-            {isLoading ? "Saving..." : "Save Wallet"}
+            {isLoading ? t("keys.saving") : t("keys.saveWallet")}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -938,7 +919,7 @@ export default function KeysScreen() {
           onPress={handleReset}
           disabled={isLoading}
         >
-          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.cancel")}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -948,21 +929,15 @@ export default function KeysScreen() {
     const isPlain = isPlainWalletJson(loadedFileContent ?? "");
     return (
     <View style={styles.container}>
-      {isPlain ? (
-        <Text style={styles.title}>Load Wallet</Text>
-      ) : (
-        <Text style={styles.title}>Enter Wallet Password</Text>
-      )}
+      <Text style={styles.title}>{t("keys.loadTitle")}</Text>
 
       <Text style={styles.description}>
-        {isPlain
-          ? "This wallet file is not encrypted — no password is needed."
-          : "Enter the password to decrypt your wallet file."}
+        {isPlain ? t("keys.fileNotEncrypted") : t("keys.fileEncryptedDesc")}
       </Text>
 
       {!isPlain && (
         <View style={styles.inputGroup}>
-          <Text style={styles.inputLabel}>Password</Text>
+          <Text style={styles.inputLabel}>{t("keys.password")}</Text>
           <TextInput
             style={styles.input}
             value={loadFilePassword}
@@ -970,7 +945,7 @@ export default function KeysScreen() {
             secureTextEntry
             autoCapitalize="none"
             autoCorrect={false}
-            placeholder="Enter wallet password"
+            placeholder={t("wallet.passwordPlaceholder")}
           />
         </View>
       )}
@@ -984,7 +959,7 @@ export default function KeysScreen() {
           disabled={isLoading}
         >
           <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-            {isLoading ? "Loading..." : "Load Wallet"}
+            {isLoading ? t("keys.loading") : t("keys.loadWalletBtn")}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -992,7 +967,7 @@ export default function KeysScreen() {
           onPress={handleReset}
           disabled={isLoading}
         >
-          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.cancel")}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -1001,15 +976,14 @@ export default function KeysScreen() {
 
   const renderOldWalletOldPasswordState = () => (
     <View style={styles.container}>
-      <Text style={styles.title}>Enter Old Wallet Password</Text>
+      <Text style={styles.title}>{t("keys.oldTitle")}</Text>
 
       <Text style={styles.description}>
-        This old wallet file is encrypted. Enter the password that was used to
-        encrypt it so the keys can be imported.
+        {t("keys.oldDesc")}
       </Text>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Old Wallet Password</Text>
+        <Text style={styles.inputLabel}>{t("keys.oldWalletPassword")}</Text>
         <TextInput
           style={styles.input}
           value={oldWalletPassword}
@@ -1017,7 +991,7 @@ export default function KeysScreen() {
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="Enter old wallet password"
+          placeholder={t("keys.oldPwPh")}
         />
       </View>
 
@@ -1030,7 +1004,7 @@ export default function KeysScreen() {
           disabled={isLoading}
         >
           <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-            {isLoading ? "Decrypting..." : "Continue"}
+            {isLoading ? t("keys.decrypting") : t("keys.continue")}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -1038,7 +1012,7 @@ export default function KeysScreen() {
           onPress={handleReset}
           disabled={isLoading}
         >
-          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.cancel")}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -1046,22 +1020,21 @@ export default function KeysScreen() {
 
   const renderOldWalletNewPasswordState = () => (
     <View style={styles.container}>
-      <Text style={styles.title}>Set Wallet Password</Text>
+      <Text style={styles.title}>{t("keys.setPassword")}</Text>
 
       <View style={styles.walletInfo}>
-        <Text style={styles.label}>Imported wallet address:</Text>
+        <Text style={styles.label}>{t("keys.yourAddress")}</Text>
         <Text style={styles.address} selectable>
           {walletAddress}
         </Text>
       </View>
 
       <Text style={styles.description}>
-        Choose a strong password to encrypt your wallet. You will need this
-        password to access your wallet.
+        {t("keys.passwordNote")}
       </Text>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Password</Text>
+        <Text style={styles.inputLabel}>{t("keys.password")}</Text>
         <TextInput
           style={styles.input}
           value={password}
@@ -1069,12 +1042,12 @@ export default function KeysScreen() {
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="Enter password (min 6 characters)"
+          placeholder={t("keys.enterPassword")}
         />
       </View>
 
       <View style={styles.inputGroup}>
-        <Text style={styles.inputLabel}>Confirm Password</Text>
+        <Text style={styles.inputLabel}>{t("keys.confirmPassword")}</Text>
         <TextInput
           style={styles.input}
           value={confirmPassword}
@@ -1082,7 +1055,7 @@ export default function KeysScreen() {
           secureTextEntry
           autoCapitalize="none"
           autoCorrect={false}
-          placeholder="Confirm password"
+          placeholder={t("keys.confirmPassword2")}
         />
       </View>
 
@@ -1095,7 +1068,7 @@ export default function KeysScreen() {
           disabled={isLoading}
         >
           <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-            {isLoading ? "Saving..." : "Save Wallet"}
+            {isLoading ? t("keys.saving") : t("keys.saveWallet")}
           </Text>
         </TouchableOpacity>
         <TouchableOpacity
@@ -1103,7 +1076,7 @@ export default function KeysScreen() {
           onPress={handleReset}
           disabled={isLoading}
         >
-          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>Cancel</Text>
+          <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.cancel")}</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -1112,7 +1085,7 @@ export default function KeysScreen() {
   return (
     <ScrollView style={styles.scrollView}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Manage Keys</Text>
+        <Text style={styles.headerTitle}>{t("keys.manageKeys")}</Text>
       </View>
 
       {isLoading &&

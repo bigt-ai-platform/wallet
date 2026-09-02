@@ -46,12 +46,12 @@ export default function TokensScreen() {
   };
 
   const handleCreate = async () => {
-    if (!tokenName.trim()) { Alert.alert('Error', 'Token name is required'); return; }
-    if (!tokenSymbol.trim()) { Alert.alert('Error', 'Token symbol is required'); return; }
+    if (!tokenName.trim()) { Alert.alert(t('tokens.title'), t('tokens.errName')); return; }
+    if (!tokenSymbol.trim()) { Alert.alert(t('tokens.title'), t('tokens.errSymbol')); return; }
     const decimals = parseInt(tokenDecimals);
-    if (isNaN(decimals) || decimals < 0 || decimals > 18) { Alert.alert('Error', 'Decimals must be 0-18'); return; }
+    if (isNaN(decimals) || decimals < 0 || decimals > 18) { Alert.alert(t('tokens.title'), t('tokens.errDecimals')); return; }
     const supply = parseFloat(tokenSupply);
-    if (isNaN(supply) || supply <= 0) { Alert.alert('Error', 'Supply must be > 0'); return; }
+    if (isNaN(supply) || supply <= 0) { Alert.alert(t('tokens.title'), t('tokens.errSupply')); return; }
 
     setCreating(true);
     try {
@@ -65,14 +65,14 @@ export default function TokensScreen() {
       };
       const res = await httpService.request('signToken', 'POST', payload);
       if (res.success) {
-        Alert.alert('Token Created', `${tokenName} (${tokenSymbol}) has been created on the blockchain`);
+        Alert.alert(t('tokens.created'), t('tokens.createdDesc', { name: tokenName, symbol: tokenSymbol }));
         setShowCreate(false); setTokenName(''); setTokenSymbol(''); setTokenDesc('');
         loadTokens();
       } else {
-        Alert.alert('Error', res.error || 'Failed to create token');
+        Alert.alert(t('tokens.title'), res.error || t('tokens.failed'));
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to create token');
+      Alert.alert(t('tokens.title'), e.message || t('tokens.failed'));
     } finally { setCreating(false); }
   };
 
@@ -89,7 +89,7 @@ export default function TokensScreen() {
       <SegmentedTabs
         tabs={[
           { key: 'browse', label: t('tokens.title') },
-          { key: 'create', label: 'Create' },
+          { key: 'create', label: t('tokens.createTab') },
         ]}
         active={activeTab}
         onChange={(k) => setActiveTab(k as typeof activeTab)}
@@ -103,7 +103,7 @@ export default function TokensScreen() {
               autoCapitalize="none" autoCorrect={false} testID="token-search-input" />
           </View>
           <ScrollView contentContainerStyle={s.listContent}>
-            <Text style={s.listTitle}>{tokens.length} tokens</Text>
+            <Text style={s.listTitle}>{t('tokens.countTokens', { count: tokens.length })}</Text>
             {filtered.length === 0 ? (
               <View style={s.emptyCard}>
                 <Text style={s.emptyTitle}>{search ? t('tokens.noMatches') : t('tokens.noTokens')}</Text>
@@ -113,7 +113,7 @@ export default function TokensScreen() {
                 <View key={token.tokenid || i} style={s.tokenCard} testID={`token-card-${i}`}>
                   <View style={s.tokenDot} />
                   <View style={s.tokenInfo}>
-                    <Text style={s.tokenName}>{token.tokenname || 'Unknown'}</Text>
+                    <Text style={s.tokenName}>{token.tokenname || t('tokens.unknown')}</Text>
                     <Text style={s.tokenId}>{token.tokenid ? token.tokenid.slice(0, 16) + '...' : ''}</Text>                    {token.description ? <Text style={s.tokenDesc} numberOfLines={1}>{token.description}</Text> : null}
                   </View>
                 </View>
@@ -123,44 +123,44 @@ export default function TokensScreen() {
         </>
       ) : (
         <ScrollView contentContainerStyle={s.formContent}>
-          <Text style={s.formTitle}>Create New Token</Text>
-          <Text style={s.formSub}>Issue a new token on the blockchain, like USDC or your own custom token.</Text>
+          <Text style={s.formTitle}>{t('tokens.createTitle')}</Text>
+          <Text style={s.formSub}>{t('tokens.createSub')}</Text>
 
           <View style={s.fieldGroup}>
-            <Text style={s.fieldLabel}>Token Name</Text>
+            <Text style={s.fieldLabel}>{t('tokens.fieldName')}</Text>
             <TextInput style={s.fieldInput} value={tokenName} onChangeText={setTokenName}
-              placeholder="e.g. USD Coin" placeholderTextColor={s.placeholder.color} />
+              placeholder={t('tokens.phName')} placeholderTextColor={s.placeholder.color} />
           </View>
 
           <View style={s.fieldGroup}>
-            <Text style={s.fieldLabel}>Symbol / Ticker</Text>
+            <Text style={s.fieldLabel}>{t('tokens.fieldSymbol')}</Text>
             <TextInput style={s.fieldInput} value={tokenSymbol} onChangeText={setTokenSymbol}
-              placeholder="e.g. USDC" placeholderTextColor={s.placeholder.color}
+              placeholder={t('tokens.phSymbol')} placeholderTextColor={s.placeholder.color}
               autoCapitalize="characters" />
           </View>
 
           <View style={s.fieldRow}>
             <View style={[s.fieldGroup, { flex: 1, marginRight: 8 }]}>
-              <Text style={s.fieldLabel}>Decimals</Text>
+              <Text style={s.fieldLabel}>{t('tokens.fieldDecimals')}</Text>
               <TextInput style={s.fieldInput} value={tokenDecimals} onChangeText={setTokenDecimals}
                 placeholder="6" keyboardType="number-pad" />
             </View>
             <View style={[s.fieldGroup, { flex: 2 }]}>
-              <Text style={s.fieldLabel}>Initial Supply</Text>
+              <Text style={s.fieldLabel}>{t('tokens.fieldSupply')}</Text>
               <TextInput style={s.fieldInput} value={tokenSupply} onChangeText={setTokenSupply}
                 placeholder="1000000" keyboardType="decimal-pad" />
             </View>
           </View>
 
           <View style={s.fieldGroup}>
-            <Text style={s.fieldLabel}>Description (optional)</Text>
+            <Text style={s.fieldLabel}>{t('tokens.fieldDesc')}</Text>
             <TextInput style={[s.fieldInput, s.fieldArea]} value={tokenDesc} onChangeText={setTokenDesc}
-              placeholder="Describe your token" placeholderTextColor={s.placeholder.color}
+              placeholder={t('tokens.phDesc')} placeholderTextColor={s.placeholder.color}
               multiline numberOfLines={3} />
           </View>
 
           <TouchableOpacity style={s.createBtn} onPress={handleCreate} disabled={creating}>
-            <Text style={s.createBtnText}>{creating ? 'Creating...' : 'Create Token'}</Text>
+            <Text style={s.createBtnText}>{creating ? t('tokens.btnCreating') : t('tokens.btnCreate')}</Text>
           </TouchableOpacity>
         </ScrollView>
       )}

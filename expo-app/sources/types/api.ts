@@ -246,10 +246,10 @@ export interface OrderOpenParams {
 }
 
 export interface L1ChainConfig {
+  /** Unique on-chain id of the L1 order chain (e.g. "ordermatch"). */
+  chainId: string;
   name: string;
   url: string;
-  /** L1 destination chain id for the bridge peg-in (e.g. "ordermatch"). */
-  chainId?: string;
 }
 
 /**

@@ -170,10 +170,10 @@ export default function ChartScreen() {
   return (
     <View style={s.container} testID="chart-screen">
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel="Back">
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back')}>
           <Text style={s.backText}>←</Text>
         </TouchableOpacity>
-        <Text style={s.pageTitle}>Chart</Text>
+        <Text style={s.pageTitle}>{t('chart.title')}</Text>
       </View>
 
       <ScrollView contentContainerStyle={s.content}>

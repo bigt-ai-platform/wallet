@@ -3,6 +3,7 @@
  *
  * Uses imports from bigtangle-ts to work in both Node.js and webpack environments.
  */
+import i18n from '../../lib/i18n';
 
 import { PQKey, Utils, ECKey, Address, MainNetParams, TestParams } from 'bigtangle-ts';
 // @ts-ignore - These are not exported in index but exist in dist
@@ -191,11 +192,11 @@ export async function loadWallet(
     // Plain SerializedWallet JSON (already unencrypted) — accept it directly.
     parsed = parsedRoot;
   } else {
-    throw new Error('Unrecognized wallet file format');
+    throw new Error(i18n.t('errors.walletFormat'));
   }
 
   if (!parsed.keys?.length) {
-    throw new Error('No key found in wallet file');
+    throw new Error(i18n.t('errors.walletNoKey'));
   }
 
   const keyData = parsed.keys[0];
@@ -244,7 +245,7 @@ export function loadPlainWalletSync(fileData: string): WalletFile {
   const parsed = parsedRoot as SerializedWallet;
 
   if (!parsed.keys?.length) {
-    throw new Error('No key found in wallet file');
+    throw new Error(i18n.t('errors.walletNoKey'));
   }
 
   const keyData = parsed.keys[0];
@@ -346,11 +347,11 @@ export async function importOldWalletFile(
   let keys: Array<ECKey | any>;
   if (wallet.isEncrypted()) {
     if (!password) {
-      throw new Error('This old wallet file is encrypted. Please enter its password.');
+      throw new Error(i18n.t('errors.oldWalletEncrypted'));
     }
     const crypter = wallet.getKeyCrypter();
     if (!crypter) {
-      throw new Error('Encrypted wallet is missing its key crypter');
+      throw new Error(i18n.t('errors.noCrypter'));
     }
     const aesKey = await crypter.deriveKey(password);
     keys = await wallet.walletKeysAll(aesKey);
@@ -360,7 +361,7 @@ export async function importOldWalletFile(
 
   const ecKey = findLegacyKey(keys);
   if (!ecKey) {
-    throw new Error('No usable EC private key found in wallet file');
+    throw new Error(i18n.t('errors.noEcKey'));
   }
 
   const params = wallet.getParams();

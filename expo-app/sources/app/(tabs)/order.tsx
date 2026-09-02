@@ -151,7 +151,7 @@ export default function OrderScreen() {
 
     const wallet = getUnlockedWallet();
     if (!wallet) { Alert.alert('', t('order.unlockFirst')); return; }
-    if (!l1Url) { Alert.alert('', 'No L1 chain configured'); return; }
+    if (!l1Url) { Alert.alert('', t('order.noL1')); return; }
 
     setSubmitting(true);
     try {
@@ -268,7 +268,7 @@ export default function OrderScreen() {
           <View style={s.sectionRow}>
             <Text style={s.sectionTitle}>{t('order.yourOrders')}</Text>
             <TouchableOpacity onPress={() => loadMyOrders(true)} disabled={refreshingOrders}>
-              <Text style={s.refreshBtn}>{refreshingOrders ? '...' : 'Refresh'}</Text>
+              <Text style={s.refreshBtn}>{refreshingOrders ? '...' : t('order.refresh')}</Text>
             </TouchableOpacity>
           </View>
 
@@ -277,10 +277,10 @@ export default function OrderScreen() {
             <Text style={s.filterLabel}>{t('order.dateRange')}</Text>
             <View style={s.dateRow}>
               <TextInput style={s.dateInput} value={historyFromDate} onChangeText={setHistoryFromDate}
-                placeholder="from e.g. 2024-01-01" placeholderTextColor={s.placeholder.color}
+                placeholder={t('balance.fromPh')} placeholderTextColor={s.placeholder.color}
                 autoCapitalize="none" testID="order-from-date" />
               <TextInput style={s.dateInput} value={historyToDate} onChangeText={setHistoryToDate}
-                placeholder="to e.g. 2026-01-01" placeholderTextColor={s.placeholder.color}
+                placeholder={t('balance.toPh')} placeholderTextColor={s.placeholder.color}
                 autoCapitalize="none" testID="order-to-date" />
             </View>
           </View>
@@ -306,7 +306,7 @@ export default function OrderScreen() {
                   <>
                     {tracked.length > 0 && (
                       <>
-                        <Text style={s.groupLabel}>Tracked (in-app)</Text>
+                        <Text style={s.groupLabel}>{t('order.trackedGroup')}</Text>
                         {tracked.map((o) => {
                           const badgeColor = statusBadgeColor(o.status, theme);
                           return (
@@ -327,7 +327,7 @@ export default function OrderScreen() {
                       </>
                     )}
                     <View style={s.liveChainRow}>
-                      <Text style={s.groupLabel}>Live on</Text>
+                      <Text style={s.groupLabel}>{t('order.liveGroup')}</Text>
                       <ChainBadge layer={1} name={activeChainName} />
                     </View>
                     {live.length === 0 ? (

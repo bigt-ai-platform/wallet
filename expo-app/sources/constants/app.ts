@@ -12,10 +12,10 @@ export const IS_DEV = typeof __DEV__ !== 'undefined' && __DEV__;
 export const DEV_L0_URL = 'http://127.0.0.1:24089/';
 export const DEV_L1_URL = 'http://127.0.0.1:24086/';
 
-/** Default L1 (order match) chains per network. */
+/** Default L1 (order match) chains per network. Each has a unique on-chain id. */
 export const DEFAULT_L1_CHAINS_MAINNET = [
-  { name: IS_DEV ? 'Local' : 'Main', url: IS_DEV ? DEV_L1_URL : 'https://m.bigtangle.org' },
+  { chainId: 'ordermatch', name: IS_DEV ? 'Local' : 'Main', url: IS_DEV ? DEV_L1_URL : 'https://m.bigtangle.org' },
 ];
 export const DEFAULT_L1_CHAINS_TESTNET = [
-  { name: IS_DEV ? 'Local' : 'Test', url: IS_DEV ? DEV_L1_URL : 'https://testm.bigtangle.org' },
+  { chainId: 'ordermatch', name: IS_DEV ? 'Local' : 'Test', url: IS_DEV ? DEV_L1_URL : 'https://testm.bigtangle.org' },
 ];

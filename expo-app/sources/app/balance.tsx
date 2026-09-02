@@ -16,6 +16,12 @@ interface LayerUtxo extends UTXO {
   layerName: string;
   /** Server URL this UTXO lives on (L0 undefined = default, or an L1 chain). */
   baseUrl?: string;
+  /** Sending address of the transaction that created this output. */
+  fromAddress?: string;
+  /** Whether the output was already consumed by a later transaction. */
+  spent?: boolean;
+  /** Whether a pending outgoing transaction currently reserves this output. */
+  spendPending?: boolean;
 }
 
 interface Aggregated {
@@ -30,8 +36,38 @@ function toBigInt(v: any): bigint {
   try { return BigInt(v ?? 0); } catch { return BigInt(0); }
 }
 
-function formatValue(v: bigint): string {
-  return v.toString();
+const separatorCache = new Map<string, { thousand: string; decimal: string }>();
+
+function localeSeparators(locale: string): { thousand: string; decimal: string } {
+  const hit = separatorCache.get(locale);
+  if (hit) return hit;
+  let thousand = ',';
+  let decimal = '.';
+  try {
+    const parts = new Intl.NumberFormat(locale).formatToParts(1234567.8);
+    for (const p of parts) {
+      if (p.type === 'group') thousand = p.value;
+      else if (p.type === 'decimal') decimal = p.value;
+    }
+  } catch { /* fall back to en separators */ }
+  const sep = { thousand, decimal };
+  separatorCache.set(locale, sep);
+  return sep;
+}
+
+function formatValue(v: bigint, decimals: number, locale: string): string {
+  const { thousand, decimal } = localeSeparators(locale);
+  const neg = v < 0n;
+  const abs = neg ? -v : v;
+  const divisor = 10n ** BigInt(Math.max(0, decimals));
+  const whole = abs / divisor;
+  const frac = abs % divisor;
+  // Group the whole part with the locale's thousands separator.
+  const digits = whole.toString();
+  const grouped = digits.replace(/\B(?=(\d{3})+(?!\d))/g, thousand);
+  if (frac === 0n) return `${neg ? '-' : ''}${grouped}`;
+  const fracStr = frac.toString().padStart(decimals, '0').replace(/0+$/, '');
+  return `${neg ? '-' : ''}${grouped}${decimal}${fracStr}`;
 }
 
 function LayerDropdown({ value, options, onChange }: {
@@ -39,18 +75,19 @@ function LayerDropdown({ value, options, onChange }: {
   options: Array<{ key: 'all' | number; label: string }>;
   onChange: (key: 'all' | number) => void;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
   const current = options.find((o) => o.key === value);
   return (
     <>
       <TouchableOpacity style={s.dropdown} onPress={() => setOpen(true)} testID="balance-layer-select">
-        <Text style={s.dropdownText}>{current?.label ?? 'All Layers'}</Text>
+        <Text style={s.dropdownText}>{current?.label ?? t('balance.allLayers')}</Text>
         <Text style={s.dropdownChevron}>▾</Text>
       </TouchableOpacity>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setOpen(false)}>
           <View style={s.modalSheet}>
-            <Text style={s.modalTitle}>Layer</Text>
+            <Text style={s.modalTitle}>{t('balance.layer')}</Text>
             {options.map((o) => (
               <TouchableOpacity
                 key={String(o.key)}
@@ -68,15 +105,19 @@ function LayerDropdown({ value, options, onChange }: {
 }
 
 export default function BalanceScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const router = useRouter();
-  const { publicInfo, isUnlocked } = useWallet();
+  const { publicInfo, isUnlocked, getUnlockedWallet } = useWallet();
+  const locale = i18n.language || 'en';
   const l1Chains = React.useMemo(() => httpService.getL1Chains(), []);
   const [utxos, setUtxos] = React.useState<LayerUtxo[]>([]);
+  // Decimals per token id (fetched from the balances API) so amounts display
+  // in whole units, not raw smallest-units.
+  const [tokenDecimals, setTokenDecimals] = React.useState<Record<string, number>>({});
   const [loading, setLoading] = React.useState(false);
   const [fromDate, setFromDate] = React.useState('');
   const [toDate, setToDate] = React.useState('');
-  const [aggregate, setAggregate] = React.useState(false);
+  const [aggregate, setAggregate] = React.useState(true);
   const [activeLayer, setActiveLayer] = React.useState<'all' | number>('all');
   // Per-UTXO detail fetched on demand by the "… more" button (key = hash:index).
   const [detailData, setDetailData] = React.useState<Record<string, { detail?: any; finalized?: boolean }>>({});
@@ -121,6 +162,9 @@ export default function BalanceScreen() {
           ? String((u.value as any).value ?? 0)
           : u.value,
       tokenid: u.tokenId || (u.value && (u.value as any).tokenHex) || u.tokenid,
+      fromAddress: u.fromaddress || u.fromAddress || '',
+      spent: !!u.spent,
+      spendPending: !!u.spendPending,
       spendable:
         u.spendable ??
         (!!u.confirmed && !u.spent && !u.spendPending),
@@ -161,11 +205,35 @@ export default function BalanceScreen() {
     if (!publicInfo?.address) return;
     setLoading(true);
     try {
+      // Collect per-token decimals from the balances API so formatted amounts
+      // use the right divisor (BIG = 8 decimals).
+      const wallet = getUnlockedWallet();
+      if (wallet) {
+        const privateKeyHex = wallet.wallet.privateKey;
+        const map: Record<string, number> = {};
+        const collect = (arr: any[] | undefined) => {
+          (arr ?? []).forEach((t: any) => {
+            if (t && t.tokenid && t.decimals != null) {
+              map[t.tokenid] = Number(t.decimals);
+            }
+          });
+        };
+        const l0 = await httpService.getBalances(privateKeyHex);
+        collect(l0.success ? l0.data : []);
+        for (let i = 0; i < l1Chains.length; i++) {
+          try {
+            const l1 = await httpService.getBalancesOn(l1Chains[i].url, privateKeyHex);
+            collect(l1.success ? l1.data : []);
+          } catch { /* L1 unreachable — skip */ }
+        }
+        setTokenDecimals(map);
+      }
       const results = await Promise.all([
         loadLayer(undefined, 0, 'L0'),
         ...l1Chains.map((c, i) => loadLayer(c.url, i + 1, c.name)),
       ]);
-      setUtxos(results.flat());
+      // Only unspent outputs count as balance — spent history is excluded.
+      setUtxos(results.flat().filter((u) => !u.spent));
     } catch (e) {
       console.error('Error loading balance UTXOs:', e);
     } finally {
@@ -173,13 +241,16 @@ export default function BalanceScreen() {
     }
   };
 
+  const decimalsOf = (tokenId: string): number =>
+    tokenDecimals[tokenId] ?? (tokenId === 'bc' ? 8 : 0);
+
   const filtered = utxos.filter((u) =>
     activeLayer === 'all' ? true : u.layer === activeLayer
   );
 
   // Every layer as a list entry: All Layers, L0, then one per L1 chain.
   const layerList: Array<{ key: 'all' | number; label: string }> = [
-    { key: 'all', label: 'All Layers' },
+    { key: 'all', label: t('balance.allLayers') },
     { key: 0, label: 'L0' },
     ...l1Chains.map((c, i) => ({ key: i + 1, label: c.name || `L1-${i + 1}` })),
   ];
@@ -215,33 +286,33 @@ export default function BalanceScreen() {
   return (
     <View style={s.container} testID="balance-screen">
       <View style={s.header}>
-        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel="Back">
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back')}>
           <Text style={s.backText}>←</Text>
         </TouchableOpacity>
-        <Text style={s.pageTitle}>Balance</Text>
+        <Text style={s.pageTitle}>{t('balance.title')}</Text>
       </View>
 
       <View style={s.filterCard}>
-        <Text style={s.cardLabel}>Date Range (from / to)</Text>
+        <Text style={s.cardLabel}>{t('balance.dateRange')}</Text>
         <View style={s.dateRow}>
           <TextInput style={s.dateInput} value={fromDate} onChangeText={setFromDate}
-            placeholder="from e.g. 2024-01-01" placeholderTextColor={s.placeholder.color}
+            placeholder={t('balance.fromPh')} placeholderTextColor={s.placeholder.color}
             autoCapitalize="none" testID="balance-from-date" />
           <TextInput style={s.dateInput} value={toDate} onChangeText={setToDate}
-            placeholder="to e.g. 2026-01-01" placeholderTextColor={s.placeholder.color}
+            placeholder={t('balance.toPh')} placeholderTextColor={s.placeholder.color}
             autoCapitalize="none" testID="balance-to-date" />
         </View>
         <View style={s.optionRow}>
           <TouchableOpacity onPress={() => setAggregate(!aggregate)} style={[s.aggToggle, aggregate && s.aggToggleOn]} testID="balance-aggregate-toggle">
-            <Text style={[s.aggToggleText, aggregate && s.aggToggleTextOn]}>{aggregate ? 'Aggregated by Token' : 'List all UTXOs'}</Text>
+            <Text style={[s.aggToggleText, aggregate && s.aggToggleTextOn]}>{aggregate ? t('balance.aggregated') : t('balance.listUtxos')}</Text>
           </TouchableOpacity>
           <TouchableOpacity onPress={loadAll} style={s.refreshBtn} disabled={loading} testID="balance-refresh">
-            <Text style={s.refreshText}>{loading ? '...' : 'Apply / Refresh'}</Text>
+            <Text style={s.refreshText}>{loading ? '...' : t('balance.applyRefresh')}</Text>
           </TouchableOpacity>
         </View>
-        <Text style={s.cardLabel}>Layer</Text>
+        <Text style={s.cardLabel}>{t('balance.layer')}</Text>
         <LayerDropdown value={activeLayer} options={layerList} onChange={setActiveLayer} />
-        <Text style={s.countText}>{totalCount} UTXO{totalCount === 1 ? '' : 's'}</Text>
+        <Text style={s.countText}>{t('balance.count', { count: totalCount })}</Text>
       </View>
 
       <ScrollView contentContainerStyle={s.content}>
@@ -249,47 +320,58 @@ export default function BalanceScreen() {
           <ActivityIndicator size="large" color={s.loader.color} style={{ padding: 32 }} />
         ) : aggregate ? (
           agg.length === 0 ? (
-            <Text style={s.emptyText}>No UTXOs found for the selected filters.</Text>
+            <Text style={s.emptyText}>{t('balance.empty')}</Text>
           ) : (
             agg.map((a) => (
               <View key={a.tokenId} style={s.card}>
                 <View style={s.aggHeader}>
                   <Text style={s.tokenName}>{a.tokenName}</Text>
-                  <Text style={s.tokenValue}>{formatValue(a.total)}</Text>
+                  <Text style={s.tokenValue}>{formatValue(a.total, decimalsOf(a.tokenId), locale)}</Text>
                 </View>
-                <Text style={s.tokenMeta}>{a.count} UTXO{a.count === 1 ? '' : 's'} · layers: {a.layers.sort((x, y) => x - y).map((l) => (l === 0 ? 'L0' : `L1-${l}`)).join(', ')}</Text>
+                <Text style={s.tokenMeta}>{t('balance.metaUtxos', { count: a.count, layers: a.layers.sort((x, y) => x - y).map((l) => (l === 0 ? 'L0' : `L1-${l}`)).join(', ') })}</Text>
                 <Text style={s.tokenId}>{a.tokenId.slice(0, 18)}...</Text>
               </View>
             ))
           )
         ) : filtered.length === 0 ? (
-          <Text style={s.emptyText}>No UTXOs found for the selected filters.</Text>
+          <Text style={s.emptyText}>{t('balance.empty')}</Text>
         ) : (
-          filtered.map((u, i) => {
+          filtered.map((u) => {
             const key = `${u.hashHex ?? u.txhash}:${u.index}`;
             const entry = detailData[key];
             const d = entry?.detail;
+            const confirmLabel = u.confirmed ? t('balance.confirmYes') : t('balance.confirmNo');
+            const stateLabel = u.spendable
+              ? t('balance.stateSpendable')
+              : u.spent
+                ? t('balance.stateSpent')
+                : u.spendPending
+                  ? t('balance.statePendingSpend')
+                  : t('balance.stateLocked');
+            const fromLabel = u.fromAddress ? u.fromAddress.slice(0, 18) : '...';
+            const toLabel = u.address ? u.address.slice(0, 18) : '...';
+            const dateSuffix = u.time ? ` · ${new Date(u.time * 1000).toISOString().slice(0, 10)}` : '';
             return (
             <View key={key} style={s.card}>
               <View style={s.aggHeader}>
-                <Text style={s.tokenName}>{u.tokenname || u.tokenid?.slice(0, 8) || 'token'}</Text>
-                <Text style={s.tokenValue}>{formatValue(toBigInt(u.value))}</Text>
+                <Text style={s.tokenName}>{u.tokenname || u.tokenid?.slice(0, 8) || t('balance.tokenFallback')}</Text>
+                <Text style={s.tokenValue}>{formatValue(toBigInt(u.value), decimalsOf(u.tokenid || 'bc'), locale)}</Text>
               </View>
-              <Text style={s.tokenMeta}>layer {u.layerName} · {u.confirmed ? 'confirmed' : 'pending'} · {u.spendable ? 'spendable' : 'locked'}</Text>
-              <Text style={s.tokenMeta}>to {u.address ? u.address.slice(0, 18) : '...'}{u.time ? ` · ${new Date(u.time * 1000).toISOString().slice(0, 10)}` : ''}</Text>
+              <Text style={s.tokenMeta}>{t('balance.metaLine', { layerName: u.layerName, confirm: confirmLabel, state: stateLabel })}</Text>
+              <Text style={s.tokenMeta}>{t('balance.fromTo', { from: fromLabel, to: toLabel })}{dateSuffix}</Text>
               <Text style={s.tokenId}>{(u.txhash || '').slice(0, 20)}</Text>
               {expandedKey === key && (
                 <View style={s.detailBox}>
                   {d ? (
                     <>
-                      <Text style={s.tokenMeta}>Block: {(d.blockHash || '').slice(0, 20)}…</Text>
-                      <Text style={s.tokenMeta}>Height: {d.blockHeight ?? '?'} · Chainlength: {d.blockChainlength ?? '?'}</Text>
-                      <Text style={s.tokenMeta}>Confirmed: {d.blockConfirmed ? 'yes' : 'no'} · Finalized: {entry?.finalized ? 'yes' : 'no'}</Text>
-                      {d.output?.fromaddress ? <Text style={s.tokenMeta}>From: {d.output.fromaddress}</Text> : null}
-                      {d.output?.memo ? <Text style={s.tokenMeta}>Memo: {d.output.memo}</Text> : null}
+                      <Text style={s.tokenMeta}>{t('balance.detailBlock', { hash: (d.blockHash || '').slice(0, 20) })}</Text>
+                      <Text style={s.tokenMeta}>{t('balance.detailHeight', { height: d.blockHeight ?? '?', chainlength: d.blockChainlength ?? '?' })}</Text>
+                      <Text style={s.tokenMeta}>{t('balance.detailConfirmed', { confirmed: d.blockConfirmed ? t('balance.yes') : t('balance.no'), finalized: entry?.finalized ? t('balance.yes') : t('balance.no') })}</Text>
+                      {d.output?.fromaddress ? <Text style={s.tokenMeta}>{t('balance.detailFrom', { address: d.output.fromaddress })}</Text> : null}
+                      {d.output?.memo ? <Text style={s.tokenMeta}>{t('balance.detailMemo', { memo: d.output.memo })}</Text> : null}
                     </>
                   ) : (
-                    <Text style={s.tokenMeta}>Loading…</Text>
+                    <Text style={s.tokenMeta}>{t('balance.loading')}</Text>
                   )}
                 </View>
               )}
@@ -297,7 +379,7 @@ export default function BalanceScreen() {
                 style={s.moreBtn}
                 onPress={() => showDetail(u, key)}
                 accessibilityRole="button"
-                accessibilityLabel={`more-details-${i}`}
+                accessibilityLabel={t('balance.moreDetails')}
               >
                 <Text style={s.moreText}>{expandedKey === key ? '−' : '⋯'}</Text>
               </TouchableOpacity>

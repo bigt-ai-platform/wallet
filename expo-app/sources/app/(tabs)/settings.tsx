@@ -16,7 +16,7 @@ export default function SettingsScreen() {
   });
   const [serverUrl, setServerUrl] = React.useState(httpService.getServerUrl());
   const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
-  const [activeL1Index, setActiveL1Index] = React.useState(() => httpService.getActiveL1Index());
+  const [activeChainId, setActiveChainId] = React.useState(() => httpService.getActiveL1ChainId());
   const [showDev, setShowDev] = React.useState(false);
   // Moved here from the Transaction tab: the L1 bridge/withdraw test harness.
   const [l1TestToken, setL1TestToken] = React.useState('');
@@ -24,12 +24,13 @@ export default function SettingsScreen() {
   const [l1TestDest, setL1TestDest] = React.useState('');
   const [l1TestSub, setL1TestSub] = React.useState(false);
   const [l1TestMode, setL1TestMode] = React.useState<'pay' | 'payback'>('pay');
+  const [newChainId, setNewChainId] = React.useState('');
   const [newChainName, setNewChainName] = React.useState('');
   const [newChainUrl, setNewChainUrl] = React.useState('');
 
   React.useEffect(() => httpService.subscribeL1Change(() => {
     setL1Chains(httpService.getL1Chains());
-    setActiveL1Index(httpService.getActiveL1Index());
+    setActiveChainId(httpService.getActiveL1ChainId());
   }), []);
   const appVersion = APP_VERSION;
 
@@ -45,11 +46,23 @@ export default function SettingsScreen() {
     Alert.alert(t('settings.saved'), t('settings.serverUpdated'));
   };
 
+  const chainErrMsg = (code: string | null, id?: string): string => {
+    switch (code) {
+      case 'chainIdEmpty': return t('settings.chainIdEmpty');
+      case 'chainIdReserved': return t('settings.chainIdReserved');
+      case 'chainIdExists': return t('settings.chainIdExists', { id: id || '' });
+      case 'chainNotFound': return t('settings.noL1Chains');
+      default: return code || '';
+    }
+  };
+
   const addL1Chain = () => {
-    if (!newChainName.trim()) { Alert.alert('', 'Chain name cannot be empty'); return; }
-    if (!newChainUrl.trim()) { Alert.alert('', 'Chain URL cannot be empty'); return; }
-    httpService.addL1Chain(newChainName.trim(), newChainUrl.trim());
+    if (!newChainName.trim()) { Alert.alert('', t('settings.errNameEmpty')); return; }
+    if (!newChainUrl.trim()) { Alert.alert('', t('settings.errUrlEmpty')); return; }
+    const err = httpService.addL1Chain(newChainId, newChainName, newChainUrl);
+    if (err) { Alert.alert('', chainErrMsg(err, newChainId)); return; }
     setL1Chains(httpService.getL1Chains());
+    setNewChainId('');
     setNewChainName('');
     setNewChainUrl('');
   };
@@ -57,29 +70,38 @@ export default function SettingsScreen() {
   const removeL1Chain = (index: number) => {
     httpService.removeL1Chain(index);
     setL1Chains(httpService.getL1Chains());
+    setActiveChainId(httpService.getActiveL1ChainId());
   };
 
-  const saveL1Chain = (index: number, name: string, url: string) => {
-    httpService.updateL1Chain(index, name, url);
+  const saveL1Chain = (index: number, chainId: string, name: string, url: string) => {
+    const err = httpService.updateL1Chain(index, chainId, name, url);
+    if (err) { Alert.alert('', chainErrMsg(err, chainId)); }
     setL1Chains(httpService.getL1Chains());
+    setActiveChainId(httpService.getActiveL1ChainId());
   };
 
   const updateChainName = (index: number, name: string) => {
     const updated = l1Chains.map((c, i) => i === index ? { ...c, name } : c);
     setL1Chains(updated);
-    saveL1Chain(index, name, updated[index].url);
+    saveL1Chain(index, updated[index].chainId, name, updated[index].url);
   };
 
   const updateChainUrl = (index: number, url: string) => {
     const updated = l1Chains.map((c, i) => i === index ? { ...c, url } : c);
     setL1Chains(updated);
-    saveL1Chain(index, updated[index].name, url);
+    saveL1Chain(index, updated[index].chainId, updated[index].name, url);
+  };
+
+  const updateChainId = (index: number, chainId: string) => {
+    const updated = l1Chains.map((c, i) => i === index ? { ...c, chainId } : c);
+    setL1Chains(updated);
+    saveL1Chain(index, chainId, updated[index].name, updated[index].url);
   };
 
   const handlePayL1 = async () => {
-    if (!l1TestToken.trim()) { Alert.alert('', 'Enter a token ID'); return; }
-    if (!l1TestAmount || parseFloat(l1TestAmount) <= 0) { Alert.alert('', 'Enter valid amount'); return; }
-    if (!l1TestDest.trim()) { Alert.alert('', 'Enter L1 destination address'); return; }
+    if (!l1TestToken.trim()) { Alert.alert('', t('settings.errEnterToken')); return; }
+    if (!l1TestAmount || parseFloat(l1TestAmount) <= 0) { Alert.alert('', t('settings.errAmount')); return; }
+    if (!l1TestDest.trim()) { Alert.alert('', t('settings.errL1Dest')); return; }
 
     setL1TestSub(true);
     try {
@@ -91,25 +113,25 @@ export default function SettingsScreen() {
       };
       const res = await httpService.request('regSubtangle', 'POST', payload);
       if (res.success) {
-        Alert.alert('Success', `Bridged ${l1TestAmount} to L1 chain`);
+        Alert.alert(t('keys.successHead'), t('settings.bridged', { amount: l1TestAmount }));
         setL1TestAmount(''); setL1TestDest('');
       } else {
-        Alert.alert('Error', res.error || 'Bridge failed');
+        Alert.alert(t('keys.errorHead'), res.error || t('settings.bridgeFailed'));
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      Alert.alert(t('keys.errorHead'), e.message);
     } finally {
       setL1TestSub(false);
     }
   };
 
   const handlePayBackL1 = async () => {
-    if (!l1TestToken.trim()) { Alert.alert('', 'Enter a token ID'); return; }
-    if (!l1TestAmount || parseFloat(l1TestAmount) <= 0) { Alert.alert('', 'Enter valid amount'); return; }
-    if (!l1TestDest.trim()) { Alert.alert('', 'Enter L0 destination address'); return; }
+    if (!l1TestToken.trim()) { Alert.alert('', t('settings.errEnterToken')); return; }
+    if (!l1TestAmount || parseFloat(l1TestAmount) <= 0) { Alert.alert('', t('settings.errAmount')); return; }
+    if (!l1TestDest.trim()) { Alert.alert('', t('settings.errL0Dest')); return; }
 
-    const chain = l1Chains[activeL1Index];
-    if (!chain) { Alert.alert('Error', 'No L1 chain selected'); return; }
+    const chain = l1Chains.find((c) => c.chainId === activeChainId);
+    if (!chain) { Alert.alert(t('keys.errorHead'), t('order.noL1')); return; }
 
     setL1TestSub(true);
     try {
@@ -119,15 +141,15 @@ export default function SettingsScreen() {
         toAddress: l1TestDest.trim(),
         fromAddress: undefined,
       };
-      const res = await httpService.requestL1ByIndex(activeL1Index, 'withdrawTransaction', 'POST', payload);
+      const res = await httpService.requestL1ByChainId(activeChainId, 'withdrawTransaction', 'POST', payload);
       if (res.success) {
-        Alert.alert('Success', `Withdrawal of ${l1TestAmount} from L1 initiated`);
+        Alert.alert(t('keys.successHead'), t('settings.withdrawalInitiated', { amount: l1TestAmount }));
         setL1TestAmount(''); setL1TestDest('');
       } else {
-        Alert.alert('Error', res.error || 'Withdrawal failed');
+        Alert.alert(t('keys.errorHead'), res.error || t('settings.withdrawalFailed'));
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message);
+      Alert.alert(t('keys.errorHead'), e.message);
     } finally {
       setL1TestSub(false);
     }
@@ -138,9 +160,9 @@ export default function SettingsScreen() {
     httpService.setTestnet(false);
     httpService.setServerUrl(httpService.getDefaultServerUrl());
     httpService.setL1Chains(DEFAULT_L1_CHAINS_TESTNET.slice());
-    httpService.setActiveL1Index(0);
+    httpService.setActiveL1ChainId(DEFAULT_L1_CHAINS_TESTNET[0].chainId);
     setL1Chains(httpService.getL1Chains());
-    setActiveL1Index(httpService.getActiveL1Index());
+    setActiveChainId(httpService.getActiveL1ChainId());
     setServerUrl(httpService.getDefaultServerUrl());
     Alert.alert('', t('settings.resetDone'));
   };
@@ -172,24 +194,28 @@ export default function SettingsScreen() {
       </View>
 
       <View style={s.card}>
-        <Text style={s.cardLabel}>L1 Chains</Text>
-        <Text style={s.settingDesc}>Configure L1 order match chains</Text>
+        <Text style={s.cardLabel}>{t('settings.l1Chains')}</Text>
+        <Text style={s.settingDesc}>{t('settings.l1ChainsDesc')}</Text>
 
         {l1Chains.map((chain, i) => (
-          <TouchableOpacity key={i} style={[s.chainRow, activeL1Index === i && s.chainRowActive]}
-            onPress={() => httpService.setActiveL1Index(i)} testID={`l1-chain-row-${i}`}>
-            <View style={s.chainRadio}>{activeL1Index === i && <View style={s.chainRadioDot} />}</View>
+          <TouchableOpacity key={chain.chainId} style={[s.chainRow, activeChainId === chain.chainId && s.chainRowActive]}
+            onPress={() => httpService.setActiveL1ChainId(chain.chainId)} testID={`l1-chain-row-${i}`}>
+            <View style={s.chainRadio}>{activeChainId === chain.chainId && <View style={s.chainRadioDot} />}</View>
             <View style={s.chainFields}>
               <TextInput style={s.chainInput} value={chain.name}
                 onChangeText={(v) => updateChainName(i, v)}
-                placeholder="Name" placeholderTextColor={s.placeholder.color}
+                placeholder={t('settings.namePh')} placeholderTextColor={s.placeholder.color}
                 autoCapitalize="none" />
+              <TextInput style={s.chainInput} value={chain.chainId}
+                onChangeText={(v) => updateChainId(i, v)}
+                placeholder={t('settings.chainIdPh')} placeholderTextColor={s.placeholder.color}
+                autoCapitalize="none" autoCorrect={false} />
               <TextInput style={s.chainInput} value={chain.url}
                 onChangeText={(v) => updateChainUrl(i, v)}
                 placeholder="https://..." placeholderTextColor={s.placeholder.color}
                 autoCapitalize="none" autoCorrect={false} keyboardType="url" />
             </View>
-            <ChainBadge layer={1} name="active" />
+            <ChainBadge layer={1} name={t('settings.active')} />
             <TouchableOpacity style={s.removeBtn} onPress={() => removeL1Chain(i)}>
               <Text style={s.removeBtnText}>X</Text>
             </TouchableOpacity>
@@ -197,8 +223,11 @@ export default function SettingsScreen() {
         ))}
 
         <View style={s.addChainRow}>
+          <TextInput style={s.chainInputSmall} value={newChainId}
+            onChangeText={setNewChainId} placeholder={t('settings.chainIdAddPh')} placeholderTextColor={s.placeholder.color}
+            autoCapitalize="none" autoCorrect={false} testID="new-chain-id-input" />
           <TextInput style={s.chainInputSmall} value={newChainName}
-            onChangeText={setNewChainName} placeholder="Name" placeholderTextColor={s.placeholder.color}
+            onChangeText={setNewChainName} placeholder={t('settings.namePh')} placeholderTextColor={s.placeholder.color}
             autoCapitalize="none" />
           <TextInput style={s.chainInputSmall} value={newChainUrl}
             onChangeText={setNewChainUrl} placeholder="https://..." placeholderTextColor={s.placeholder.color}
@@ -224,8 +253,8 @@ export default function SettingsScreen() {
       <View style={s.card}>
         <TouchableOpacity style={s.settingRow} onPress={() => setShowDev(!showDev)} testID="developer-toggle">
           <View style={s.settingLeft}>
-            <Text style={s.settingLabel}>Developer</Text>
-            <Text style={s.settingDesc}>L1 bridge &amp; withdrawal test harness</Text>
+            <Text style={s.settingLabel}>{t('settings.dev')}</Text>
+            <Text style={s.settingDesc}>{t('settings.devDesc')}</Text>
           </View>
           <Text style={s.devChevron}>{showDev ? '▾' : '▸'}</Text>
         </TouchableOpacity>
@@ -233,20 +262,20 @@ export default function SettingsScreen() {
         {showDev && (
           <>
             <Text style={s.settingDesc} testID="l1-test-desc">
-              Test paying L1 chain and paying back from L1 to Layer 0
+              {t('settings.payDesc')}
             </Text>
             <View style={[s.card, s.devInner]}>
-              <Text style={s.cardLabel}>Select L1 Chain</Text>
+              <Text style={s.cardLabel}>{t('settings.selectL1Chain')}</Text>
               {l1Chains.length === 0 ? (
-                <Text style={s.settingDesc}>No L1 chains configured.</Text>
+                <Text style={s.settingDesc}>{t('settings.noL1Chains')}</Text>
               ) : (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} testID="l1-chain-list">
                   {l1Chains.map((chain, i) => (
-                    <TouchableOpacity key={i} style={[s.tokenChip, activeL1Index === i && s.tokenChipActive]}
-                      onPress={() => httpService.setActiveL1Index(i)} testID={`l1-chain-chip-${i}`}>
+                    <TouchableOpacity key={chain.chainId} style={[s.tokenChip, activeChainId === chain.chainId && s.tokenChipActive]}
+                      onPress={() => httpService.setActiveL1ChainId(chain.chainId)} testID={`l1-chain-chip-${i}`}>
                       <ChainBadge layer={1} />
-                      <Text style={[s.tokenChipName, activeL1Index === i && s.tokenChipNameActive]}>{chain.name}</Text>
-                      <Text style={[s.tokenChipBal, activeL1Index === i && s.tokenChipBalActive]}>{chain.url}</Text>
+                      <Text style={[s.tokenChipName, activeChainId === chain.chainId && s.tokenChipNameActive]}>{chain.name}</Text>
+                      <Text style={[s.tokenChipBal, activeChainId === chain.chainId && s.tokenChipBalActive]}>{chain.chainId} · {chain.url}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -255,57 +284,57 @@ export default function SettingsScreen() {
 
             <View style={s.modeRow} testID="l1-mode-tabs">
               <TouchableOpacity style={[s.modeTab, l1TestMode === 'pay' && s.modeTabActive]} onPress={() => setL1TestMode('pay')} testID="l1-mode-pay">
-                <Text style={[s.modeTabText, l1TestMode === 'pay' && s.modeTabTextActive]}>Pay L1</Text>
+                <Text style={[s.modeTabText, l1TestMode === 'pay' && s.modeTabTextActive]}>{t('settings.payMode')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[s.modeTab, l1TestMode === 'payback' && s.modeTabActive]} onPress={() => setL1TestMode('payback')} testID="l1-mode-payback">
-                <Text style={[s.modeTabText, l1TestMode === 'payback' && s.modeTabTextActive]}>Pay Back L1→L0</Text>
+                <Text style={[s.modeTabText, l1TestMode === 'payback' && s.modeTabTextActive]}>{t('settings.paybackMode')}</Text>
               </TouchableOpacity>
             </View>
 
             {l1TestMode === 'pay' ? (
               <View style={[s.card, s.devInner]} testID="l1-pay-section">
-                <Text style={s.sectionLabel}>Pay L1 Chain</Text>
-                <Text style={s.settingDesc}>Bridge tokens from Layer 0 to the selected L1 chain.</Text>
+                <Text style={s.sectionLabel}>{t('settings.paySection')}</Text>
+                <Text style={s.settingDesc}>{t('settings.paySectionDesc')}</Text>
                 <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>Token ID</Text>
+                  <Text style={s.fieldLabel}>{t('settings.fieldTokenId')}</Text>
                   <TextInput style={s.input} value={l1TestToken} onChangeText={setL1TestToken}
-                    placeholder="e.g. bc for BIG" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-pay-token-input" />
+                    placeholder={t('settings.bcPh')} placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-pay-token-input" />
                 </View>
                 <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>Amount</Text>
+                  <Text style={s.fieldLabel}>{t('settings.fieldAmount')}</Text>
                   <TextInput style={s.input} value={l1TestAmount} onChangeText={setL1TestAmount}
                     placeholder="0.00" keyboardType="decimal-pad" testID="l1-pay-amount-input" />
                 </View>
                 <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>L1 Destination Address</Text>
+                  <Text style={s.fieldLabel}>{t('settings.fieldL1Dest')}</Text>
                   <TextInput style={s.input} value={l1TestDest} onChangeText={setL1TestDest}
-                    placeholder="L1 address on order chain" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-pay-dest-input" />
+                    placeholder={t('settings.l1DestPh')} placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-pay-dest-input" />
                 </View>
                 <TouchableOpacity style={s.l1Btn} onPress={handlePayL1} disabled={l1TestSub} testID="l1-pay-button">
-                  <Text style={s.l1BtnText}>{l1TestSub ? 'Processing...' : 'Pay L1 Chain'}</Text>
+                  <Text style={s.l1BtnText}>{l1TestSub ? t('settings.processing') : t('settings.payL1Btn')}</Text>
                 </TouchableOpacity>
               </View>
             ) : (
               <View style={[s.card, s.devInner]} testID="l1-payback-section">
-                <Text style={s.sectionLabel}>Pay Back from L1 to L0</Text>
-                <Text style={s.settingDesc}>Withdraw tokens from the selected L1 chain back to Layer 0.</Text>
+                <Text style={s.sectionLabel}>{t('settings.paybackSection')}</Text>
+                <Text style={s.settingDesc}>{t('settings.paybackDesc')}</Text>
                 <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>Token ID</Text>
+                  <Text style={s.fieldLabel}>{t('settings.fieldTokenId')}</Text>
                   <TextInput style={s.input} value={l1TestToken} onChangeText={setL1TestToken}
-                    placeholder="e.g. bc for BIG" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-payback-token-input" />
+                    placeholder={t('settings.bcPh')} placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-payback-token-input" />
                 </View>
                 <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>Amount</Text>
+                  <Text style={s.fieldLabel}>{t('settings.fieldAmount')}</Text>
                   <TextInput style={s.input} value={l1TestAmount} onChangeText={setL1TestAmount}
                     placeholder="0.00" keyboardType="decimal-pad" testID="l1-payback-amount-input" />
                 </View>
                 <View style={s.fieldGroup}>
-                  <Text style={s.fieldLabel}>L0 Destination Address</Text>
+                  <Text style={s.fieldLabel}>{t('settings.fieldL0Dest')}</Text>
                   <TextInput style={s.input} value={l1TestDest} onChangeText={setL1TestDest}
-                    placeholder="L0 address" placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-payback-dest-input" />
+                    placeholder={t('settings.l0DestPh')} placeholderTextColor={s.placeholder.color} autoCapitalize="none" testID="l1-payback-dest-input" />
                 </View>
                 <TouchableOpacity style={s.l1Btn} onPress={handlePayBackL1} disabled={l1TestSub} testID="l1-payback-button">
-                  <Text style={s.l1BtnText}>{l1TestSub ? 'Processing...' : 'Pay Back to L0'}</Text>
+                  <Text style={s.l1BtnText}>{l1TestSub ? t('settings.processing') : t('settings.paybackBtn')}</Text>
                 </TouchableOpacity>
               </View>
             )}

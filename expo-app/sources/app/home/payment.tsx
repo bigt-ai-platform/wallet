@@ -8,18 +8,21 @@ import { router } from "expo-router";
 import { useTranslation } from "react-i18next";
 import { useWallet } from "@/state/wallet";
 import { httpService } from "@/services/http";
-import { payOnLayer1, payOnLayer0, pegInToL1 } from "@/services/transaction";
+import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { WalletIcon } from "@/components/Icons";
 import ChainBadge from "@/components/ChainBadge";
 import SegmentedTabs from "@/components/SegmentedTabs";
 import { statusBadgeColor } from "@/utils/status";
+import { showAlert } from "@/utils/alert";
 import { MONO_FONT } from "@/constants/fonts";
 import type { WalletAccountItem, L1ChainConfig, TrackedRecord } from "@/types/api";
 
+/** A pay destination: Settlement (id '0') or an L1 order chain (on-chain id). */
 interface LayerOption {
-  value: number;
+  id: string;
   label: string;
+  layer: number;
 }
 
 interface LayerToken extends WalletAccountItem {
@@ -28,18 +31,18 @@ interface LayerToken extends WalletAccountItem {
 
 function LayerSelect({ label, value, options, onChange, testID }: {
   label: string;
-  value: number;
+  value: string;
   options: LayerOption[];
-  onChange: (value: number) => void;
+  onChange: (value: string) => void;
   testID?: string;
 }) {
   const [open, setOpen] = React.useState(false);
-  const current = options.find((o) => o.value === value);
+  const current = options.find((o) => o.id === value);
   return (
     <>
       <TouchableOpacity style={s.dropdown} onPress={() => setOpen(true)} testID={testID}>
         <View style={s.dropdownValue}>
-          <ChainBadge layer={value} />
+          {current && <ChainBadge layer={current.layer} />}
           <Text style={s.dropdownText}>{current?.label ?? options[0]?.label ?? ''}</Text>
         </View>
         <Text style={s.dropdownChevron}>▾</Text>
@@ -50,12 +53,12 @@ function LayerSelect({ label, value, options, onChange, testID }: {
             <Text style={s.modalTitle}>{label}</Text>
             {options.map((o) => (
               <TouchableOpacity
-                key={o.value}
-                style={[s.modalOption, o.value === value && s.modalOptionActive]}
-                onPress={() => { onChange(o.value); setOpen(false); }}
+                key={o.id}
+                style={[s.modalOption, o.id === value && s.modalOptionActive]}
+                onPress={() => { onChange(o.id); setOpen(false); }}
               >
-                <ChainBadge layer={o.value} />
-                <Text style={[s.modalOptionText, o.value === value && s.modalOptionTextActive]}>{o.label}</Text>
+                <ChainBadge layer={o.layer} />
+                <Text style={[s.modalOptionText, o.id === value && s.modalOptionTextActive]}>{o.label}</Text>
               </TouchableOpacity>
             ))}
           </View>
@@ -71,20 +74,21 @@ function TokenSelect({ value, options, onChange, testID }: {
   onChange: (token: LayerToken) => void;
   testID?: string;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
   return (
     <>
       <TouchableOpacity style={s.dropdown} onPress={() => setOpen(true)} testID={testID}>
         <View style={s.dropdownValue}>
           {value && <ChainBadge layer={value.layer} />}
-          <Text style={s.dropdownText}>{value ? `${value.tokenname} (${value.balance})` : 'Select token'}</Text>
+          <Text style={s.dropdownText}>{value ? `${value.tokenname} (${value.balance})` : t('transaction.selectPlaceholder')}</Text>
         </View>
         <Text style={s.dropdownChevron}>▾</Text>
       </TouchableOpacity>
       <Modal visible={open} transparent animationType="fade" onRequestClose={() => setOpen(false)}>
         <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setOpen(false)}>
           <View style={s.modalSheet}>
-            <Text style={s.modalTitle}>Select Token</Text>
+            <Text style={s.modalTitle}>{t('transaction.selectToken')}</Text>
             {options.map((t) => (
               <TouchableOpacity
                 key={`${t.layer}-${t.tokenid}`}
@@ -116,7 +120,7 @@ export default function TransactionScreen() {
   const [memo, setMemo] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [loadingTokens, setLoadingTokens] = React.useState(false);
-  const [activeTab, setActiveTab] = React.useState<'send' | 'history' | 'payments' | 'bridge'>('send');
+  const [activeTab, setActiveTab] = React.useState<'send' | 'history' | 'payments'>('send');
   const [txHistory, setTxHistory] = React.useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = React.useState(false);
   const [historyLayer, setHistoryLayer] = React.useState(-1); // -1 = all, 0 = L0, 1..N = L1 chains
@@ -126,19 +130,21 @@ export default function TransactionScreen() {
   const [unlockPwd, setUnlockPwd] = React.useState("");
   const [unlocking, setUnlocking] = React.useState(false);
 
-  // Bridge (L0 -> L1 peg-in) form
-  const [bridgeToken, setBridgeToken] = React.useState("bc");
-  const [bridgeDest, setBridgeDest] = React.useState("");
-  const [bridgeSub, setBridgeSub] = React.useState(false);
-
   const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
-  // Payment routing layers: 0 = Layer 0 (L0/settlement), 1..N = the configured
-  // L1 chains. Both the source and destination default to L0.
-  const [fromLayer, setFromLayer] = React.useState(0);
-  const [toLayer, setToLayer] = React.useState(0);
+  // Payment routing: the recipient is paid on an explicit chain. Settlement is
+  // the special destination id '0'; every L1 order chain is its on-chain id.
+  // Sendable tokens are those the wallet holds on that chain.
+  const [destChainId, setDestChainId] = React.useState<string>('0');
   React.useEffect(() => httpService.subscribeL1Change(() => {
     setL1Chains(httpService.getL1Chains());
   }), []);
+
+  // If the configured L1 chain set changes (add/remove), reload balances so the
+  // per-chain token buckets match the current chain list.
+  const l1ChainKey = l1Chains.map((c) => c.chainId).join(',');
+  React.useEffect(() => {
+    if (publicInfo && isUnlocked) loadTokens();
+  }, [l1ChainKey]);
 
   React.useEffect(() => {
     if (publicInfo && isUnlocked) { loadTokens(); loadHistory(); }
@@ -162,28 +168,52 @@ export default function TransactionScreen() {
           (l1.success && l1.data ? l1.data : []).forEach((t) => all.push({ ...t, layer: i + 1 }));
         } catch (e) { /* L1 unreachable — skip */ }
       }
-      // Always offer BIG (the base token) even when the wallet holds no
-      // balance yet, so a fresh wallet still defaults to a sendable token.
-      if (!all.some((t) => t.tokenid === 'bc')) {
-        all.unshift({
-          tokenid: 'bc',
-          tokenname: 'BIG',
-          balance: '0',
-          confirmedBalance: '0',
-          unconfirmedBalance: '0',
-          decimals: 8,
-          layer: 0,
-        });
-      }
       setTokens(all);
-      if (all.length > 0 && !selectedToken) {
-        // Default to BIG (tokenid = bc) when present, otherwise the first token.
-        const big = all.find((t) => t.tokenid === 'bc');
-        setSelectedToken(big || all[0]);
-      }
     } catch (e) { console.error("Error loading tokens:", e); }
     finally { setLoadingTokens(false); }
   };
+
+  // Chains the recipient can be paid on.
+  const layerOptions = React.useMemo<LayerOption[]>(() => [
+    { id: '0', label: t('transaction.settlement'), layer: 0 },
+    ...l1Chains.map((chain, i) => ({ id: chain.chainId, label: chain.name, layer: i + 1 })),
+  ], [l1Chains, t]);
+
+  // Numeric layer (0 = L0, i+1 = i-th configured L1 chain) of the destination.
+  const destLayer = React.useMemo(() => {
+    if (destChainId === '0') return 0;
+    const idx = l1Chains.findIndex((c) => c.chainId === destChainId);
+    return idx >= 0 ? idx + 1 : 0;
+  }, [destChainId, l1Chains]);
+
+  // Sendable tokens on the destination chain. Always offer BIG (the base
+  // token) on an otherwise-empty chain so a fresh wallet still has a
+  // sendable token to pick.
+  const tokenOptions = React.useMemo<LayerToken[]>(() => {
+    const onLayer = tokens.filter((t) => t.layer === destLayer);
+    if (onLayer.length > 0) return onLayer;
+    return [{
+      tokenid: 'bc',
+      tokenname: 'BIG',
+      balance: '0',
+      confirmedBalance: '0',
+      unconfirmedBalance: '0',
+      decimals: 8,
+      layer: destLayer,
+    }];
+  }, [tokens, destLayer]);
+
+  // Keep the selected token valid for the destination chain: prefer BIG when
+  // present, otherwise the first token held on that chain.
+  React.useEffect(() => {
+    const preferred = tokenOptions.find((t) => t.tokenid === 'bc') || tokenOptions[0];
+    setSelectedToken((prev) =>
+      (prev && prev.layer === destLayer
+        && tokenOptions.some((o) => o.tokenid === prev.tokenid && o.layer === prev.layer))
+        ? prev
+        : preferred ?? null
+    );
+  }, [destLayer, tokens]);
 
   const loadHistory = async () => {
     if (!publicInfo?.address) return;
@@ -220,34 +250,43 @@ export default function TransactionScreen() {
     finally { setLoadingHistory(false); }
   };
 
-  const loadPayments = async (isRefresh = false) => {
-    if (isRefresh) setRefreshingPayments(true);
+  const loadPayments = async (fromServer = false, silent = false) => {
+    if (fromServer && !silent) setRefreshingPayments(true);
     try {
-      if (isRefresh) {
+      if (fromServer) {
         const updated = await refreshAllStatuses(publicInfo?.address);
         setPayments(updated.filter((r) => r.kind === 'payment'));
       } else {
         setPayments(listPayments());
       }
     } catch (e) { /* ignore */ }
-    finally { setRefreshingPayments(false); }
+    finally { if (!silent) setRefreshingPayments(false); }
   };
 
+  // While the Payments tab is open, poll the chain so a freshly sent payment
+  // does not sit at "pending / MEMPOOL" until the user taps Refresh manually.
   React.useEffect(() => {
-    if (activeTab === 'payments') loadPayments();
+    if (activeTab !== 'payments') return;
+    loadPayments(true, true);
+    const timer = setInterval(() => {
+      if (listPayments().some((p) => p.status === 'pending')) {
+        loadPayments(true, true);
+      }
+    }, 5000);
+    return () => clearInterval(timer);
   }, [activeTab]);
 
   const handleSend = async () => {
     const wallet = getUnlockedWallet();
     const password = getPassword();
-    if (!wallet || !isUnlocked) { Alert.alert("Error", "Please unlock your wallet first"); return; }
-    if (!selectedToken) { Alert.alert("Error", "Please select a token"); return; }
-    if (!toAddress) { Alert.alert("Error", "Please enter recipient address"); return; }
-    if (!amount || parseFloat(amount) <= 0) { Alert.alert("Error", "Please enter valid amount"); return; }
+    if (!wallet || !isUnlocked) { showAlert(t('transaction.error'), t('transaction.errUnlock')); return; }
+    if (!selectedToken) { showAlert(t('transaction.error'), t('transaction.errSelectToken')); return; }
+    if (!toAddress) { showAlert(t('transaction.error'), t('transaction.errRecipient')); return; }
+    if (!amount || parseFloat(amount) <= 0) { showAlert(t('transaction.error'), t('transaction.errAmount')); return; }
 
     const amountNum = parseFloat(amount);
     const balance = parseFloat(selectedToken.balance);
-    if (amountNum > balance) { Alert.alert("Error", "Insufficient balance"); return; }
+    if (amountNum > balance) { showAlert(t('transaction.error'), t('transaction.insufficient')); return; }
 
     const decimals = selectedToken.decimals || 8;
     const satoshis = Math.floor(amountNum * Math.pow(10, decimals));
@@ -255,17 +294,16 @@ export default function TransactionScreen() {
     // Confirm the send. react-native-web's Alert.alert ignores the buttons
     // array, so on web use window.confirm (which Playwright/browsers can drive);
     // on native keep the Alert with Cancel/Send buttons.
+    const confirmBody = t('transaction.confirmBody', { amount, token: selectedToken.tokenname, to: toAddress });
     const confirmed = await new Promise<boolean>((resolve) => {
       if (Platform.OS === "web") {
         resolve(
-          typeof window !== "undefined" && window.confirm(
-            `Send ${amount} ${selectedToken.tokenname} to:\n${toAddress}`,
-          ),
+          typeof window !== "undefined" && window.confirm(confirmBody),
         );
       } else {
-        Alert.alert("Confirm Transaction", `Send ${amount} ${selectedToken.tokenname} to:\n${toAddress}`, [
-          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-          { text: "Send", onPress: () => resolve(true) },
+        Alert.alert(t('transaction.confirmTitle'), confirmBody, [
+          { text: t('transaction.cancel'), style: "cancel", onPress: () => resolve(false) },
+          { text: t('transaction.send_'), onPress: () => resolve(true) },
         ]);
       }
     });
@@ -274,7 +312,7 @@ export default function TransactionScreen() {
     setLoading(true);
     try {
       let result: { success: boolean; error?: string; data?: string };
-      if (toLayer === 0) {
+      if (selectedToken.layer === 0) {
         // Layer 0: use the SDK wallet (correct getOutputs format, fee
         // included) so the wallet's funded UTXOs can be spent.
         const txHash = await payOnLayer0({
@@ -287,8 +325,8 @@ export default function TransactionScreen() {
         result = { success: true, data: txHash };
       } else {
         // L1 chain: use the SDK wallet pointed at the selected L1 server.
-        const chain = l1Chains[toLayer - 1];
-        if (!chain) throw new Error("No L1 chain selected");
+        const chain = l1Chains[selectedToken.layer - 1];
+        if (!chain) throw new Error(t('transaction.errNoL1'));
         const txHash = await payOnLayer1({
           privateKeyHex: wallet.wallet.privateKey,
           l1Url: chain.url,
@@ -299,7 +337,7 @@ export default function TransactionScreen() {
         });
         result = { success: true, data: txHash };
       }
-      if (!result.success) throw new Error(result.error || "Transaction failed");
+      if (!result.success) throw new Error(result.error || t('transaction.errFailed'));
       const txHash = result.data || "";
       recordPayment({
         txHash,
@@ -310,41 +348,25 @@ export default function TransactionScreen() {
         fromAddress: publicInfo!.address,
         toAddress,
         memo: memo || undefined,
-        layer: toLayer,
+        layer: selectedToken.layer,
       });
       setPayments(listPayments());
-      Alert.alert("Success", `Tx sent!\nTracking: ${txHash.slice(0, 12)}...`);
+      showAlert(t('transaction.success'), t('transaction.successBody', { hash: txHash.slice(0, 12) }));
       setToAddress(""); setAmount(""); setMemo(""); loadTokens(); loadHistory();
     } catch (error) {
-      Alert.alert("Error", error instanceof Error ? error.message : "Failed");
+      showAlert(t('transaction.error'), error instanceof Error ? error.message : t('transaction.errFailed'));
     } finally { setLoading(false); }
   };
 
-  const handleBridge = async () => {
-    const wallet = getUnlockedWallet();
-    if (!wallet || !isUnlocked) { Alert.alert("Error", "Please unlock your wallet first"); return; }
-    if (!bridgeToken.trim()) { Alert.alert("Error", "Please enter a token ID"); return; }
-    if (!bridgeDest.trim()) { Alert.alert("Error", "Please enter an L1 destination address"); return; }
-    const chain = httpService.getActiveL1Chain();
-    const chainId = chain?.chainId || "ordermatch";
-    setBridgeSub(true);
+  const handleUnlock = async () => {
+    if (!unlockPwd || unlocking) return;
+    setUnlocking(true);
     try {
-      const txHash = await pegInToL1({
-        privateKeyHex: wallet.wallet.privateKey,
-        l1Address: bridgeDest.trim(),
-        tokenId: bridgeToken.trim(),
-        chainId,
-      });
-      Alert.alert("Bridge Submitted", `Locked a ${bridgeToken.trim()} UTXO to the vault for L1 chain "${chainId}".\nTx: ${txHash.slice(0, 12)}...`);
-      setBridgeDest("");
-    } catch (e: any) { Alert.alert("Error", e.message); }
-    finally { setBridgeSub(false); }
+      await unlockWallet(unlockPwd);
+    } catch (e: any) {
+      showAlert(t('transaction.error'), e.message || t('keys.wrongPassword'));
+    } finally { setUnlocking(false); }
   };
-
-  const layerOptions: LayerOption[] = [
-    { value: 0, label: 'Settlement' },
-    ...l1Chains.map((chain, i) => ({ value: i + 1, label: chain.name })),
-  ];
 
   if (!isUnlocked) {
     const hasWallet = publicInfo?.hasEncryptedWallet;
@@ -358,42 +380,37 @@ export default function TransactionScreen() {
             <>
               <Text style={s.lockedTitle}>{t('transaction.locked')}</Text>
               <Text style={s.lockedSub}>{t('transaction.lockedSub')}</Text>
-              <Text style={s.walletLabel}>Wallet: {publicInfo?.address?.slice(0, 10)}...</Text>
+              <Text style={s.walletLabel}>{t('transaction.walletLabel', { address: `${(publicInfo?.address ?? '').slice(0, 10)}...` })}</Text>
               <TextInput
                 style={s.unlockInput}
                 value={unlockPwd}
                 onChangeText={setUnlockPwd}
-                placeholder="Enter wallet password"
+                placeholder={t('wallet.passwordPlaceholder')}
                 placeholderTextColor={s.placeholder.color}
                 secureTextEntry
                 autoCapitalize="none"
+                returnKeyType="go"
+                onSubmitEditing={handleUnlock}
+                testID="wallet-password-input"
               />
               <TouchableOpacity
                 style={[s.primaryBtn, unlocking && s.btnDisabled]}
-                onPress={async () => {
-                  if (!unlockPwd) return;
-                  setUnlocking(true);
-                  try {
-                    await unlockWallet(unlockPwd);
-                  } catch (e: any) {
-                    Alert.alert("Error", e.message || "Wrong password");
-                  } finally { setUnlocking(false); }
-                }}
+                onPress={handleUnlock}
                 disabled={unlocking}
               >
-                <Text style={s.primaryBtnText}>{unlocking ? "Unlocking..." : t('transaction.unlock')}</Text>
+                <Text style={s.primaryBtnText}>{unlocking ? t('keys.unlocking') : t('transaction.unlock')}</Text>
               </TouchableOpacity>
             </>
           ) : (
             // No wallet at all — direct create/import
             <>
-              <Text style={s.lockedTitle}>No Wallet Found</Text>
-              <Text style={s.lockedSub}>Create or import a wallet to start sending payments</Text>
+              <Text style={s.lockedTitle}>{t('wallet.noWalletFound')}</Text>
+              <Text style={s.lockedSub}>{t('wallet.noWalletFoundSub')}</Text>
               <TouchableOpacity style={s.primaryBtn} onPress={() => router.push("/home/keys")}>
-                <Text style={s.primaryBtnText}>Create Wallet</Text>
+                <Text style={s.primaryBtnText}>{t('wallet.createWallet')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.secondaryBtn} onPress={() => router.push("/home/keys")}>
-                <Text style={s.secondaryBtnText}>Import Existing Wallet</Text>
+                <Text style={s.secondaryBtnText}>{t('wallet.importExistingWallet')}</Text>
               </TouchableOpacity>
             </>
           )}
@@ -406,10 +423,9 @@ export default function TransactionScreen() {
     <View style={s.container} testID="transaction-screen">
       <SegmentedTabs
         tabs={[
-          { key: 'send', label: 'Send' },
-          { key: 'history', label: 'History' },
-          { key: 'payments', label: 'Payments' },
-          { key: 'bridge', label: 'Bridge' },
+          { key: 'send', label: t('transaction.tabSend') },
+          { key: 'history', label: t('transaction.tabHistory') },
+          { key: 'payments', label: t('transaction.tabPayments') },
         ]}
         active={activeTab}
         onChange={(k) => setActiveTab(k as typeof activeTab)}
@@ -419,11 +435,17 @@ export default function TransactionScreen() {
         <ScrollView contentContainerStyle={s.content}>
           <Text style={s.pageTitle}>{t('transaction.title')}</Text>
           <View style={s.card}>
+            <Text style={s.cardLabel}>{t('transaction.destChain')}</Text>
+            <LayerSelect label={t('transaction.destChain')} value={destChainId} options={layerOptions}
+              onChange={(id) => setDestChainId(id)} testID="dest-chain-select" />
+            <Text style={s.hint}>{t('transaction.destChainHint')}</Text>
+          </View>
+          <View style={s.card}>
             <Text style={s.cardLabel}>{t('transaction.selectToken')}</Text>
             {loadingTokens ? (
               <ActivityIndicator size="small" color={s.loader.color} />
             ) : (
-              <TokenSelect value={selectedToken} options={tokens} onChange={setSelectedToken} testID="token-select" />
+              <TokenSelect value={selectedToken} options={tokenOptions} onChange={setSelectedToken} testID="token-select" />
             )}
           </View>
           <View style={s.card}>
@@ -445,16 +467,6 @@ export default function TransactionScreen() {
               placeholder={t('transaction.memo')} placeholderTextColor={s.placeholder.color}
               multiline numberOfLines={3} testID="memo-input" />
           </View>
-          <View style={s.card}>
-            <Text style={s.cardLabel}>From Layer</Text>
-            <LayerSelect label="From Layer" value={fromLayer} options={layerOptions} onChange={setFromLayer} testID="from-layer-select" />
-            <Text style={s.hint}>Layer holding the funds being sent.</Text>
-          </View>
-          <View style={s.card}>
-            <Text style={s.cardLabel}>To Layer</Text>
-            <LayerSelect label="To Layer" value={toLayer} options={layerOptions} onChange={setToLayer} testID="to-layer-select" />
-            <Text style={s.hint}>Layer the payment is submitted to. Payments on Settlement settle on Layer 0; payments on an L1 chain submit to that order chain.</Text>
-          </View>
           <TouchableOpacity style={[s.primaryBtn, (loading || !selectedToken) && s.btnDisabled]} onPress={handleSend} disabled={loading || !selectedToken}>
             <Text style={s.primaryBtnText}>{loading ? t('transaction.sending') : t('transaction.send')}</Text>
           </TouchableOpacity>
@@ -462,16 +474,16 @@ export default function TransactionScreen() {
       ) : activeTab === 'payments' ? (
         <ScrollView contentContainerStyle={s.content} testID="payments-tab">
           <View style={s.sectionHeader}>
-            <Text style={s.pageTitle}>Payment Tracking</Text>
+            <Text style={s.pageTitle}>{t('transaction.paymentTracking')}</Text>
             <TouchableOpacity onPress={() => loadPayments(true)} disabled={refreshingPayments}>
-              <Text style={s.refreshBtn}>{refreshingPayments ? '...' : 'Refresh'}</Text>
+              <Text style={s.refreshBtn}>{refreshingPayments ? '...' : t('order.refresh')}</Text>
             </TouchableOpacity>
           </View>
-          <Text style={s.desc}>Track the on-chain status of every payment sent from this wallet.</Text>
+          <Text style={s.desc}>{t('transaction.paymentDesc')}</Text>
           {payments.length === 0 ? (
             <View style={s.emptyCard}>
-              <Text style={s.emptyTitle}>No Payments Yet</Text>
-              <Text style={s.emptySub}>Payments sent from the Send tab will appear here with their live status.</Text>
+              <Text style={s.emptyTitle}>{t('transaction.paymentEmptyTitle')}</Text>
+              <Text style={s.emptySub}>{t('transaction.paymentEmptySub')}</Text>
             </View>
           ) : (
             payments.map((p) => {
@@ -487,7 +499,7 @@ export default function TransactionScreen() {
                     </View>
                     <View style={s.payMetaRow}>
                       <ChainBadge layer={p.layer ?? 0} size="sm" />
-                      <Text style={s.txId}>to {p.toAddress?.slice(0, 12)}...</Text>
+                      <Text style={s.txId}>{t('transaction.historyTo', { address: p.toAddress ? p.toAddress.slice(0, 12) : '' })}...</Text>
                     </View>
                     <Text style={s.txId} testID="payment-txhash">{p.txHash}</Text>
                     {p.statusDetail && <Text style={s.payDetail}>{p.statusDetail}</Text>}
@@ -497,39 +509,16 @@ export default function TransactionScreen() {
             })
           )}
         </ScrollView>
-      ) : activeTab === 'bridge' ? (
-        <ScrollView contentContainerStyle={s.content} testID="bridge-tab">
-          <Text style={s.pageTitle}>Bridge to L1</Text>
-          <Text style={s.desc}>Lock a Layer 0 token UTXO to the bridge vault; the L1 order chain mints wrapped tokens 1:1 to the destination address. One whole UTXO is locked per bridge.</Text>
-
-          <View style={s.card}>
-            <Text style={s.cardLabel}>Token ID</Text>
-            <TextInput style={s.input} value={bridgeToken} onChangeText={setBridgeToken}
-              placeholder="bc for BIG" placeholderTextColor={s.placeholder.color}
-              autoCapitalize="none" autoCorrect={false} testID="bridge-token-input" />
-          </View>
-
-          <View style={s.card}>
-            <Text style={s.cardLabel}>L1 Destination Address</Text>
-            <TextInput style={s.input} value={bridgeDest} onChangeText={setBridgeDest}
-              placeholder="L1 address on order chain" placeholderTextColor={s.placeholder.color}
-              autoCapitalize="none" autoCorrect={false} testID="bridge-dest-input" />
-          </View>
-
-          <TouchableOpacity style={s.l1Btn} onPress={handleBridge} disabled={bridgeSub} testID="bridge-submit-button">
-            <Text style={s.l1BtnText}>{bridgeSub ? 'Bridging...' : 'Bridge to L1'}</Text>
-          </TouchableOpacity>
-        </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={s.content} testID="history-tab">
-          <Text style={s.pageTitle}>Transaction History</Text>
+          <Text style={s.pageTitle}>{t('transaction.historyTitle')}</Text>
 
           {/* Filters */}
           <View style={s.card}>
-            <Text style={s.cardLabel}>Filter by Layer</Text>
+            <Text style={s.cardLabel}>{t('transaction.filterLayer')}</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }} testID="history-layer-filters">
               <TouchableOpacity style={[s.tokenChip, historyLayer === -1 && s.tokenChipActive]} onPress={() => setHistoryLayer(-1)} testID="history-layer-all">
-                <Text style={[s.tokenChipName, historyLayer === -1 && s.tokenChipNameActive]}>All</Text>
+                <Text style={[s.tokenChipName, historyLayer === -1 && s.tokenChipNameActive]}>{t('transaction.filterAll')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[s.tokenChip, historyLayer === 0 && s.tokenChipActive]} onPress={() => setHistoryLayer(0)} testID="history-layer-0">
                 <ChainBadge layer={0} />
@@ -542,9 +531,9 @@ export default function TransactionScreen() {
             </ScrollView>
           </View>
           <View style={s.card}>
-            <Text style={s.cardLabel}>Filter by To Address</Text>
+            <Text style={s.cardLabel}>{t('transaction.filterToAddress')}</Text>
             <TextInput style={s.input} value={historyToFilter} onChangeText={setHistoryToFilter}
-              placeholder="Recipient address" placeholderTextColor={s.placeholder.color}
+              placeholder={t('transaction.recipientPlaceholder')} placeholderTextColor={s.placeholder.color}
               autoCapitalize="none" autoCorrect={false} testID="history-to-filter" />
           </View>
 
@@ -552,8 +541,8 @@ export default function TransactionScreen() {
             <ActivityIndicator size="small" color={s.loader.color} style={{ padding: 24 }} />
           ) : txHistory.length === 0 ? (
             <View style={s.emptyCard}>
-              <Text style={s.emptyTitle}>No Transactions Yet</Text>
-              <Text style={s.emptySub}>Your transaction history will appear here after you send or receive tokens.</Text>
+              <Text style={s.emptyTitle}>{t('transaction.historyEmptyTitle')}</Text>
+              <Text style={s.emptySub}>{t('transaction.historyEmptySub')}</Text>
             </View>
           ) : (
             txHistory
@@ -573,7 +562,7 @@ export default function TransactionScreen() {
                       </View>
                       <View style={s.payMetaRow}>
                         <ChainBadge layer={tx.layer ?? 0} />
-                        <Text style={s.txId}>to {tx.address ? tx.address.slice(0, 16) : '...'}</Text>
+                        <Text style={s.txId}>{t('transaction.historyTo', { address: tx.address ? tx.address.slice(0, 16) : '...' })}</Text>
                       </View>
                       <Text style={s.txId}>{tx.txhash?.slice(0, 20) || '...'}</Text>
                     </View>
@@ -643,8 +632,6 @@ const s = StyleSheet.create((theme) => ({
   fieldGroup: { marginBottom: 14 },
   fieldLabel: { fontSize: 13, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 6 },
   sectionLabel: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 4 },
-  l1Btn: { backgroundColor: theme.colors.accent.purple, borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 4 },
-  l1BtnText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
   dropdown: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, paddingHorizontal: 12, paddingVertical: 10 },
   dropdownValue: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dropdownText: { fontSize: 14, color: theme.colors.text.primary },

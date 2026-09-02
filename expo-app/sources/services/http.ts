@@ -157,22 +157,28 @@ export class HttpService {
   }
 
   /**
-   * Index of the currently active L1 chain (single source of truth for all
-   * screens). Clamped to the configured chain list.
+   * The on-chain id of the currently active L1 chain (single source of truth
+   * for all screens). Falls back to the first configured chain; returns ''
+   * when none are configured.
    */
-  getActiveL1Index(): number {
-    const count = this.getL1Chains().length;
-    if (count === 0) return -1;
-    const stored = Number(device.get(STORAGE_KEYS.ACTIVE_L1));
-    const idx = Number.isFinite(stored) ? Math.floor(stored) : 0;
-    return Math.min(Math.max(idx, 0), count - 1);
+  getActiveL1ChainId(): string {
+    const chains = this.getL1Chains();
+    if (chains.length === 0) return '';
+    const activeId = (device.get(STORAGE_KEYS.ACTIVE_L1) ?? '').trim();
+    if (!activeId) return chains[0].chainId;
+    // Migration: an older build stored a numeric index here.
+    if (/^\d+$/.test(activeId)) {
+      const oldIdx = Math.min(Math.max(Number(activeId), 0), chains.length - 1);
+      return chains[oldIdx].chainId;
+    }
+    return chains.some((c) => c.chainId === activeId) ? activeId : chains[0].chainId;
   }
 
   /**
-   * Set the active L1 chain by index and notify subscribers.
+   * Set the active L1 chain by on-chain id and notify subscribers.
    */
-  setActiveL1Index(index: number): void {
-    device.set(STORAGE_KEYS.ACTIVE_L1, String(index));
+  setActiveL1ChainId(chainId: string): void {
+    device.set(STORAGE_KEYS.ACTIVE_L1, chainId);
     this.notifyL1Change();
   }
 
@@ -181,8 +187,8 @@ export class HttpService {
    */
   getActiveL1Chain(): L1ChainConfig | null {
     const chains = this.getL1Chains();
-    const idx = this.getActiveL1Index();
-    return idx >= 0 && idx < chains.length ? chains[idx] : null;
+    const id = this.getActiveL1ChainId();
+    return chains.find((c) => c.chainId === id) ?? null;
   }
 
   /**
@@ -214,12 +220,14 @@ export class HttpService {
   setTestnet(useTestnet: boolean): void {
     device.set(STORAGE_KEYS.USE_TESTNET, useTestnet.toString());
     this.setL1Chains(useTestnet ? DEFAULT_L1_CHAINS_TESTNET.slice() : DEFAULT_L1_CHAINS_MAINNET.slice());
-    this.setActiveL1Index(0);
+    const defaults = useTestnet ? DEFAULT_L1_CHAINS_TESTNET : DEFAULT_L1_CHAINS_MAINNET;
+    this.setActiveL1ChainId(defaults[0].chainId);
     this.notifyL1Change();
   }
 
   /**
-   * Get all configured L1 chains
+   * Get all configured L1 chains. Older configs saved without a chainId are
+   * back-filled on read so every chain is keyable by its unique on-chain id.
    */
   getL1Chains(): L1ChainConfig[] {
     const stored = device.get(STORAGE_KEYS.L1_CHAINS);
@@ -227,14 +235,18 @@ export class HttpService {
       try {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          return parsed.map((c, i) => ({
+            chainId: typeof c?.chainId === 'string' && c.chainId ? c.chainId : (i === 0 ? 'ordermatch' : `chain-${i}`),
+            name: c?.name || '',
+            url: c?.url || '',
+          }));
         }
       } catch { /* fall through */ }
     }
     const savedUrl = device.get(STORAGE_KEYS.L1_URL);
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
     const singleUrl = savedUrl || defaultL1Url(useTestnet);
-    return [{ name: 'Default', url: singleUrl }];
+    return [{ chainId: 'ordermatch', name: 'Default', url: singleUrl }];
   }
 
   /**
@@ -246,13 +258,20 @@ export class HttpService {
   }
 
   /**
-   * Add a new L1 chain
+   * Add a new L1 chain. chainId must be a non-empty, unique on-chain id
+   * ('0' is reserved for Layer 0/settlement). Returns a machine error code
+   * ('chainIdEmpty' | 'chainIdReserved' | 'chainIdExists') or null on success.
    */
-  addL1Chain(name: string, url: string): void {
+  addL1Chain(chainId: string, name: string, url: string): string | null {
+    const id = chainId.trim();
+    if (!id) return 'chainIdEmpty';
+    if (id === '0') return 'chainIdReserved';
     const chains = this.getL1Chains();
-    chains.push({ name, url });
+    if (chains.some((c) => c.chainId === id)) return 'chainIdExists';
+    chains.push({ chainId: id, name: name.trim(), url: url.trim() });
     this.setL1Chains(chains);
     this.notifyL1Change();
+    return null;
   }
 
   /**
@@ -260,27 +279,37 @@ export class HttpService {
    */
   removeL1Chain(index: number): void {
     const chains = this.getL1Chains();
-    if (index >= 0 && index < chains.length) {
-      chains.splice(index, 1);
-      this.setL1Chains(chains);
-      // Keep the active index pointing at a valid chain.
-      if (index === this.getActiveL1Index()) {
-        this.setActiveL1Index(Math.max(0, Math.min(this.getActiveL1Index(), chains.length - 1)));
-      }
-      this.notifyL1Change();
+    if (index < 0 || index >= chains.length) return;
+    const removed = chains[index];
+    chains.splice(index, 1);
+    this.setL1Chains(chains);
+    // If the removed chain was the active one, fall back to the first remaining.
+    if (removed.chainId === this.getActiveL1ChainId()) {
+      this.setActiveL1ChainId(chains.length > 0 ? chains[0].chainId : '');
     }
+    this.notifyL1Change();
   }
 
   /**
-   * Update an L1 chain at index
+   * Update an L1 chain at index. chainId must stay non-empty and unique among
+   * the other chains ('0' is reserved for Layer 0/settlement). Returns a
+   * machine error code or null on success.
    */
-  updateL1Chain(index: number, name: string, url: string): void {
+  updateL1Chain(index: number, chainId: string, name: string, url: string): string | null {
     const chains = this.getL1Chains();
-    if (index >= 0 && index < chains.length) {
-      chains[index] = { name, url };
-      this.setL1Chains(chains);
-      this.notifyL1Change();
+    if (index < 0 || index >= chains.length) return 'chainNotFound';
+    const id = chainId.trim();
+    if (!id) return 'chainIdEmpty';
+    if (id === '0') return 'chainIdReserved';
+    if (chains.some((c, i) => i !== index && c.chainId === id)) return 'chainIdExists';
+    const wasActive = chains[index].chainId === this.getActiveL1ChainId();
+    chains[index] = { chainId: id, name: name.trim(), url: url.trim() };
+    this.setL1Chains(chains);
+    if (wasActive) {
+      device.set(STORAGE_KEYS.ACTIVE_L1, id);
     }
+    this.notifyL1Change();
+    return null;
   }
 
   /**
@@ -612,6 +641,22 @@ export class HttpService {
       return { success: false, error: 'L1 chain not found' };
     }
     return this.request(endpoint, method, body, chains[index].url);
+  }
+
+  /**
+   * Make HTTP request to a specific L1 chain by on-chain id
+   */
+  async requestL1ByChainId<T>(
+    chainId: string,
+    endpoint: string,
+    method: 'GET' | 'POST' = 'POST',
+    body?: any,
+  ): Promise<ApiResponse<T>> {
+    const chain = this.getL1Chains().find((c) => c.chainId === chainId);
+    if (!chain) {
+      return { success: false, error: 'L1 chain not found' };
+    }
+    return this.request(endpoint, method, body, chain.url);
   }
 
   /**

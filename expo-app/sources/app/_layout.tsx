@@ -10,6 +10,7 @@ import { WalletProvider } from '@/state/wallet';
 import Sidebar from '@/components/Sidebar';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
 import { MenuIcon } from '@/components/Icons';
+import { useTranslation } from 'react-i18next';
 import '../unistyles';
 import '../lib/i18n';
 
@@ -30,10 +31,11 @@ function AppShell() {
     const { width } = useWindowDimensions();
     const isDesktop = width >= DESKTOP_BREAKPOINT;
     const { setOpen } = useSidebar();
+    const { t } = useTranslation();
 
     const headerLeft = () => (
         <TouchableOpacity onPress={() => setOpen(true)} style={{ paddingLeft: 16, paddingRight: 8, paddingVertical: 4 }}
-            accessibilityRole="button" accessibilityLabel="Open navigation menu">
+            accessibilityRole="button" accessibilityLabel={t('sidebar.menu')}>
             <MenuIcon size={22} color={theme.colors.text.primary} />
         </TouchableOpacity>
     );
@@ -50,8 +52,8 @@ function AppShell() {
                             headerTintColor: theme.colors.text.primary,
                         }}
                     >
-                        <Stack.Screen name="home/payment" options={{ title: 'Payment' }} />
-                        <Stack.Screen name="home/keys" options={{ title: 'Keys' }} />
+                        <Stack.Screen name="home/payment" options={{ title: t('sidebar.payment') }} />
+                        <Stack.Screen name="home/keys" options={{ title: t('sidebar.keys') }} />
                         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                         <Stack.Screen name="balance" options={{ headerShown: false }} />
                         <Stack.Screen name="chart" options={{ headerShown: false }} />

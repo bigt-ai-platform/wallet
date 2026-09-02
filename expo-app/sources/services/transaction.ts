@@ -5,6 +5,7 @@
  */
 
 import { PQKey, TestParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigtangle-ts';
+import i18n from '../lib/i18n';
 // @ts-ignore
 import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
 // @ts-ignore
@@ -149,7 +150,7 @@ export async function createAndSignTransaction(
     if (!utxosResponse.success || !utxosResponse.data) {
       return {
         success: false,
-        error: 'Failed to fetch UTXOs',
+        error: i18n.t('errors.fetchUtxos'),
       };
     }
 
@@ -158,7 +159,7 @@ export async function createAndSignTransaction(
     if (!selected) {
       return {
         success: false,
-        error: 'Insufficient funds',
+        error: i18n.t('errors.insufficientFunds'),
       };
     }
 
@@ -239,7 +240,7 @@ export async function createAndSignTransaction(
     console.error('[Transaction] Error creating transaction:', error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to create transaction',
+      error: error instanceof Error ? error.message : i18n.t('errors.createTx'),
     };
   }
 }
@@ -273,19 +274,19 @@ export async function broadcastTransaction(rawTx: string): Promise<ApiResponse<s
     if (result.error || (result.errorcode !== undefined && result.errorcode !== 0)) {
       return {
         success: false,
-        error: result.message || result.error || 'Transaction rejected',
+        error: result.message || result.error || i18n.t('errors.txRejected'),
       };
     }
 
     return {
       success: true,
-      data: 'Transaction broadcasted',
+      data: i18n.t('errors.txBroadcast'),
     };
   } catch (error) {
     console.error('[Transaction] Error broadcasting:', error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to broadcast transaction',
+      error: error instanceof Error ? error.message : i18n.t('errors.broadcast'),
     };
   }
 }
@@ -328,7 +329,7 @@ export async function broadcastPegIn(rawTx: string): Promise<ApiResponse<string>
     console.error('[Transaction] Error submitting peg-in:', error);
     return {
       success: false,
-      error: error instanceof Error ? error.message : 'Failed to submit peg-in',
+      error: error instanceof Error ? error.message : i18n.t('errors.pegInFail'),
     };
   }
 }
@@ -358,7 +359,7 @@ export async function payOnLayer0(params: {
   // 1. Fetch spendable UTXOs (correct pubkey-hash format).
   const utxosResponse = await httpService.getOutputs(privateKeyHex);
   if (!utxosResponse.success || !utxosResponse.data) {
-    throw new Error('Failed to fetch UTXOs');
+    throw new Error(i18n.t('errors.fetchUtxos'));
   }
 
   // 2. Select confirmed UTXOs of the target token to cover amount + fee.
@@ -381,7 +382,7 @@ export async function payOnLayer0(params: {
     if (total >= needed) break;
   }
   if (total < needed) {
-    throw new Error('Insufficient funds');
+    throw new Error(i18n.t('errors.insufficientFunds'));
   }
 
   // 3. Build the transaction (addInput2 wires the correct outpoint).
@@ -415,7 +416,7 @@ export async function payOnLayer0(params: {
   const txHex = bytesToHex(tx.bitcoinSerialize());
   const broadcastResult = await broadcastTransaction(txHex);
   if (!broadcastResult.success) {
-    throw new Error(broadcastResult.error || 'Failed to broadcast transaction');
+    throw new Error(broadcastResult.error || i18n.t('errors.broadcast'));
   }
 
   return tx.getHash().toString();
@@ -444,21 +445,21 @@ export async function pegInToL1(params: {
 
   const bridge = await httpService.getBridgeInfo();
   if (!bridge.success || !bridge.data) {
-    throw new Error('Failed to fetch bridge info');
+    throw new Error(i18n.t('errors.bridgeInfo'));
   }
   if (!bridge.data.active) {
-    throw new Error('Bridge is not active on L0');
+    throw new Error(i18n.t('errors.bridgeInactive'));
   }
   const vaultScriptHex = bridge.data.vaultScriptHex;
   if (!vaultScriptHex) {
-    throw new Error('L0 bridge returned no vault script');
+    throw new Error(i18n.t('errors.noVault'));
   }
 
   // 1. Fetch spendable UTXOs and pick one confirmed, unspent UTXO of the token
   //    to lock 1:1 (processPegIn requires exactly one input and one output).
   const utxosResponse = await httpService.getOutputs(privateKeyHex);
   if (!utxosResponse.success || !utxosResponse.data) {
-    throw new Error('Failed to fetch UTXOs');
+    throw new Error(i18n.t('errors.fetchUtxos'));
   }
   const candidates = (utxosResponse.data as any[])
     .filter((u) => (u.tokenId || u.value?.tokenHex) === tokenId
@@ -470,7 +471,7 @@ export async function pegInToL1(params: {
       return av < bv ? 1 : av > bv ? -1 : 0;
     });
   if (candidates.length === 0) {
-    throw new Error('No spendable UTXO of the selected token to bridge');
+    throw new Error(i18n.t('errors.noBridgeUtxo'));
   }
   const source = candidates[0];
 
@@ -495,7 +496,7 @@ export async function pegInToL1(params: {
   const txHex = bytesToHex(tx.bitcoinSerialize());
   const broadcastResult = await broadcastPegIn(txHex);
   if (!broadcastResult.success) {
-    throw new Error(broadcastResult.error || 'Failed to submit peg-in transaction');
+    throw new Error(broadcastResult.error || i18n.t('errors.pegInSubmit'));
   }
 
   return tx.getHash().toString();
@@ -536,7 +537,7 @@ export async function payOnLayer1(params: {
     memo || ''
   );
   if (!tx) {
-    throw new Error('Failed to create L1 transaction');
+    throw new Error(i18n.t('errors.createL1Tx'));
   }
   return tx.getHash().toString();
 }
@@ -571,7 +572,7 @@ export async function orderOnLayer1(params: {
     : await wallet.sellOrder(null, tokenId, price, amount, null, null, baseToken, true);
 
   if (!tx) {
-    throw new Error('Failed to create order transaction');
+    throw new Error(i18n.t('errors.createOrderTx'));
   }
   return tx.getHash().toString();
 }
@@ -587,7 +588,7 @@ export async function sendTransaction(
   if (!createResult.success || !createResult.data) {
     return {
       success: false,
-      error: createResult.error || 'Failed to create transaction',
+      error: createResult.error || i18n.t('errors.createTx'),
     };
   }
 
@@ -596,7 +597,7 @@ export async function sendTransaction(
   if (!broadcastResult.success) {
     return {
       success: false,
-      error: broadcastResult.error || 'Failed to broadcast transaction',
+      error: broadcastResult.error || i18n.t('errors.broadcast'),
     };
   }
 

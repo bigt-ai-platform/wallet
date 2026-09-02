@@ -1,5 +1,5 @@
 const variant = process.env.APP_ENV || 'development';
-const name = "bigt.ai";
+const name = "Wallet";
 const bundleId = {
     development: "com.example.bapp.dev",
     preview: "com.example.bapp.preview",

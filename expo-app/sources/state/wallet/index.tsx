@@ -3,6 +3,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import { loadWallet, loadPlainWalletSync, isPlainWalletJson, type WalletFile } from '@/screens/wallet/WalletHelper';
 import { device } from '@/storage';
+import i18n from '@/lib/i18n';
 
 /**
  * Wallet State Management
@@ -167,7 +168,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       ]);
 
       if (!encryptedContent) {
-        throw new Error('No wallet found');
+        throw new Error(i18n.t('errors.noWalletFound'));
       }
 
       const wallet = await loadWallet(encryptedContent, password);
