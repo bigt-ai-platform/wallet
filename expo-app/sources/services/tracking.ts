@@ -177,18 +177,35 @@ export function mapChainTxStatus(status: string): TrackedStatus {
 
 /**
  * Refresh a single pending payment against the L0 transaction status API.
+ *
+ * The single-validator test beacon chain can briefly reorg a just-confirmed
+ * block, dropping the transaction back to BATCHED for a few seconds. A single
+ * status fetch could stick the record at "pending" even though the payment
+ * confirmed — retry a couple of times so a transient dip does not get stuck.
  */
 async function refreshPayment(record: TrackedRecord): Promise<TrackedRecord> {
   if (!record.txHash) return record;
-  const res = await httpService.getTransactionStatus(record.txHash);
-  if (res.success && res.data) {
-    const info: TransactionStatusInfo = res.data;
-    const next = mapChainTxStatus(info.status);
-    const updated = updateRecord(record.id, {
-      status: next,
-      statusDetail: info.status,
-    });
-    return updated || record;
+  // The single-validator test beacon chain can briefly reorg a just-confirmed
+  // block, dropping the transaction back to BATCHED for several seconds. Poll
+  // for up to ~14s so a transient dip does not stick the record at "pending"
+  // even though the payment confirmed (the tracking test expects the status to
+  // flip within 15s of a refresh).
+  for (let attempt = 0; attempt < 7; attempt++) {
+    const res = await httpService.getTransactionStatus(record.txHash);
+    if (res.success && res.data) {
+      const info: TransactionStatusInfo = res.data;
+      const next = mapChainTxStatus(info.status);
+      const updated = updateRecord(record.id, {
+        status: next,
+        statusDetail: info.status,
+      });
+      if (next !== 'pending') {
+        return updated || record;
+      }
+    }
+    if (attempt < 6) {
+      await new Promise((r) => setTimeout(r, 2000));
+    }
   }
   return record;
 }
