@@ -235,6 +235,15 @@ test.describe('Payment Tracking', () => {
     const confirmedTxHash = await getConfirmedTxHash();
     await seedTracking(page, [paymentRecord(confirmedTxHash)]);
 
+    // Record whether L0 getTransactionStatus is actually queried. Attach the
+    // listener BEFORE opening the Payments tab: the app auto-refreshes pending
+    // payments against that endpoint while the tab is open, so the first query
+    // can happen the moment the tab mounts.
+    let sawStatusQuery = false;
+    page.on('request', (req) => {
+      if (req.url().includes('getTransactionStatus') && req.method() === 'POST') sawStatusQuery = true;
+    });
+
     await goToPayment(page);
     await page.getByText('Payments', { exact: true }).click();
 
@@ -244,14 +253,12 @@ test.describe('Payment Tracking', () => {
     await expect(status).toBeAttached({ timeout: 10000 });
     await expect((await getElement(page, 'payment-txhash')).first()).toContainText(confirmedTxHash.slice(0, 16), { timeout: 5000 });
 
-    // Refresh pulls the live status from the L0 getTransactionStatus endpoint.
-    const getStatusReq = page.waitForRequest(
-      (req) => req.url().includes('getTransactionStatus') && req.method() === 'POST',
-      { timeout: 15000 }
-    );
+    // The app auto-refreshes pending payments against L0 getTransactionStatus
+    // (and a manual Refresh also triggers it), so the live status must flip
+    // from the seeded 'pending' to 'confirmed'.
     await page.getByText('Refresh').first().click();
-    await getStatusReq;
-    await expect(status).toHaveText('confirmed', { timeout: 15000 });
+    await expect(status).toHaveText('confirmed', { timeout: 20000 });
+    expect(sawStatusQuery).toBe(true);
   });
 });
 

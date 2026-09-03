@@ -204,15 +204,19 @@ export default function TransactionScreen() {
   }, [tokens, destLayer]);
 
   // Keep the selected token valid for the destination chain: prefer BIG when
-  // present, otherwise the first token held on that chain.
+  // present, otherwise the first token held on that chain. Whenever the token
+  // list reloads, REFRESH the selection with the freshly-loaded entry (same
+  // token+layer but current balance) — otherwise a token selected while its
+  // bucket was still empty keeps the stale 0 balance forever.
   React.useEffect(() => {
     const preferred = tokenOptions.find((t) => t.tokenid === 'bc') || tokenOptions[0];
-    setSelectedToken((prev) =>
-      (prev && prev.layer === destLayer
-        && tokenOptions.some((o) => o.tokenid === prev.tokenid && o.layer === prev.layer))
-        ? prev
-        : preferred ?? null
-    );
+    setSelectedToken((prev) => {
+      if (prev && prev.layer === destLayer) {
+        const fresh = tokenOptions.find((o) => o.tokenid === prev.tokenid && o.layer === prev.layer);
+        if (fresh) return fresh;
+      }
+      return preferred ?? null;
+    });
   }, [destLayer, tokens]);
 
   const loadHistory = async () => {
