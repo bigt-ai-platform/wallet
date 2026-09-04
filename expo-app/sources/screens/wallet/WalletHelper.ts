@@ -33,7 +33,8 @@ export interface Key {
 
 export interface WalletFile {
   wallet: Key;
-  credentials: CredentialEntry;
+  /** Optional wallet.bigt.ai web-login credentials (no longer generated for new wallets). */
+  credentials?: CredentialEntry;
 }
 
 export interface SerializedWallet {
@@ -44,7 +45,7 @@ export interface SerializedWallet {
     keyType?: string;
     network?: string;
   }>;
-  credentials: CredentialEntry;
+  credentials?: CredentialEntry;
 }
 
 /**
@@ -62,22 +63,6 @@ export function isPlainWalletJson(content: string): boolean {
 
 // Default context root for bigtangle network
 const DEFAULT_CONTEXT_ROOT = 'http://localhost:8088/';
-
-/**
- * Generate random bytes using crypto API
- */
-function getRandomBytes(length: number): Uint8Array {
-  const bytes = new Uint8Array(length);
-  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
-    crypto.getRandomValues(bytes);
-  } else {
-    // Fallback for environments without crypto
-    for (let i = 0; i < length; i++) {
-      bytes[i] = Math.floor(Math.random() * 256);
-    }
-  }
-  return bytes;
-}
 
 /**
  * Base58 on-chain address of a PQ key (the format the server stores/expects —
@@ -102,31 +87,25 @@ export async function createWallet(): Promise<WalletFile> {
     privateKey,
   };
 
-  const credentials: CredentialEntry = {
-    url: 'https://wallet.bigt.ai',
-    user: address + '@bigt.ai',
-    password: Utils.HEX.encode(getRandomBytes(32)),
-  };
-
-  return { wallet, credentials };
+  return { wallet };
 }
 
 export async function saveKeyToFile(
   walletFile: WalletFile,
   _password: string,
 ): Promise<string> {
-  const serialized: SerializedWallet = {
-    keys: [
-      {
-        address: walletFile.wallet.address,
-        pubkey: walletFile.wallet.pubkey,
-        privateKey: walletFile.wallet.privateKey,
-        keyType: walletFile.wallet.keyType ?? 'PQ',
-        network: walletFile.wallet.network,
-      },
-    ],
-    credentials: walletFile.credentials,
+  const keyEntry: SerializedWallet['keys'][number] = {
+    address: walletFile.wallet.address,
+    pubkey: walletFile.wallet.pubkey,
+    privateKey: walletFile.wallet.privateKey,
+    keyType: walletFile.wallet.keyType ?? 'PQ',
+    network: walletFile.wallet.network,
   };
+  const serialized: SerializedWallet = { keys: [keyEntry] };
+  // wallets created without credentials (new format) keep the file credential-free
+  if (walletFile.credentials) {
+    serialized.credentials = walletFile.credentials;
+  }
 
   const raw = JSON.stringify(serialized, null, 2);
 
@@ -301,13 +280,7 @@ export async function importPrivateKey(
     privateKey,
   };
 
-  const credentials: CredentialEntry = {
-    url: 'https://wallet.bigt.ai',
-    user: address + '@bigt.ai',
-    password: Utils.HEX.encode(getRandomBytes(32)),
-  };
-
-  return { wallet, credentials };
+  return { wallet };
 }
 
 /**
@@ -374,11 +347,6 @@ export async function importOldWalletFile(
       privateKey: Utils.HEX.encode(ecKey.getPrivKeyBytes()),
       keyType: 'EC',
       network: params.getId(),
-    },
-    credentials: {
-      url: 'https://wallet.bigt.ai',
-      user: address + '@bigt.ai',
-      password: Utils.HEX.encode(getRandomBytes(32)),
     },
   };
 }
