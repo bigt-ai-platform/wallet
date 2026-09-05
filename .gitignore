@@ -56,3 +56,7 @@ notes/
 playwright-report/
 test-results/
 
+
+# generated artifacts (dev logs, demo captures)
+logs/
+expo-app/demo-output/

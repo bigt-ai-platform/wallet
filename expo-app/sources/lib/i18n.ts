@@ -1,5 +1,8 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { device } from '@/storage';
+
+const LANGUAGE_KEY = ['settings', 'language'];
 
 const resources = {
   en: {
@@ -109,7 +112,22 @@ export const supportedLanguages = [
   { code: 'ja', name: '日本語', flag: '🇯🇵' },
 ];
 
-i18n.use(initReactI18next).init({ resources, fallbackLng: 'en', interpolation: { escapeValue: false } });
+// Persist the user's language choice (MMKV) so it survives app restarts.
+export function persistLanguage(code: string): void {
+  device.set(LANGUAGE_KEY, code);
+}
+
+function storedLanguage(): string | undefined {
+  const code = device.get(LANGUAGE_KEY);
+  return code && supportedLanguages.some((l) => l.code === code) ? code : undefined;
+}
+
+i18n.use(initReactI18next).init({
+  resources,
+  fallbackLng: 'en',
+  lng: storedLanguage(),
+  interpolation: { escapeValue: false },
+});
 
 // Expose i18n on the web bundle so automated capture tools (and any embedder)
 // can switch the active language programmatically.

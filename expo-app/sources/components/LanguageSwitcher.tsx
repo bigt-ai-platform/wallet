@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useTranslation } from 'react-i18next';
 import { useUnistyles } from 'react-native-unistyles';
 import { GlobeIcon, CloseIcon } from './Icons';
-import { supportedLanguages } from '@/lib/i18n';
+import { supportedLanguages, persistLanguage } from '@/lib/i18n';
 
 export default function LanguageSwitcher() {
   const { i18n, t } = useTranslation();
@@ -14,6 +14,7 @@ export default function LanguageSwitcher() {
   const current = supportedLanguages.find(l => l.code === i18n.language) || supportedLanguages[0];
 
   const changeLang = (code: string) => {
+    persistLanguage(code);
     i18n.changeLanguage(code);
     setVisible(false);
   };
