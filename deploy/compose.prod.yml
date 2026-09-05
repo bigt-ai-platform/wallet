@@ -1,0 +1,27 @@
+# bapp production web container (run via deploy/region.sh).
+#
+# Single static bundle (expo export) served by nginx. The SPA talks to the
+# existing prod chain from the browser (mainnet L1 https://m.bigtangle.org),
+# so there is nothing else in this stack — no DB, no chain containers.
+# Only the host-facing port is published on 127.0.0.1: the shared host Caddy
+# (region.sh `caddy`) reverse-proxies the region domain to it.
+#
+# Image comes prebuilt by deploy/tag.sh — no compile happens here.
+#   REGION=prod WEB_PORT=8081 APP_IMAGE=bapp-web:latest \
+#     docker compose -f deploy/compose.prod.yml up -d
+
+name: bapp-${REGION:-bapp}
+
+services:
+  web:
+    image: ${APP_IMAGE:-bapp-web:latest}
+    container_name: bapp-${REGION:-bapp}-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8081}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s

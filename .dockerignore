@@ -1,0 +1,19 @@
+# Docker builds that use the repo root as context: deploy/Dockerfile.app (bapp
+# web runtime image) and the legacy e2e web image (e2e/Dockerfile). Keep heavy
+# or irrelevant dirs out of the build context. NOTE: do not exclude `dist/`
+# (packages/bigtangle-ts/dist is a committed build the e2e image relies on) nor
+# the root `web-build/` (deploy/Dockerfile.app packages it).
+
+**/node_modules
+.git
+logs
+notes
+deploy/.image
+e2e/web-build
+e2e/demo-output
+e2e/playwright-report
+test-results
+playwright-report
+expo-app/.expo
+expo-app/demo-output
+*.log
