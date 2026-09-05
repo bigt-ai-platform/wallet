@@ -1,319 +1,292 @@
-# Bapp - Bigtangle Mobile Application
+# Wallet — Bigtangle blockchain wallet (iOS · Android · Web)
 
-A cross-platform (Android, iOS, Web) mobile application for Bigtangle blockchain, built with React Native and Expo.
+A cross-platform wallet app for the Bigtangle blockchain, built with React
+Native and Expo. It manages post-quantum (PQ) key wallets, sends UTXO
+transactions across Layer 0 / L1 order-match chains, places buy/sell orders,
+browses and creates tokens, and renders price/volume charts — all in 6
+languages, from a single TypeScript monorepo.
+
+The blockchain protocol logic lives in the **Java** codebase
+(`../blockchain`); this repo ships a TypeScript port of that logic
+(`packages/bigtangle-ts`) plus the mobile/web client built on it.
 
 ## Features
 
-### Core Features ✅
-- **Wallet Management**: Create, import, and manage encrypted wallets
-- **Transaction Payments**: Send tokens with UTXO-based transactions
-- **Market Prices**: View live token prices and trading information
-- **Token Browser**: Search and browse available tokens
-- **Settings**: Network configuration (mainnet/testnet) and server selection
+### Wallet & keys
+- Create, import (hex / WIF), load, and manage encrypted PQ-key wallets
+- Import legacy `.wallet` protobuf files and unencrypted app-format wallets
+- Scrypt (N=16384, r=8, p=1) + AES encryption at rest; decrypted keys held in
+  memory only; auto-lock on app background / lock
+- No fabricated server credentials — new wallets are self-contained key files
 
-### Transaction System ✅
-- **UTXO Selection**: Automatic selection of optimal UTXOs for transactions
-- **Transaction Signing**: Secure signing using bigtangle-ts with SIGHASH_ALL
-- **Fee Estimation**: Smart fee calculation based on transaction size
-- **Change Handling**: Automatic change output creation
-- **Memo Support**: Optional transaction notes
+### Payments & transactions
+- Send any token to an address on the settlement chain of your choice (L0 or a
+  configured L1 order-match chain)
+- UTXO selection, SIGHASH_ALL signing, fee estimation, change output, memo
+- On-chain payment tracking with live status, and a filterable transaction
+  history (layer, recipient, date range)
 
-### Security Features
-- **Encrypted Storage**: Scrypt-based wallet encryption
-- **Auto-Lock**: Wallet automatically locks on app background
-- **In-Memory Keys**: Private keys never persisted unencrypted
-- **Secure Signing**: All signing happens on-device
+### Trading & markets
+- Buy / sell orders matched on an L1 order-match chain
+- Market data: live prices, gainers/losers, token count
+- Price & volume chart (`chart.tsx`) with interval selection
+- Order history and in-app tracked orders
 
-## Project Structure
+### Tokens
+- Browse tokens by name or ID; create / issue new tokens on-chain
+
+### Balance explorer
+- Layer-filtered balance, aggregated by token, with a full UTXO list
+  (confirmed/pending, spendable/spent/locked, block, height, memo …)
+
+### Settings & network
+- Mainnet / testnet switching with configurable server URLs
+- Manage multiple L1 order-match chains (add/remove, unique chain id)
+- Language picker (persisted) and developer bridge (L1 pay / pay-back) harness
+
+### Internationalization
+- i18next + react-i18next with 6 languages: en, zh, de, fr, es, ja
+- Translations are inline in `expo-app/sources/lib/i18n.ts`; the chosen
+  language is persisted via MMKV (native) / localStorage (web)
+
+## Repository layout
 
 ```
-bapp/
-├── expo-app/              # Main application code
+wallet/
+├── expo-app/                 # React Native / Expo client (the app)
 │   ├── sources/
-│   │   ├── app/           # Expo Router screens (file-based routing)
-│   │   ├── components/    # Reusable UI components
-│   │   ├── hooks/         # Custom React hooks
-│   │   ├── utils/         # Utility functions
-│   │   ├── assets/        # Images, fonts, and other assets
-│   │   ├── constants/     # App constants
-│   │   ├── types/         # TypeScript type definitions
-│   │   ├── unistyles/     # Theme configuration
-│   │   ├── lib/           # Internationalization (i18n via i18next + react-i18next)
-│   ├── app.config.js      # Expo configuration
-│   ├── babel.config.js    # Babel configuration
-│   ├── metro.config.js    # Metro bundler configuration
-│   ├── tsconfig.json      # TypeScript configuration
-│   └── package.json       # Dependencies and scripts
-├── package.json           # Root workspace configuration
-└── README.md             # This file
+│   │   ├── app/              # Expo Router routes (see below)
+│   │   ├── components/       # Reusable UI (Sidebar, ChainBadge, …)
+│   │   ├── screens/          # Larger screens / helpers
+│   │   │   ├── wallet/       # WalletHelper.ts, Keys.tsx
+│   │   │   └── trade/        # TokenOrderScreen.tsx (buy/sell)
+│   │   ├── services/         # http.ts, transaction.ts, tracking.ts
+│   │   ├── state/wallet/     # WalletProvider: unlock/lock/clear state
+│   │   ├── storage/          # MMKV / localStorage abstraction
+│   │   ├── lib/i18n.ts       # i18next setup + all translations
+│   │   ├── text/             # typed `t()` helper / legacy dict
+│   │   ├── unistyles/        # theme tokens & styling setup
+│   │   ├── constants/        # networks, L1 chains, fonts, version
+│   │   ├── utils/            # bigtangle, alert, status helpers
+│   │   └── types/            # shared API types
+│   ├── app.config.js         # Expo config (3 APP_ENV variants)
+│   ├── eas.json              # EAS build profiles
+│   ├── metro.config.js       # web stubs for jackson-js / node builtins
+│   └── package.json
+├── packages/bigtangle-ts/    # TypeScript blockchain client (Java port)
+│   ├── src/                  # protocol, crypto (PQ/EC), wallet, scripts
+│   └── test/                 # core + remote integration tests
+├── e2e/                      # Playwright web e2e suite + infra helpers
+├── deploy/                   # web-only regional deploy kit (nginx + Caddy)
+├── docker/                   # dockerized blockchain + app build/test scripts
+├── dev.sh                    # one-shot: Java infra (L0/L1) + Expo web dev server
+├── e2eremote.sh              # run TS remote integration tests vs Java infra
+├── scripts/                  # helper scripts (test wallet generation, …)
+├── AGENTS.md                 # agent/dev conventions (read me first)
+└── package.json              # yarn workspaces root (expo-app, packages/*)
 ```
 
-## Technology Stack
+### Routes (`expo-app/sources/app/`)
 
-- **Framework**: React Native 0.81.4 with Expo SDK 54
-- **Language**: TypeScript 5.9.2 (strict mode)
-- **Routing**: Expo Router v6 (file-based routing)
-- **Styling**: React Native Unistyles 3.0.21
-- **State Management**: Zustand 5.0.6
-- **Navigation**: React Navigation 7
-- **Package Manager**: Yarn 1.22.22
+```
+/                       → Redirect to /home/payment
+/home/payment           Send payment, live payment tracking, transaction history
+/home/keys              Manage keys (create / import / load wallet)
+/(tabs)/order           Market prices, buy/sell order placement, order history
+/(tabs)/buy | /sell     Buy / sell order screens (hidden tab-bar entries)
+/(tabs)/tokens          Token browser + token creation
+/(tabs)/settings        Network, L1 chains, language, developer bridge harness
+/balance                Layer-filtered balance & UTXO explorer
+/chart                  Token price & volume chart
+```
+
+Navigation is **sidebar-first**: a persistent sidebar on desktop (≥768px) and a
+hamburger drawer + bottom tab bar on mobile.
+
+## Technology stack
+
+- **Framework**: React Native 0.81.4, Expo SDK 54 (new architecture), Expo Router 6
+- **Language**: TypeScript ~5.9 (strict)
+- **Blockchain client**: `bigtangle-ts` (workspace package, v1.0.7)
+- **Styling**: react-native-unistyles 3 (light/dark theme tokens)
+- **State**: Zustand 5 + React Context (`WalletProvider`)
+- **Crypto deps**: @noble/ciphers, @noble/hashes, @noble/post-quantum,
+  secp256k1, scrypt-js, bs58
+- **i18n**: i18next + react-i18next
+- **Storage**: MMKV (native) / localStorage (web) behind `@/storage`
+- **Tests**: Vitest (client + SDK), Playwright (web e2e), Detox (native e2e)
+- **Package manager**: Yarn 1.22.22 (workspaces, enforced via `packageManager`)
 
 ## Prerequisites
 
-- Node.js 18+
-- Yarn 1.22.22 (will be enforced by packageManager field)
-- For iOS development: macOS with Xcode installed
-- For Android development: Android Studio with SDK installed
-- Expo CLI (will be installed via dependencies)
+- Node.js 20+, Yarn 1.22.22
+- The Java blockchain repo checked out at `../blockchain`
+  (`git clone` + built modules) — used for local dev infra and as the protocol
+  reference
+- iOS: macOS + Xcode; Android: Android Studio + SDK; Expo CLI comes via deps
 
-## Getting Started
+## Getting started
 
-### 1. Install Dependencies
+### 1. Install dependencies (repo root)
 
 ```bash
-cd bapp
 yarn install
 ```
 
-### 2. Add Assets
+This installs the workspaces (`expo-app` + `packages/bigtangle-ts`).
 
-Before running the app, you need to add the required assets to `expo-app/sources/assets/images/`:
+### 2. Build the TS blockchain client
 
-- `icon.png` (1024x1024) - App icon
-- `icon-adaptive.png` (1024x1024) - Android adaptive icon
-- `icon-monochrome.png` (1024x1024) - Android monochrome icon
-- `icon-notification.png` (1024x1024) - Notification icon
-- `favicon.png` (48x48+) - Web favicon
+`expo-app` depends on the workspace `bigtangle-ts`, whose runtime entry is its
+compiled `dist/`. Keep it in sync after any change:
 
-You can generate these using tools like [icon.kitchen](https://icon.kitchen/).
+```bash
+cd packages/bigtangle-ts
+yarn build
+```
 
-### 3. Start Development Server
+### 3a. Full local stack: `dev.sh` (recommended)
+
+Starts the Java L0/L1/MCMC infra (via `e2e/infra.sh` → `../blockchain`
+`remote.sh infra`) and then the Expo dev server:
+
+```bash
+./dev.sh              # infra on L0 :24089 / L1 :24086, web on http://localhost:8081
+DEV_CMD="yarn ios" ./dev.sh     # boot the iOS simulator instead of web
+./dev.sh down         # stop infra
+```
+
+> Requires Docker (postgres) and Maven. `dev.sh` also bootstraps dev-trade
+> tokens and a partial order book for a populated test environment.
+
+### 3b. Just the app (no chain)
+
+Point the app at an existing chain via Settings:
 
 ```bash
 cd expo-app
-yarn start
+yarn start            # Expo dev server: i = iOS, a = Android, w = web
 ```
 
-This will start the Expo development server. You can then:
-- Press `i` to open iOS simulator
-- Press `a` to open Android emulator
-- Press `w` to open in web browser
-- Scan QR code with Expo Go app on your device
+## Build variants
 
-## Development Scripts
-
-### Expo App (run from `expo-app/` directory)
-
-```bash
-# Development
-yarn start              # Start Expo dev server
-yarn ios                # Run on iOS simulator
-yarn android            # Run on Android emulator
-yarn web                # Run in web browser
-
-# Build variants
-yarn ios:dev            # iOS development build
-yarn ios:preview        # iOS preview build
-yarn ios:production     # iOS production build
-yarn android:dev        # Android development build
-yarn android:preview    # Android preview build
-yarn android:production # Android production build
-
-# Type checking and testing
-yarn typecheck          # Run TypeScript type checking
-yarn test               # Run tests
-
-# Native project generation
-yarn prebuild           # Generate native iOS and Android directories
-```
-
-## Project Configuration
-
-### Environment Variants
-
-The app supports three build variants:
-
-- **development** - Local development with debug features
-- **preview** - Testing/staging environment
-- **production** - Production release
-
-Set the variant using the `APP_ENV` environment variable:
-
-```bash
-APP_ENV=development yarn start
-```
-
-### Bundle IDs
-
-- Development: `ai.bigt.bapp.dev`
-- Preview: `ai.bigt.bapp.preview`
-- Production: `ai.bigt.bapp`
-
-Update these in `app.config.js` to match your organization.
-
-## Building for Production
-
-### iOS
+The app reads `APP_ENV` (`development` | `preview` | `production`) to pick the
+network defaults and bundle id (currently placeholders `com.example.bapp.*` —
+replace in `expo-app/app.config.js` before release):
 
 ```bash
 cd expo-app
-yarn ios:production
+yarn start:dev        # development
+yarn ios:production   # native production build
+yarn web:build        # static web export → ../e2e/web-build
 ```
 
-Or use EAS Build:
+EAS Build profiles live in `expo-app/eas.json`; GitHub Actions workflows in
+`.github/workflows/` (CI lint/typecheck/unit, iOS EAS build, preview + publish).
+See `app-store-publish-plan.md` / `google-play-publish-plan.md` for release
+checklists.
+
+## Testing
+
+Test expectations mirror the **Java** remote test suite. When a test fails,
+follow AGENTS.md's **Java-first** rule: reproduce, compare with
+`../blockchain` behavior, then touch the TS code only if it diverges.
+
+### TypeScript / unit tests (no chain)
 
 ```bash
-npx eas build --platform ios
+cd packages/bigtangle-ts
+yarn test             # vitest: core, crypto, script, wallet, PQ/EC compat, …
+
+cd expo-app
+yarn typecheck
 ```
 
-### Android
+### Remote integration tests (chain required)
+
+`e2eremote.sh` brings up the Java infra and runs the TS remote suites under
+`packages/bigtangle-ts/test/testintegration/` (ports 18088 / 18086):
+
+```bash
+QUICK=1 ./e2eremote.sh        # fast smoke subset
+./e2eremote.sh                # full suite
+```
+
+These suites are ports of the Java remote test classes in
+`../blockchain/.../remote/` — see the mapping table in `AGENTS.md`.
+
+### Playwright web e2e
+
+Drive a real browser against the web app (Dev infra from `dev.sh`, then):
+
+```bash
+cd e2e
+npx playwright test --config playwright.config.ts   # mobile + desktop projects
+```
+
+### Detox native e2e
 
 ```bash
 cd expo-app
-yarn android:production
+yarn e2e:build:ios && yarn e2e:test:ios      # macOS / iOS simulator
 ```
 
-Or use EAS Build:
+## Deployment (web)
+
+`deploy/` ships the static Expo web export as a single nginx container behind
+a host Caddy vhost — fully containerised, mirroring `../aifeeds/deploy`; the
+chain itself is **not** part of this stack (the app talks to the prod chain
+from the browser). See `deploy/README.md`.
 
 ```bash
-npx eas build --platform android
+./deploy/tag.sh                       # expo export → docker image → tar/registry
+./deploy/region.sh deploy prod        # provision a region VM (idempotent)
 ```
 
-### Web
+## Architecture notes
 
-```bash
-cd expo-app
-npx expo export:web
-```
+### bigtangle-ts (`packages/bigtangle-ts`)
 
-## Architecture
+A TypeScript client mirroring the Java `bigtangle-core`: post-quantum key
+bundles (ML-DSA + SLH-DSA via `PQKey`, default ML-DSA-87) alongside EC,
+`Wallet`, UTXO `Transaction`/`Script` building, params for main/testnet, and
+HTTP/WebSocket transport. See `packages/bigtangle-ts/README.md` for the
+carefully-maintained **differences from Java** (prefixed vs unprefixed public
+key bytes, Jackson parser limitations, tx version upgrade to
+`PQConstants.TX_PQ_VERSION`, etc.) and cross-platform PQ/EC test fixtures.
 
-### File-Based Routing
+### Web bundle stubs
 
-This app uses Expo Router for navigation. Routes are defined by the file structure in `sources/app/`:
+`metro.config.js` routes `jackson-js` and the Node builtins `https/http/net/tls`
+to stubs so the SDK's Jackson-decorated classes and axios transport load in the
+browser (`expo-app/jackson-stub.js`, `expo-app/node-web-stub.js`).
 
-- `sources/app/index.tsx` - Home screen (/)
-- `sources/app/settings.tsx` - Settings screen (/settings)
-- `sources/app/_layout.tsx` - Root layout
+### Wallet security model
 
-### Styling with Unistyles
+- Encrypted wallet JSON persisted under MMKV / localStorage
+- Password-derived scrypt key decrypts only into an in-memory `WalletFile`
+- `WalletProvider` (`sources/state/wallet`) zeros the in-memory private key and
+  locks on `background`/`inactive`; public info (address) stays available
+- `.wallet` protobuf import uses `WalletProtobufSerializer`; keys may be PQ
+  (new) or EC (legacy, migrated)
 
-All styling uses React Native Unistyles for cross-platform theming:
+### HTTP service layer
 
-```typescript
-import { StyleSheet } from 'react-native-unistyles';
-
-const styles = StyleSheet.create((theme) => ({
-    container: {
-        backgroundColor: theme.colors.surface,
-        padding: theme.margins.lg,
-    },
-}));
-```
-
-### Internationalization
-
-Uses **i18next** with **react-i18next**. Translations are defined inline in `sources/lib/i18n.ts` with 6 supported languages:
-
-| Language | Code |
-|----------|------|
-| English | `en` |
-| Chinese | `zh` |
-| German | `de` |
-| French | `fr` |
-| Spanish | `es` |
-| Japanese | `ja` |
-
-Usage in components:
-
-```typescript
-import { useTranslation } from 'react-i18next';
-
-const { t } = useTranslation();
-const title = t('wallet.manageKeys');
-```
-
-Add new translation keys in `sources/lib/i18n.ts` under each language's `translation` object.
-
-## Path Aliases
-
-TypeScript path alias `@/*` maps to `sources/*`:
-
-```typescript
-import { t } from '@/text';
-import { MyComponent } from '@/components/MyComponent';
-```
-
-## Platform Support
-
-- ✅ iOS 14+
-- ✅ Android 6.0+ (API level 23+)
-- ✅ Web (modern browsers)
-
-## Architecture Details
-
-### Bigtangle Blockchain Integration
-
-The app integrates with the Bigtangle blockchain via `@bigtangle/bigtangle-ts` (local dependency at `../bigtangle-ts`).
-
-**Key capabilities:**
-- Blockchain protocol implementation
-- Cryptographic utilities (secp256k1, scrypt, AES)
-- UTXO-based transaction handling
-- Wallet management with address derivation
-- Network communication via HTTP and WebSocket
-
-**Utility helper:** `sources/utils/bigtangle.ts` provides convenience functions for initialization and version info.
-
-**Dependencies brought in:** `@noble/ciphers`, `@noble/hashes`, `axios`, `bs58`, `secp256k1`, `socket.io-client`
-
-### Wallet System
-
-The wallet system provides secure key management with encryption at rest and in-memory-only decrypted keys.
-
-**Core files:**
-- `sources/screens/wallet/WalletHelper.ts` — bigtangle-ts wallet utilities (create, save, load, import)
-- `sources/state/wallet/index.tsx` — React Context-based state management with auto-lock
-- `sources/storage/index.ts` — MMKV-based encrypted storage abstraction
-
-**Security model:**
-- Scrypt key derivation (N=16384, r=8, p=1) + AES encryption for wallet files
-- Private keys decrypted only in memory; cleared on app background
-- Password never persisted (session-only)
-- WIF and hex private key import supported
-
-**State management:**
-- `WalletProvider` context wraps the app
-- `useWallet()` hook exposes `publicInfo`, `isUnlocked`, `storeEncryptedWallet`, `unlockWallet`, `lockWallet`, `clearWallet`
-- Public info (address, hasEncryptedWallet) always accessible; private keys only when unlocked
-
-### Transaction System
-
-UTXO-based payment sending implemented in `sources/services/transaction.ts`.
-
-**Flow:**
-1. Fetch UTXOs from network
-2. Greedy largest-first UTXO selection to meet amount + fee
-3. Transaction creation with bigtangle-ts classes (`Transaction`, `TransactionInput`, `TransactionOutput`, `Coin`, `Script`)
-4. SIGHASH_ALL signing via `ECKey.sign()`
-5. Broadcast to `POST {serverUrl}/broadcastTransaction`
-
-**Fee estimation:** base 1000 satoshis + 500 per input + 300 per output
-
-**Integration:** Transaction screen (`sources/app/(tabs)/index.tsx`) with token selection, recipient, amount, memo fields, and confirmation dialog.
-
-### HTTP Service Layer
-
-Singleton API service at `sources/services/http.ts` with endpoints for balances, outputs, tokens, market prices, and user data. Supports mainnet/testnet switching with configurable server URLs. Type-safe request/response handling via `sources/types/api.ts`.
-
-### Internationalization
-
-All user-facing strings use `useTranslation()` from `react-i18next`. Translations are defined in `sources/lib/i18n.ts` supporting 6 languages (en, zh, de, fr, es, ja).
-
-## License
-
-[Your License Here]
+`expo-app/sources/services/http.ts` is the singleton API client for balances,
+UTXOs, tokens, market prices, order placement and bridge info, with
+mainnet/testnet switching and app-wide L1 chain selection
+(`subscribeL1Change`). Transaction building / order creation lives in
+`transaction.ts`; on-chain status polling in `tracking.ts`.
 
 ## Contributing
 
-[Your Contributing Guidelines Here]
+- Read `AGENTS.md` first — it defines the Java-first verification workflow and
+  the remote-test ↔ Java mapping.
+- Format/typecheck before opening a PR (`yarn typecheck` in `expo-app`,
+  `yarn build && yarn test` in `packages/bigtangle-ts`).
+- No fabricated credentials or server-side secrets: wallets must remain
+  self-contained key files.
+
+## License
+
+MIT (see `packages/bigtangle-ts/LICENSE`).
