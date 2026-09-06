@@ -113,6 +113,13 @@ export class HttpService {
   }
 
   /**
+   * Whether testnet mode is switched on (settings 'useTestnet' flag).
+   */
+  getUseTestnet(): boolean {
+    return device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
+  }
+
+  /**
    * Get the current server URL
    */
   getServerUrl(): string {

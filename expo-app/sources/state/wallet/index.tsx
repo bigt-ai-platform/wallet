@@ -77,18 +77,23 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const hasEncrypted = !!encryptedContent;
 
     // An unencrypted wallet file needs no password — treat it as unlocked.
-    // Re-derive the address from the stored file so a stale saved address
-    // (e.g. an older PQ-hex one) self-heals.
+    // Re-derive the address from the stored private key so a stale saved address
+    // (e.g. an older PQ-hex one, or an older network-encoded base58) self-heals
+    // to the currently selected network's encoding.
     const isPlain = hasEncrypted && isPlainWalletJson(String(encryptedContent));
     let address = device.get(['device', WALLET_ADDRESS_KEY]);
     if (isPlain) {
       try {
-        const keys = JSON.parse(String(encryptedContent)).keys;
-        if (keys?.length && typeof keys[0]?.address === 'string') {
-          address = keys[0].address;
-        }
+        address = loadPlainWalletSync(String(encryptedContent)).wallet.address;
       } catch {
-        // keep the stored address
+        try {
+          const keys = JSON.parse(String(encryptedContent)).keys;
+          if (keys?.length && typeof keys[0]?.address === 'string') {
+            address = keys[0].address;
+          }
+        } catch {
+          // keep the stored address
+        }
       }
     }
 

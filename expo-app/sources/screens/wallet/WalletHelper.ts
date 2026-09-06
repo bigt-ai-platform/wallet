@@ -4,6 +4,8 @@
  * Uses imports from bigtangle-ts to work in both Node.js and webpack environments.
  */
 import i18n from '../../lib/i18n';
+import { IS_DEV } from '../../constants/app';
+import { httpService } from '../../services/http';
 
 import { PQKey, Utils, ECKey, Address, MainNetParams, TestParams } from 'bigtangle-ts';
 // @ts-ignore - These are not exported in index but exist in dist
@@ -66,11 +68,13 @@ const DEFAULT_CONTEXT_ROOT = 'http://localhost:8088/';
 
 /**
  * Base58 on-chain address of a PQ key (the format the server stores/expects —
- * e.g. getOutputsHistory). Test-net encoding matches the local test infra and
- * the TestKeys addresses (m…/n… prefix).
+ * e.g. getOutputsHistory). Encoded for the currently selected network:
+ * MainNetParams (mainnet, '1…' prefix) by default, TestParams ('m…/n…' prefix)
+ * in testnet mode and in dev builds (which target the local test infra).
  */
 function pqKeyAddress(pqKey: PQKey): string {
-  return Address.fromP2PKH(TestParams.get(), pqKey.getPubKeyHash()).toBase58();
+  const params = IS_DEV || httpService.getUseTestnet() ? TestParams.get() : MainNetParams.get();
+  return Address.fromP2PKH(params, pqKey.getPubKeyHash()).toBase58();
 }
 
 // Use bigtangle-ts PQKey for wallet creation

@@ -4,7 +4,7 @@
  * Handles transaction creation, signing, and broadcasting
  */
 
-import { PQKey, TestParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigtangle-ts';
+import { PQKey, TestParams, MainNetParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigtangle-ts';
 import i18n from '../lib/i18n';
 // @ts-ignore
 import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
@@ -15,6 +15,7 @@ import { TransactionOutput } from 'bigtangle-ts/dist/net/bigtangle/core/Transact
 // @ts-ignore
 import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutPoint';
 import { httpService } from './http';
+import { IS_DEV } from '@/constants/app';
 import { ReqCmd } from '@/types/api';
 import type { UTXO, ApiResponse } from '@/types/api';
 
@@ -49,14 +50,14 @@ interface SelectedUTXOs {
 }
 
 /**
- * Get TestParams instance (lazy loaded and cached)
+ * Network parameters for the currently selected network (no caching — the
+ * network can change at runtime via the settings testnet toggle). TestParams
+ * in dev builds (local test infra) or testnet mode, MainNetParams otherwise.
+ * The network also selects the base58 address prefix, so it must match the
+ * addresses being created/parsed here.
  */
-let _testParams: any = null;
-function getTestParams(): any {
-  if (!_testParams) {
-    _testParams = TestParams.get();
-  }
-  return _testParams;
+function getNetParams(): any {
+  return IS_DEV || httpService.getUseTestnet() ? TestParams.get() : MainNetParams.get();
 }
 
 /**
@@ -129,7 +130,7 @@ export async function createAndSignTransaction(
   params: SendTransactionParams
 ): Promise<ApiResponse<TransactionResult>> {
   try {
-    const testParams = getTestParams();
+    const netParams = getNetParams();
     const {
       fromAddress,
       toAddress,
@@ -168,7 +169,7 @@ export async function createAndSignTransaction(
     const pqKey = PQKey.fromPrivateKey(rawKey);
 
     // Create transaction
-    const tx = new Transaction(testParams);
+    const tx = new Transaction(netParams);
 
     // Convert token ID to bytes
     const tokenIdBytes = hexToBytes(tokenId);
@@ -176,26 +177,26 @@ export async function createAndSignTransaction(
     // Add inputs from selected UTXOs
     for (const utxo of selected.utxos) {
       const hash = Sha256Hash.wrap(hexToBytes(utxo.txhash));
-      const outPoint = TransactionOutPoint.fromTransactionOutPoint4(testParams, utxo.index, Sha256Hash.ZERO_HASH, hash);
+      const outPoint = TransactionOutPoint.fromTransactionOutPoint4(netParams, utxo.index, Sha256Hash.ZERO_HASH, hash);
 
       const scriptBytes = utxo.script ? hexToBytes(utxo.script) : new Uint8Array(0);
-      const input = TransactionInput.fromScriptBytes(testParams, tx, scriptBytes);
+      const input = TransactionInput.fromScriptBytes(netParams, tx, scriptBytes);
       tx.addInput(input);
     }
 
     // Add output to recipient
-    const toAddr = Address.fromBase58(testParams, toAddress);
+    const toAddr = Address.fromBase58(netParams, toAddress);
     const recipientCoin = new Coin(amountValue, tokenIdBytes);
     const recipientScript = ScriptBuilder.createOutputScript(toAddr);
-    const recipientOutput = new TransactionOutput(testParams, tx, recipientCoin, recipientScript.getProgram());
+    const recipientOutput = new TransactionOutput(netParams, tx, recipientCoin, recipientScript.getProgram());
     tx.addOutput(recipientOutput);
 
     // Add change output if needed
     if (selected.change > BigInt(0)) {
-      const fromAddr = Address.fromBase58(testParams, fromAddress);
+      const fromAddr = Address.fromBase58(netParams, fromAddress);
       const changeCoin = new Coin(selected.change, tokenIdBytes);
       const changeScript = ScriptBuilder.createOutputScript(fromAddr);
-      const changeOutput = new TransactionOutput(testParams, tx, changeCoin, changeScript.getProgram());
+      const changeOutput = new TransactionOutput(netParams, tx, changeCoin, changeScript.getProgram());
       tx.addOutput(changeOutput);
     }
 
@@ -351,7 +352,7 @@ export async function payOnLayer0(params: {
   memo?: string;
 }): Promise<string> {
   const { privateKeyHex, toAddress, amount, tokenId, memo } = params;
-  const testParams = getTestParams();
+  const netParams = getNetParams();
 
   const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
   const tokenBytes = hexToBytes(tokenId);
@@ -386,18 +387,18 @@ export async function payOnLayer0(params: {
   }
 
   // 3. Build the transaction (addInput2 wires the correct outpoint).
-  const tx = new Transaction(testParams);
+  const tx = new Transaction(netParams);
   if (memo) tx.setMemo(memo);
 
   for (const u of selected) {
-    tx.addInput2(u.getBlockHash(), new FreeStandingTransactionOutput(testParams, u));
+    tx.addInput2(u.getBlockHash(), new FreeStandingTransactionOutput(netParams, u));
   }
 
-  tx.addOutputAddress(new Coin(amount, tokenBytes), Address.fromBase58(testParams, toAddress));
+  tx.addOutputAddress(new Coin(amount, tokenBytes), Address.fromBase58(netParams, toAddress));
 
   const change = total - needed;
   if (change > BigInt(0)) {
-    tx.addOutputAddress(new Coin(change, tokenBytes), Address.fromKey(testParams, pqKey));
+    tx.addOutputAddress(new Coin(change, tokenBytes), Address.fromKey(netParams, pqKey));
   }
 
   // 4. Sign each input.
@@ -440,7 +441,7 @@ export async function pegInToL1(params: {
   chainId: string;
 }): Promise<string> {
   const { privateKeyHex, l1Address, tokenId, chainId } = params;
-  const testParams = getTestParams();
+  const netParams = getNetParams();
   const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
 
   const bridge = await httpService.getBridgeInfo();
@@ -476,12 +477,12 @@ export async function pegInToL1(params: {
   const source = candidates[0];
 
   // 2. Build the peg-in transaction (version 2 = PQ witness data).
-  const tx = new Transaction(testParams);
+  const tx = new Transaction(netParams);
   tx.version = PQConstants.TX_PQ_VERSION;
-  tx.setToAddressInSubtangle(Address.fromBase58(testParams, l1Address).getHash160());
+  tx.setToAddressInSubtangle(Address.fromBase58(netParams, l1Address).getHash160());
   tx.setDataClassName('PegInInfo');
   tx.setData(new TextEncoder().encode(JSON.stringify({ chainId })));
-  tx.addInput2(source.getBlockHash(), new FreeStandingTransactionOutput(testParams, source));
+  tx.addInput2(source.getBlockHash(), new FreeStandingTransactionOutput(netParams, source));
   tx.addOutputScript(source.getValue(), new Script(hexToBytes(vaultScriptHex)));
 
   // 3. Sign the single input with the UTXO owner's key.
@@ -519,12 +520,12 @@ export async function payOnLayer1(params: {
   memo?: string;
 }): Promise<string> {
   const { privateKeyHex, l1Url, toAddress, amount, tokenId, memo } = params;
-  const testParams = getTestParams();
+  const netParams = getNetParams();
 
   const rawKey = hexToBytes(privateKeyHex);
   const pqKey = PQKey.fromPrivateKey(rawKey);
 
-  const wallet = await Wallet.fromKeysURL(testParams, [pqKey], l1Url);
+  const wallet = await Wallet.fromKeysURL(netParams, [pqKey], l1Url);
   wallet.setFee(false);
 
   const giveMoneyResult = new Map<string, bigint>();
@@ -559,12 +560,12 @@ export async function orderOnLayer1(params: {
   decimals: number;
 }): Promise<string> {
   const { side, privateKeyHex, l1Url, tokenId, price, amount, baseToken, decimals } = params;
-  const testParams = getTestParams();
+  const netParams = getNetParams();
 
   const rawKey = hexToBytes(privateKeyHex);
   const pqKey = PQKey.fromPrivateKey(rawKey);
 
-  const wallet = await Wallet.fromKeysURL(testParams, [pqKey], l1Url);
+  const wallet = await Wallet.fromKeysURL(netParams, [pqKey], l1Url);
   wallet.setFee(false);
 
   const tx = side === 'buy'
