@@ -104,7 +104,10 @@ fleet, `oraclevpc.key`).
 
 `deploy` is idempotent: it loads the image (registry pull, or `docker load` of
 `deploy/.image/bapp-web.latest.tar`), syncs the compose file, starts the
-container and (re)writes the Caddy vhost. Redeploy after `./deploy/tag.sh`
+container and (re)writes the Caddy vhost. The remote working dir is resolved
+per SSH user when `REMOTE_REPO` is empty: root → `/srv/bapp`,
+ubuntu → `/home/<user>/bapp` (override with `REMOTE_REPO=...`). Redeploy after
+`./deploy/tag.sh`
 produces a new image. There are no systemd units and no data volumes — a wiped
 VM is fully rebuilt by `deploy`.
 

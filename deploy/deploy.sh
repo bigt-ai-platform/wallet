@@ -29,10 +29,6 @@ SCRIPT_DIR="$ROOT/deploy"
 source "$SCRIPT_DIR/region.conf"
 ALL_REGIONS=("${REGIONS[@]}")
 
-# region.conf holds the map but not the helpers (those live in region.sh),
-# so define the tiny lookup deploy.sh needs (analog dai's vm_user).
-vm_user() { echo "${REGION_SSH_USER[$1]}"; }
-
 COMMIT=0; YES=0; DRY=0; DEPLOY_ONLY=0; VERSION=""
 for a in "$@"; do
   case "$a" in
@@ -134,14 +130,9 @@ for x in "${APEX_REGION:-}" "${DEPLOY_REGIONS_ARR[@]}"; do
 done
 for r in "${ordered[@]}"; do
   echo -e "\n${GREEN}=== deploy → $r ($TAGGED) ===${NC}"
-  # root regions keep the stack at /srv/bapp; ubuntu regions at
-  # /home/<user>/bapp (region.conf REMOTE_REPO default only fits root)
-  if [ "$(vm_user "$r")" = "root" ]; then
-    REPO="${REMOTE_REPO:-/srv/bapp}"
-  else
-    REPO="${REMOTE_REPO:-/home/$(vm_user "$r")/bapp}"
-  fi
-  REMOTE_REPO="$REPO" APP_IMAGE="$TAGGED" ./deploy/region.sh deploy "$r"
+  # region.sh resolves the per-user working dir (/srv/bapp for root,
+  # /home/<user>/bapp for ubuntu) from REMOTE_REPO being empty.
+  APP_IMAGE="$TAGGED" ./deploy/region.sh deploy "$r"
 done
 
 echo -e "\n${GREEN}=== release v${VERSION} deployed to ${ordered[*]} ===${NC}"

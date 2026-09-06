@@ -56,6 +56,13 @@ vm_user() { echo "${REGION_SSH_USER[$1]}"; }
 vm_key()  { echo "${REGION_SSH_KEY[$1]}"; }
 domain()  { echo "${REGION_DOMAIN[$1]}"; }
 
+# Resolve the VM working dir per SSH user when REMOTE_REPO was left empty:
+# root regions keep the stack at /srv/bapp, ubuntu regions at /home/<user>/bapp.
+default_repo() {
+  local u; u="$(vm_user "$1")"
+  [ "$u" = "root" ] && echo "/srv/bapp" || echo "/home/$u/bapp"
+}
+
 ssh_run() { local r="$1"; shift; ssh ${SSH_OPTS} -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" "$@"; }
 
 sudo_cmd() { local r="$1"; [ "$(vm_user "$r")" = "root" ] && echo "" || echo "sudo"; }
@@ -270,6 +277,7 @@ EOF
 main() {
   local ACTION="${1:-}"; shift || true
   local REGION="${1:-}"
+  [ -n "$REGION" ] && valid_region "$REGION" && [ -z "$REMOTE_REPO" ] && REMOTE_REPO="$(default_repo "$REGION")"
   case "${ACTION}" in
     deploy)  [ -n "$REGION" ] && deploy_region "$REGION" || usage ;;
     caddy)   [ -n "$REGION" ] && { require_region "$REGION"; config_caddy "$REGION"; } || usage ;;
