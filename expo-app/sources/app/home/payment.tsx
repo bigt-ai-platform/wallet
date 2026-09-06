@@ -4,17 +4,20 @@ import {
   ActivityIndicator, Alert, Platform, Modal,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { useTranslation } from "react-i18next";
+import * as WebBrowser from "expo-web-browser";
 import { useWallet } from "@/state/wallet";
 import { httpService } from "@/services/http";
 import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
-import { WalletIcon } from "@/components/Icons";
+import { WalletIcon, QrScanIcon } from "@/components/Icons";
 import ChainBadge from "@/components/ChainBadge";
 import SegmentedTabs from "@/components/SegmentedTabs";
+import QrScannerModal from "@/components/QrScannerModal";
 import { statusBadgeColor } from "@/utils/status";
 import { showAlert } from "@/utils/alert";
+import { parseQrContent } from "@/lib/qr";
 import { MONO_FONT } from "@/constants/fonts";
 import type { WalletAccountItem, L1ChainConfig, TrackedRecord } from "@/types/api";
 
@@ -129,6 +132,21 @@ export default function TransactionScreen() {
   const [refreshingPayments, setRefreshingPayments] = React.useState(false);
   const [unlockPwd, setUnlockPwd] = React.useState("");
   const [unlocking, setUnlocking] = React.useState(false);
+  const [qrOpen, setQrOpen] = React.useState(false);
+  // When a scanned payment request names a token, remember it so the token
+  // selection effect below can prefer it over the default BIG selection.
+  const requestedTokenIdRef = React.useRef<string | null>(null);
+
+  // A shared "payment request" link (`…/home/payment?address=…&amount=…`)
+  // re-opens this screen prefilled. Guard so it only applies once per address.
+  const urlParams = useLocalSearchParams<{
+    address?: string | string[];
+    amount?: string | string[];
+    tokenid?: string | string[];
+    memo?: string | string[];
+    chain?: string | string[];
+  }>();
+  const appliedRequestAddressRef = React.useRef<string | null>(null);
 
   const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
   // Payment routing: the recipient is paid on an explicit chain. Settlement is
@@ -203,20 +221,25 @@ export default function TransactionScreen() {
     }];
   }, [tokens, destLayer]);
 
-  // Keep the selected token valid for the destination chain: prefer BIG when
-  // present, otherwise the first token held on that chain. Whenever the token
-  // list reloads, REFRESH the selection with the freshly-loaded entry (same
+  // Keep the selected token valid for the destination chain: prefer the token
+  // requested by a scanned QR when present, otherwise BIG when present,
+  // otherwise the first token held on that chain. Whenever the token list
+  // reloads, REFRESH the selection with the freshly-loaded entry (same
   // token+layer but current balance) — otherwise a token selected while its
   // bucket was still empty keeps the stale 0 balance forever.
   React.useEffect(() => {
-    const preferred = tokenOptions.find((t) => t.tokenid === 'bc') || tokenOptions[0];
+    const requested = requestedTokenIdRef.current
+      ? tokenOptions.find((o) => o.tokenid.toLowerCase() === requestedTokenIdRef.current)
+      : undefined;
+    const preferred = requested ?? tokenOptions.find((t) => t.tokenid === 'bc') ?? tokenOptions[0];
     setSelectedToken((prev) => {
-      if (prev && prev.layer === destLayer) {
+      if (prev && prev.layer === destLayer && !requested) {
         const fresh = tokenOptions.find((o) => o.tokenid === prev.tokenid && o.layer === prev.layer);
         if (fresh) return fresh;
       }
       return preferred ?? null;
     });
+    if (requested) requestedTokenIdRef.current = null;
   }, [destLayer, tokens]);
 
   const loadHistory = async () => {
@@ -372,6 +395,127 @@ export default function TransactionScreen() {
     } finally { setUnlocking(false); }
   };
 
+  // Scanned a web url link — ask before leaving the app.
+  const openScannedUrl = (url: string) => {
+    const body = t('qr.openLinkBody', { url });
+    const doOpen = () => {
+      if (Platform.OS === "web") {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } else {
+        WebBrowser.openBrowserAsync(url).catch(() => showAlert(t('transaction.error'), t('qr.openFailed')));
+      }
+    };
+    if (Platform.OS === "web") {
+      if (typeof window !== "undefined" && window.confirm(body)) doOpen();
+    } else {
+      Alert.alert(t('qr.openLinkTitle'), body, [
+        { text: t('transaction.cancel'), style: "cancel" },
+        { text: t('qr.open'), onPress: doOpen },
+      ]);
+    }
+  };
+
+  // Map a scanned token/chain request onto the Send form: prefill recipient /
+  // amount / memo and switch the destination chain & token to the requested
+  // ones when the wallet holds the token there.
+  const applyPaymentRequest = (address: string, amount?: string, memo?: string, tokenid?: string, chainId?: string) => {
+    setToAddress(address);
+    if (amount) setAmount(amount);
+    if (memo) setMemo(memo);
+
+    // Resolve an explicit destination chain id: '0' (settlement) or one of
+    // the configured L1 chains (also accept a 1..N layer number).
+    let targetChainId: string | undefined;
+    if (chainId) {
+      if (chainId === '0') {
+        targetChainId = '0';
+      } else if (l1Chains.some((c) => c.chainId === chainId)) {
+        targetChainId = chainId;
+      } else {
+        const n = Number(chainId);
+        if (Number.isInteger(n) && n >= 1 && n <= l1Chains.length) {
+          targetChainId = l1Chains[n - 1].chainId;
+        }
+      }
+    }
+
+    // Prefer a token held on the requested chain; otherwise pick the first
+    // layer the wallet holds it on.
+    let wanted: string | undefined;
+    let layer: number | undefined;
+    if (tokenid) {
+      const lower = tokenid.toLowerCase();
+      const targetLayer = targetChainId === undefined ? undefined : targetChainId === '0' ? 0 : l1Chains.findIndex((c) => c.chainId === targetChainId) + 1;
+      const onTarget = targetLayer !== undefined && targetLayer >= 0
+        ? tokens.find((tt) => tt.layer === targetLayer && tt.tokenid.toLowerCase() === lower)
+        : undefined;
+      const hit = onTarget ?? tokens.find((tt) => tt.tokenid.toLowerCase() === lower);
+      if (hit) {
+        wanted = hit.tokenid;
+        layer = hit.layer;
+      }
+    }
+
+    if (wanted && layer !== undefined) {
+      const cid = layer === 0 ? '0' : (l1Chains[layer - 1]?.chainId ?? '0');
+      setDestChainId(cid);
+      requestedTokenIdRef.current = wanted.toLowerCase();
+    } else if (targetChainId !== undefined) {
+      setDestChainId(targetChainId);
+    }
+  };
+
+  const handleQrContent = (content: string) => {
+    const parsed = parseQrContent(content);
+    if (parsed.kind === 'url') {
+      setQrOpen(false);
+      openScannedUrl(parsed.url);
+      return;
+    }
+    if (parsed.kind === 'unknown') {
+      setQrOpen(false);
+      showAlert(t('transaction.error'), t('qr.unrecognized'));
+      return;
+    }
+    setQrOpen(false);
+    applyPaymentRequest(
+      parsed.request.address,
+      parsed.request.amount,
+      parsed.request.memo,
+      parsed.request.tokenid,
+      parsed.request.chainId,
+    );
+  };
+
+  // Manual selections always win over a token a QR scan requested.
+  const selectDestChain = (id: string) => {
+    requestedTokenIdRef.current = null;
+    setDestChainId(id);
+  };
+  const selectTokenNow = (token: LayerToken) => {
+    requestedTokenIdRef.current = null;
+    setSelectedToken(token);
+  };
+
+  // Apply a shared payment-request link when this screen is opened (or
+  // re-opened) with query params.
+  const firstParam = (v?: string | string[]): string | undefined =>
+    typeof v === 'string' ? v : undefined;
+  React.useEffect(() => {
+    const linkAddress = firstParam(urlParams.address)?.trim() ?? '';
+    if (!linkAddress || linkAddress === appliedRequestAddressRef.current) return;
+    appliedRequestAddressRef.current = linkAddress;
+    applyPaymentRequest(
+      linkAddress,
+      firstParam(urlParams.amount),
+      firstParam(urlParams.memo),
+      firstParam(urlParams.tokenid),
+      firstParam(urlParams.chain),
+    );
+    // Only react to distinct request addresses, not unrelated param changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlParams.address]);
+
   if (!isUnlocked) {
     const hasWallet = publicInfo?.hasEncryptedWallet;
     return (
@@ -441,7 +585,7 @@ export default function TransactionScreen() {
           <View style={s.card}>
             <Text style={s.cardLabel}>{t('transaction.destChain')}</Text>
             <LayerSelect label={t('transaction.destChain')} value={destChainId} options={layerOptions}
-              onChange={(id) => setDestChainId(id)} testID="dest-chain-select" />
+              onChange={selectDestChain} testID="dest-chain-select" />
             <Text style={s.hint}>{t('transaction.destChainHint')}</Text>
           </View>
           <View style={s.card}>
@@ -449,11 +593,23 @@ export default function TransactionScreen() {
             {loadingTokens ? (
               <ActivityIndicator size="small" color={s.loader.color} />
             ) : (
-              <TokenSelect value={selectedToken} options={tokenOptions} onChange={setSelectedToken} testID="token-select" />
+              <TokenSelect value={selectedToken} options={tokenOptions} onChange={selectTokenNow} testID="token-select" />
             )}
           </View>
           <View style={s.card}>
-            <Text style={s.cardLabel}>{t('transaction.recipient')}</Text>
+            <View style={s.cardHeaderRow}>
+              <Text style={s.cardLabel}>{t('transaction.recipient')}</Text>
+              <TouchableOpacity
+                style={s.scanBtn}
+                onPress={() => setQrOpen(true)}
+                accessibilityRole="button"
+                accessibilityLabel={t('qr.scan')}
+                testID="qr-scan-button"
+              >
+                <QrScanIcon size={15} color={s.scanBtnText.color} />
+                <Text style={s.scanBtnText}>{t('qr.scan')}</Text>
+              </TouchableOpacity>
+            </View>
             <TextInput style={s.input} value={toAddress} onChangeText={setToAddress}
               placeholder={t('transaction.recipient')} placeholderTextColor={s.placeholder.color}
               autoCapitalize="none" autoCorrect={false} testID="recipient-address-input" />
@@ -474,6 +630,16 @@ export default function TransactionScreen() {
           <TouchableOpacity style={[s.primaryBtn, (loading || !selectedToken) && s.btnDisabled]} onPress={handleSend} disabled={loading || !selectedToken}>
             <Text style={s.primaryBtnText}>{loading ? t('transaction.sending') : t('transaction.send')}</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={s.requestBtn}
+            onPress={() => router.push('/receive')}
+            accessibilityRole="button"
+            testID="request-payment-button"
+          >
+            <QrScanIcon size={16} color={s.requestBtnText.color} />
+            <Text style={s.requestBtnText}>{t('receive.requestBtn')}</Text>
+          </TouchableOpacity>
+          {qrOpen && <QrScannerModal visible onClose={() => setQrOpen(false)} onScanned={handleQrContent} />}
         </ScrollView>
       ) : activeTab === 'payments' ? (
         <ScrollView contentContainerStyle={s.content} testID="payments-tab">
@@ -593,6 +759,9 @@ const s = StyleSheet.create((theme) => ({
   pageTitle: { fontSize: 22, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 16 },
   card: { backgroundColor: theme.colors.card?.background || theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.card?.border || theme.colors.border, padding: 16, marginBottom: 12 },
   cardLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
+  cardHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
+  scanBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingVertical: 4, paddingHorizontal: 8, borderRadius: 6, backgroundColor: theme.colors.primarySoft },
+  scanBtnText: { fontSize: 12, fontWeight: '600', color: theme.colors.primary },
   input: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 15 },
   inputBig: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 24, fontWeight: '700' },
   textArea: { minHeight: 72, textAlignVertical: 'top' },
@@ -611,6 +780,8 @@ const s = StyleSheet.create((theme) => ({
   tokenChipBalActive: { color: '#FFFFFF', opacity: 0.85 },
   primaryBtn: { backgroundColor: theme.colors.primary, borderRadius: 10, paddingVertical: 15, alignItems: 'center', marginTop: 8 },
   primaryBtnText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF' },
+  requestBtn: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: theme.colors.primary, paddingVertical: 14, marginTop: 10 },
+  requestBtnText: { fontSize: 15, fontWeight: '600', color: theme.colors.primary },
   secondaryBtn: { borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, paddingVertical: 14, paddingHorizontal: 32, alignItems: 'center', marginTop: 10 },
   secondaryBtnText: { fontSize: 15, fontWeight: '600', color: theme.colors.text.secondary },
   btnDisabled: { opacity: 0.5 },

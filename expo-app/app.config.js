@@ -68,6 +68,12 @@ export default {
             "expo-secure-store",
             "expo-web-browser",
             [
+                "expo-camera",
+                {
+                    cameraPermission: "Allow $(PRODUCT_NAME) to access your camera to scan payment and link QR codes."
+                }
+            ],
+            [
                 'expo-splash-screen',
                 {
                     image: "./sources/assets/images/splash.png",

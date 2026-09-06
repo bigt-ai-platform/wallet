@@ -54,6 +54,7 @@ function AppShell() {
                     >
                         <Stack.Screen name="home/payment" options={{ title: t('sidebar.payment') }} />
                         <Stack.Screen name="home/keys" options={{ title: t('sidebar.keys') }} />
+                        <Stack.Screen name="receive" options={{ headerShown: false }} />
                         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                         <Stack.Screen name="balance" options={{ headerShown: false }} />
                         <Stack.Screen name="chart" options={{ headerShown: false }} />

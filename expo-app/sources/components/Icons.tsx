@@ -22,3 +22,4 @@ export const ChartIcon = makeIcon('M3 20h18M6 16V9m6 7V4m6 12v-5');
 export const OrderIcon = makeIcon('M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4');
 export const DataIcon = makeIcon('M4 7v10c0 2 1 3 3 3h10c2 0 3-1 3-3V7c0-2-1-3-3-3H7C5 4 4 5 4 7zm0 3h16M8 12h2m-2 3h2m-2 3h2');
 export const SendIcon = makeIcon('M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z');
+export const QrScanIcon = makeIcon('M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM13 13h5v5h-5zM19 15h2v2h-2zM15 20h2v2h-2zM13 22h2v2h-2z');

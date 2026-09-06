@@ -451,11 +451,11 @@ Current test coverage:
 - ✅ Wallet creation and import
 - ✅ Wallet lock/unlock
 - ✅ Transaction form validation
+- ✅ QR code scanning (payment request + url links)
 - ✅ Market data display
 - ✅ Settings configuration
 
 Planned test coverage:
-- ⏳ QR code scanning
 - ⏳ Transaction history
 - ⏳ Contact management
 - ⏳ Network error handling

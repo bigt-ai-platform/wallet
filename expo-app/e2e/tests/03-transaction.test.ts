@@ -286,17 +286,33 @@ describe('Transactions', () => {
     });
   });
 
-  describe('QR Code (Future)', () => {
-    it('should open QR scanner', async () => {
-      // Tap QR button
-      try {
-        await tapByTestId('qr-scan-button');
-        await waitForElementToBeVisible(by.id('qr-scanner'));
-        await takeScreenshot('qr-scanner');
-      } catch (e) {
-        // QR feature not yet implemented
-        await takeScreenshot('qr-not-implemented');
-      }
+  describe('QR Code Scan', () => {
+    it('should open and close QR scanner', async () => {
+      await tapByTestId('qr-scan-button');
+      await waitForElementToBeVisible(by.id('qr-scanner'));
+      await takeScreenshot('qr-scanner');
+
+      // Close the scanner so it does not block the following tests.
+      await tapByTestId('qr-close');
+      await waitForElementToBeVisible(by.id('transaction-screen'));
+    });
+
+    it('should prefill payment form from a payment QR content', async () => {
+      await tapByTestId('qr-scan-button');
+      await waitForElementToBeVisible(by.id('qr-scanner'));
+
+      // Simulate a scanned payment request (Java wallet format) via the
+      // manual fallback path.
+      const json = `{"address":"${TEST_WALLET.address}","quantity":"0.001","tokenid":"bc","memo":"qr e2e"}`;
+      await typeTextByTestId('qr-manual-input', json);
+      await tapByTestId('qr-manual-apply');
+
+      // The scanner closes itself and the Send form is prefilled.
+      await waitForElementToBeVisible(by.id('transaction-screen'));
+      await detoxExpect(element(by.id('recipient-address-input'))).toHaveText(TEST_WALLET.address);
+      await detoxExpect(element(by.id('amount-input'))).toHaveText('0.001');
+
+      await takeScreenshot('qr-payment-prefilled');
     });
   });
 
