@@ -13,6 +13,11 @@
 #   ./deploy/tag.sh                  # build bapp-web:latest, save to deploy/.image/
 #   ./deploy/tag.sh 1.2.0            # also tag bapp-web:v1.2.0
 #   APP_IMAGE=ghcr.io/you/bapp-web:latest ./deploy/tag.sh   # push to registry
+#
+# The release train is MAINNET only: before the export, deploy/network.sh
+# (assert_mainnet_default) verifies expo-app/sources still pins the mainnet
+# defaults and aborts otherwise, so a testnet-flipped tree can never be baked
+# into the image.
 set -euo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -20,6 +25,9 @@ RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(dirname "$SCRIPT_DIR")"
 cd "$ROOT"
+
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/network.sh"
 
 VERSION="${1:-}"
 IMAGE_BASE="${IMAGE_BASE:-bapp-web}"
@@ -37,6 +45,9 @@ if [ ! -d expo-app/node_modules ]; then
   echo -e "${YELLOW}expo-app/node_modules missing — running yarn install (workspace)…${NC}"
   yarn install --frozen-lockfile
 fi
+
+echo -e "${GREEN}--- network guard: pin mainnet defaults ---${NC}"
+assert_mainnet_default
 
 echo -e "${GREEN}--- expo web export (host) ---${NC}"
 rm -rf web-build

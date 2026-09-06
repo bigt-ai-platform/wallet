@@ -39,6 +39,7 @@ Cloudflare (DNS-only A → region VM)
 | `deploy.sh` | Release train (analog `../dai/deploy/deploy.sh`): bump patch tag → `tag.sh` build+push `:vX.Y.Z` + `:latest` → `region.sh deploy` every region pinned to `:vX.Y.Z` |
 | `region.sh` | Provision one region VM: load image → sync repo → `compose up` → Caddy; status/health/logs/env/destroy |
 | `region.conf` | Region map: domain, VM IP, SSH user/key, `WEB_PORT`, `APP_IMAGE`, apex (edit before deploying) |
+| `network.sh` | Mainnet guard (`assert_mainnet_default`): fails the release if the source no longer pins mainnet defaults (sourced by `tag.sh`/`deploy.sh`) |
 
 ## Regions (analog `../dai`)
 
@@ -120,6 +121,14 @@ testnet, export with the testnet URLs baked in (edit
 `expo-app/sources/constants/app.ts` and the params used by
 `sources/services/http.ts` before running `tag.sh`) — nothing is configurable
 at runtime by design.
+
+**The release train is mainnet only.** `deploy/network.sh`
+(`assert_mainnet_default`) is run by both `deploy.sh` and `tag.sh` before any
+tag/build: it verifies the checked-in `constants/app.ts` +
+`services/http.ts` still pin the mainnet L1 host (`https://m.bigtangle.org`)
+and `MainNetParams` seeds, and **aborts the release** if a testnet default has
+leaked in. There is intentionally no bypass — a non-mainnet build must be done
+out-of-band, never through the release train.
 
 ## CORS + mixed content (preconditions)
 

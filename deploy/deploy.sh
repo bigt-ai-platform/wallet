@@ -15,6 +15,10 @@
 # DOCKER_PAT. To restrict the fleet:
 #   DEPLOY_REGIONS="europa asia" ./deploy/deploy.sh
 #
+# The release train is MAINNET only: deploy.sh (and tag.sh) run
+# deploy/network.sh's assert_mainnet_default before tagging/building and abort
+# if the checked-in source no longer pins the mainnet defaults.
+#
 # Requires: docker (tag.sh builds/pushes), git, SSH access to each region VM
 # (region.sh) and, if the registry image is private, a prior `docker login`.
 set -euo pipefail
@@ -27,6 +31,8 @@ cd "$ROOT"
 SCRIPT_DIR="$ROOT/deploy"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/region.conf"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/network.sh"
 ALL_REGIONS=("${REGIONS[@]}")
 
 COMMIT=0; YES=0; DRY=0; DEPLOY_ONLY=0; VERSION=""
@@ -95,6 +101,9 @@ fi
 # but does not manage git tags itself (unlike dai's ./tag.sh), so deploy.sh owns
 # the git tag here.
 if [ "$DEPLOY_ONLY" != 1 ]; then
+  echo -e "\n${GREEN}--- network guard: source must pin mainnet defaults ---${NC}"
+  assert_mainnet_default
+
   if [ -n "$(git status --porcelain)" ]; then
     if [ "$COMMIT" = 1 ]; then
       echo "committing working tree…"
