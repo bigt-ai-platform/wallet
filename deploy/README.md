@@ -11,12 +11,17 @@ Cloudflare (DNS-only A → region VM)
         │
 ┌───────▼────────┐   region VM (e.g. wallet.bigtangle.org)
 │  Caddy :443     │
-│  domain → :8081 (web container, 127.0.0.1)
+│  domain → :8084 (web container, 127.0.0.1)
 └───────┬────────┘
         │   docker compose (deploy/compose.prod.yml)
         ▼
    nginx container = static expo web export (mainnet bundle)
 ```
+
+> **Port 8081 is NOT free on the fleet** — every region VM runs a registry
+> container (`reg-europa`, …) on `127.0.0.1:8081`, so the wallet uses `:8084`
+> (free on europa/asia/usa, no clash with dai's `:3000` or the other `808x`
+> tenants).
 
 > **Chain is NOT in this stack.** The app connects to the already-running
 > mainnet/testnet chain (`m.bigtangle.org` / `testm.bigtangle.org`). Per-region
@@ -27,7 +32,7 @@ Cloudflare (DNS-only A → region VM)
 
 | File | Purpose |
 |---|---|
-| `compose.prod.yml` | Single `web` container (nginx static), published on `127.0.0.1:8081` |
+| `compose.prod.yml` | Single `web` container (nginx static), published on `127.0.0.1:8084` |
 | `Dockerfile.app` | Runtime image: packages the host-built `web-build/` export under nginx; **no compile in-image** |
 | `nginx.conf` | SPA fallback (`index.html`) + hard caching of hashed Metro assets |
 | `tag.sh` | HOST build: `expo export` → docker image → registry push **or** docker-save tar (no registry needed) |
@@ -44,7 +49,7 @@ Cloudflare (DNS-only A → region VM)
 | usa | `us.wallet.bigt.ai` | `43.162.118.46` | `ubuntu` |
 
 Same fleet as `../dai` (same IPs/users/keys) — the wallet cohabits the VMs on
-port `:8081` (dai uses `:3000`) with its own Caddy vhosts. The apex
+port `:8084` (dai uses `:3000`) with its own Caddy vhosts. The apex
 `wallet.bigt.ai` / `www.wallet.bigt.ai` is served from `APEX_REGION`
 (`europa`); other regions only serve their own `<region>.wallet.bigt.ai`.
 
