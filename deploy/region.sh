@@ -12,13 +12,13 @@
 # toolchain) and either pushed to $APP_IMAGE or saved to deploy/.image/. The VM
 # never compiles — region.sh just transfers/loads the image and runs compose.
 #
-#   ./deploy/region.sh deploy prod      # full provision (idempotent)
-#   ./deploy/region.sh caddy prod       # rewrite Caddy vhost only
-#   ./deploy/region.sh status prod      # container + ports
-#   ./deploy/region.sh health prod      # local container + public https
-#   ./deploy/region.sh logs prod        # recent container logs
-#   ./deploy/region.sh env prod         # resolved config for the region
-#   ./deploy/region.sh destroy prod     # stop stack (remove Caddy vhost)
+#   ./deploy/region.sh deploy europa      # full provision (idempotent)
+#   ./deploy/region.sh caddy europa       # rewrite Caddy vhosts only
+#   ./deploy/region.sh status europa      # container + ports
+#   ./deploy/region.sh health europa      # local container + public https
+#   ./deploy/region.sh logs europa        # recent container logs
+#   ./deploy/region.sh env europa         # resolved config for the region
+#   ./deploy/region.sh destroy europa     # stop stack (remove Caddy vhost)
 set -uo pipefail
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -136,7 +136,8 @@ EOF
 config_caddy() {
   local r="$1" dom; dom="$(domain "$r")"
   local sudo; sudo="$(sudo_cmd "$r")"
-  echo -e "${GREEN}--- Caddy vhost for $dom on $(vm_ip "$r") ---${NC}"
+  local apex="${APEX_DOMAIN:-wallet.bigt.ai}"
+  echo -e "${GREEN}--- Caddy vhosts for $dom on $(vm_ip "$r") ---${NC}"
   ssh ${SSH_OPTS} -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" \
     "${sudo} tee /etc/caddy/Caddyfile.d/bapp-${r}.caddy > /dev/null" <<CADDYEOF
 # bapp $r — wallet web app (static nginx container on 127.0.0.1:${WEB_PORT})
@@ -158,8 +159,38 @@ http://${dom}, http://www.${dom} {
     redir https://${dom}{uri} permanent
 }
 CADDYEOF
+  # apex (wallet.bigt.ai / www.wallet.bigt.ai) is served from one region
+  # (region.conf APEX_REGION, analog ../dai bigt.ai); other regions only handle
+  # their own <region>.wallet.bigt.ai domain.
+  if [ "$r" = "${APEX_REGION:-}" ]; then
+    ssh ${SSH_OPTS} -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" \
+      "${sudo} tee -a /etc/caddy/Caddyfile.d/bapp-${r}.caddy > /dev/null" <<APEXEOF
+
+# bapp apex (${APEX_REGION}) — ${apex} / www.${apex} → web
+${apex}, www.${apex} {
+    reverse_proxy 127.0.0.1:${WEB_PORT}
+    encode gzip
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+    log {
+        output file /var/log/caddy/bapp-${r}-apex-access.log
+    }
+}
+
+http://${apex}, http://www.${apex} {
+    redir https://${apex}{uri} permanent
+}
+APEXEOF
+  fi
   ssh_run "$r" "${sudo} systemctl reload caddy 2>/dev/null || ${sudo} caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || true"
   echo -e "${GREEN}    Caddy configured for $dom${NC}"
+  if [ "$r" = "${APEX_REGION:-}" ]; then
+    echo -e "${GREEN}    Caddy apex configured for $apex${NC}"
+  fi
 }
 
 # ─── Actions ───
@@ -216,6 +247,9 @@ env_region() {
   echo "  vm          : $(vm_user "$r")@$(vm_ip "$r") (key: $(vm_key "$r"))"
   echo "  remote repo : $REMOTE_REPO"
   echo "  web port    : $WEB_PORT"
+  if [ "$r" = "${APEX_REGION:-}" ]; then
+    echo "  apex        : ${APEX_DOMAIN:-wallet.bigt.ai} (served from $r)"
+  fi
   [ -n "$APP_IMAGE" ] && echo "  app image   : $APP_IMAGE (registry pull)" \
                       || echo "  app image   : deploy/.image/bapp-web.latest.tar (docker load)"
 }

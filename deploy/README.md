@@ -31,8 +31,22 @@ Cloudflare (DNS-only A → region VM)
 | `Dockerfile.app` | Runtime image: packages the host-built `web-build/` export under nginx; **no compile in-image** |
 | `nginx.conf` | SPA fallback (`index.html`) + hard caching of hashed Metro assets |
 | `tag.sh` | HOST build: `expo export` → docker image → registry push **or** docker-save tar (no registry needed) |
+| `deploy.sh` | Release train (analog `../dai/deploy/deploy.sh`): bump patch tag → `tag.sh` build+push `:vX.Y.Z` + `:latest` → `region.sh deploy` every region pinned to `:vX.Y.Z` |
 | `region.sh` | Provision one region VM: load image → sync repo → `compose up` → Caddy; status/health/logs/env/destroy |
-| `region.conf` | Region map: domain, VM IP, SSH user/key, `WEB_PORT`, `APP_IMAGE` (edit before deploying) |
+| `region.conf` | Region map: domain, VM IP, SSH user/key, `WEB_PORT`, `APP_IMAGE`, apex (edit before deploying) |
+
+## Regions (analog `../dai`)
+
+| Region | Domain | VM | SSH user |
+|---|---|---|---|
+| europa | `eu.wallet.bigt.ai` | `85.214.37.95` | `root` |
+| asia | `asia.wallet.bigt.ai` | `43.132.208.9` | `ubuntu` |
+| usa | `us.wallet.bigt.ai` | `43.162.118.46` | `ubuntu` |
+
+Same fleet as `../dai` (same IPs/users/keys) — the wallet cohabits the VMs on
+port `:8081` (dai uses `:3000`) with its own Caddy vhosts. The apex
+`wallet.bigt.ai` / `www.wallet.bigt.ai` is served from `APEX_REGION`
+(`europa`); other regions only serve their own `<region>.wallet.bigt.ai`.
 
 ## Build once, deploy anywhere
 
@@ -45,10 +59,22 @@ APP_IMAGE=ghcr.io/your-org/bapp-web ./deploy/tag.sh
 `tag.sh` needs the node toolchain (node, yarn, workspace deps) — run it on a
 dev/CI host, never on the VM. The region VMs only run docker + caddy.
 
+Release train (versioned, all regions pinned to one image):
+
+```bash
+./deploy/deploy.sh                    # bump patch of latest vX.Y.Z → build+push → deploy all regions
+./deploy/deploy.sh 1.2.3              # explicit version
+./deploy/deploy.sh --commit --yes     # auto-commit dirty tree, skip prompt
+DEPLOY_REGIONS="europa asia" ./deploy/deploy.sh   # restrict the fleet
+./deploy/deploy.sh --deploy-only      # no tag/build — redeploy existing :latest
+./deploy/deploy.sh --dry-run          # print the plan, do nothing
+```
+
 ## Region setup
 
 Edit `region.conf` (`REGION_VM` IP, `REGION_SSH_KEY`, `REGION_SSH_USER`,
-`REGION_DOMAIN`) for the region you deploy.
+`REGION_DOMAIN`) for the region you deploy. Defaults mirror `../dai` (same
+fleet, `oraclevpc.key`).
 
 ### The VM must already have
 - **docker** (compose plugin) and a user able to run it.
@@ -62,13 +88,13 @@ Edit `region.conf` (`REGION_VM` IP, `REGION_SSH_KEY`, `REGION_SSH_USER`,
 ## Usage
 
 ```bash
-./deploy/region.sh deploy prod     # full provision (idempotent)
-./deploy/region.sh caddy prod      # rewrite Caddy vhost only
-./deploy/region.sh status prod     # container + image + local http code
-./deploy/region.sh health prod     # container http + public https
-./deploy/region.sh logs prod       # recent container logs
-./deploy/region.sh env prod        # resolved config (domain/vm/image)
-./deploy/region.sh destroy prod    # stop container + remove Caddy vhost
+./deploy/region.sh deploy europa   # full provision (idempotent)
+./deploy/region.sh caddy europa    # rewrite Caddy vhosts only (region + apex if APEX_REGION)
+./deploy/region.sh status europa   # container + image + local http code
+./deploy/region.sh health europa   # container http + public https
+./deploy/region.sh logs europa     # recent container logs
+./deploy/region.sh env europa      # resolved config (domain/vm/image)
+./deploy/region.sh destroy europa  # stop container + remove Caddy vhost
 ```
 
 `deploy` is idempotent: it loads the image (registry pull, or `docker load` of
