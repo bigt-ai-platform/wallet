@@ -98,4 +98,26 @@ describe('KeyCrypterScryptTest', () => {
             );
         }
     }, 30000);
+
+    test('equals compares salt and params without Buffer (browser-safe)', () => {
+        const salt = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+        const a = new KeyCrypterScrypt({ salt });
+        const b = new KeyCrypterScrypt({ salt: new Uint8Array(salt) });
+        const differentSalt = new KeyCrypterScrypt({
+            salt: new Uint8Array([9, 9, 9, 9, 9, 9, 9, 9]),
+        });
+        const differentN = new KeyCrypterScrypt({ salt, N: 4096 });
+
+        // The web bundle has no Node Buffer global; equals() must not need it.
+        const savedBuffer = (globalThis as any).Buffer;
+        (globalThis as any).Buffer = undefined;
+        try {
+            expect(a.equals(b)).toBe(true);
+            expect(a.equals(differentSalt)).toBe(false);
+            expect(a.equals(differentN)).toBe(false);
+            expect(a.equals({} as any)).toBe(false);
+        } finally {
+            (globalThis as any).Buffer = savedBuffer;
+        }
+    });
 });

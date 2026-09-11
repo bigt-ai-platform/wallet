@@ -330,8 +330,8 @@ export async function importOldWalletFile(
     if (!crypter) {
       throw new Error(i18n.t('errors.noCrypter'));
     }
-    const aesKey = await crypter.deriveKey(password);
-    keys = await wallet.walletKeysAll(aesKey);
+    logOldWalletCrypto(fileData, wallet, crypter);
+    keys = await decryptLegacyWalletKeys(wallet, crypter, password);
   } else {
     keys = await wallet.walletKeysAll(null);
   }
@@ -368,6 +368,64 @@ function findLegacyKey(keys: Array<ECKey | any>): ECKey | null {
     }
   }
   return null;
+}
+
+/**
+ * Decrypt the keys of a legacy `.wallet`. The historical Java clients derive the
+ * AES key from the password's UTF-16BE bytes
+ * ({@link KeyCrypterScrypt.convertToByteArray}), which is the canonical format.
+ * A few files produced through the JS SDK used the app's UTF-8 `deriveKey()`,
+ * so fall back to that before giving up.
+ */
+async function decryptLegacyWalletKeys(
+  wallet: Wallet,
+  crypter: any,
+  password: string,
+): Promise<Array<ECKey | any>> {
+  const attempts: Array<[string, () => Promise<any>]> =
+    crypter instanceof KeyCrypterScrypt
+      ? [
+          ['java-utf16be', () => crypter.deriveKeyJava(password)],
+          ['utf8', () => crypter.deriveKey(password)],
+        ]
+      : [['default', () => crypter.deriveKey(password)]];
+
+  let lastError: unknown;
+  for (const [name, derive] of attempts) {
+    try {
+      const keys = await wallet.walletKeysAll(await derive());
+      if (IS_DEV) console.info(`[old-wallet] decrypted with ${name} key derivation`);
+      return keys;
+    } catch (e) {
+      lastError = e;
+      if (IS_DEV) {
+        console.info(`[old-wallet] ${name} key derivation failed: ${(e as Error).message}`);
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+/** Diagnostic dump of a legacy wallet's crypto parameters (dev builds only). */
+function logOldWalletCrypto(fileData: Uint8Array, wallet: Wallet, crypter: any): void {
+  if (!IS_DEV) {
+    return;
+  }
+  try {
+    const proto = WalletProtobufSerializer.parseToProto(fileData);
+    const keyTypes = proto.key.map((k) => k.type).join(',');
+    let scrypt = '';
+    if (crypter instanceof KeyCrypterScrypt) {
+      const sp = crypter.getScryptParameters();
+      scrypt = ` N=${sp.N} r=${sp.r} p=${sp.p} saltLen=${sp.salt.length} salt=${Utils.HEX.encode(sp.salt)}`;
+    }
+    console.info(
+      `[old-wallet] network=${proto.network_identifier} encryptionType=${proto.encryption_type} ` +
+        `keys=${proto.key.length} keyTypes=[${keyTypes}]${scrypt}`,
+    );
+  } catch (e) {
+    console.info('[old-wallet] could not log wallet crypto params:', (e as Error).message);
+  }
 }
 
 /**

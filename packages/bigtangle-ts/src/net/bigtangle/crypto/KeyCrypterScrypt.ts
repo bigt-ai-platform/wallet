@@ -51,6 +51,22 @@ export class KeyCrypterScrypt implements KeyCrypter {
 
   async deriveKey(password: string): Promise<KeyParameter> {
     const passwordBytes = new TextEncoder().encode(password);
+    return this.deriveKeyFromBytes(passwordBytes);
+  }
+
+  /**
+   * Derives the AES key exactly like the legacy Java `KeyCrypterScrypt`: the
+   * password is first converted with {@link convertToByteArray} (UTF-16BE, two
+   * bytes per char), NOT UTF-8. Password-protected old-format `.wallet`
+   * protobuf files written by the legacy Java clients can only be decrypted
+   * with this derivation, so the `.wallet` import path must use it instead of
+   * {@link deriveKey}.
+   */
+  async deriveKeyJava(password: string): Promise<KeyParameter> {
+    return this.deriveKeyFromBytes(KeyCrypterScrypt.convertToByteArray(password));
+  }
+
+  private async deriveKeyFromBytes(passwordBytes: Uint8Array): Promise<KeyParameter> {
     const { N, r, p, salt } = this.scryptParameters;
 
     const key = await scrypt(passwordBytes, salt, N, r, p, KeyCrypterScrypt.KEY_LENGTH);
@@ -177,11 +193,19 @@ export class KeyCrypterScrypt implements KeyCrypter {
 
   equals(other: KeyCrypter): boolean {
     if (other instanceof KeyCrypterScrypt) {
+      // NOTE: compare bytes without Buffer — this runs in the browser (web
+      // wallet import), where the Node Buffer global is not available.
+      const a = this.scryptParameters.salt;
+      const b = other.scryptParameters.salt;
+      if (a.length !== b.length) {
+        return false;
+      }
+      for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) {
+          return false;
+        }
+      }
       return (
-        Buffer.compare(
-          new Uint8Array(this.scryptParameters.salt),
-          new Uint8Array(other.scryptParameters.salt)
-        ) === 0 &&
         this.scryptParameters.N === other.scryptParameters.N &&
         this.scryptParameters.r === other.scryptParameters.r &&
         this.scryptParameters.p === other.scryptParameters.p
