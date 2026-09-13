@@ -4,7 +4,7 @@
  * Handles transaction creation, signing, and broadcasting
  */
 
-import { PQKey, TestParams, MainNetParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigtangle-ts';
+import { PQKey, ECKey, TestParams, MainNetParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigtangle-ts';
 import i18n from '../lib/i18n';
 // @ts-ignore
 import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
@@ -28,6 +28,8 @@ export interface SendTransactionParams {
   amount: string;
   tokenId: string;
   privateKeyHex: string;
+  /** Key algorithm of privateKeyHex: legacy EC (old .wallet import) or PQ (default). */
+  keyType?: 'PQ' | 'EC';
   memo?: string;
   fee?: string;
 }
@@ -84,6 +86,20 @@ function bytesToHex(bytes: Uint8Array): string {
 }
 
 /**
+ * Rebuild the signing key from the private key hex. Legacy EC (secp256k1)
+ * wallets imported from an old .wallet file must use an ECKey — a PQKey built
+ * from those bytes throws (truncated ML-DSA key) and would sign for the wrong
+ * address anyway.
+ */
+function keyFromPrivateKey(privateKeyHex: string, keyType?: 'PQ' | 'EC'): ECKey | PQKey {
+  const raw = hexToBytes(privateKeyHex);
+  if (keyType === 'EC') {
+    return ECKey.fromPrivate(raw, true);
+  }
+  return PQKey.fromPrivateKey(raw);
+}
+
+/**
  * Select UTXOs for transaction
  * Uses a simple greedy algorithm - takes UTXOs until we have enough
  */
@@ -137,6 +153,7 @@ export async function createAndSignTransaction(
       amount,
       tokenId,
       privateKeyHex,
+      keyType,
       memo,
       fee = '1000', // Default fee: 1000 satoshis
     } = params;
@@ -147,7 +164,7 @@ export async function createAndSignTransaction(
 
     // Fetch UTXOs for the wallet (server expects pubkey hashes, derived from
     // the private key).
-    const utxosResponse = await httpService.getOutputs(privateKeyHex);
+    const utxosResponse = await httpService.getOutputs(privateKeyHex, keyType);
     if (!utxosResponse.success || !utxosResponse.data) {
       return {
         success: false,
@@ -164,9 +181,8 @@ export async function createAndSignTransaction(
       };
     }
 
-    // Create PQKey from private key
-    const rawKey = hexToBytes(privateKeyHex);
-    const pqKey = PQKey.fromPrivateKey(rawKey);
+    // Create the signing key (EC for legacy wallets, PQ otherwise)
+    const signKey = keyFromPrivateKey(privateKeyHex, keyType);
 
     // Create transaction
     const tx = new Transaction(netParams);
@@ -217,8 +233,8 @@ export async function createAndSignTransaction(
 
       const sigHashBytes = tx.hashForSignatureScript(i, new Script(scriptBytes), 1 as any, false);
 
-      const signatureBundle = await pqKey.signWithAesKey(sigHashBytes, null);
-      const scriptSig = ScriptBuilder.createInputScript(signatureBundle, pqKey);
+      const signatureBundle = await signKey.signWithAesKey(sigHashBytes, null);
+      const scriptSig = ScriptBuilder.createInputScript(signatureBundle, signKey);
       input.setScriptSig(scriptSig!);
     }
 
@@ -346,19 +362,20 @@ export async function broadcastPegIn(rawTx: string): Promise<ApiResponse<string>
  */
 export async function payOnLayer0(params: {
   privateKeyHex: string;
+  keyType?: 'PQ' | 'EC';
   toAddress: string;
   amount: bigint;
   tokenId: string;
   memo?: string;
 }): Promise<string> {
-  const { privateKeyHex, toAddress, amount, tokenId, memo } = params;
+  const { privateKeyHex, keyType, toAddress, amount, tokenId, memo } = params;
   const netParams = getNetParams();
 
-  const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
+  const signKey = keyFromPrivateKey(privateKeyHex, keyType);
   const tokenBytes = hexToBytes(tokenId);
 
   // 1. Fetch spendable UTXOs (correct pubkey-hash format).
-  const utxosResponse = await httpService.getOutputs(privateKeyHex);
+  const utxosResponse = await httpService.getOutputs(privateKeyHex, keyType);
   if (!utxosResponse.success || !utxosResponse.data) {
     throw new Error(i18n.t('errors.fetchUtxos'));
   }
@@ -398,7 +415,7 @@ export async function payOnLayer0(params: {
 
   const change = total - needed;
   if (change > BigInt(0)) {
-    tx.addOutputAddress(new Coin(change, tokenBytes), Address.fromKey(netParams, pqKey));
+    tx.addOutputAddress(new Coin(change, tokenBytes), Address.fromKey(netParams, signKey));
   }
 
   // 4. Sign each input.
@@ -408,8 +425,8 @@ export async function payOnLayer0(params: {
     const connected = input.getConnectedOutput();
     const scriptBytes = connected?.getScriptBytes() ?? new Uint8Array(0);
     const sigHashBytes = tx.hashForSignatureScript(i, new Script(scriptBytes), 1 as any, false);
-    const signatureBundle = await pqKey.signWithAesKey(sigHashBytes, null);
-    const scriptSig = ScriptBuilder.createInputScript(signatureBundle, pqKey);
+    const signatureBundle = await signKey.signWithAesKey(sigHashBytes, null);
+    const scriptSig = ScriptBuilder.createInputScript(signatureBundle, signKey);
     input.setScriptSig(scriptSig!);
   }
 
@@ -436,13 +453,14 @@ export async function payOnLayer0(params: {
  */
 export async function pegInToL1(params: {
   privateKeyHex: string;
+  keyType?: 'PQ' | 'EC';
   l1Address: string;
   tokenId: string;
   chainId: string;
 }): Promise<string> {
-  const { privateKeyHex, l1Address, tokenId, chainId } = params;
+  const { privateKeyHex, keyType, l1Address, tokenId, chainId } = params;
   const netParams = getNetParams();
-  const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
+  const signKey = keyFromPrivateKey(privateKeyHex, keyType);
 
   const bridge = await httpService.getBridgeInfo();
   if (!bridge.success || !bridge.data) {
@@ -458,7 +476,7 @@ export async function pegInToL1(params: {
 
   // 1. Fetch spendable UTXOs and pick one confirmed, unspent UTXO of the token
   //    to lock 1:1 (processPegIn requires exactly one input and one output).
-  const utxosResponse = await httpService.getOutputs(privateKeyHex);
+  const utxosResponse = await httpService.getOutputs(privateKeyHex, keyType);
   if (!utxosResponse.success || !utxosResponse.data) {
     throw new Error(i18n.t('errors.fetchUtxos'));
   }
@@ -490,8 +508,8 @@ export async function pegInToL1(params: {
   const connected = input.getConnectedOutput();
   const scriptBytes = connected?.getScriptBytes() ?? new Uint8Array(0);
   const sighash = tx.hashForSignatureScript(0, new Script(scriptBytes), 1 as any, false);
-  const signatureBundle = await pqKey.signWithAesKey(sighash, null);
-  input.setScriptSig(ScriptBuilder.createInputScript(signatureBundle, pqKey)!);
+  const signatureBundle = await signKey.signWithAesKey(sighash, null);
+  input.setScriptSig(ScriptBuilder.createInputScript(signatureBundle, signKey)!);
 
   // 4. Submit the raw transaction to processPegIn.
   const txHex = bytesToHex(tx.bitcoinSerialize());
@@ -513,19 +531,19 @@ export async function pegInToL1(params: {
  */
 export async function payOnLayer1(params: {
   privateKeyHex: string;
+  keyType?: 'PQ' | 'EC';
   l1Url: string;
   toAddress: string;
   amount: bigint;
   tokenId: string;
   memo?: string;
 }): Promise<string> {
-  const { privateKeyHex, l1Url, toAddress, amount, tokenId, memo } = params;
+  const { privateKeyHex, keyType, l1Url, toAddress, amount, tokenId, memo } = params;
   const netParams = getNetParams();
 
-  const rawKey = hexToBytes(privateKeyHex);
-  const pqKey = PQKey.fromPrivateKey(rawKey);
+  const signKey = keyFromPrivateKey(privateKeyHex, keyType);
 
-  const wallet = await Wallet.fromKeysURL(netParams, [pqKey], l1Url);
+  const wallet = await Wallet.fromKeysURL(netParams, [signKey], l1Url);
   wallet.setFee(false);
 
   const giveMoneyResult = new Map<string, bigint>();
@@ -552,6 +570,7 @@ export async function payOnLayer1(params: {
 export async function orderOnLayer1(params: {
   side: 'buy' | 'sell';
   privateKeyHex: string;
+  keyType?: 'PQ' | 'EC';
   l1Url: string;
   tokenId: string;
   price: bigint;
@@ -559,13 +578,12 @@ export async function orderOnLayer1(params: {
   baseToken: string;
   decimals: number;
 }): Promise<string> {
-  const { side, privateKeyHex, l1Url, tokenId, price, amount, baseToken, decimals } = params;
+  const { side, privateKeyHex, keyType, l1Url, tokenId, price, amount, baseToken, decimals } = params;
   const netParams = getNetParams();
 
-  const rawKey = hexToBytes(privateKeyHex);
-  const pqKey = PQKey.fromPrivateKey(rawKey);
+  const signKey = keyFromPrivateKey(privateKeyHex, keyType);
 
-  const wallet = await Wallet.fromKeysURL(netParams, [pqKey], l1Url);
+  const wallet = await Wallet.fromKeysURL(netParams, [signKey], l1Url);
   wallet.setFee(false);
 
   const tx = side === 'buy'

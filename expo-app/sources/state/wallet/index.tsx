@@ -143,6 +143,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         if (password) {
           passwordRef.current = password;
+          // The wallet is now unlocked — populate the in-memory decrypted
+          // wallet so getUnlockedWallet() works immediately (import /
+          // create flows save with a password and continue unlocked).
+          try {
+            decryptedWalletRef.current = await loadWallet(encryptedContent, password);
+          } catch {
+            // Unlock later through the normal unlock flow.
+          }
         }
 
         // Unencrypted wallets are never locked.

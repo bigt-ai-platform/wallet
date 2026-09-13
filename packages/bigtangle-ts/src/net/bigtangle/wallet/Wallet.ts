@@ -135,7 +135,9 @@ export class Wallet extends WalletBase {
     multisigns: boolean
   ): Promise<UTXO[]> {
     const pubKeyHashs: string[] = [];
-    const keys = await this.walletKeys(aesKey);
+    // Match Java: iterate ALL wallet keys (legacy EC and PQ) — the EC keys of
+    // an old .wallet import hold their funds under the ECKey hash160.
+    const keys = await this.walletKeysAll(aesKey);
     for (const ecKey of keys) {
       pubKeyHashs.push(Utils.HEX.encode(ecKey.getPubKeyHash()));
     }

@@ -107,6 +107,7 @@ export default function TokenOrderScreen({ side }: Props) {
       const txHash = await orderOnLayer1({
         side,
         privateKeyHex: wallet.wallet.privateKey,
+        keyType: wallet.wallet.keyType,
         l1Url,
         tokenId: selectedToken.tokenid,
         price: BigInt(Math.floor(price * Math.pow(10, decimals))),

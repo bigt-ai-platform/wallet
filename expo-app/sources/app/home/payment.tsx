@@ -175,14 +175,15 @@ export default function TransactionScreen() {
     setLoadingTokens(true);
     try {
       const privateKeyHex = wallet.wallet.privateKey;
+      const keyType = wallet.wallet.keyType;
       const all: LayerToken[] = [];
       // Layer 0 tokens.
-      const l0 = await httpService.getBalances(privateKeyHex);
+      const l0 = await httpService.getBalances(privateKeyHex, keyType);
       (l0.success && l0.data ? l0.data : []).forEach((t) => all.push({ ...t, layer: 0 }));
       // Tokens on each configured L1 chain.
       for (let i = 0; i < l1Chains.length; i++) {
         try {
-          const l1 = await httpService.getBalancesOn(l1Chains[i].url, privateKeyHex);
+          const l1 = await httpService.getBalancesOn(l1Chains[i].url, privateKeyHex, keyType);
           (l1.success && l1.data ? l1.data : []).forEach((t) => all.push({ ...t, layer: i + 1 }));
         } catch (e) { /* L1 unreachable — skip */ }
       }
@@ -249,7 +250,7 @@ export default function TransactionScreen() {
     setLoadingHistory(true);
     try {
       const [outRes, statusRes] = await Promise.all([
-        httpService.getOutputs(wallet.wallet.privateKey),
+        httpService.getOutputs(wallet.wallet.privateKey, wallet.wallet.keyType),
         httpService.getTransactionsStatusByAddress(publicInfo.address),
       ]);
       const outputs: any[] = outRes.success && outRes.data ? outRes.data : [];
@@ -344,6 +345,7 @@ export default function TransactionScreen() {
         // included) so the wallet's funded UTXOs can be spent.
         const txHash = await payOnLayer0({
           privateKeyHex: wallet.wallet.privateKey,
+          keyType: wallet.wallet.keyType,
           toAddress,
           amount: BigInt(satoshis),
           tokenId: selectedToken.tokenid,
@@ -356,6 +358,7 @@ export default function TransactionScreen() {
         if (!chain) throw new Error(t('transaction.errNoL1'));
         const txHash = await payOnLayer1({
           privateKeyHex: wallet.wallet.privateKey,
+          keyType: wallet.wallet.keyType,
           l1Url: chain.url,
           toAddress,
           amount: BigInt(satoshis),

@@ -210,6 +210,7 @@ export default function BalanceScreen() {
       const wallet = getUnlockedWallet();
       if (wallet) {
         const privateKeyHex = wallet.wallet.privateKey;
+        const keyType = wallet.wallet.keyType;
         const map: Record<string, number> = {};
         const collect = (arr: any[] | undefined) => {
           (arr ?? []).forEach((t: any) => {
@@ -218,11 +219,11 @@ export default function BalanceScreen() {
             }
           });
         };
-        const l0 = await httpService.getBalances(privateKeyHex);
+        const l0 = await httpService.getBalances(privateKeyHex, keyType);
         collect(l0.success ? l0.data : []);
         for (let i = 0; i < l1Chains.length; i++) {
           try {
-            const l1 = await httpService.getBalancesOn(l1Chains[i].url, privateKeyHex);
+            const l1 = await httpService.getBalancesOn(l1Chains[i].url, privateKeyHex, keyType);
             collect(l1.success ? l1.data : []);
           } catch { /* L1 unreachable — skip */ }
         }

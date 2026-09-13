@@ -27,7 +27,7 @@ import {
   type ChainNumberInfo,
   type OutputDetail,
 } from '@/types/api';
-import { PQKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
+import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
 import { DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET, IS_DEV, DEV_L0_URL, DEV_L1_URL } from '@/constants/app';
 
 /**
@@ -373,8 +373,8 @@ export class HttpService {
    * of hex pubkey hashes (not an address), so the wallet's private key is
    * required to derive the pubkey hash.
    */
-  async getBalances(privateKeyHex: string): Promise<ApiResponse<WalletAccountItem[]>> {
-    const items = await this.fetchAccountBalances(privateKeyHex);
+  async getBalances(privateKeyHex: string, keyType?: 'PQ' | 'EC'): Promise<ApiResponse<WalletAccountItem[]>> {
+    const items = await this.fetchAccountBalances(privateKeyHex, undefined, keyType);
     return { success: true, data: items };
   }
 
@@ -382,8 +382,8 @@ export class HttpService {
    * Get account balances from a specific chain URL (e.g. an L1 order chain),
    * not just the default L0 server.
    */
-  async getBalancesOn(baseUrl: string, privateKeyHex: string): Promise<ApiResponse<WalletAccountItem[]>> {
-    const items = await this.fetchAccountBalances(privateKeyHex, baseUrl);
+  async getBalancesOn(baseUrl: string, privateKeyHex: string, keyType?: 'PQ' | 'EC'): Promise<ApiResponse<WalletAccountItem[]>> {
+    const items = await this.fetchAccountBalances(privateKeyHex, baseUrl, keyType);
     return { success: true, data: items };
   }
 
@@ -405,9 +405,23 @@ export class HttpService {
     };
   }
 
-  private async fetchAccountBalances(privateKeyHex: string, baseUrl?: string): Promise<WalletAccountItem[]> {
-    const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
-    const pubKeyHash = Utils.HEX.encode(pqKey.getPubKeyHash());
+  /**
+   * Hex pubKeyHash the server indexes outputs/balances under. Legacy EC
+   * (secp256k1) wallets from an old .wallet import hold their funds under the
+   * ECKey hash160 — deriving a PQKey from those bytes throws or yields the
+   * wrong hash, so the key type must be respected.
+   */
+  private pubKeyHashHex(privateKeyHex: string, keyType?: 'PQ' | 'EC'): string {
+    const raw = hexToBytes(privateKeyHex);
+    if (keyType === 'EC') {
+      return Utils.HEX.encode(ECKey.fromPrivate(raw, true).getPubKeyHash());
+    }
+    const pqKey = PQKey.fromPrivateKey(raw);
+    return Utils.HEX.encode(pqKey.getPubKeyHash());
+  }
+
+  private async fetchAccountBalances(privateKeyHex: string, baseUrl?: string, keyType?: 'PQ' | 'EC'): Promise<WalletAccountItem[]> {
+    const pubKeyHash = this.pubKeyHashHex(privateKeyHex, keyType);
     const response = await this.request<any>(ReqCmd.GetBalances, 'POST', [pubKeyHash], baseUrl);
     if (!response.success || !response.data) return [];
     const balances: any[] = response.data.balance || [];
@@ -433,9 +447,8 @@ export class HttpService {
    * Get UTXOs for a wallet. The Java server's getOutputs expects a JSON array
    * of hex pubkey hashes (not an address).
    */
-  async getOutputs(privateKeyHex: string): Promise<ApiResponse<UTXO[]>> {
-    const pqKey = PQKey.fromPrivateKey(hexToBytes(privateKeyHex));
-    const pubKeyHash = Utils.HEX.encode(pqKey.getPubKeyHash());
+  async getOutputs(privateKeyHex: string, keyType?: 'PQ' | 'EC'): Promise<ApiResponse<UTXO[]>> {
+    const pubKeyHash = this.pubKeyHashHex(privateKeyHex, keyType);
     const response = await this.request<any>(ReqCmd.GetOutputs, 'POST', [pubKeyHash]);
     if (response.success && response.data) {
       return {
