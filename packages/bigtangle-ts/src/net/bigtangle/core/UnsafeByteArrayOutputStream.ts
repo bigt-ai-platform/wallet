@@ -34,7 +34,10 @@ export class UnsafeByteArrayOutputStream {
             // (small overhead, acceptable for diagnosis)
          //   console.log(`UnsafeByteArrayOutputStream.write: wrote 1 byte, new size=${this.count}`);
         } else {
-            const buffer = b instanceof Buffer ? b : new Uint8Array(b);
+            // NOTE: do NOT use `instanceof Buffer` here — Buffer is a Node
+            // global that is undefined in web bundles (and Uint8Array covers
+            // Buffer in Node anyway, since Buffer extends Uint8Array).
+            const buffer = b instanceof Uint8Array ? b : new Uint8Array(b);
             this.writeBytes(buffer, 0, buffer.length);
         }
     }

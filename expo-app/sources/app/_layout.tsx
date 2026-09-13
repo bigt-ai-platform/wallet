@@ -57,6 +57,8 @@ function AppShell() {
                         <Stack.Screen name="receive" options={{ headerShown: false }} />
                         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
                         <Stack.Screen name="balance" options={{ headerShown: false }} />
+                        <Stack.Screen name="public-balance" options={{ headerShown: false }} />
+                        <Stack.Screen name="blocks" options={{ headerShown: false }} />
                         <Stack.Screen name="chart" options={{ headerShown: false }} />
                     </Stack>
                 </View>

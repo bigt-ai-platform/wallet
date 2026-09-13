@@ -24,7 +24,9 @@ export class FilteredBlock extends Message {
     constructor(params: NetworkParameters, header: Block, pmt: PartialMerkleTree);
     constructor(params: NetworkParameters, arg1: Uint8Array | Block, arg2?: PartialMerkleTree) {
         super(params);
-        if (arg1 instanceof Buffer) {
+        // Uint8Array (Buffer is Node-only and extends Uint8Array anyway) so
+        // this also works in web bundles where Buffer is undefined.
+        if (arg1 instanceof Uint8Array) {
             // Constructor(params, payloadBytes)
             this.payload = arg1;
             this.merkleTree = new PartialMerkleTree(params, new Uint8Array(0), 0); // Placeholder

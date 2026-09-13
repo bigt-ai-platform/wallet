@@ -20,6 +20,9 @@ export enum ReqCmd {
   GetTransactionsStatusByAddress = 'getTransactionsStatusByAddress',
   SubmitTransaction = 'submitTransaction',
   GetChainNumber = 'getChainNumber',
+  FindBlockEvaluation = 'findBlockEvaluation',
+  SearchBlockByBlockHashs = 'searchBlockByBlockHashs',
+  GetBlockByHash = 'getBlockByHash',
   ProcessPegIn = 'processPegIn',
   GetBridgeInfo = 'getBridgeInfo',
 }

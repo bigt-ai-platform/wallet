@@ -9,11 +9,11 @@ SERVER_PORT="${SERVER_PORT:-18088}"
 L1_PORT="${L1_PORT:-18086}"
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | token | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | token | blocks | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" token "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" token "|" blocks "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, blocks, remaining, tests, demo";;
 esac
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -143,6 +143,17 @@ E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list tokens.spec.ts 2>&1
 log "Token e2e tests passed."
+fi
+
+# 4b4. Run the block-explorer tests (latest blocks / hash search / dump details).
+if [[ "$CMD" == "blocks" ]]; then
+info "Running block explorer e2e tests..."
+cd "$E2E_DIR"
+APP_URL="http://localhost:${WEB_PORT}/" \
+E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
+E2E_L1_URL="http://localhost:${L1_PORT}/" \
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list blocks.spec.ts 2>&1
+log "Block explorer e2e tests passed."
 fi
 
 # 4c. Run remaining specs (tokens, settings, order, wallet-flow, L1 Test Tab,

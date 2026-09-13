@@ -8,7 +8,7 @@ import { useRouter, usePathname, useGlobalSearchParams } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   WalletIcon, MarketIcon, TokensIcon, SettingsIcon, CloseIcon,
-  ChartIcon, OrderIcon, DataIcon, SendIcon,
+  ChartIcon, OrderIcon, DataIcon, SendIcon, SearchIcon, BlocksIcon,
 } from './Icons';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useTranslation } from 'react-i18next';
@@ -68,6 +68,8 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       items: [
         { label: t('sidebar.payment'), key: 'payment', icon: SendIcon, route: '/home/payment' },
         { label: t('sidebar.balance'), key: 'balance', icon: DataIcon, route: '/balance' },
+        { label: t('sidebar.addressBalance'), key: 'addressBalance', icon: SearchIcon, route: '/public-balance' },
+        { label: t('sidebar.blocks'), key: 'blocks', icon: BlocksIcon, route: '/blocks' },
         { label: t('sidebar.tokens'), key: 'tokens', icon: TokensIcon, route: '/tokens' },
         { label: t('sidebar.keys'), key: 'keys', icon: WalletIcon, route: '/home/keys' },
         { label: t('sidebar.settings'), key: 'settings', icon: SettingsIcon, route: '/settings' },

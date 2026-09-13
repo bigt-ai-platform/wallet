@@ -512,6 +512,68 @@ export class HttpService {
   }
 
   /**
+   * Block explorer: the chain's latest blocks (`findBlockEvaluation`).
+   * `lastNum` caps the list (Java's page defaults to 50). Returns the raw
+   * evaluation rows (normalize with lib/blockinfo toBlockRow).
+   */
+  async findBlockEvaluations(lastNum: number, baseUrl?: string): Promise<ApiResponse<any[]>> {
+    const response = await this.request<any>(
+      ReqCmd.FindBlockEvaluation,
+      'POST',
+      { lastestAmount: String(lastNum) },
+      baseUrl
+    );
+    if (response.success && response.data) {
+      return { success: true, data: response.data.evaluations || [] };
+    }
+    return {
+      success: false,
+      error: response.error || 'Failed to find blocks',
+    } as ApiResponse<any[]>;
+  }
+
+  /**
+   * Block explorer: look up blocks by their hashes
+   * (`searchBlockByBlockHashs`).
+   */
+  async searchBlockByHashs(blockhashs: string[], baseUrl?: string): Promise<ApiResponse<any[]>> {
+    const response = await this.request<any>(
+      ReqCmd.SearchBlockByBlockHashs,
+      'POST',
+      { blockhashs },
+      baseUrl
+    );
+    if (response.success && response.data) {
+      return { success: true, data: response.data.evaluations || [] };
+    }
+    return {
+      success: false,
+      error: response.error || 'Failed to search blocks',
+    } as ApiResponse<any[]>;
+  }
+
+  /**
+   * Block explorer: raw serialized block of one hash (`getBlockByHash`
+   * answers { dataHex }) for client-side decoding — the app turns it into a
+   * full block dump like Java's block2string dialog.
+   */
+  async getBlockDataHex(hashHex: string, baseUrl?: string): Promise<ApiResponse<string>> {
+    const response = await this.request<{ dataHex?: string }>(
+      ReqCmd.GetBlockByHash,
+      'POST',
+      { hashHex },
+      baseUrl
+    );
+    if (response.success && response.data?.dataHex) {
+      return { success: true, data: response.data.dataHex };
+    }
+    return {
+      success: false,
+      error: response.error || 'Failed to get block',
+    } as ApiResponse<string>;
+  }
+
+  /**
    * Get the on-chain lifecycle status of a single transaction
    */
   async getTransactionStatus(txHash: string): Promise<ApiResponse<TransactionStatusInfo>> {
