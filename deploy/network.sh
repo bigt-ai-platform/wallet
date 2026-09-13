@@ -3,9 +3,9 @@
 # The production export defaults to mainnet only by convention: `expo export`
 # bakes __DEV__=false, and expo-app/sources/constants/app.ts +
 # expo-app/sources/services/http.ts point that branch at the mainnet L1
-# (https://m.bigtangle.org) and MainNetParams seeds. Nothing else selects the
-# network, so a testnet URL/TestParams sneaking into those two files would be
-# silently shipped to production.
+# (https://m.bigtangle.org), the same-origin /l0/ web proxy and MainNetParams
+# seeds. Nothing else selects the network, so a testnet URL/TestParams sneaking
+# into those two files would be silently shipped to production.
 #
 # assert_mainnet_default() fails the release when the checked-in source no
 # longer pins the canonical mainnet defaults. It is sourced by deploy/tag.sh
@@ -46,6 +46,13 @@ assert_mainnet_default() {
   # …and discoverL0Url() must resolve the L0 seeds from MainNetParams.
   if ! awk '/function discoverL0Url/{f=1} f{print} f&&/^}/{exit}' "$http_ts" | grep -q 'MainNetParams'; then
     echo -e "${red}network guard: discoverL0Url() no longer resolves mainnet L0 from MainNetParams ($http_ts)${nc}"
+    bad=1
+  fi
+  # …while the web branch must use the same-origin /l0/ path that
+  # deploy/region.sh's Caddy vhost reverse-proxies to the public L0 API (the
+  # raw http:// seeds are blocked as mixed content / CORS in a browser).
+  if ! awk '/function discoverL0Url/{f=1} f{print} f&&/^}/{exit}' "$http_ts" | grep -q "'/l0/'"; then
+    echo -e "${red}network guard: discoverL0Url() no longer uses the same-origin /l0/ web path ($http_ts)${nc}"
     bad=1
   fi
 

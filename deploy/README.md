@@ -3,8 +3,9 @@
 Serves the bapp web wallet (expo static export) on a region VM — **fully
 containerised**, mirroring `../aifeeds/deploy`. Unlike aifeeds there is no app
 tier: the wallet talks to the **existing prod chain** straight from the browser
-(mainnet L1 order-match at `https://m.bigtangle.org`, L0 discovered from the
-network seeds), so this stack is a single nginx container + a host Caddy vhost.
+(mainnet L1 order-match at `https://m.bigtangle.org`; L0 through the same-origin
+`/l0/*` Caddy proxy to `L0_API`, default `https://eu1.bigtangle.org`) so this
+stack is a single nginx container + a host Caddy vhost.
 
 ```
 Cloudflare (DNS-only A → region VM)
@@ -115,9 +116,9 @@ VM is fully rebuilt by `deploy`.
 ## Network (mainnet vs testnet)
 
 The **production export defaults to mainnet** (`IS_DEV=false` →
-`https://m.bigtangle.org` L1, mainnet seeds for L0); users can switch to the
-testnet chain in the app's Settings. If you want a build whose *default* is
-testnet, export with the testnet URLs baked in (edit
+`https://m.bigtangle.org` L1, same-origin `/l0/` proxy for L0); users can switch
+to the testnet chain in the app's Settings. If you want a build whose *default*
+is testnet, export with the testnet URLs baked in (edit
 `expo-app/sources/constants/app.ts` and the params used by
 `sources/services/http.ts` before running `tag.sh`) — nothing is configurable
 at runtime by design.
@@ -125,35 +126,29 @@ at runtime by design.
 **The release train is mainnet only.** `deploy/network.sh`
 (`assert_mainnet_default`) is run by both `deploy.sh` and `tag.sh` before any
 tag/build: it verifies the checked-in `constants/app.ts` +
-`services/http.ts` still pin the mainnet L1 host (`https://m.bigtangle.org`)
-and `MainNetParams` seeds, and **aborts the release** if a testnet default has
-leaked in. There is intentionally no bypass — a non-mainnet build must be done
-out-of-band, never through the release train.
+`services/http.ts` still pin the mainnet L1 host (`https://m.bigtangle.org`),
+the same-origin `/l0/` web path and `MainNetParams` seeds, and **aborts the
+release** if a testnet default has leaked in. There is intentionally no bypass
+— a non-mainnet build must be done out-of-band, never through the release
+train.
 
 ## CORS + mixed content (preconditions)
 
 The browser app calls the chain endpoints cross-origin:
 - L1 order-match: `https://m.bigtangle.org` (mainnet) / `https://testm.bigtangle.org` (testnet)
-- L0 main chain: discovered from the network seeds
-  (`MainNetParams.serverSeeds()` in `bigtangle-ts`), used with `http://<host>/`
+- L0 main chain: same-origin `/l0/*` on the wallet domain — the region Caddy
+  vhost (`region.sh`) reverse-proxies it to `L0_API`
+  (`region.conf`, default `https://eu1.bigtangle.org`). The raw
+  `MainNetParams.serverSeeds()` entries (`http://<ip>/`) are plain-HTTP P2P
+  sync endpoints: an HTTPS page cannot call them (mixed content), and the
+  chain nodes have CORS **disabled by default** (`server.corsAllowedOrigins=`
+  in `../blockchain`). Native builds keep using the seeds directly, where
+  neither restriction applies.
 
-The Java chain servers have CORS **disabled by default** (see
-`CorsConfiguration.java` in `../blockchain`: `server.corsAllowedOrigins=`)
-and only respond to browser cross-origin calls once you enable it:
-
-```
-server.corsAllowedOrigins=https://wallet.example.org
-```
-
-on each L0/L1 node the app will reach. Until that property is set, the web
-wallet on a separate origin will be blocked by the browser. Two further notes:
-
-1. The app builds the L0 URL as `http://<seed>/`. If the wallet is served over
-   HTTPS, browsers block those as **mixed content** — for a fully HTTPS web
-   deployment the app/params must switch the L0 discovery to an HTTPS URL
-   (native apps are unaffected).
-2. If you cannot enable CORS on the chain nodes, serve the chain API under the
-   wallet's own origin instead (same-origin reverse proxy in the Caddy vhost)
-   — that needs an app tweak so requests go to the relative path.
+The relative path is baked into the production web build
+(`discoverL0Url()` in `expo-app/sources/services/http.ts` returns `/l0/` for
+`Platform.OS === 'web'`); `deploy/network.sh` fails the release if that web
+branch or the mainnet seeds disappear. Nothing needs to change on the chain
+nodes for this deployment model.
 
 No API keys or secrets are involved — this is a public read/write wallet UI.

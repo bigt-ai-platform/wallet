@@ -27,17 +27,25 @@ import {
   type ChainNumberInfo,
   type OutputDetail,
 } from '@/types/api';
+import { Platform } from 'react-native';
 import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
 import { DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET, IS_DEV, DEV_L0_URL, DEV_L1_URL } from '@/constants/app';
 
 /**
  * Default API endpoints.
  *
- * The L0 (main chain) server URL is discovered from the network seeds defined
- * in the blockchain params (Java `RequesterSeedDiscovery`): each
- * `serverSeeds()` entry is an "host:port" HTTP seed server. DNS enrtree seeds
- * and UDP-discovered peers are added server-side; the browser client only
- * needs the static HTTP seed list.
+ * The L0 (main chain) server URL for native builds is discovered from the
+ * network seeds defined in the blockchain params (Java
+ * `RequesterSeedDiscovery`): each `serverSeeds()` entry is a "host:port" HTTP
+ * seed server. DNS enrtree seeds and UDP-discovered peers are added
+ * server-side; a native client only needs the static HTTP seed list.
+ *
+ * A BROWSER client cannot use those seeds: they are plain `http://` endpoints
+ * (blocked as mixed content on the HTTPS wallet) and the chain nodes have CORS
+ * disabled. The production web build therefore calls the same-origin `/l0/`
+ * path, which the deploy Caddy vhost (deploy/region.sh) reverse-proxies to the
+ * public HTTPS L0 API. The `serverSeeds()` fallback below still selects the
+ * mainnet/testnet defaults for native builds.
  *
  * Development builds point at the local dev-server endpoints instead
  * (dev.sh: L0 :24089, L1 :24086).
@@ -48,6 +56,9 @@ import { DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET, IS_DEV, DEV_L0_UR
 function discoverL0Url(useTestnet: boolean): string {
   if (IS_DEV) {
     return DEV_L0_URL;
+  }
+  if (!useTestnet && Platform.OS === 'web') {
+    return '/l0/';
   }
   const params = useTestnet ? TestParams.get() : MainNetParams.get();
   const seeds = params.serverSeeds();
