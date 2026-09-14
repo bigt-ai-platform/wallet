@@ -137,12 +137,15 @@ done out-of-band, never through the release train.
 
 ## CORS + mixed content (preconditions)
 
-The browser app calls the chain endpoints same-origin through Caddy:
+The browser app calls the chain endpoints same-origin:
 - L0 main chain: `/l0/*` → `L0_API` (`region.conf`, default
-  `https://eu1.bigtangle.org`).
-- L1 order-match: `/l1/*` → `L1_API` (`region.conf`, default
+  `https://eu1.bigtangle.org`) and `/l1/*` → `L1_API` (`region.conf`, default
   `https://ordereu1.bigtangle.org`). The legacy `m.bigtangle.org` host serves
   the JSF webapp, not the JSON-RPC order API.
+- The host Caddy vhost (written by `region.sh`) handles these prefixes; the
+  web container also ships the same proxies in `deploy/nginx.conf` as a
+  fallback for hosts where the Caddy vhost was not (re)written. Keep the
+  upstreams in `region.conf` and `nginx.conf` in sync.
 
 The chain nodes have CORS **disabled by default** (`server.corsAllowedOrigins=`
 in `../blockchain`) and expose no HTTPS proxy for arbitrary origins, so the

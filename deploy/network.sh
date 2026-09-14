@@ -2,11 +2,11 @@
 #
 # The production export defaults to mainnet only by convention: `expo export`
 # bakes __DEV__=false, and expo-app/sources/constants/app.ts +
-# expo-app/sources/services/http.ts point that branch at the mainnet L1 order
-# nodes (https://ordereu1.bigtangle.org, same-origin /l1/ on web), the
-# same-origin /l0/ web proxy and MainNetParams seeds. Nothing else selects the
-# network, so a testnet URL/TestParams sneaking into those two files would be
-# silently shipped to production.
+# expo-app/sources/services/http.ts point that branch at the production TLS
+# entry points (PROD_L0_URL / PROD_L1_URL = eu1 / ordereu1.bigtangle.org) and
+# the same-origin /l0/ + /l1/ web proxies. Nothing else selects the network, so
+# a testnet URL/TestParams sneaking into those two files would be silently
+# shipped to production.
 #
 # assert_mainnet_default() fails the release when the checked-in source no
 # longer pins the canonical mainnet defaults. It is sourced by deploy/tag.sh
@@ -34,18 +34,28 @@ assert_mainnet_default() {
     bad=1
   fi
 
-  # The mainnet L1 constant must pin the public order node (native) and the
-  # same-origin /l1/ proxy (web). The legacy JSF host https://m.bigtangle.org
-  # serves HTML, not the JSON-RPC order API, and must not come back.
-  local l1_main_line
-  l1_main_line="$(grep -m1 'export const DEFAULT_L1_MAINNET_URL' "$app_ts" || true)"
-  if ! echo "$l1_main_line" | grep -q 'ordereu1\.bigtangle\.org' \
-     || ! echo "$l1_main_line" | grep -q "'/l1/'"; then
-    echo -e "${red}network guard: DEFAULT_L1_MAINNET_URL must be IS_WEB ? '/l1/' : 'https://ordereu1.bigtangle.org' ($app_ts)${nc}"
+  # app.ts must pin the production TLS entry points and the same-origin web
+  # bases. The legacy JSF host https://m.bigtangle.org serves HTML, not the
+  # JSON-RPC order API, and must not come back anywhere in the app defaults.
+  local l0_line l1_line l0_web l1_web
+  l0_line="$(grep -m1 'export const PROD_L0_URL' "$app_ts" || true)"
+  l1_line="$(grep -m1 'export const PROD_L1_URL' "$app_ts" || true)"
+  l0_web="$(grep -m1 'export const PROD_WEB_L0_BASE' "$app_ts" || true)"
+  l1_web="$(grep -m1 'export const PROD_WEB_L1_BASE' "$app_ts" || true)"
+  if ! echo "$l0_line" | grep -q 'eu1\.bigtangle\.org'; then
+    echo -e "${red}network guard: PROD_L0_URL no longer points at https://eu1.bigtangle.org ($app_ts)${nc}"
     bad=1
   fi
-  if echo "$l1_main_line" | grep -q 'm\.bigtangle\.org'; then
-    echo -e "${red}network guard: DEFAULT_L1_MAINNET_URL points at the legacy JSF host m.bigtangle.org ($app_ts)${nc}"
+  if ! echo "$l1_line" | grep -q 'ordereu1\.bigtangle\.org'; then
+    echo -e "${red}network guard: PROD_L1_URL no longer points at https://ordereu1.bigtangle.org ($app_ts)${nc}"
+    bad=1
+  fi
+  if ! echo "$l0_web" | grep -q "'/l0/'"; then
+    echo -e "${red}network guard: PROD_WEB_L0_BASE must be the same-origin '/l0/' path ($app_ts)${nc}"
+    bad=1
+  fi
+  if ! echo "$l1_web" | grep -q "'/l1/'"; then
+    echo -e "${red}network guard: PROD_WEB_L1_BASE must be the same-origin '/l1/' path ($app_ts)${nc}"
     bad=1
   fi
   if grep -q 'https://m\.bigtangle\.org' "$http_ts" "$app_ts"; then
@@ -58,16 +68,12 @@ assert_mainnet_default() {
     echo -e "${red}network guard: defaultL1Url() no longer resolves the default L1 from DEFAULT_L1_MAINNET_URL ($http_ts)${nc}"
     bad=1
   fi
-  # …and discoverL0Url() must resolve the L0 seeds from MainNetParams.
-  if ! awk '/function discoverL0Url/{f=1} f{print} f&&/^}/{exit}' "$http_ts" | grep -q 'MainNetParams'; then
-    echo -e "${red}network guard: discoverL0Url() no longer resolves mainnet L0 from MainNetParams ($http_ts)${nc}"
-    bad=1
-  fi
-  # …while the web branch must use the same-origin /l0/ path that
-  # deploy/region.sh's Caddy vhost reverse-proxies to the public L0 API (the
-  # raw http:// seeds are blocked as mixed content / CORS in a browser).
-  if ! awk '/function discoverL0Url/{f=1} f{print} f&&/^}/{exit}' "$http_ts" | grep -q "'/l0/'"; then
-    echo -e "${red}network guard: discoverL0Url() no longer uses the same-origin /l0/ web path ($http_ts)${nc}"
+  # …and discoverL0Url() must use the same-origin /l0/ base on web and the
+  # HTTPS PROD_L0_URL on native — never the raw http:// seeds for mainnet.
+  local discover
+  discover="$(awk '/function discoverL0Url/{f=1} f{print} f&&/^}/{exit}' "$http_ts")"
+  if ! echo "$discover" | grep -q 'PROD_WEB_L0_BASE' || ! echo "$discover" | grep -q 'PROD_L0_URL'; then
+    echo -e "${red}network guard: discoverL0Url() must use PROD_WEB_L0_BASE on web and PROD_L0_URL on native ($http_ts)${nc}"
     bad=1
   fi
 

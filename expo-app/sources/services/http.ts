@@ -5,6 +5,7 @@
  */
 
 import { device } from '@/storage';
+import { Platform } from 'react-native';
 import {
   type ApiResponse,
   type GetBalancesResponse,
@@ -27,7 +28,6 @@ import {
   type ChainNumberInfo,
   type OutputDetail,
 } from '@/types/api';
-import { Platform } from 'react-native';
 import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
 import {
   DEFAULT_L1_CHAINS_MAINNET,
@@ -37,42 +37,48 @@ import {
   IS_DEV,
   DEV_L0_URL,
   DEV_L1_URL,
+  PROD_L0_URL,
+  PROD_WEB_L0_BASE,
 } from '@/constants/app';
+
+/**
+ * True when running as the static web export served over http(s) in
+ * production (`npx expo export` sets __DEV__ = false). Native platforms have
+ * no mixed-content or CORS restrictions, so they talk to the network hosts
+ * directly; the browser build must go through the app origin.
+ */
+function isWebProd(): boolean {
+  return !IS_DEV && Platform.OS === 'web';
+}
 
 /**
  * Default API endpoints.
  *
- * The L0 (main chain) server URL for native builds is discovered from the
- * network seeds defined in the blockchain params (Java
- * `RequesterSeedDiscovery`): each `serverSeeds()` entry is a "host:port" HTTP
- * seed server. DNS enrtree seeds and UDP-discovered peers are added
- * server-side; a native client only needs the static HTTP seed list.
- *
- * A BROWSER client cannot use those seeds: they are plain `http://` endpoints
- * (blocked as mixed content on the HTTPS wallet) and the chain nodes have CORS
- * disabled. The production web build therefore calls the same-origin `/l0/`
- * path, which the deploy Caddy vhost (deploy/region.sh) reverse-proxies to the
- * public HTTPS L0 API. The `serverSeeds()` fallback below still selects the
- * mainnet/testnet defaults for native builds.
- *
- * Development builds point at the local dev-server endpoints instead
- * (dev.sh: L0 :24089, L1 :24086).
+ * The L0 (main chain) server URL:
+ *  - dev builds point at the local dev-server endpoints (dev.sh: L0 :24089,
+ *    L1 :24086);
+ *  - the production web build uses the same-origin reverse proxy base (/l0/
+ *    — host Caddy from deploy/region.sh, fallback deploy/nginx.conf), because
+ *    browsers can neither call the plain-http network seeds (mixed content)
+ *    nor the https endpoints directly (no CORS headers);
+ *  - native production builds use the https entry point of the production
+ *    deployment (PROD_L0_URL, helper/prod/prod.sh), which has no CORS
+ *    restrictions.
  *
  * The L1 (order match) chains carry no seed list of their own, so they use
- * the well-known endpoints from constants/app.ts: the public HTTPS order node
- * for native builds, the same-origin `/l1/` proxy for the web build (the
- * order nodes also have CORS disabled; the legacy `m.bigtangle.org` host is
- * the JSF webapp, not the JSON-RPC order API).
+ * the constants in constants/app.ts (same-origin /l1/ on web, PROD_L1_URL on
+ * native; the legacy m.bigtangle.org host is the JSF webapp, not the
+ * JSON-RPC order API).
  */
 function discoverL0Url(useTestnet: boolean): string {
   if (IS_DEV) {
     return DEV_L0_URL;
   }
-  if (!useTestnet && Platform.OS === 'web') {
-    return '/l0/';
+  if (!useTestnet) {
+    return isWebProd() ? PROD_WEB_L0_BASE : PROD_L0_URL;
   }
-  const params = useTestnet ? TestParams.get() : MainNetParams.get();
-  const seeds = params.serverSeeds();
+  // Testnet L0 is dev-only; keep the TestParams seeds (no public HTTPS entry).
+  const seeds = TestParams.get().serverSeeds();
   if (seeds && seeds.length > 0) {
     return `http://${seeds[0].trim()}/`;
   }
@@ -145,10 +151,23 @@ export class HttpService {
   getServerUrl(): string {
     const savedUrl = device.get(STORAGE_KEYS.SERVER_URL);
     if (savedUrl) {
+      // Values saved by older builds may name the raw network seeds
+      // (http://92.5.34.128:80/ etc.) — browsers block those (mixed content),
+      // so ignore them and fall back to the current network default.
+      const seeds = this.isWebProd()
+        ? [MainNetParams.get().serverSeeds(), TestParams.get().serverSeeds()].flat().map((s) => `http://${s}`)
+        : [];
+      if (seeds.some((s) => savedUrl.startsWith(s))) {
+        return this.getDefaultServerUrl();
+      }
       return savedUrl;
     }
 
     return this.getDefaultServerUrl();
+  }
+
+  private isWebProd(): boolean {
+    return !IS_DEV && Platform.OS === 'web';
   }
 
   /**
@@ -253,6 +272,22 @@ export class HttpService {
   }
 
   /**
+   * Legacy L1 chain URLs saved by older builds. The legacy `m.bigtangle.org`
+   * host serves the JSF webapp, not the order API, and raw-network seeds are
+   * equally unreachable from the browser — replace both with the current
+   * mainnet default (/l1/ on web, the public order node on native).
+   */
+  private normalizeLegacyL1Url(url: string): string {
+    if (!url) return url;
+    const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
+    if (useTestnet) return url;
+    if (/^https?:\/\/m\.bigtangle\.org\/?$/.test(url)) return defaultL1Url(false);
+    const seeds = MainNetParams.get().serverSeeds().map((s) => `http://${s}`);
+    if (seeds.some((s) => url.startsWith(s))) return defaultL1Url(false);
+    return url;
+  }
+
+  /**
    * Get all configured L1 chains. Older configs saved without a chainId are
    * back-filled on read so every chain is keyable by its unique on-chain id,
    * and configs still pinned to the legacy JSF host are migrated to the
@@ -264,24 +299,17 @@ export class HttpService {
       try {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((c, i) => {
-            const rawUrl = typeof c?.url === 'string' ? c.url : '';
-            const url = /^https?:\/\/m\.bigtangle\.org\/?$/.test(rawUrl)
-              ? defaultL1Url(false)
-              : rawUrl;
-            return {
-              chainId: typeof c?.chainId === 'string' && c.chainId ? c.chainId : (i === 0 ? 'ordermatch' : `chain-${i}`),
-              name: c?.name || '',
-              url,
-            };
-          });
+          return parsed.map((c, i) => ({
+            chainId: typeof c?.chainId === 'string' && c.chainId ? c.chainId : (i === 0 ? 'ordermatch' : `chain-${i}`),
+            name: c?.name || '',
+            url: this.normalizeLegacyL1Url(c?.url || ''),
+          }));
         }
       } catch { /* fall through */ }
     }
     const savedUrl = device.get(STORAGE_KEYS.L1_URL);
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
-    const legacySaved = !!savedUrl && /^https?:\/\/m\.bigtangle\.org\/?$/.test(savedUrl);
-    const singleUrl = savedUrl && !legacySaved ? savedUrl : defaultL1Url(useTestnet);
+    const singleUrl = this.normalizeLegacyL1Url(savedUrl || defaultL1Url(useTestnet));
     return [{ chainId: 'ordermatch', name: 'Default', url: singleUrl }];
   }
 
