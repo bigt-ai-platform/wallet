@@ -3,8 +3,8 @@
 #
 # Model (deploy/README.md): the bapp wallet is a STATIC web export served by an
 # nginx container (deploy/compose.prod.yml). It talks to the EXISTING prod chain
-# from the browser (mainnet L1 https://m.bigtangle.org, L0 same-origin /l0/* via
-# this script's Caddy vhost → $L0_API), so no chain/DB containers exist here.
+# from the browser (mainnet L0/L1 same-origin /l0/* + /l1/* via this script's
+# Caddy vhost → $L0_API/$L1_API), so no chain/DB containers exist here.
 # Caddy stays on the host: it is the shared TLS
 # gateway for every tenant on these VMs and reverse-proxies the region domain to
 # the container's 127.0.0.1 host port.
@@ -151,11 +151,15 @@ config_caddy() {
 # bapp $r — wallet web app (static nginx container on 127.0.0.1:${WEB_PORT})
 ${dom}, www.${dom} {
     encode gzip
-    # Same-origin L0 API: the browser bundle calls the relative /l0/* path
-    # (an HTTPS page cannot call the plain-http MainNetParams seeds, and the
-    # chain nodes have CORS disabled). Forward it to the public HTTPS L0.
+    # Same-origin chain APIs: the browser bundle calls the relative /l0/* and
+    # /l1/* paths (an HTTPS page cannot call the plain-http MainNetParams
+    # seeds, and the chain nodes have CORS disabled). Forward them to the
+    # public HTTPS nodes.
     handle_path /l0/* {
         reverse_proxy ${L0_API}
+    }
+    handle_path /l1/* {
+        reverse_proxy ${L1_API}
     }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}
@@ -187,6 +191,9 @@ ${apex}, www.${apex} {
     encode gzip
     handle_path /l0/* {
         reverse_proxy ${L0_API}
+    }
+    handle_path /l1/* {
+        reverse_proxy ${L1_API}
     }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}

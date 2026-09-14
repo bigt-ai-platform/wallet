@@ -29,7 +29,15 @@ import {
 } from '@/types/api';
 import { Platform } from 'react-native';
 import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
-import { DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET, IS_DEV, DEV_L0_URL, DEV_L1_URL } from '@/constants/app';
+import {
+  DEFAULT_L1_CHAINS_MAINNET,
+  DEFAULT_L1_CHAINS_TESTNET,
+  DEFAULT_L1_MAINNET_URL,
+  DEFAULT_L1_TESTNET_URL,
+  IS_DEV,
+  DEV_L0_URL,
+  DEV_L1_URL,
+} from '@/constants/app';
 
 /**
  * Default API endpoints.
@@ -50,8 +58,11 @@ import { DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET, IS_DEV, DEV_L0_UR
  * Development builds point at the local dev-server endpoints instead
  * (dev.sh: L0 :24089, L1 :24086).
  *
- * The L1 (order match) chains carry no seed list of their own, so they keep
- * the well-known configured defaults below.
+ * The L1 (order match) chains carry no seed list of their own, so they use
+ * the well-known endpoints from constants/app.ts: the public HTTPS order node
+ * for native builds, the same-origin `/l1/` proxy for the web build (the
+ * order nodes also have CORS disabled; the legacy `m.bigtangle.org` host is
+ * the JSF webapp, not the JSON-RPC order API).
  */
 function discoverL0Url(useTestnet: boolean): string {
   if (IS_DEV) {
@@ -67,8 +78,6 @@ function discoverL0Url(useTestnet: boolean): string {
   }
   return '';
 }
-const DEFAULT_L1_MAINNET_URL = 'https://m.bigtangle.org';
-const DEFAULT_L1_TESTNET_URL = 'https://testm.bigtangle.org';
 
 /** The default L1 order-match URL for the given network (local in dev). */
 function defaultL1Url(useTestnet: boolean): string {
@@ -245,7 +254,9 @@ export class HttpService {
 
   /**
    * Get all configured L1 chains. Older configs saved without a chainId are
-   * back-filled on read so every chain is keyable by its unique on-chain id.
+   * back-filled on read so every chain is keyable by its unique on-chain id,
+   * and configs still pinned to the legacy JSF host are migrated to the
+   * current mainnet default (/l1/ on web, the public order node on native).
    */
   getL1Chains(): L1ChainConfig[] {
     const stored = device.get(STORAGE_KEYS.L1_CHAINS);
@@ -253,17 +264,24 @@ export class HttpService {
       try {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((c, i) => ({
-            chainId: typeof c?.chainId === 'string' && c.chainId ? c.chainId : (i === 0 ? 'ordermatch' : `chain-${i}`),
-            name: c?.name || '',
-            url: c?.url || '',
-          }));
+          return parsed.map((c, i) => {
+            const rawUrl = typeof c?.url === 'string' ? c.url : '';
+            const url = /^https?:\/\/m\.bigtangle\.org\/?$/.test(rawUrl)
+              ? defaultL1Url(false)
+              : rawUrl;
+            return {
+              chainId: typeof c?.chainId === 'string' && c.chainId ? c.chainId : (i === 0 ? 'ordermatch' : `chain-${i}`),
+              name: c?.name || '',
+              url,
+            };
+          });
         }
       } catch { /* fall through */ }
     }
     const savedUrl = device.get(STORAGE_KEYS.L1_URL);
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
-    const singleUrl = savedUrl || defaultL1Url(useTestnet);
+    const legacySaved = !!savedUrl && /^https?:\/\/m\.bigtangle\.org\/?$/.test(savedUrl);
+    const singleUrl = savedUrl && !legacySaved ? savedUrl : defaultL1Url(useTestnet);
     return [{ chainId: 'ordermatch', name: 'Default', url: singleUrl }];
   }
 

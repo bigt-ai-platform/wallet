@@ -3,9 +3,10 @@
 Serves the bapp web wallet (expo static export) on a region VM — **fully
 containerised**, mirroring `../aifeeds/deploy`. Unlike aifeeds there is no app
 tier: the wallet talks to the **existing prod chain** straight from the browser
-(mainnet L1 order-match at `https://m.bigtangle.org`; L0 through the same-origin
-`/l0/*` Caddy proxy to `L0_API`, default `https://eu1.bigtangle.org`) so this
-stack is a single nginx container + a host Caddy vhost.
+(mainnet L0/L1 through the same-origin `/l0/*` + `/l1/*` Caddy proxies to
+`L0_API` / `L1_API`, defaults `https://eu1.bigtangle.org` /
+`https://ordereu1.bigtangle.org`) so this stack is a single nginx container +
+a host Caddy vhost.
 
 ```
 Cloudflare (DNS-only A → region VM)
@@ -25,9 +26,10 @@ Cloudflare (DNS-only A → region VM)
 > tenants).
 
 > **Chain is NOT in this stack.** The app connects to the already-running
-> mainnet/testnet chain (`m.bigtangle.org` / `testm.bigtangle.org`). Per-region
-> or private chain containers are intentionally out of scope — deploy the chain
-> itself with `../blockchain/helper/prod/*` if you need your own.
+> mainnet/testnet chain (`eu1.bigtangle.org` + `ordereu1.bigtangle.org` /
+> `m.bigtangle.org` + `testm.bigtangle.org`). Per-region or private chain
+> containers are intentionally out of scope — deploy the chain itself with
+> `../blockchain/helper/prod/*` if you need your own.
 
 ## Files
 
@@ -116,39 +118,44 @@ VM is fully rebuilt by `deploy`.
 ## Network (mainnet vs testnet)
 
 The **production export defaults to mainnet** (`IS_DEV=false` →
-`https://m.bigtangle.org` L1, same-origin `/l0/` proxy for L0); users can switch
-to the testnet chain in the app's Settings. If you want a build whose *default*
-is testnet, export with the testnet URLs baked in (edit
-`expo-app/sources/constants/app.ts` and the params used by
+`https://ordereu1.bigtangle.org` L1 on native, same-origin `/l0/` + `/l1/`
+proxies on web); users can switch to the testnet chain in the app's Settings.
+If you want a build whose *default* is testnet, export with the testnet URLs
+baked in (edit `expo-app/sources/constants/app.ts` and the params used by
 `sources/services/http.ts` before running `tag.sh`) — nothing is configurable
 at runtime by design.
 
 **The release train is mainnet only.** `deploy/network.sh`
 (`assert_mainnet_default`) is run by both `deploy.sh` and `tag.sh` before any
 tag/build: it verifies the checked-in `constants/app.ts` +
-`services/http.ts` still pin the mainnet L1 host (`https://m.bigtangle.org`),
-the same-origin `/l0/` web path and `MainNetParams` seeds, and **aborts the
-release** if a testnet default has leaked in. There is intentionally no bypass
-— a non-mainnet build must be done out-of-band, never through the release
-train.
+`services/http.ts` still pin the mainnet L1 order node
+(`https://ordereu1.bigtangle.org`, same-origin `/l1/` on web), the same-origin
+`/l0/` web path and `MainNetParams` seeds, and **aborts the release** if a
+testnet default has leaked in (the legacy JSF host `m.bigtangle.org` is
+rejected too). There is intentionally no bypass — a non-mainnet build must be
+done out-of-band, never through the release train.
 
 ## CORS + mixed content (preconditions)
 
-The browser app calls the chain endpoints cross-origin:
-- L1 order-match: `https://m.bigtangle.org` (mainnet) / `https://testm.bigtangle.org` (testnet)
-- L0 main chain: same-origin `/l0/*` on the wallet domain — the region Caddy
-  vhost (`region.sh`) reverse-proxies it to `L0_API`
-  (`region.conf`, default `https://eu1.bigtangle.org`). The raw
-  `MainNetParams.serverSeeds()` entries (`http://<ip>/`) are plain-HTTP P2P
-  sync endpoints: an HTTPS page cannot call them (mixed content), and the
-  chain nodes have CORS **disabled by default** (`server.corsAllowedOrigins=`
-  in `../blockchain`). Native builds keep using the seeds directly, where
-  neither restriction applies.
+The browser app calls the chain endpoints same-origin through Caddy:
+- L0 main chain: `/l0/*` → `L0_API` (`region.conf`, default
+  `https://eu1.bigtangle.org`).
+- L1 order-match: `/l1/*` → `L1_API` (`region.conf`, default
+  `https://ordereu1.bigtangle.org`). The legacy `m.bigtangle.org` host serves
+  the JSF webapp, not the JSON-RPC order API.
 
-The relative path is baked into the production web build
-(`discoverL0Url()` in `expo-app/sources/services/http.ts` returns `/l0/` for
-`Platform.OS === 'web'`); `deploy/network.sh` fails the release if that web
-branch or the mainnet seeds disappear. Nothing needs to change on the chain
-nodes for this deployment model.
+The chain nodes have CORS **disabled by default** (`server.corsAllowedOrigins=`
+in `../blockchain`) and expose no HTTPS proxy for arbitrary origins, so the
+same-origin path is what makes the web wallet work: an HTTPS page cannot call
+the raw `MainNetParams.serverSeeds()` (`http://<ip>/`, mixed content) and a
+cross-origin call would be blocked by CORS.
+
+The relative paths are baked into the production web build
+(`discoverL0Url()` / `DEFAULT_L1_MAINNET_URL` in
+`expo-app/sources/services/http.ts` + `constants/app.ts` use `/l0/` + `/l1/`
+for `Platform.OS === 'web'`); `deploy/network.sh` fails the release if those
+web branches or the mainnet defaults disappear. Native builds talk to the
+public nodes directly, where neither restriction applies. Nothing needs to
+change on the chain nodes for this deployment model.
 
 No API keys or secrets are involved — this is a public read/write wallet UI.

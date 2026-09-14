@@ -1,8 +1,9 @@
 # bapp production web container (run via deploy/region.sh).
 #
 # Single static bundle (expo export) served by nginx. The SPA talks to the
-# existing prod chain from the browser (mainnet L1 https://m.bigtangle.org),
-# so there is nothing else in this stack — no DB, no chain containers.
+# existing prod chain from the browser (same-origin /l0/ + /l1/ proxies set up
+# by region.sh's Caddy vhost), so there is nothing else in this stack — no DB,
+# no chain containers.
 # Only the host-facing port is published on 127.0.0.1: the shared host Caddy
 # (region.sh `caddy`) reverse-proxies the region domain to it.
 #

@@ -3,7 +3,8 @@
 # deploy/tag.sh runs `expo export` on the host (node toolchain lives there) and
 # drops the bundle at <repo-root>/web-build; this image just packages it under
 # nginx. The image is per-region agnostic: mainnet endpoints are baked into the
-# production export (IS_DEV=false → https://m.bigtangle.org).
+# production export (IS_DEV=false → same-origin /l0/ + /l1/ proxies, see
+# deploy/region.sh).
 #
 # Build with the repo root as the context (so `web-build/` and `deploy/` are in
 # scope; see the root .dockerignore):
