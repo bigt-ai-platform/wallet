@@ -1,0 +1,19 @@
+# Lean context for the APK builder image (repo root is the context; yarn
+# install + codegen run inside).
+node_modules
+**/node_modules
+android
+**/android
+ios
+**/ios
+web-build
+**/web-build
+.expo
+**/.expo
+.git
+**/.git
+.env
+**/.env
+*.log
+**/*.log
+e2e

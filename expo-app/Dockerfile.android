@@ -1,0 +1,43 @@
+# wallet Android APK builder (Expo SDK 57 / RN New Arch).
+#
+#   From the repo root:
+#     docker build -f expo-app/Dockerfile.android -t wallet-android .
+#     docker run --rm -v ./out:/out [-e APP_ENV=preview] [-e BUILD_TYPE=debug] wallet-android
+#
+# APP_ENV selects the bundle id (app.config.js); BUILD_TYPE=release signs with
+# /out/wallet-release.keystore (generated on first run — keep it to preserve
+# upgrade signatures).
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+  JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 \
+  ANDROID_HOME=/opt/android-sdk \
+  ANDROID_SDK_ROOT=/opt/android-sdk \
+  GRADLE_OPTS="-Xmx4g -XX:MaxMetaspaceSize=512m" \
+  APP_ENV=preview \
+  BUILD_TYPE=debug \
+  OUT_DIR=/out
+
+RUN apt-get update && apt-get install -y \
+    curl unzip git wget build-essential python3 openjdk-17-jdk-headless \
+    && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+  && apt-get install -y nodejs \
+  && npm install -g yarn \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p $ANDROID_SDK_ROOT/cmdline-tools \
+  && wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/cmdline-tools.zip \
+  && unzip -q /tmp/cmdline-tools.zip -d $ANDROID_SDK_ROOT/cmdline-tools \
+  && rm /tmp/cmdline-tools.zip \
+  && mv $ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools $ANDROID_SDK_ROOT/cmdline-tools/latest \
+  && yes | $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT --licenses > /dev/null \
+  && $ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$ANDROID_SDK_ROOT \
+    "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.1.12297006"
+ENV PATH=$PATH:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools
+
+COPY . /workspace/wallet
+WORKDIR /workspace/wallet
+RUN yarn install --frozen-lockfile
+
+ENTRYPOINT ["/workspace/wallet/expo-app/docker-build-apk.sh"]

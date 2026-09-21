@@ -23,10 +23,7 @@ export default {
         scheme: "bigtai",
         userInterfaceStyle: "automatic",
         newArchEnabled: true,
-        notification: {
-            icon: "./sources/assets/images/icon-notification.png",
-            iosDisplayInForeground: true
-        },
+
         ios: {
             supportsTablet: true,
             bundleIdentifier: bundleId,
@@ -64,6 +61,13 @@ export default {
                 }
             ],
             "expo-asset",
+            [
+                "expo-notifications",
+                {
+                    icon: "./sources/assets/images/icon-notification.png",
+                    iosDisplayInForeground: true
+                }
+            ],
             "expo-localization",
             "expo-secure-store",
             "expo-web-browser",
