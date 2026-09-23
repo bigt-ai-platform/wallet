@@ -1,0 +1,6 @@
+# Capacitor generates these — regenerate with `npx cap add android` / `npx cap sync`.
+android/
+
+# Release signing material (never commit).
+keystore.properties
+*.keystore

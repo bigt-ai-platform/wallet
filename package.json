@@ -4,7 +4,8 @@
   "workspaces": {
     "packages": [
       "expo-app",
-      "packages/*"
+      "packages/*",
+      "webapp"
     ],
     "nohoist": [
       "**/react",

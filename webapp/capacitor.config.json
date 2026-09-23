@@ -1,0 +1,9 @@
+{
+  "appId": "com.example.bapp.webapp",
+  "appName": "Wallet",
+  "webDir": "../expo-app/dist",
+  "server": {
+    "androidScheme": "http",
+    "cleartext": true
+  }
+}

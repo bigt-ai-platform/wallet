@@ -52,18 +52,21 @@ ABI_SUFFIX=""
 if [ -n "${ABI_SPLIT:-}" ]; then
   ABI_SUFFIX="-$(echo "$ABI_SPLIT" | tr ',' '+' | tr -d ' ')"
 fi
-NAME="wallet-$APP_ENV-$BUILD_TYPE$ABI_SUFFIX-$VERSION.apk"
-LATEST_NAME="wallet-$APP_ENV-$BUILD_TYPE$ABI_SUFFIX-latest.apk"
+NAME="wallet-$APP_ENV-$BUILD_TYPE-$VERSION.apk"
+LATEST_NAME="wallet-$APP_ENV-$BUILD_TYPE-latest.apk"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-  docker build -f expo-app/Dockerfile.android -t "$IMAGE" .
-  mkdir -p "$OUT_DIR"
-  docker run --rm -v "$OUT_DIR:/out" \
-    -e "APP_ENV=$APP_ENV" -e "BUILD_TYPE=$BUILD_TYPE" \
-    -e "ABI_SPLIT=${ABI_SPLIT:-}" "$IMAGE"
+  # Build the signed Capacitor artifact (static web export → cap sync → gradle
+  # + signing) via webapp.sh. Needs webapp/keystore.properties for --release.
+  case "$BUILD_TYPE" in
+    release) ./webapp.sh --release --no-install ;;
+    *)       ./webapp.sh --no-install ;;
+  esac
 fi
-APK="$OUT_DIR/wallet-$APP_ENV-$BUILD_TYPE$ABI_SUFFIX.apk"
-[ -f "$APK" ] || { echo "missing $APK (run without --skip-build first)" >&2; exit 1; }
+SRC="$ROOT/webapp/android/app/build/outputs/apk/$BUILD_TYPE/app-$BUILD_TYPE.apk"
+APK="$OUT_DIR/wallet-$APP_ENV-$BUILD_TYPE.apk"
+[ -f "$SRC" ] || { echo "missing built artifact $SRC (run without --skip-build first)" >&2; exit 1; }
+cp -f "$SRC" "$APK"
 sha256sum "$APK"
 
 MC_ENV=(-e S3_ENDPOINT="$S3_ENDPOINT" -e S3_ACCESS_KEY="$S3_ACCESS_KEY" -e S3_SECRET_KEY="$S3_SECRET_KEY"

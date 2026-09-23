@@ -9,6 +9,9 @@
 
 import { Platform } from 'react-native';
 import { MMKV } from 'react-native-mmkv';
+import { secureWebKV, initSecureStorage } from './secureWeb';
+
+export { initSecureStorage };
 
 interface KV {
   get(key: string): string | undefined;
@@ -53,7 +56,8 @@ function nativeKV(): KV {
 
 let impl: KV | null = null;
 function kv(): KV {
-  if (!impl) impl = Platform.OS === 'web' ? webKV() : nativeKV();
+  // In the Capacitor-wrapped app this is Keystore-backed (see secureWeb.ts).
+  if (!impl) impl = Platform.OS === 'web' ? secureWebKV(webKV()) : nativeKV();
   return impl;
 }
 

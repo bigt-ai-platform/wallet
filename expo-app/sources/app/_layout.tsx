@@ -7,6 +7,7 @@ import { Stack } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { View, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { WalletProvider } from '@/state/wallet';
+import { initSecureStorage } from '@/storage';
 import Sidebar from '@/components/Sidebar';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
 import { MenuIcon } from '@/components/Icons';
@@ -98,9 +99,13 @@ export default function RootLayout() {
     React.useEffect(() => {
         (async () => {
             try {
+                // In the Capacitor app, load key material from Keystore-backed
+                // storage before anything reads the wallet.
+                await initSecureStorage();
                 setIsReady(true);
             } catch (error) {
                 console.error('Error initializing:', error);
+                setIsReady(true);
             }
         })();
     }, []);
