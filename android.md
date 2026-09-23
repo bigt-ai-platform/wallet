@@ -42,6 +42,14 @@ expo-app  ──(expo export --platform web)──▶  expo-app/dist  ──(cap
   menu** (`order · tokens · settings`) — `app/(tabs)/_layout.tsx`.
 Both come from the shared component tree, so web and Android are identical.
 
+## Branding / icons
+
+The launcher icon and splash use dai's logo
+(`../dai/apps/web/public/bigT_ai_192x192.png`), copied to `webapp/assets/icon.png`.
+`@capacitor/assets generate --android` (wired into `add:android`, or
+`npm run assets` from `webapp/`) regenerates the Android mipmaps + splashes;
+`webapp/android/` is gitignored.
+
 ## Keys on device (Keystore)
 
 The wallet's storage abstraction (`expo-app/sources/storage/index.ts`) uses MMKV
