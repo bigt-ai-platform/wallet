@@ -60,6 +60,7 @@ test-results/
 # generated artifacts (dev logs, demo captures)
 logs/
 expo-app/demo-output/
+out/
 
 # deploy: locally built web image tar (deploy/region.sh loads it onto VMs)
 deploy/.image/

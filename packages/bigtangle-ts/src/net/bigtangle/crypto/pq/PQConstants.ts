@@ -24,4 +24,18 @@ export const PQConstants = {
 
   BUNDLE_VERSION: 1,
   TX_PQ_VERSION: 2,
+
+  NEVER_ACTIVATE: -1,
+  DUAL_SUITE_DEFAULT_ACTIVATION_HEIGHT: -1,
+  DUAL_ACTIVATION_PROPERTY: "net.bigtangle.pq.dualActivationHeight",
+
+  dualActivationHeightFromProperty(): number {
+    let v: string | undefined;
+    if (typeof process !== "undefined" && typeof process.env !== "undefined")
+      v = process.env[PQConstants.DUAL_ACTIVATION_PROPERTY];
+    if (v == null || v.trim().length === 0) return PQConstants.DUAL_SUITE_DEFAULT_ACTIVATION_HEIGHT;
+    const h = Number.parseInt(v.trim(), 10);
+    if (Number.isNaN(h) || h < 0) return PQConstants.DUAL_SUITE_DEFAULT_ACTIVATION_HEIGHT;
+    return h;
+  },
 } as const;

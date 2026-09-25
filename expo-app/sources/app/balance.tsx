@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
+import { decimalsFor } from '@/lib/tokenformat';
 import { toBigInt, formatValue } from '@/lib/amountformat';
 import { MONO_FONT } from '@/constants/fonts';
 import type { UTXO } from '@/types/api';
@@ -206,7 +207,7 @@ export default function BalanceScreen() {
   };
 
   const decimalsOf = (tokenId: string): number =>
-    tokenDecimals[tokenId] ?? (tokenId === 'bc' ? 8 : 0);
+    tokenDecimals[tokenId] ?? decimalsFor(tokenId);
 
   const filtered = utxos.filter((u) =>
     activeLayer === 'all' ? true : u.layer === activeLayer

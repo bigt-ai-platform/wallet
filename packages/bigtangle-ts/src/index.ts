@@ -15,6 +15,7 @@ export { ECKey, KeyType } from './net/bigtangle/core/ECKey';
 export { ECPoint } from './net/bigtangle/core/ECPoint';
 export { Sha256Hash } from './net/bigtangle/core/Sha256Hash';
 export { Transaction } from './net/bigtangle/core/Transaction';
+export { BlockType } from './net/bigtangle/core/BlockType';
 export { TransactionInput } from './net/bigtangle/core/TransactionInput';
 export { TransactionOutput } from './net/bigtangle/core/TransactionOutput';
 export { TransactionOutPoint } from './net/bigtangle/core/TransactionOutPoint';
@@ -89,6 +90,11 @@ export { KeyBundle, KeyBundleEntry } from './net/bigtangle/crypto/pq/KeyBundle';
 export { SignatureBundle, SignatureBundleEntry } from './net/bigtangle/crypto/pq/SignatureBundle';
 export { PQAddress } from './net/bigtangle/crypto/pq/PQAddress';
 export { PQKeyDerivation } from './net/bigtangle/crypto/pq/PQKeyDerivation';
+export { PQScriptUtils } from './net/bigtangle/crypto/pq/PQScriptUtils';
+export { BcPQSignatureProvider, UnsupportedOperationException } from './net/bigtangle/crypto/pq/PQSignatureProvider';
+export type { PQKeyPair } from './net/bigtangle/crypto/pq/PQSignatureProvider';
+export { GenesisOutput } from './net/bigtangle/core/UtilGeneseBlock';
+export { BaseTaggableObject } from './net/bigtangle/utils/BaseTaggableObject';
 
 // DID and agent-to-agent communication
 export { DidKey } from './net/bigtangle/crypto/DidKey';

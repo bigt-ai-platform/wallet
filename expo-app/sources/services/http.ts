@@ -29,6 +29,7 @@ import {
   type OutputDetail,
 } from '@/types/api';
 import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
+import { decimalsFor, formatTokenAmount } from '@/lib/tokenformat';
 import {
   DEFAULT_L1_CHAINS_MAINNET,
   DEFAULT_L1_CHAINS_TESTNET,
@@ -486,14 +487,15 @@ export class HttpService {
     return balances.map((c: any) => {
       const tokenid: string = c.tokenHex || c.tokenid || 'bc';
       const token = tokennames[tokenid] || {};
-      const decimals = typeof token.decimals === 'number' ? token.decimals : tokenid === 'bc' ? 8 : 0;
-      const value = BigInt(c.value || 0);
-      const human = Number(value) / Math.pow(10, decimals);
+      // Token metadata decimals (bc = BIGTANGLE_DECIMAL) — Java formats
+      // balances with the token's own decimals, never a hardcoded 8.
+      const decimals = decimalsFor(tokenid, token.decimals);
+      const human = formatTokenAmount(BigInt(c.value || 0), decimals);
       return {
         tokenid,
         tokenname: token.tokenname || (tokenid === 'bc' ? 'BIG' : tokenid),
-        balance: String(human),
-        confirmedBalance: String(human),
+        balance: human,
+        confirmedBalance: human,
         unconfirmedBalance: '0',
         decimals,
       };

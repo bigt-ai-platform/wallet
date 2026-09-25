@@ -26,6 +26,10 @@ import { VarInt } from './VarInt';
 import { UnsafeByteArrayOutputStream } from './UnsafeByteArrayOutputStream';
 import { Transaction } from './Transaction';
 import { NetworkParameters } from '../params/NetworkParameters';
+import { KeyBundle } from '../crypto/pq/KeyBundle';
+import { SignatureBundle } from '../crypto/pq/SignatureBundle';
+import { PQConstants } from '../crypto/pq/PQConstants';
+import { PQScriptUtils } from '../crypto/pq/PQScriptUtils';
 import { MessageSerializer } from './MessageSerializer';
 import { ProtocolException } from '../exception/ProtocolException';
 import { VerificationException } from '../exception/VerificationException';
@@ -175,7 +179,7 @@ export class Block extends Message {
         a.version = NetworkParameters.BLOCK_VERSION_GENESIS;
         a.difficultyTarget = difficultyTarget;
         a.lastMiningRewardBlock = lastMiningRewardBlock;
-        a.time = Date.now() / 1000;
+        a.time = Math.floor(Date.now() / 1000);
         if (a.time < minTime)
             a.time = minTime;
         a.prevBlockHash = prevBlockHash;
@@ -779,17 +783,17 @@ export class Block extends Message {
             return true;
         }
         try {
+            const keys = KeyBundle.deserialize(this.proposerKeyBundle);
+            const sigs = SignatureBundle.deserialize(this.proposerSignatureBundle);
             const signingHash = this.computeProposerSigningHash();
-            // Delegate to external PQ verifier once available.
-            // For now, return true (verification passes) — the native provider
-            // or WASM module will perform actual ML-DSA/SLH-DSA verification.
-            return true;
+            const requireSlhDsa = this.params!.isPqSuiteActive(PQConstants.SUITE_CAT5_DUAL_1, this.height);
+            return PQScriptUtils.verifyProposerSignature(keys, sigs, signingHash, requireSlhDsa);
         } catch (e) {
             return false;
         }
     }
 
-    private computeProposerSigningHash(): Uint8Array {
+    public computeProposerSigningHash(): Uint8Array {
         const stream = new UnsafeByteArrayOutputStream(256);
         Utils.uint32ToByteStreamLE(this.version, stream);
         stream.write(this.prevBlockHash.getReversedBytes());

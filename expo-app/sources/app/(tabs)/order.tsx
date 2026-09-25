@@ -9,6 +9,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
+import { decimalsFor } from '@/lib/tokenformat';
 import { listOrders, recordOrder, refreshAllStatuses } from '@/services/tracking';
 import { CloseIcon } from '@/components/Icons';
 import SegmentedTabs from '@/components/SegmentedTabs';
@@ -121,7 +122,7 @@ export default function OrderScreen() {
           price: '0',
           change: '0',
           executedquantity: '0',
-          decimals: tk.decimals ?? 8,
+          decimals: decimalsFor(tk.tokenid, tk.decimals),
         }));
         setTokenResults(items);
       }
@@ -155,7 +156,7 @@ export default function OrderScreen() {
 
     setSubmitting(true);
     try {
-      const decimals = selectedToken.decimals ?? 8;
+      const decimals = decimalsFor(selectedToken.tokenid, selectedToken.decimals);
       const txHash = await orderOnLayer1({
         side: orderSide,
         privateKeyHex: wallet.wallet.privateKey,

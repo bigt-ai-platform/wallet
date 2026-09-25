@@ -70,6 +70,41 @@ export abstract class NetworkParameters {
   abstract getGenesisPub(): string;
   abstract getPacketMagic(): number;
 
+  protected readonly pqSuiteActivation: Map<number, number> = new Map<number, number>();
+
+  public getPqSuites(): number[] {
+    return Array.from(this.pqSuiteActivation.keys());
+  }
+
+  public addPqSuite(suiteId: number): void {
+    this.pqSuiteActivation.set(suiteId, 0);
+  }
+
+  public removePqSuite(suiteId: number): void {
+    this.pqSuiteActivation.delete(suiteId);
+  }
+
+  public getPqSuiteActivationHeight(suiteId: number): number {
+    const h = this.pqSuiteActivation.get(suiteId);
+    return h === undefined ? -1 : h;
+  }
+
+  public setPqSuiteActivationHeight(suiteId: number, height: number): void {
+    this.pqSuiteActivation.set(suiteId, height);
+  }
+
+  public isPqEnabled(): boolean {
+    return this.pqSuiteActivation.size > 0;
+  }
+
+  public isPqSuiteActive(suiteId: number): boolean;
+  public isPqSuiteActive(suiteId: number, height: number): boolean;
+  public isPqSuiteActive(suiteId: number, height?: number): boolean {
+    if (height === undefined) return this.pqSuiteActivation.has(suiteId);
+    const h = this.pqSuiteActivation.get(suiteId);
+    return h !== undefined && height >= h;
+  }
+
   public getSerializer(parseRetain: boolean): BitcoinSerializer {
     return new BitcoinSerializer(this, parseRetain);
   }

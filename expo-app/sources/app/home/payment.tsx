@@ -10,6 +10,7 @@ import * as WebBrowser from "expo-web-browser";
 import { useWallet } from "@/state/wallet";
 import { httpService } from "@/services/http";
 import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
+import { BC_DECIMALS, decimalsFor } from "@/lib/tokenformat";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { WalletIcon, QrScanIcon } from "@/components/Icons";
 import ChainBadge from "@/components/ChainBadge";
@@ -217,7 +218,7 @@ export default function TransactionScreen() {
       balance: '0',
       confirmedBalance: '0',
       unconfirmedBalance: '0',
-      decimals: 8,
+      decimals: BC_DECIMALS,
       layer: destLayer,
     }];
   }, [tokens, destLayer]);
@@ -316,7 +317,7 @@ export default function TransactionScreen() {
     const balance = parseFloat(selectedToken.balance);
     if (amountNum > balance) { showAlert(t('transaction.error'), t('transaction.insufficient')); return; }
 
-    const decimals = selectedToken.decimals || 8;
+    const decimals = decimalsFor(selectedToken.tokenid, selectedToken.decimals);
     const satoshis = Math.floor(amountNum * Math.pow(10, decimals));
 
     // Confirm the send. react-native-web's Alert.alert ignores the buttons
@@ -374,7 +375,7 @@ export default function TransactionScreen() {
         tokenId: selectedToken.tokenid,
         tokenName: selectedToken.tokenname,
         amount,
-        decimals: selectedToken.decimals || 8,
+        decimals: decimalsFor(selectedToken.tokenid, selectedToken.decimals),
         fromAddress: publicInfo!.address,
         toAddress,
         memo: memo || undefined,

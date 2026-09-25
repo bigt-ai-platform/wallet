@@ -8,6 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
+import { decimalsFor } from '@/lib/tokenformat';
 import { listOrders, recordOrder } from '@/services/tracking';
 import type { MarketPrice } from '@/types/api';
 import { MONO_FONT } from '@/constants/fonts';
@@ -103,7 +104,7 @@ export default function TokenOrderScreen({ side }: Props) {
 
     setSubmitting(true);
     try {
-      const decimals = selectedToken.decimals ?? 8;
+      const decimals = decimalsFor(selectedToken.tokenid, selectedToken.decimals);
       const txHash = await orderOnLayer1({
         side,
         privateKeyHex: wallet.wallet.privateKey,

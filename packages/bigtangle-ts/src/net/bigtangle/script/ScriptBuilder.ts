@@ -181,6 +181,16 @@ export class ScriptBuilder {
         throw new Error("Invalid type for createOutputScript");
     }
 
+    static createInputScriptForPQ(sigBundle: SignatureBundle): Script;
+    static createInputScriptForPQ(sigBundle: SignatureBundle, pubKey: ECKey | PQKey): Script;
+    static createInputScriptForPQ(sigBundle: SignatureBundle, pubKey?: ECKey | PQKey): Script {
+        const builder = new ScriptBuilder().data(sigBundle.serialize());
+        if (pubKey) {
+            builder.data(pubKey.getPubKey());
+        }
+        return builder.build();
+    }
+
     static createInputScript(signature: TransactionSignature | SignatureBundle | null, pubKey?: ECKey | PQKey): Script {
         // For PQ signatures, use serialize() (no sighash byte) matching Java's
         // createInputScriptForPQ. The encodeToBitcoin() variant would append a

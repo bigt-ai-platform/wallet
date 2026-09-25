@@ -15,8 +15,7 @@ import { EncryptedData } from '../EncryptedData';
 import { EncryptionType, EncryptableItem } from '../EncryptableItem';
 import { KeyType } from '../../core/ECKey';
 
-const MLDSA_SEED_BYTES = 32;
-const SLHDSA_SEED_BYTES = 96;
+import { sha256Drbg, MLDSA_SEED_BYTES, SLHDSA_SEED_BYTES } from './sha256Drbg';
 
 export class PQKey implements EncryptableItem {
   protected mlDsaPrivateKey: Uint8Array;
@@ -143,10 +142,25 @@ export class PQKey implements EncryptableItem {
   }
 
   /**
+   * Creates a PQKey (public-only) from a KeyBundle,
+   * matching Java PQKey.fromPublicOnly(KeyBundle).
+   */
+  static fromPublicOnly(keyBundle: KeyBundle, network?: number): PQKey;
+  /**
    * Creates a PQKey (public-only) from prefixed public key bytes (0x05 + bundle),
    * matching Java PQKey.fromPublicOnly(byte[] prefixedPubkey).
    */
-  static fromPublicOnly(pubBytes: Uint8Array, network: number = PQConstants.NETWORK_TESTNET): PQKey {
+  static fromPublicOnly(pubBytes: Uint8Array, network?: number): PQKey;
+  static fromPublicOnly(arg: KeyBundle | Uint8Array, network: number = PQConstants.NETWORK_TESTNET): PQKey {
+    if (arg instanceof KeyBundle) {
+      return new PQKey(
+        new Uint8Array(0),
+        new Uint8Array(0),
+        arg,
+        network,
+      );
+    }
+    const pubBytes = arg;
     if (pubBytes.length < 2)
       throw new Error('invalid prefixed PQ public key bytes');
     const bundle = KeyBundle.deserialize(pubBytes.slice(1));
@@ -250,7 +264,15 @@ export class PQKey implements EncryptableItem {
     return new PQKey(mlPriv, slPriv, bundle, network);
   }
 
-  sign(data: Sha256Hash): SignatureBundle {
+  getMLDSAPrivateKey(): Uint8Array {
+    return this.mlDsaPrivateKey;
+  }
+
+  getSLHDSAPrivateKey(): Uint8Array {
+    return this.slhDsaPrivateKey;
+  }
+
+  sign(data: Sha256Hash, includeSlhDsa: boolean = true): SignatureBundle {
     const txHash = domainSeparatedHash(data.getBytes(), PQConstants.TX_DOMAIN);
     const mlMsg = domainSeparatedHash(txHash, PQConstants.MLDSA_SIG_DOMAIN);
 
@@ -262,7 +284,7 @@ export class PQKey implements EncryptableItem {
     const entries: SignatureBundleEntry[] = [
       new SignatureBundleEntry(PQConstants.ALG_ML_DSA_87, mlSig),
     ];
-    if (this.slhDsaPrivateKey.length > 0) {
+    if (includeSlhDsa && this.slhDsaPrivateKey.length > 0) {
       const slhMsg = domainSeparatedHash(txHash, PQConstants.SLHDSA_SIG_DOMAIN);
       const slhSig = slh_dsa_sha2_256s.sign(slhMsg, this.slhDsaPrivateKey);
       entries.push(new SignatureBundleEntry(PQConstants.ALG_SLH_DSA_SHA2_256S, slhSig));
@@ -505,43 +527,4 @@ function domainSeparatedHash(data: Uint8Array, domain: string): Uint8Array {
   combined.set(domainBytes);
   combined.set(data, domainBytes.length);
   return Sha256Hash.hash(combined);
-}
-
-function sha256Drbg(seed: Uint8Array, outputLen: number): Uint8Array {
-  const hashLen = 32;
-  const hashSize = BigInt(hashLen);
-
-  // addSeedMaterial(byte[]): seed = H(input || seed_old)
-  let d = sha256.create();
-  if (seed.length > 0) {
-    d.update(seed);
-  }
-  let seedBuf = new Uint8Array(hashLen);
-  d.update(seedBuf);
-  seedBuf = new Uint8Array(d.digest());
-
-  let stateBuf = new Uint8Array(hashLen);
-  let stateCounter = 1n;
-
-  const result = new Uint8Array(outputLen);
-  let offset = 0;
-  while (offset < outputLen) {
-    // generateState(): state = H(old_counter || state || seed)
-    const oldCounter = stateCounter;
-    stateCounter += 1n;
-
-    d = sha256.create();
-    // Little-endian counter byte order (matching BC DigestRandomGenerator)
-    for (let i = 0; i < 8; i++) {
-      d.update(new Uint8Array([Number(oldCounter >> BigInt(i * 8) & 0xFFn)]));
-    }
-    d.update(stateBuf);
-    d.update(seedBuf);
-    stateBuf = new Uint8Array(d.digest());
-
-    const copyLen = Math.min(hashLen, outputLen - offset);
-    result.set(stateBuf.subarray(0, copyLen), offset);
-    offset += copyLen;
-  }
-  return result;
 }
