@@ -53,6 +53,21 @@ done
 : "${S3_ACCESS_KEY:?set S3_ACCESS_KEY}"
 : "${S3_SECRET_KEY:?set S3_SECRET_KEY}"
 
+# MinIO client image. quay.io/minio/mc is preferred; where it's blocked the
+# minio server image (which bundles `mc`) is used instead.
+MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc}"
+if ! docker image inspect "$MC_IMAGE" >/dev/null 2>&1; then
+  docker pull "$MC_IMAGE" >/dev/null 2>&1 || true
+fi
+if ! docker image inspect "$MC_IMAGE" >/dev/null 2>&1; then
+  alt="quay.io/minio/minio:latest"
+  docker image inspect "$alt" >/dev/null 2>&1 || docker pull "$alt" >/dev/null 2>&1 || true
+  if docker image inspect "$alt" >/dev/null 2>&1; then
+    echo "mc image $MC_IMAGE unavailable — using $alt (bundles mc)" >&2
+    MC_IMAGE="$alt"
+  fi
+fi
+
 # Release version: the git tag (vX.Y.Z) when on one, else the app package
 # version. versionCode is a monotonic integer (semver → major*1e6+minor*1e3+
 # patch) so the on-device updater can compare against the manifest regardless
@@ -98,12 +113,12 @@ sha256sum "$APK"
 MC_ENV=(-e S3_ENDPOINT="$S3_ENDPOINT" -e S3_ACCESS_KEY="$S3_ACCESS_KEY" -e S3_SECRET_KEY="$S3_SECRET_KEY"
   -e S3_BUCKET="$S3_BUCKET" -e S3_PREFIX="$S3_PREFIX" -e APK_FILE="$(basename "$APK")"
   -e NAME="$NAME" -e LATEST_NAME="$LATEST_NAME")
-docker run --rm "${MC_ENV[@]}" -v "$OUT_DIR:/out:ro" --entrypoint /bin/sh quay.io/minio/mc -c \
+docker run --rm "${MC_ENV[@]}" -v "$OUT_DIR:/out:ro" --entrypoint /bin/sh "$MC_IMAGE" -c \
   'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && \
    mc cp "/out/$APK_FILE" "up/$S3_BUCKET/$S3_PREFIX/$NAME"' \
   || { echo "upload failed — check S3_* creds" >&2; exit 1; }
 if [ "$LATEST" -eq 1 ]; then
-  docker run --rm "${MC_ENV[@]}" --entrypoint /bin/sh quay.io/minio/mc -c \
+  docker run --rm "${MC_ENV[@]}" --entrypoint /bin/sh "$MC_IMAGE" -c \
     'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && \
      mc cp "up/$S3_BUCKET/$S3_PREFIX/$NAME" "up/$S3_BUCKET/$S3_PREFIX/$LATEST_NAME"' \
     || { echo "latest-alias copy failed" >&2; exit 1; }
@@ -120,7 +135,7 @@ if [ "$LATEST" -eq 1 ] && [ "$BUILD_TYPE" = "release" ]; then
     "$VERSION" "$VERSION_CODE" "${PUBLIC_BASE_URL%/}" "$S3_PREFIX" "$NAME" "$SHA" "${MANDATORY:-false}" \
     > "$OUT_DIR/$MANIFEST"
   MC_ENV+=(-e MANIFEST="$MANIFEST")
-  docker run --rm "${MC_ENV[@]}" -v "$OUT_DIR:/out:ro" --entrypoint /bin/sh quay.io/minio/mc -c \
+  docker run --rm "${MC_ENV[@]}" -v "$OUT_DIR:/out:ro" --entrypoint /bin/sh "$MC_IMAGE" -c \
     'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && \
      mc cp "/out/$MANIFEST" "up/$S3_BUCKET/$S3_PREFIX/$MANIFEST"' \
     || { echo "manifest upload failed" >&2; exit 1; }
