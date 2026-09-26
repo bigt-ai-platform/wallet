@@ -23,10 +23,12 @@ describe('parseChainProbe', () => {
   it('reads txReward.chainLength + checkpoints from a served head', () => {
     expect(
       parseChainProbe({
-        txReward: { chainLength: 65139, blockHashHex: 'abc' },
+        txReward: { chainLength: 65139, blockHashHex: 'abc', confirmed: true, version: 1 },
         finalizedChainLength: 63952,
         finalizedEpoch: 7994,
         justifiedEpoch: 8086,
+        justifiedBlockHash: 'def',
+        finalizedBlockHash: 'fed',
       }),
     ).toEqual({
       chainLength: 65139,
@@ -34,6 +36,24 @@ describe('parseChainProbe', () => {
       finalizedEpoch: 7994,
       justifiedEpoch: 8086,
       head: 'abc',
+      confirmed: true,
+      version: 1,
+      justifiedBlockHash: 'def',
+      finalizedBlockHash: 'fed',
+    });
+  });
+
+  it('defaults optional head/checkpoint fields when absent', () => {
+    expect(parseChainProbe({ txReward: { chainLength: 42 } })).toEqual({
+      chainLength: 42,
+      finalizedChainLength: null,
+      finalizedEpoch: null,
+      justifiedEpoch: null,
+      head: '',
+      confirmed: null,
+      version: null,
+      justifiedBlockHash: '',
+      finalizedBlockHash: '',
     });
   });
 

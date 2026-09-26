@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { isCapacitorNative } from '@/lib/platform';
 
 /**
  * App version shown in Settings/About. Baked at build time from the release
@@ -12,13 +13,17 @@ export const APP_VERSION = process.env.EXPO_PUBLIC_APP_VERSION || '1.0.0';
 export const IS_DEV = typeof __DEV__ !== 'undefined' && __DEV__;
 
 /**
- * True in the static web export. Browsers cannot call the public chain nodes
- * directly (their API has CORS disabled), so web production builds use the
- * same-origin /l0/ + /l1/ paths reverse-proxied by the deploy stack: the host
- * Caddy vhost (deploy/region.sh) and the in-container nginx fallback
- * (deploy/nginx.conf).
+ * True only in a genuine browser running the static web export. Browsers
+ * cannot call the public chain nodes directly (their API has CORS disabled),
+ * so web production builds use the same-origin /l0/ + /l1/ paths
+ * reverse-proxied by the deploy stack: the host Caddy vhost (deploy/region.sh)
+ * and the in-container nginx fallback (deploy/nginx.conf).
+ *
+ * The Capacitor Android app also reports Platform.OS === 'web' (its UI is the
+ * web export) but is served from a local asset server with no such proxy, so
+ * it must use the direct network endpoints like a native build.
  */
-const IS_WEB = Platform.OS === 'web';
+export const IS_WEB_BROWSER = Platform.OS === 'web' && !isCapacitorNative();
 
 /**
  * Local dev-server endpoints (dev.sh: L0 :24089, L1 :24086). Development
@@ -104,7 +109,7 @@ export const OTA_CHANNEL = process.env.EXPO_PUBLIC_APK_ENV || 'production';
 export const OTA_TYPE = 'release';
 
 /** Mainnet L1 order-match URL for the current platform. */
-export const DEFAULT_L1_MAINNET_URL = IS_WEB ? PROD_WEB_L1_BASE : PROD_L1_URL;
+export const DEFAULT_L1_MAINNET_URL = IS_WEB_BROWSER ? PROD_WEB_L1_BASE : PROD_L1_URL;
 
 /** Default L1 (order match) chains per network. Each has a unique on-chain id. */
 export const DEFAULT_L1_CHAINS_MAINNET = [

@@ -14,11 +14,21 @@
 
 /** Shape of a `getChainNumber` response, parsed as checkchain.sh does. */
 export interface ChainProbe {
+  /** Confirmed DAG length (`txReward.chainLength`) — the freshness key. */
   chainLength: number;
   finalizedChainLength: number | null;
   finalizedEpoch: number | null;
   justifiedEpoch: number | null;
+  /** Head block hash (`txReward.blockHashHex`), hex. */
   head: string;
+  /** Head block confirmed by the DAG. */
+  confirmed: boolean | null;
+  /** Protocol version reported in `txReward.version`. */
+  version: number | null;
+  /** Last justified (Casper FFG) block hash, hex. */
+  justifiedBlockHash: string;
+  /** Last finalized (Casper FFG) block hash, hex. */
+  finalizedBlockHash: string;
 }
 
 export interface ProbeResult {
@@ -64,6 +74,10 @@ export function parseChainProbe(data: unknown): ChainProbe | null {
     finalizedEpoch: num(d.finalizedEpoch),
     justifiedEpoch: num(d.justifiedEpoch),
     head: typeof r.blockHashHex === 'string' ? r.blockHashHex : '',
+    confirmed: typeof r.confirmed === 'boolean' ? r.confirmed : null,
+    version: num(r.version),
+    justifiedBlockHash: typeof d.justifiedBlockHash === 'string' ? d.justifiedBlockHash : '',
+    finalizedBlockHash: typeof d.finalizedBlockHash === 'string' ? d.finalizedBlockHash : '',
   };
 }
 

@@ -13,7 +13,6 @@
  * `bigtai/check/checkchain.sh`: a node serves only with HTTP 200, no
  * `errorcode`, and a `txReward.chainLength` (see `parseChainProbe`).
  */
-import { Platform } from 'react-native';
 import { device } from '@/storage';
 import {
   DEV_L0_URL,
@@ -21,6 +20,7 @@ import {
   DNS_SEEDS_DOMAIN,
   DOH_URL,
   IS_DEV,
+  IS_WEB_BROWSER,
   MAINNET_L0_URLS,
   MAINNET_L1_URLS,
   PROD_WEB_L0_BASE,
@@ -38,6 +38,7 @@ import {
   parseChainProbe,
   rankProbes,
   withSlash,
+  type ChainProbe,
   type ProbeResult,
   type RankedEndpoint,
 } from '@/lib/endpoints';
@@ -74,7 +75,6 @@ export const LEARNED_MAX = 16;
 
 const down = new Set<string>();
 const refreshing = new Set<Role>();
-const IS_WEB = Platform.OS === 'web';
 
 function isTestnet(): boolean {
   return device.get(['settings', 'useTestnet']) === 'true';
@@ -118,7 +118,7 @@ export function rememberPeer(role: Role, url: string): void {
 function staticCandidates(role: Role): string[] {
   if (IS_DEV) return role === 'l0' ? [DEV_L0_URL] : [DEV_L1_URL];
   if (isTestnet()) return [];
-  if (IS_WEB) return role === 'l0' ? [PROD_WEB_L0_BASE] : [PROD_WEB_L1_BASE];
+  if (IS_WEB_BROWSER) return role === 'l0' ? [PROD_WEB_L0_BASE] : [PROD_WEB_L1_BASE];
   return role === 'l0' ? MAINNET_L0_URLS.slice() : MAINNET_L1_URLS.slice();
 }
 
@@ -128,7 +128,7 @@ function staticCandidates(role: Role): string[] {
  * remote seeds discovered via DNS would be unusable there.
  */
 function dnsDiscoveryEnabled(): boolean {
-  return !IS_DEV && !isTestnet() && !IS_WEB;
+  return !IS_DEV && !isTestnet() && !IS_WEB_BROWSER;
 }
 
 function dedupe(urls: string[]): string[] {
@@ -261,11 +261,15 @@ function readCache(role: Role): Cache | null {
 }
 
 /**
- * Probe one endpoint's health + progress via the cheap `getChainNumber`. A node
- * is healthy only when it is HTTP 200, reports no `errorcode`, and exposes a
- * `txReward.chainLength` (same rule as `bigtai/check/checkchain.sh`).
+ * Fetch + parse one endpoint's `getChainNumber`. A node is healthy only when it
+ * is HTTP 200, reports no `errorcode`, and exposes a `txReward.chainLength`
+ * (same rule as `bigtai/check/checkchain.sh`). Shared by `probe` (health) and
+ * `endpointInfo` (full chain state for the status page).
  */
-export async function probe(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<ProbeResult | null> {
+async function fetchProbe(
+  url: string,
+  timeoutMs: number,
+): Promise<{ probe: ChainProbe; latencyMs: number } | null> {
   const base = withSlash(url);
   const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = setTimeout(() => ctrl?.abort(), timeoutMs);
@@ -280,12 +284,33 @@ export async function probe(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<
     if (!res.ok) return null;
     const parsed = parseChainProbe(await res.json());
     if (!parsed) return null;
-    return { url, chainLength: parsed.chainLength, latencyMs: Date.now() - t0 };
+    return { probe: parsed, latencyMs: Date.now() - t0 };
   } catch {
     return null;
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Probe one endpoint's health + progress via the cheap `getChainNumber`. */
+export async function probe(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<ProbeResult | null> {
+  const r = await fetchProbe(url, timeoutMs);
+  return r ? { url, chainLength: r.probe.chainLength, latencyMs: r.latencyMs } : null;
+}
+
+/** Full `getChainNumber` state of one endpoint (for the chain-status page). */
+export interface EndpointInfo {
+  url: string;
+  latencyMs: number;
+  probe: ChainProbe;
+}
+
+export async function endpointInfo(
+  url: string,
+  timeoutMs = PROBE_TIMEOUT_MS,
+): Promise<EndpointInfo | null> {
+  const r = await fetchProbe(url, timeoutMs);
+  return r ? { url, latencyMs: r.latencyMs, probe: r.probe } : null;
 }
 
 export interface EndpointHealth {

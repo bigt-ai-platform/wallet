@@ -5,7 +5,6 @@
  */
 
 import { device } from '@/storage';
-import { Platform } from 'react-native';
 import {
   type ApiResponse,
   type GetBalancesResponse,
@@ -38,6 +37,7 @@ import {
   DEFAULT_L1_MAINNET_URL,
   DEFAULT_L1_TESTNET_URL,
   IS_DEV,
+  IS_WEB_BROWSER,
   DEV_L0_URL,
   DEV_L1_URL,
   PROD_L0_URL,
@@ -51,7 +51,7 @@ import {
  * directly; the browser build must go through the app origin.
  */
 function isWebProd(): boolean {
-  return !IS_DEV && Platform.OS === 'web';
+  return !IS_DEV && IS_WEB_BROWSER;
 }
 
 /**
@@ -170,7 +170,7 @@ export class HttpService {
   }
 
   private isWebProd(): boolean {
-    return !IS_DEV && Platform.OS === 'web';
+    return !IS_DEV && IS_WEB_BROWSER;
   }
 
   /**
