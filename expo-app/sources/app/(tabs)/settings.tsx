@@ -6,7 +6,50 @@ import { httpService } from '@/services/http';
 import { MONO_FONT } from '@/constants/fonts';
 import { APP_VERSION, DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET } from '@/constants/app';
 import ChainBadge from '@/components/ChainBadge';
+import { checkForUpdate, confirmUpdate, currentVersion, installUpdate } from '@/services/updater';
 import type { L1ChainConfig } from '@/types/api';
+
+/** OTA updates: show the installed version and offer a manual check + install
+ *  against the release manifest (native Android only; a no-op on web). */
+function UpdatesCard() {
+  const { t } = useTranslation();
+  const [ver, setVer] = React.useState<string | null>(null);
+  const [status, setStatus] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    currentVersion().then((v) => setVer(v?.versionName ?? null)).catch(() => {});
+  }, []);
+
+  const check = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const info = await checkForUpdate();
+      if (!info) { setStatus(t('updates.unavailable')); return; }
+      if (!info.hasUpdate) { setStatus(t('updates.upToDate')); return; }
+      if (!info.mandatory && !(await confirmUpdate(info.versionName))) return;
+      const done = await installUpdate(info);
+      setStatus(done ? t('updates.installing') : t('updates.failed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <View style={s.card} testID="settings-updates-card">
+      <Text style={s.cardLabel}>{t('updates.title')}</Text>
+      <View style={s.aboutRow}>
+        <Text style={s.aboutLabel}>{t('updates.current')}</Text>
+        <Text style={s.aboutValue}>{ver ? `v${ver}` : APP_VERSION}</Text>
+      </View>
+      <TouchableOpacity style={s.saveBtn} onPress={check} disabled={busy} testID="settings-check-update">
+        <Text style={s.saveBtnText}>{busy ? t('updates.checking') : t('updates.check')}</Text>
+      </TouchableOpacity>
+      {!!status && <Text style={s.updateStatus} testID="settings-update-status">{status}</Text>}
+    </View>
+  );
+}
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
@@ -250,6 +293,8 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      <UpdatesCard />
+
       <View style={s.card}>
         <TouchableOpacity style={s.settingRow} onPress={() => setShowDev(!showDev)} testID="developer-toggle">
           <View style={s.settingLeft}>
@@ -381,6 +426,7 @@ const s = StyleSheet.create((theme) => ({
   aboutRow: { flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8 },
   aboutLabel: { fontSize: 14, color: theme.colors.text.secondary },
   aboutValue: { fontSize: 14, fontWeight: '600', color: theme.colors.text.primary },
+  updateStatus: { fontSize: 13, color: theme.colors.text.secondary, marginTop: 10, textAlign: 'center' },
   resetBtn: {
     borderRadius: 10, borderWidth: 1, borderColor: theme.colors.accent.red,
     paddingVertical: 15, alignItems: 'center', marginTop: 8,

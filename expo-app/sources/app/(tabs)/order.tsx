@@ -161,7 +161,7 @@ export default function OrderScreen() {
         side: orderSide,
         privateKeyHex: wallet.wallet.privateKey,
         keyType: wallet.wallet.keyType,
-        l1Url,
+        l1Url: httpService.l1Bases(l1Url)[0] ?? l1Url,
         tokenId: selectedToken.tokenid,
         price: BigInt(Math.floor(price * Math.pow(10, decimals))),
         amount: BigInt(Math.floor(amount * Math.pow(10, decimals))),

@@ -99,7 +99,105 @@ device reaches a local stack.
    build inlines them).
 3. **Build**: `./webapp.sh --release` / `--aab`; verify with `apksigner verify`.
 4. **Publish** — `./deploy.apk.sh --release` builds the signed Capacitor
-   artifact via `webapp.sh` and uploads it to MinIO (`S3_*` from env).
+   artifact via `webapp.sh` and uploads it to MinIO (`S3_*` from env). For a
+   release APK it also writes `wallet-<env>-release-latest.json` (the OTA
+   manifest). Pass `MANDATORY=true` to force the install.
+
+## Automatic updates (OTA)
+
+Analog of `../dai/apps/web/src/lib/updater.ts`. The release bucket
+(`aifeeds-content`, `releases/`) is public-read, so the app needs no gateway:
+it fetches the manifest directly and the manifest's `url` is the APK object.
+
+| Piece | Role |
+| --- | --- |
+| `deploy.apk.sh` | Writes `wallet-<env>-release-latest.json`: `{versionName, versionCode, url, sha256, mandatory}` next to the release APK. |
+| `expo-app/sources/lib/ota.ts` | Pure manifest url/parse/compare helpers (unit tested). |
+| `expo-app/sources/services/updater.ts` | Fetches the manifest, reads the installed versionCode via the native plugin, drives install. |
+| `webapp/native/updater/…` | `UpdaterPlugin` (`getVersion`, `install` via `PackageInstaller`) + `UpdateReceiver`; copied into the generated project by `patch-android.mjs`. |
+| `expo-app/sources/app/_layout.tsx` | Auto-checks ~4s after first paint; installs mandatory updates silently, prompts otherwise. |
+| Settings → Updates | Shows the installed version and a manual "Check for updates" button. |
+
+The channel is baked at build time (`EXPO_PUBLIC_APK_ENV`, default
+`production`); the manifest base defaults to
+`https://minio-s1001.bigt.ai/aifeeds-content/releases` and is overridable with
+`EXPO_PUBLIC_OTA_BASE`. Only `--release` builds publish/consume a manifest — a
+debug/release signature mismatch cannot install over the other, and
+`versionCode` must strictly increase.
+
+```sh
+./deploy.apk.sh --env=production --release          # publish + manifest
+./deploy.apk.sh --env=production --release --skip-build  # re-upload existing
+```
+
+## L0/L1 endpoint discovery
+
+DNS is only the bootstrap for the **seed** set; the app then verifies every seed
+and picks the best (details below). DNS is resolved over **DNS-over-HTTPS**
+(`services/discovery.ts` → `lib/dnsseeds.ts`) because the WebView/RN runtime
+cannot query SRV/TXT directly; DoH is ordinary HTTPS, so it works on web and
+device (both `https://dns.google/resolve` and Cloudflare send
+`Access-Control-Allow-Origin: *`). Override the resolver with
+`EXPO_PUBLIC_DOH_URL`, the seed domain with `EXPO_PUBLIC_DNS_SEEDS_DOMAIN`
+(default `bigtangle.org`).
+
+Ops publishes, per network domain:
+
+```
+_bigtangle-l0.<domain>       TXT  "https://eu1.bigtangle.org" "https://eu2.bigtangle.org" "https://eu3.bigtangle.org"
+_bigtangle-l1.<domain>       TXT  "https://ordereu1.bigtangle.org" "https://ordereu2.bigtangle.org" "https://ordereu3.bigtangle.org"
+_bigtangle-l0._tcp.<domain>  SRV  0 0 443 eu1.bigtangle.org.
+_bigtangle-l1._tcp.<domain>  SRV  0 0 443 ordereu1.bigtangle.org.
+```
+
+(TXT with several quoted strings or several RRs; SRV is an alternative giving
+target + port. `A` records are used only to resolve SRV targets.)
+
+`EXPO_PUBLIC_SEEDS_URLS` (comma-separated) points at the
+[`bigtangle-seeds`](https://github.com/bigt-ai-platform/seeds) registries: the
+client `POST`s `/serverinfolist`, keeps the active nodes for its chain (`L0`,
+`ordermatch`) and caches them 1h. This is the *live* node list, so the compiled
+`MAINNET_*_URLS` seeds (the censorable `NetworkParameters` set) are only a
+fallback. The registry must be TLS-reachable from the app — an `http://`
+registry is blocked by the WebView/Android cleartext policy, so expose it over
+https (a wallet-domain `/seeds/` proxy, or a cert on the registry itself).
+
+Verify a registry serves usable nodes with the same code path the app uses:
+
+```sh
+yarn verify:seeds https://eu.wallet.bigt.ai/seeds L0      # exit 1 if none healthy
+yarn verify:seeds http://92.5.34.128:8089 ordermatch
+```
+
+A newly published seed is picked up on the next refresh (1h cache) with **no
+client rebuild**; `expo-app/sources/lib/__tests__/seeds-discovery.test.ts`
+covers exactly that against a mock registry + node.
+
+Then, per role L0/L1, the client:
+
+1. resolves the DNS seed list **and the seeds registry** (both cached 1h) and
+   unions them with the static `MAINNET_*_URLS` fallback **and the peers it
+   reached before**;
+2. health-checks every candidate with `POST /getChainNumber` — the
+   `checkchain.sh` rule: HTTP 200, no `errorcode`, and `txReward.chainLength`;
+3. ranks by chain length then latency (cached 10 min), uses #1 and fails over
+   down the list; a failing base is demoted for the session.
+
+**Learned peers (anti-censorship).** Every base that answered a request is
+persisted (`discovery-learned/<net>/<role>`, most-recent first, cap 16) and
+folded back into the candidate set. So if the seeds are later blocked, the app
+still has a way back in without any seed or DNS — the seed set is needed at most
+once. Scoped per network (`dev`/`test`/`main`) so networks never mix.
+
+**Tor.** `.onion` entries from the seeds registry are accepted and tried *last*
+(clear-net always preferred); they need a Tor route, so the plain app skips them
+and they never block a clear-net request.
+
+DNS discovery is native-mainnet only: the browser build can only reach its
+same-origin `/l0/`,`/l1/` proxy (the chain nodes send no CORS), so remote seeds
+would be unusable there. To discover *more than the seeds*, the network itself
+must return its peer list (a public `/seeds`-style RPC); `/getPeers` exists but
+returns no public URLs today.
 
 ## Limitations / non-goals
 

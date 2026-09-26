@@ -8,6 +8,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { View, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { WalletProvider } from '@/state/wallet';
 import { initSecureStorage } from '@/storage';
+import { checkForUpdate, confirmUpdate, installUpdate } from '@/services/updater';
 import Sidebar from '@/components/Sidebar';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
 import { MenuIcon } from '@/components/Icons';
@@ -116,6 +117,26 @@ export default function RootLayout() {
                 SplashScreen.hideAsync();
             }, 100);
         }
+    }, [isReady]);
+
+    // OTA check (native Android only): a newer tagged APK in the release bucket
+    // offers an in-place upgrade. Delayed after first paint so it never blocks
+    // render, and a failure is silent.
+    React.useEffect(() => {
+        if (!isReady) return;
+        const timer = setTimeout(() => {
+            void (async () => {
+                try {
+                    const info = await checkForUpdate();
+                    if (!info?.hasUpdate) return;
+                    if (!info.mandatory && !(await confirmUpdate(info.versionName))) return;
+                    await installUpdate(info);
+                } catch {
+                    /* update checks must never break startup */
+                }
+            })();
+        }, 4000);
+        return () => clearTimeout(timer);
     }, [isReady]);
 
     if (!isReady) {

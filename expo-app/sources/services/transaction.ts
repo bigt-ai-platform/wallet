@@ -16,8 +16,38 @@ import { TransactionOutput } from 'bigtangle-ts/dist/net/bigtangle/core/Transact
 import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutPoint';
 import { httpService } from './http';
 import { IS_DEV } from '@/constants/app';
+import { withSlash } from '@/lib/endpoints';
+import { rememberPeer } from '@/services/discovery';
 import { ReqCmd } from '@/types/api';
 import type { UTXO, ApiResponse } from '@/types/api';
+
+/**
+ * POST raw transaction bytes to a role endpoint, failing over across the
+ * discovered L0 candidates. Returns the decoded response or a transport error.
+ */
+async function postRaw(endpoint: string, rawTx: string): Promise<{ response?: any; error?: string }> {
+  let error = 'Unknown error';
+  for (const base of httpService.l0Bases()) {
+    try {
+      const res = await fetch(`${withSlash(base)}${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream' },
+        body: hexToBytes(rawTx) as unknown as BodyInit,
+      });
+      if (!res.ok) {
+        error = `HTTP ${res.status}: ${res.statusText}`;
+        httpService.reportDown('l0', base);
+        continue;
+      }
+      rememberPeer('l0', base);
+      return { response: await res.json() };
+    } catch (e) {
+      error = e instanceof Error ? e.message : 'Unknown error';
+      httpService.reportDown('l0', base);
+    }
+  }
+  return { error };
+}
 
 /**
  * Transaction creation parameters
@@ -271,27 +301,14 @@ export async function createAndSignTransaction(
  */
 export async function broadcastTransaction(rawTx: string): Promise<ApiResponse<string>> {
   try {
-    const serverUrl = httpService.getServerUrl();
-    const url = `${serverUrl}${ReqCmd.SubmitTransaction}`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-      },
-      body: hexToBytes(rawTx) as unknown as BodyInit,
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    const { response, error } = await postRaw(ReqCmd.SubmitTransaction, rawTx);
+    if (!response) {
+      return { success: false, error: error || i18n.t('errors.broadcast') };
     }
-
-    const result = await response.json();
-
-    if (result.error || (result.errorcode !== undefined && result.errorcode !== 0)) {
+    if (response.error || (response.errorcode !== undefined && response.errorcode !== 0)) {
       return {
         success: false,
-        error: result.message || result.error || i18n.t('errors.txRejected'),
+        error: response.message || response.error || i18n.t('errors.txRejected'),
       };
     }
 
@@ -314,27 +331,14 @@ export async function broadcastTransaction(rawTx: string): Promise<ApiResponse<s
  */
 export async function broadcastPegIn(rawTx: string): Promise<ApiResponse<string>> {
   try {
-    const serverUrl = httpService.getServerUrl();
-    const url = `${serverUrl}${ReqCmd.ProcessPegIn}`;
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/octet-stream',
-      },
-      body: hexToBytes(rawTx) as unknown as BodyInit,
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    const { response, error } = await postRaw(ReqCmd.ProcessPegIn, rawTx);
+    if (!response) {
+      return { success: false, error: error || i18n.t('errors.pegInFail') };
     }
-
-    const result = await response.json();
-
-    if (result.error || (result.errorcode !== undefined && result.errorcode !== 0)) {
+    if (response.error || (response.errorcode !== undefined && response.errorcode !== 0)) {
       return {
         success: false,
-        error: result.message || result.error || 'Peg-in rejected',
+        error: response.message || response.error || 'Peg-in rejected',
       };
     }
 

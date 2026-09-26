@@ -99,7 +99,7 @@ export default function TokenOrderScreen({ side }: Props) {
 
     const wallet = getUnlockedWallet();
     if (!wallet) { Alert.alert('', t('order.unlockFirst')); return; }
-    const l1Url = httpService.getL1Url();
+    const l1Url = httpService.l1Bases()[0];
     if (!l1Url) { Alert.alert('', t('order.noL1')); return; }
 
     setSubmitting(true);

@@ -360,7 +360,7 @@ export default function TransactionScreen() {
         const txHash = await payOnLayer1({
           privateKeyHex: wallet.wallet.privateKey,
           keyType: wallet.wallet.keyType,
-          l1Url: chain.url,
+          l1Url: httpService.l1Bases(chain.url)[0] ?? chain.url,
           toAddress,
           amount: BigInt(satoshis),
           tokenId: selectedToken.tokenid,

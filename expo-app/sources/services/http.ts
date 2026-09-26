@@ -30,6 +30,8 @@ import {
 } from '@/types/api';
 import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
 import { decimalsFor, formatTokenAmount } from '@/lib/tokenformat';
+import { withSlash } from '@/lib/endpoints';
+import { orderedBases, markDown, rememberPeer } from '@/services/discovery';
 import {
   DEFAULT_L1_CHAINS_MAINNET,
   DEFAULT_L1_CHAINS_TESTNET,
@@ -378,7 +380,31 @@ export class HttpService {
   }
 
   /**
-   * Make HTTP request
+   * Ordered L0 candidates for callers that build their own request (raw
+   * transaction broadcast): user-pinned URL first, then the discovered ranking.
+   */
+  l0Bases(): string[] {
+    return orderedBases('l0', this.getServerUrl());
+  }
+
+  /**
+   * Ordered L1 candidates for a chain URL (defaults to the active chain). Used
+   * by SDK-submitted order/payment transactions so they target the freshest
+   * order node rather than a fixed host.
+   */
+  l1Bases(preferred?: string): string[] {
+    return orderedBases('l1', preferred ?? this.getL1Url());
+  }
+
+  /** Demote a base that just failed (used by the raw broadcast path). */
+  reportDown(role: 'l0' | 'l1', base: string): void {
+    markDown(role, base);
+  }
+
+  /**
+   * Make HTTP request. Without an explicit `baseUrl` the request fails over
+   * across the discovered L0 candidates; with one it is a single attempt at
+   * that base (L1 chains / caller-pinned URLs).
    */
   async request<T>(
     endpoint: string,
@@ -386,11 +412,41 @@ export class HttpService {
     body?: any,
     baseUrl?: string
   ): Promise<ApiResponse<T>> {
+    if (baseUrl) return this.requestBase<T>(baseUrl, endpoint, method, body);
+    return this.requestBases<T>(orderedBases('l0', this.getServerUrl()), 'l0', endpoint, method, body);
+  }
+
+  /** Try each base in order; the first success wins, failures are demoted. */
+  private async requestBases<T>(
+    bases: string[],
+    role: 'l0' | 'l1',
+    endpoint: string,
+    method: 'GET' | 'POST',
+    body?: any
+  ): Promise<ApiResponse<T>> {
+    let last: ApiResponse<T> = { success: false, error: 'Unknown error' };
+    for (const base of bases) {
+      const r = await this.requestBase<T>(base, endpoint, method, body);
+      if (r.success) {
+        rememberPeer(role, base);
+        return r;
+      }
+      last = r;
+      markDown(role, base);
+    }
+    return last;
+  }
+
+  private async requestBase<T>(
+    base: string,
+    endpoint: string,
+    method: 'GET' | 'POST',
+    body?: any
+  ): Promise<ApiResponse<T>> {
     try {
-      const base = baseUrl ? baseUrl : this.getServerUrl();
       // Base URLs may be configured without a trailing slash (settings input,
       // L1 chain URL, defaults) — normalize so `${base}${endpoint}` is valid.
-      const url = `${base.endsWith('/') ? base : base + '/'}${endpoint}`;
+      const url = `${withSlash(base)}${endpoint}`;
 
       const options: RequestInit = {
         method,
@@ -765,7 +821,7 @@ export class HttpService {
     method: 'GET' | 'POST' = 'POST',
     body?: any,
   ): Promise<ApiResponse<T>> {
-    return this.request(endpoint, method, body, this.getL1Url());
+    return this.requestBases(orderedBases('l1', this.getL1Url()), 'l1', endpoint, method, body);
   }
 
   /**
@@ -781,7 +837,13 @@ export class HttpService {
     if (index < 0 || index >= chains.length) {
       return { success: false, error: 'L1 chain not found' };
     }
-    return this.request(endpoint, method, body, chains[index].url);
+    return this.requestBases(
+      orderedBases('l1', chains[index].url),
+      'l1',
+      endpoint,
+      method,
+      body,
+    );
   }
 
   /**
@@ -797,7 +859,7 @@ export class HttpService {
     if (!chain) {
       return { success: false, error: 'L1 chain not found' };
     }
-    return this.request(endpoint, method, body, chain.url);
+    return this.requestBases(orderedBases('l1', chain.url), 'l1', endpoint, method, body);
   }
 
   /**

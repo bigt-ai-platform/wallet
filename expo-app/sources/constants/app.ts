@@ -36,6 +36,45 @@ export const PROD_L0_URL = 'https://eu1.bigtangle.org';
 export const PROD_L1_URL = 'https://ordereu1.bigtangle.org';
 
 /**
+ * Mainnet TLS entry points probed for the freshest/lowest-latency node (see
+ * services/discovery.ts). eu1 is the historical primary; eu2/eu3 are the other
+ * validator failure domains. Native builds probe these directly; the web build
+ * cannot (CORS/mixed content) and uses the same-origin proxy instead.
+ */
+export const MAINNET_L0_URLS = [
+  'https://eu1.bigtangle.org',
+  'https://eu2.bigtangle.org',
+  'https://eu3.bigtangle.org',
+];
+export const MAINNET_L1_URLS = [
+  'https://ordereu1.bigtangle.org',
+  'https://ordereu2.bigtangle.org',
+  'https://ordereu3.bigtangle.org',
+];
+
+/**
+ * DNS is only the bootstrap for the *seed* set. Ops publishes
+ * `_bigtangle-l0[l1]` TXT/SRV records under this domain and the app resolves
+ * them via DNS-over-HTTPS (WebView/RN cannot query SRV/TXT directly). The
+ * static MAINNET_* lists above are the fallback when DNS yields nothing.
+ */
+export const DOH_URL = process.env.EXPO_PUBLIC_DOH_URL || 'https://dns.google/resolve';
+export const DNS_SEEDS_DOMAIN = process.env.EXPO_PUBLIC_DNS_SEEDS_DOMAIN || 'bigtangle.org';
+
+/**
+ * bigtangle-seeds registries (plain JSON `POST /serverinfolist`) for live node
+ * discovery, so the compiled `MAINNET_*` seeds are only a fallback. Must be a
+ * TLS URL reachable from the app (e.g. a wallet-domain `/seeds/` proxy) — an
+ * `http://` registry is blocked by the WebView/Android cleartext policy.
+ */
+export const SEEDS_URLS = (process.env.EXPO_PUBLIC_SEEDS_URLS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+export const SEEDS_CHAIN_L0 = 'L0';
+export const SEEDS_CHAIN_L1 = 'ordermatch';
+
+/**
  * Same-origin proxy bases served by the deploy stack for the web production
  * build (host Caddy from deploy/region.sh, fallback deploy/nginx.conf).
  * Requests go to <origin>/l0/... and are proxied to the PROD_* hosts, which
@@ -47,6 +86,17 @@ export const PROD_WEB_L1_BASE = '/l1/';
 
 /** Testnet L1 (order match) endpoint (no web proxy — testnet is dev-only). */
 export const DEFAULT_L1_TESTNET_URL = 'https://testm.bigtangle.org';
+
+/**
+ * OTA release updates (Android APK only). The release bucket is public-read, so
+ * the app fetches `wallet-<channel>-<type>-latest.json` directly and the
+ * manifest's `url` is the APK object. `OTA_CHANNEL` is baked at build time by
+ * deploy.apk.sh (EXPO_PUBLIC_APK_ENV); both can be overridden for testing.
+ */
+export const OTA_BASE =
+  process.env.EXPO_PUBLIC_OTA_BASE || 'https://minio-s1001.bigt.ai/aifeeds-content/releases';
+export const OTA_CHANNEL = process.env.EXPO_PUBLIC_APK_ENV || 'production';
+export const OTA_TYPE = 'release';
 
 /** Mainnet L1 order-match URL for the current platform. */
 export const DEFAULT_L1_MAINNET_URL = IS_WEB ? PROD_WEB_L1_BASE : PROD_L1_URL;

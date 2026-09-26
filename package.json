@@ -15,5 +15,8 @@
       "**/react-native-edge-to-edge/**"
     ]
   },
+  "scripts": {
+    "verify:seeds": "tsx scripts/verify-seeds.mts"
+  },
   "packageManager": "yarn@1.22.22"
 }

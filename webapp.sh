@@ -8,12 +8,14 @@
 #   ./webapp.sh --no-install       # build the APK only
 #   ./webapp.sh --release          # assembleRelease (signed, needs webapp/keystore.properties)
 #   ./webapp.sh --aab              # signed App Bundle
+#   ./webapp.sh --env=production   # OTA release channel baked into the app
 #
 # Dev: the wallet's default node is http://localhost:8088 — reverse it (plus any
 # extra ports in REVERSE_PORTS) so the device reaches a local node. For prod,
 # the app's built-in https node URLs are used.
 #
-# Env: ADB, DEVICE, JAVA_HOME (JDK 21), ANDROID_HOME, REVERSE_PORTS, OUT_DIR.
+# Env: ADB, DEVICE, JAVA_HOME (JDK 21), ANDROID_HOME, REVERSE_PORTS, OUT_DIR,
+#      APP_ENV (OTA channel), APP_VERSION/APP_VERSION_NAME/APP_VERSION_CODE.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -27,6 +29,7 @@ SKIP_BUILD=0
 DO_INSTALL=1
 DO_LAUNCH=1
 DEVICE="${DEVICE:-}"
+APP_ENV="${APP_ENV:-preview}"
 
 # Wallet node (dev) + anything extra; space/comma separated.
 REVERSE_PORTS=(${REVERSE_PORTS:-8088})
@@ -36,15 +39,34 @@ ACTIVITY="$PKG/.MainActivity"
 for a in "$@"; do
   case "$a" in
     --device=*) DEVICE="${a#--device=}" ;;
+    --env=*) APP_ENV="${a#--env=}" ;;
     --release) BUILD_TYPE="release" ;;
     --aab) BUILD_TYPE="aab" ;;
     --skip-build) SKIP_BUILD=1 ;;
     --no-install) DO_INSTALL=0 ;;
     --no-launch) DO_LAUNCH=0 ;;
-    --help|-h) sed -n '2,20p' "$0"; exit 0 ;;
+    --help|-h) sed -n '2,21p' "$0"; exit 0 ;;
     *) echo "unknown arg: $a" >&2; exit 1 ;;
   esac
 done
+
+# Release version identity for the OTA updater: baked into the APK (gradle
+# versionName/versionCode via patch-android.mjs) and written into the manifest
+# by deploy.apk.sh. versionCode is a monotonic integer derived from semver so
+# the on-device updater can compare regardless of tag formatting.
+if [ -z "${APP_VERSION_NAME:-}" ]; then
+  APP_VERSION_NAME="${APP_VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)}"
+  [ -n "$APP_VERSION_NAME" ] || APP_VERSION_NAME="$(node -e "console.log(require('./expo-app/package.json').version)")"
+fi
+BASE_VERSION="$(printf '%s' "$APP_VERSION_NAME" | sed -E 's/[-+].*$//')"
+MAJOR="$(printf '%s' "$BASE_VERSION" | cut -d. -f1 | sed 's/[^0-9]//g')"
+MINOR="$(printf '%s' "$BASE_VERSION" | cut -d. -f2 | sed 's/[^0-9]//g')"
+PATCH="$(printf '%s' "$BASE_VERSION" | cut -d. -f3 | sed 's/[^0-9]//g')"
+APP_VERSION_CODE="${APP_VERSION_CODE:-$(( (MAJOR * 1000000) + (MINOR * 1000) + PATCH ))}"
+[ "${APP_VERSION_CODE:-0}" -gt 0 ] || APP_VERSION_CODE="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+export APP_VERSION_NAME APP_VERSION_CODE
+# Release channel the OTA updater checks; inlined into the web bundle.
+export EXPO_PUBLIC_APK_ENV="${EXPO_PUBLIC_APK_ENV:-$APP_ENV}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 pass() { echo -e "  ${GREEN}PASS${NC} $1"; }
