@@ -1,7 +1,12 @@
 import { Platform } from 'react-native';
 
-/** App-wide constants shared across screens. */
-export const APP_VERSION = '1.2.0';
+/**
+ * App version shown in Settings/About. Baked at build time from the release
+ * tag (`EXPO_PUBLIC_APP_VERSION`, set by webapp.sh / deploy/tag.sh); the
+ * fallback only applies to dev/e2e builds with no tag. The OTA check itself
+ * uses the native Android versionCode, not this value.
+ */
+export const APP_VERSION = process.env.EXPO_PUBLIC_APP_VERSION || '1.0.0';
 
 /** True in development builds (Metro/Expo), false in production exports. */
 export const IS_DEV = typeof __DEV__ !== 'undefined' && __DEV__;

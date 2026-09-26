@@ -143,7 +143,7 @@ const settingsHtml = `
     </div>
     <div style="background:#fff;border-radius:12px;border:1px solid #e5e5e5;padding:16px;margin-bottom:12px;">
       <div style="font-size:12px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">About</div>
-      <div style="display:flex;justify-content:space-between;padding:8px 0;"><span style="font-size:14px;color:#8e8e93;">App Version</span><span style="font-size:14px;font-weight:600;color:#000;">1.2.0</span></div>
+      <div style="display:flex;justify-content:space-between;padding:8px 0;"><span style="font-size:14px;color:#8e8e93;">App Version</span><span style="font-size:14px;font-weight:600;color:#000;">1.0.0</span></div>
       <div style="display:flex;justify-content:space-between;padding:8px 0;"><span style="font-size:14px;color:#8e8e93;">Network</span><span style="font-size:14px;font-weight:600;color:#000;">Testnet</span></div>
     </div>
     <div style="border-radius:10px;border:1px solid #ef4444;padding:13px;text-align:center;"><span style="font-size:14px;font-weight:600;color:#ef4444;">Reset to Defaults</span></div>

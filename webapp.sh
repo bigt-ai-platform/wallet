@@ -67,6 +67,8 @@ APP_VERSION_CODE="${APP_VERSION_CODE:-$(( (MAJOR * 1000000) + (MINOR * 1000) + P
 export APP_VERSION_NAME APP_VERSION_CODE
 # Release channel the OTA updater checks; inlined into the web bundle.
 export EXPO_PUBLIC_APK_ENV="${EXPO_PUBLIC_APK_ENV:-$APP_ENV}"
+# Version shown in Settings/About; inlined into the web bundle.
+export EXPO_PUBLIC_APP_VERSION="$APP_VERSION_NAME"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 pass() { echo -e "  ${GREEN}PASS${NC} $1"; }

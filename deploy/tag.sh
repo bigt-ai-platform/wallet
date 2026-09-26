@@ -30,6 +30,8 @@ cd "$ROOT"
 source "$SCRIPT_DIR/network.sh"
 
 VERSION="${1:-}"
+# Bake the release version into the web bundle (shown in Settings/About).
+export EXPO_PUBLIC_APP_VERSION="${VERSION:-$(node -p "require('./expo-app/package.json').version" 2>/dev/null || echo 0.0.0)}"
 IMAGE_BASE="${IMAGE_BASE:-bapp-web}"
 APP_IMAGE="${APP_IMAGE:-}"
 TAR_DIR="${SCRIPT_DIR}/.image"
