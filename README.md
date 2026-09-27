@@ -45,7 +45,7 @@ The blockchain protocol logic lives in the **Java** codebase
 - Language picker (persisted) and developer bridge (L1 pay / pay-back) harness
 
 ### Internationalization
-- i18next + react-i18next with 6 languages: en, zh, de, fr, es, ja
+- i18next + react-i18next with 12 languages: en, zh, de, fr, es, ja, hi, ar, pt, id, ru, ko
 - Translations are inline in `expo-app/sources/lib/i18n.ts`; the chosen
   language is persisted via MMKV (native) / localStorage (web)
 
