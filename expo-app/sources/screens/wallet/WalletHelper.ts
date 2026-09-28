@@ -382,10 +382,15 @@ async function decryptLegacyWalletKeys(
   crypter: any,
   password: string,
 ): Promise<Array<ECKey | any>> {
+  const deriveJava = () =>
+    typeof crypter.deriveKeyJava === 'function'
+      ? crypter.deriveKeyJava(password)
+      : KeyCrypterScrypt.prototype.deriveKeyJava.call(crypter, password);
+
   const attempts: Array<[string, () => Promise<any>]> =
-    crypter instanceof KeyCrypterScrypt
+    typeof crypter.getScryptParameters === 'function'
       ? [
-          ['java-utf16be', () => crypter.deriveKeyJava(password)],
+          ['java-utf16be', deriveJava],
           ['utf8', () => crypter.deriveKey(password)],
         ]
       : [['default', () => crypter.deriveKey(password)]];
@@ -415,7 +420,7 @@ function logOldWalletCrypto(fileData: Uint8Array, wallet: Wallet, crypter: any):
     const proto = WalletProtobufSerializer.parseToProto(fileData);
     const keyTypes = proto.key.map((k) => k.type).join(',');
     let scrypt = '';
-    if (crypter instanceof KeyCrypterScrypt) {
+    if (typeof crypter.getScryptParameters === 'function') {
       const sp = crypter.getScryptParameters();
       scrypt = ` N=${sp.N} r=${sp.r} p=${sp.p} saltLen=${sp.salt.length} salt=${Utils.HEX.encode(sp.salt)}`;
     }

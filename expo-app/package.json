@@ -48,7 +48,7 @@
     "@shopify/flash-list": "2.0.2",
     "asn1js": "^3.0.7",
     "axios": "^1.20.0",
-    "bigtangle-ts": "1.0.7",
+    "bigtangle-ts": "^1.0.8",
     "color": "^5.0.0",
     "expo": "~57.0.20",
     "expo-application": "~57.0.2",

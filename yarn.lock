@@ -3734,7 +3734,7 @@ at-least-node@^1.0.0:
   resolved "https://registry.yarnpkg.com/at-least-node/-/at-least-node-1.0.0.tgz#602cd4b46e844ad4effc92a8011a3c46e0238dc2"
   integrity sha512-+q/t7Ekv1EDY2l6Gda6LLiX14rU9TV20Wa3ofeQmwPFZbOMo9DXrLbOjFaaclkXKWidIaopwAObQDqwWtGUjqg==
 
-axios@^1.1.0, axios@^1.20.0:
+axios@^1.20.0:
   version "1.20.0"
   resolved "https://registry.yarnpkg.com/axios/-/axios-1.20.0.tgz#515513445aa60e71d04b6521ca6210829ccb4786"
   integrity sha512-r8aOh8j9cGKpgQAqpzrUHnSIc6a59Y3Xf/cv8sy1DrHCkZHzQGEuoq1tARk6qSyDdtQGSDgpb9kFlruzPvrgwg==
@@ -4009,32 +4009,6 @@ big-integer@1.6.x:
   version "1.6.52"
   resolved "https://registry.yarnpkg.com/big-integer/-/big-integer-1.6.52.tgz#60a887f3047614a8e1bffe5d7173490a97dc8c85"
   integrity sha512-QxD8cf2eVqJOOz63z6JIN9BzvVs/dlySa5HGSBH5xtR8dPteIRQnBxxKqkNTiT6jbDTF6jAfrd4oMcND9RGbQg==
-
-bigtangle-ts@1.0.7:
-  version "1.0.7"
-  resolved "https://registry.yarnpkg.com/bigtangle-ts/-/bigtangle-ts-1.0.7.tgz#71ea0e6ce530afab9971cf44d2c00cdb8e28a55d"
-  integrity sha512-IBrN4SjbZD8HImrf8xDqr3sPc05thIoSnf8mXQ4yVtzCU39sw5MBAGysoDDeB9xlWc1SwclORZSHcu6uk6X3aQ==
-  dependencies:
-    "@babel/runtime" "^7.28.4"
-    "@noble/ciphers" "^2.1.1"
-    "@noble/hashes" "^1.7.1"
-    axios "^1.1.0"
-    bs58 "^6.0.0"
-    crypto-js "^4.2.0"
-    date-fns "^4.1.0"
-    deepmerge "^4.3.1"
-    immutable "^5.0.2"
-    jackson-js "^1.1.0"
-    jwt-decode "^4.0.0"
-    rxjs "^7.8.1"
-    scrypt-js "^3.0.1"
-    secp256k1 "^5.0.1"
-    socket.io "^4.8.0"
-    socket.io-client "^4.8.0"
-    uint8array-tools "^0.0.9"
-    uuid "^11.0.3"
-    validator "^13.15.15"
-    ws "^8.18.0"
 
 bl@^4.0.3:
   version "4.1.0"
