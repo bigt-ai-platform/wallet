@@ -18,6 +18,19 @@ public class UpdateReceiver extends BroadcastReceiver {
   @Override
   public void onReceive(Context context, Intent intent) {
     int status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+
+    // The session was accepted but needs the user's approval: the installer
+    // hands back a confirmation activity rather than a result. Launch it and
+    // leave the call pending — the final status arrives in a later broadcast.
+    if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+      Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+      if (confirm != null) {
+        confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(confirm);
+      }
+      return;
+    }
+
     int sessionId = intent.getIntExtra("sessionId", -1);
     String callId = intent.getStringExtra("callId");
 

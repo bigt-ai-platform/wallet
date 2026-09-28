@@ -166,7 +166,12 @@ public class UpdaterPlugin extends Plugin {
     intent.putExtra("sessionId", sessionId);
     intent.putExtra("callId", callId);
     int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+    // The installer writes EXTRA_STATUS into this intent, so it has to stay
+    // mutable: Android 12+ rejects an immutable status receiver outright, and
+    // below that the status extras are silently dropped (the receiver then
+    // falls back to STATUS_FAILURE). Below S the mutability flag does not
+    // exist and pending intents are mutable by default.
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags |= PendingIntent.FLAG_MUTABLE;
     PendingIntent pi = PendingIntent.getBroadcast(activity, sessionId, intent, flags);
     return pi.getIntentSender();
   }
