@@ -1,6 +1,7 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
 import { device } from '@/storage';
+import { matchBaseLang } from './langmatch';
 
 const LANGUAGE_KEY = ['settings', 'language'];
 
@@ -296,10 +297,32 @@ function storedLanguage(): string | undefined {
   return code && supportedLanguages.some((l) => l.code === code) ? code : undefined;
 }
 
+/** Best-effort match of the browser/WebView language list against the shipped
+ *  dicts (zh-CN → zh, de-AT → de). The Capacitor WebView exposes the Android
+ *  device locale here, so this covers both web and the native app. Null outside
+ *  a browser or when none of the preferred languages ship (pt-BR → null). */
+function detectBrowserLang(): string | undefined {
+  if (typeof navigator === 'undefined') return undefined;
+  const prefs = [...(navigator.languages ?? []), navigator.language ?? ''];
+  return matchBaseLang(prefs, supportedLanguages.map((l) => l.code)) ?? undefined;
+}
+
+/** Initial language: an explicit stored pick always wins. On first launch,
+ *  detect the browser/device locale so a German or Chinese device lands in its
+ *  own language, and persist the result so it stays stable across restarts
+ *  even if the device locale later changes. Fall back to English. */
+function loadLang(): string {
+  const stored = storedLanguage();
+  if (stored) return stored;
+  const lang = detectBrowserLang() ?? 'en';
+  persistLanguage(lang);
+  return lang;
+}
+
 i18n.use(initReactI18next).init({
   resources,
   fallbackLng: 'en',
-  lng: storedLanguage(),
+  lng: loadLang(),
   interpolation: { escapeValue: false },
 });
 
