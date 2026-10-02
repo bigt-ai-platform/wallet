@@ -97,7 +97,8 @@ LATEST_NAME="wallet-$APP_ENV-$BUILD_TYPE-latest.apk"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
   # Build the signed Capacitor artifact (static web export → cap sync → gradle
-  # + signing) via webapp.sh. Needs webapp/keystore.properties for --release.
+  # + signing) via webapp.sh. Needs webapp/keystore.properties, pinned in
+  # webapp/signing.sha256 — every build carries the production certificate.
   # APP_VERSION_NAME/CODE + EXPO_PUBLIC_APK_ENV are exported above.
   case "$BUILD_TYPE" in
     release) ./webapp.sh --env="$APP_ENV" --release --no-install ;;
@@ -107,40 +108,89 @@ fi
 SRC="$ROOT/webapp/android/app/build/outputs/apk/$BUILD_TYPE/app-$BUILD_TYPE.apk"
 APK="$OUT_DIR/wallet-$APP_ENV-$BUILD_TYPE.apk"
 [ -f "$SRC" ] || { echo "missing built artifact $SRC (run without --skip-build first)" >&2; exit 1; }
+# Last gate before an OTA manifest points devices at this file: a non-production
+# signing key makes every upgrade of the installed app fail as incompatible.
+node "$ROOT/webapp/scripts/signing.mjs" artifact "$SRC" \
+  || { echo "signing check failed — $SRC is not signed with the production key" >&2; exit 1; }
 cp -f "$SRC" "$APK"
 sha256sum "$APK"
 
 MC_ENV=(-e S3_ENDPOINT="$S3_ENDPOINT" -e S3_ACCESS_KEY="$S3_ACCESS_KEY" -e S3_SECRET_KEY="$S3_SECRET_KEY"
-  -e S3_BUCKET="$S3_BUCKET" -e S3_PREFIX="$S3_PREFIX" -e APK_FILE="$(basename "$APK")"
-  -e NAME="$NAME" -e LATEST_NAME="$LATEST_NAME")
-docker run --rm "${MC_ENV[@]}" -v "$OUT_DIR:/out:ro" --entrypoint /bin/sh "$MC_IMAGE" -c \
-  'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && \
-   mc cp "/out/$APK_FILE" "up/$S3_BUCKET/$S3_PREFIX/$NAME"' \
+  -e S3_BUCKET="$S3_BUCKET" -e S3_PREFIX="$S3_PREFIX")
+
+# mc cp inside the client container ($1 = source, $2 = destination). OUT_DIR is
+# mounted read-write so the same helper can pull objects back for checking.
+mc_cp() {
+  docker run --rm "${MC_ENV[@]}" -v "$OUT_DIR:/out" -e MC_SRC="$1" -e MC_DST="$2" \
+    --entrypoint /bin/sh "$MC_IMAGE" -c \
+    'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && \
+     mc cp "$MC_SRC" "$MC_DST"'
+}
+
+# Key check: what is live right now. A release published under a different
+# certificate leaves every installed copy unable to upgrade in place
+# (INSTALL_FAILED_UPDATE_INCOMPATIBLE), so say so before overwriting the object
+# those devices are pointed at. Warns rather than fails — publishing a fixed,
+# production-signed release over a wrongly signed one is the repair.
+LIVE_JSON=".live-$APP_ENV-$BUILD_TYPE.json"
+LIVE_APK=".live-$APP_ENV-$BUILD_TYPE.apk"
+if [ "$LATEST" -eq 1 ] && [ "$BUILD_TYPE" = "release" ] \
+  && mc_cp "up/$S3_BUCKET/$S3_PREFIX/wallet-$APP_ENV-release-latest.json" "/out/$LIVE_JSON" 2>/dev/null; then
+  LIVE_VER="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(String(j.versionName ?? "?")+" / code "+String(j.versionCode ?? "?"))' "$OUT_DIR/$LIVE_JSON" 2>/dev/null || echo unknown)"
+  LIVE_URL="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(typeof j.url === "string" ? j.url : "")' "$OUT_DIR/$LIVE_JSON" 2>/dev/null || true)"
+  LIVE_KEY="${LIVE_URL#*"$S3_PREFIX/"}"
+  if [ -n "$LIVE_URL" ] && [ "$LIVE_KEY" != "$LIVE_URL" ] \
+    && mc_cp "up/$S3_BUCKET/$S3_PREFIX/$LIVE_KEY" "/out/$LIVE_APK" 2>/dev/null; then
+    if LIVE_SIGNING="$(node "$ROOT/webapp/scripts/signing.mjs" artifact "$OUT_DIR/$LIVE_APK" 2>&1)"; then
+      echo "live: published release ($LIVE_VER) carries the production key"
+    elif printf '%s' "$LIVE_SIGNING" | grep -q "not the production key"; then
+      echo "WARNING: the published release ($LIVE_VER) is signed by a DIFFERENT certificate:" >&2
+      printf '%s\n' "$LIVE_SIGNING" | sed 's/^/    /' >&2
+      echo "    devices running it cannot upgrade in place and must be reinstalled;" >&2
+      echo "    publishing a production-signed release does not repair them." >&2
+    else
+      echo "note: could not check the published release: $LIVE_SIGNING" >&2
+    fi
+  fi
+elif [ "$LATEST" -eq 1 ] && [ "$BUILD_TYPE" = "release" ]; then
+  echo "live: no published $APP_ENV-release manifest to compare against"
+fi
+rm -f "$OUT_DIR/$LIVE_JSON" "$OUT_DIR/$LIVE_APK"
+
+mc_cp "/out/$(basename "$APK")" "up/$S3_BUCKET/$S3_PREFIX/$NAME" \
   || { echo "upload failed — check S3_* creds" >&2; exit 1; }
 if [ "$LATEST" -eq 1 ]; then
-  docker run --rm "${MC_ENV[@]}" --entrypoint /bin/sh "$MC_IMAGE" -c \
-    'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && \
-     mc cp "up/$S3_BUCKET/$S3_PREFIX/$NAME" "up/$S3_BUCKET/$S3_PREFIX/$LATEST_NAME"' \
+  mc_cp "up/$S3_BUCKET/$S3_PREFIX/$NAME" "up/$S3_BUCKET/$S3_PREFIX/$LATEST_NAME" \
     || { echo "latest-alias copy failed" >&2; exit 1; }
 fi
 
 # OTA version manifest — the on-device updater fetches this straight from the
-# (public-read) release prefix and compares versionCode. Only signed release
-# APKs are upgradeable (a debug/release signature mismatch cannot install), so
-# only the release variant publishes a manifest.
+# (public-read) release prefix and compares versionCode. Every build carries the
+# production certificate now, but only the release variant publishes a manifest.
 if [ "$LATEST" -eq 1 ] && [ "$BUILD_TYPE" = "release" ]; then
   SHA="$(sha256sum "$APK" | awk '{print $1}')"
   MANIFEST="wallet-$APP_ENV-release-latest.json"
   printf '{"versionName":"%s","versionCode":%s,"url":"%s/%s/%s","sha256":"%s","mandatory":%s}\n' \
     "$VERSION" "$VERSION_CODE" "${PUBLIC_BASE_URL%/}" "$S3_PREFIX" "$NAME" "$SHA" "${MANDATORY:-false}" \
     > "$OUT_DIR/$MANIFEST"
-  MC_ENV+=(-e MANIFEST="$MANIFEST")
-  docker run --rm "${MC_ENV[@]}" -v "$OUT_DIR:/out:ro" --entrypoint /bin/sh "$MC_IMAGE" -c \
-    'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && \
-     mc cp "/out/$MANIFEST" "up/$S3_BUCKET/$S3_PREFIX/$MANIFEST"' \
+  mc_cp "/out/$MANIFEST" "up/$S3_BUCKET/$S3_PREFIX/$MANIFEST" \
     || { echo "manifest upload failed" >&2; exit 1; }
   echo "uploaded: $PUBLIC_BASE_URL/$S3_PREFIX/$MANIFEST ($VERSION / code $VERSION_CODE)"
 fi
+
+# Verify what we actually published: the OTA manifest points devices at this
+# exact object, so re-download it and confirm both the bytes and the key.
+VERIFY_APK=".verify-$APP_ENV-$BUILD_TYPE.apk"
+mc_cp "up/$S3_BUCKET/$S3_PREFIX/$NAME" "/out/$VERIFY_APK" \
+  || { echo "could not re-download $S3_PREFIX/$NAME to verify it" >&2; exit 1; }
+WANT_SHA="$(sha256sum "$APK" | awk '{print $1}')"
+GOT_SHA="$(sha256sum "$OUT_DIR/$VERIFY_APK" | awk '{print $1}')"
+[ "$WANT_SHA" = "$GOT_SHA" ] || {
+  echo "uploaded object sha256 $GOT_SHA != built $WANT_SHA" >&2; exit 1; }
+node "$ROOT/webapp/scripts/signing.mjs" artifact "$OUT_DIR/$VERIFY_APK" \
+  || { echo "uploaded object is not signed with the production key" >&2; exit 1; }
+rm -f "$OUT_DIR/$VERIFY_APK"
+echo "verified: $S3_PREFIX/$NAME ($GOT_SHA, production key)"
 
 echo "uploaded: $S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX/$NAME"
 [ "$LATEST" -eq 1 ] && echo "uploaded: $S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX/$LATEST_NAME"

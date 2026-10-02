@@ -6,7 +6,7 @@
 #   ./webapp.sh --device=ALHX6R…   # pick a device when several are attached
 #   ./webapp.sh --skip-build       # reuse the built APK (install + launch only)
 #   ./webapp.sh --no-install       # build the APK only
-#   ./webapp.sh --release          # assembleRelease (signed, needs webapp/keystore.properties)
+#   ./webapp.sh --release          # assembleRelease (needs webapp/keystore.properties, pinned in signing.sha256)
 #   ./webapp.sh --aab              # signed App Bundle
 #   ./webapp.sh --env=production   # OTA release channel baked into the app
 #
@@ -138,8 +138,10 @@ build_web_export() {
 
 build_apk() {
   info "Syncing Capacitor + building $BUILD_TYPE APK…"
-  ( cd "$WEBAPP_DIR" && npx cap sync android && node scripts/patch-android.mjs ) || die "cap sync failed"
+  # patch-android verifies the production keystore through keytool, so resolve
+  # the toolchain before the sync rather than just before gradle.
   resolve_jdk; resolve_android_sdk
+  ( cd "$WEBAPP_DIR" && npx cap sync android && node scripts/patch-android.mjs ) || die "cap sync failed"
   local task="assembleDebug"
   [ "$BUILD_TYPE" = "release" ] && task="assembleRelease"
   [ "$BUILD_TYPE" = "aab" ] && task="bundleRelease"
@@ -173,4 +175,8 @@ else
   [ -f "$APK" ] || die "--skip-build: no APK at $APK"
   warn "reusing existing $APK"
 fi
+# Last gate before the artifact reaches a device or an upload: a non-production
+# signing key makes every upgrade of the installed app fail as incompatible.
+node "$WEBAPP_DIR/scripts/signing.mjs" artifact "$APK" \
+  || die "$APK is not signed with the production key — see above"
 if [ "$DO_INSTALL" -eq 1 ]; then install_and_run; else info "APK ready: $APK"; fi

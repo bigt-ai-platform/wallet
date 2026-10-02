@@ -31,7 +31,9 @@ expo-app  ──(expo export --platform web)──▶  expo-app/dist  ──(cap
 | `expo-app` | The app. Expo Router; `web.output: "single"` (SPA). |
 | `expo-app/dist` | Web export (`npx expo export --platform web`), the Capacitor `webDir`. |
 | `webapp/` | Capacitor project (`webDir: ../expo-app/dist`, `androidScheme: http`). |
-| `webapp/scripts/patch-android.mjs` | Post-`sync` patches: loopback-scoped cleartext + release signing config. `webapp/android/` is generated/gitignored. |
+| `webapp/scripts/patch-android.mjs` | Post-`sync` patches: loopback-scoped cleartext + production signing config (fail-closed). `webapp/android/` is generated/gitignored. |
+| `webapp/scripts/signing.mjs` | The signing guard: pins the certificate in `signing.sha256`, wires it into `app/build.gradle` for both build types, and re-checks a built artifact before it reaches a device or an upload. CLI: `node scripts/signing.mjs keystore` / `… artifact <apk\|aab>`. |
+| `webapp/signing.sha256` | SHA-256 of the single certificate every APK/AAB carries. |
 | `webapp.sh` | Build/install/run helper (see **Dev workflow**). |
 
 ## Shell (style parity with `../dai`)
@@ -78,7 +80,11 @@ npm? # this repo uses yarn@1.22
 
 `webapp.sh` resolves a JDK 21 (system JREs lack `javac`; Capacitor's AGP rejects
 Java 25) and the Android SDK, and in dev mode reverses the API ports so the
-device reaches a local stack.
+device reaches a local stack. Every build — debug included — is signed with the
+production certificate: `patch-android.mjs` refuses to run without
+`webapp/keystore.properties`, and `webapp.sh` re-checks the built APK against
+the `webapp/signing.sha256` pin before installing it (a second key anywhere
+turns the next upgrade into `INSTALL_FAILED_UPDATE_INCOMPATIBLE`).
 
 ## Production release runbook
 
@@ -94,14 +100,26 @@ device reaches a local stack.
    EOF
    ```
    `patch-android.mjs` injects the signingConfig into the generated
-   `app/build.gradle` on the next sync.
+   `app/build.gradle` on the next sync — after checking the keystore against
+   the committed pin:
+   ```sh
+   node webapp/scripts/signing.mjs keystore   # must print "signing: keystore ok"
+   ```
+   The pin lives in `webapp/signing.sha256` (tracked). If the keystore ever
+   holds a different certificate, update that file only after every installed
+   copy has been uninstalled — otherwise those devices cannot upgrade in place.
 2. **Endpoints** — bake the production node/API URLs before exporting (the web
    build inlines them).
-3. **Build**: `./webapp.sh --release` / `--aab`; verify with `apksigner verify`.
+3. **Build**: `./webapp.sh --release` / `--aab`; `webapp.sh` verifies the
+   artifact itself (`signing.mjs artifact`), or check manually with
+   `node webapp/scripts/signing.mjs artifact <apk\|aab>` / `apksigner verify`.
 4. **Publish** — `./deploy.apk.sh --release` builds the signed Capacitor
    artifact via `webapp.sh` and uploads it to MinIO (`S3_*` from env). For a
    release APK it also writes `wallet-<env>-release-latest.json` (the OTA
-   manifest). Pass `MANDATORY=true` to force the install.
+   manifest). Pass `MANDATORY=true` to force the install. Before uploading it
+   re-runs the signing check, warns if the currently published release carries
+   a different certificate, and after uploading re-downloads the object to
+   confirm both its sha256 and its signer.
 
 ## Automatic updates (OTA)
 
@@ -121,9 +139,9 @@ it fetches the manifest directly and the manifest's `url` is the APK object.
 The channel is baked at build time (`EXPO_PUBLIC_APK_ENV`, default
 `production`); the manifest base defaults to
 `https://minio-s1001.bigt.ai/aifeeds-content/releases` and is overridable with
-`EXPO_PUBLIC_OTA_BASE`. Only `--release` builds publish/consume a manifest — a
-debug/release signature mismatch cannot install over the other, and
-`versionCode` must strictly increase.
+`EXPO_PUBLIC_OTA_BASE`. Debug and release builds share the one pinned
+certificate, so either can install over the other, but only `--release` builds
+publish/consume a manifest — and `versionCode` must strictly increase.
 
 ```sh
 ./deploy.apk.sh --env=production --release          # publish + manifest

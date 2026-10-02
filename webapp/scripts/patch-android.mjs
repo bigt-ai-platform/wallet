@@ -9,10 +9,12 @@
  * 2. OTA updater: the install permission, the status receiver, and the native
  *    plugin sources (android/ is generated+gitignored, so they live as tracked
  *    templates under native/<name> and are copied in on every sync).
- * 3. Release signing: `android/` is generated, so the signingConfig can't be
- *    committed there. When `webapp/keystore.properties` exists, inject a
- *    release signingConfig into app/build.gradle so `assembleRelease`/AAB is
- *    signed. Create the keystore with:
+ * 3. Production signing (fail-closed): `android/` is generated, so the
+ *    signingConfig can't be committed there. `signing.mjs` injects one for
+ *    *both* build types from `keystore.properties` and refuses to continue
+ *    unless that keystore holds the certificate pinned in `signing.sha256` —
+ *    a second key anywhere turns the next upgrade into
+ *    INSTALL_FAILED_UPDATE_INCOMPATIBLE. Create the keystore with:
  *      keytool -genkeypair -v -keystore webapp/release.keystore \
  *        -alias wallet -keyalg RSA -keysize 2048 -validity 10000
  *    and put storeFile/storePassword/keyAlias/keyPassword in
@@ -21,6 +23,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { applySigningGradle, assertProdFingerprint, keystoreFingerprint, readKeystoreProperties } from "./signing.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const app = path.join(root, "android", "app", "src", "main");
@@ -135,46 +138,28 @@ for (const name of ["updater"]) {
   console.log(`patch-android: native/${name} sources → ${path.relative(root, javaDest)}`);
 }
 
-// ── 2. release signing ──────────────────────────────────────────────────────
-if (!fs.existsSync(keystoreProps)) {
-  console.log("patch-android: no keystore.properties — release build stays unsigned");
-  process.exit(0);
-}
+// ── 2. production signing (fail-closed) ──────────────────────────────────────
+// Debug and release install over the same package, so both carry the pinned
+// production certificate. webapp.sh re-checks the artifact itself before it
+// reaches a device or an upload.
 if (!fs.existsSync(buildGradle)) {
   console.error("patch-android: app/build.gradle missing");
   process.exit(1);
 }
-let gradle = fs.readFileSync(buildGradle, "utf8");
-if (gradle.includes("signingConfigs.release")) {
-  console.log("patch-android: signing already configured");
-  process.exit(0);
+try {
+  const props = readKeystoreProperties(keystoreProps);
+  const fingerprint = keystoreFingerprint(props);
+  assertProdFingerprint(fingerprint, `keystore ${props.storeFile}`);
+  const gradle = fs.readFileSync(buildGradle, "utf8");
+  const patched = applySigningGradle(gradle);
+  if (patched !== gradle) {
+    fs.writeFileSync(buildGradle, patched);
+    console.log("patch-android: production signingConfig applied to debug + release");
+  } else {
+    console.log("patch-android: production signingConfig already applied");
+  }
+  console.log(`patch-android: signing verified (${fingerprint[0].slice(0, 16)}…)`);
+} catch (e) {
+  console.error(`patch-android: ${e.message}`);
+  process.exit(1);
 }
-
-gradle = gradle.replace(
-  "apply plugin: 'com.android.application'",
-  `apply plugin: 'com.android.application'
-
-def keystoreProperties = new Properties()
-def keystorePropertiesFile = rootProject.file('../keystore.properties')
-if (keystorePropertiesFile.exists()) {
-    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
-}`,
-);
-gradle = gradle.replace(
-  /(\n\s*)buildTypes\s*\{/,
-  `$1signingConfigs {
-$1    release {
-$1        storeFile file(keystoreProperties['storeFile'])
-$1        storePassword keystoreProperties['storePassword']
-$1        keyAlias keystoreProperties['keyAlias']
-$1        keyPassword keystoreProperties['keyPassword']
-$1    }
-$1}
-$1buildTypes {`,
-);
-gradle = gradle.replace(
-  /(buildTypes\s*\{\s*\n\s*release\s*\{\s*\n)/,
-  "$1            signingConfig signingConfigs.release\n",
-);
-fs.writeFileSync(buildGradle, gradle);
-console.log("patch-android: release signingConfig injected");
