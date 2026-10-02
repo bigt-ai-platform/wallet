@@ -6,9 +6,11 @@ import path from 'node:path';
 //   loads helper/test/wallet/genesis-wallet.json (seed 01, unencrypted) in the
 //   app and verifies the balance screen shows its on-chain bc UTXOs.
 // Requires the local infra running: L0 http://127.0.0.1:24089, L1 127.0.0.1:24086
-// (e.g. `cd ../blockchain && helper/fulltest/remote.sh infra`).
+// (e.g. `cd ../blockchain && helper/fulltest/remote.sh infra`). e2etest.sh runs
+// the infra on other ports and exports E2E_SERVER_URL — prefer it over the
+// legacy 24089 default.
 const WALLET_FILE = '/home/jcui/git/blockchain/helper/test/wallet/genesis-wallet.json';
-const L0_URL = process.env.E2E_L0_URL || 'http://127.0.0.1:24089';
+const L0_URL = process.env.E2E_L0_URL || process.env.E2E_SERVER_URL || 'http://127.0.0.1:24089';
 const L1_URL = process.env.E2E_L1_URL || 'http://127.0.0.1:24086';
 const GENESIS_ADDRESS = 'mnvGDASDFGpHXycAadQC4STYFNwfhfTGsf';
 
@@ -71,6 +73,9 @@ test.describe('Genesis wallet balance (helper/test/wallet/genesis-wallet.json)',
     expect(parsed).toBeGreaterThan(0);
 
     // The genesis address shows in the loaded wallet info (Keys screen).
+    // The balance screen has no sidebar (stack screen, Back instead of the
+    // hamburger) — go back first.
+    await page.getByRole('button', { name: 'Back' }).click();
     await clickTab(page, 'Keys');
     await expect(page.getByText(GENESIS_ADDRESS).first()).toBeAttached({ timeout: 10000 });
   });

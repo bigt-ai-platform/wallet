@@ -9,11 +9,13 @@ import path from 'node:path';
 //   wallet's balance is shown. The balance/UTXO queries must derive the EC
 //   pubKeyHash (not a PQ hash) — regression for the old-wallet import bug.
 // Requires the local infra running: L0 http://127.0.0.1:24089, L1 127.0.0.1:24086
-// (e.g. `cd ../blockchain && helper/fulltest/remote.sh infra`).
+// (e.g. `cd ../blockchain && helper/fulltest/remote.sh infra`). e2etest.sh runs
+// the infra on other ports and exports E2E_SERVER_URL — prefer it over the
+// legacy 24089 default. A trailing slash is required for the SDK funding calls.
 const WALLET_FILE = path.resolve(__dirname, '../../../packages/bigtangle-ts/test/oldwallet/java-encrypted.wallet');
 const OLD_PASSWORD = 'bigtangle';
 const NEW_PASSWORD = 'TestPassword123!';
-const L0_URL = (process.env.E2E_L0_URL || 'http://127.0.0.1:24089') + '/';
+const L0_URL = (process.env.E2E_L0_URL || process.env.E2E_SERVER_URL || 'http://127.0.0.1:24089').replace(/\/+$/, '') + '/';
 const L1_URL = process.env.E2E_L1_URL || 'http://127.0.0.1:24086';
 const EC_ADDRESS = 'mkzY5JpvC9hMb59rh4hHDjx3JvnFqWFBC7';
 const EC_PRIVATE_KEY = '02e0fbb15c9d7ea9012ff4b79857f1d171f36c70bf69a78c74d1b69f524aec9a';

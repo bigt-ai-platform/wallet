@@ -196,8 +196,12 @@ test.describe('Tokens Screen', () => {
 
     let submitted = false;
     // Auto-accept dialogs (the send uses window.confirm on web; accepting it
-    // resolves confirm to true so the send proceeds).
-    page.on('dialog', (d) => d.accept().catch(() => {}));
+    // resolves confirm to true so the send proceeds). Log the message: an
+    // error showAlert() also lands here and would otherwise be invisible.
+    page.on('dialog', (d) => {
+      console.log(`[dialog:${d.type()}] ${d.message()}`);
+      return d.accept().catch(() => {});
+    });
     page.on('request', (req) => {
       if (req.url().includes('submitTransaction')) submitted = true;
     });

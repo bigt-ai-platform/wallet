@@ -7,8 +7,9 @@ async function createWalletQuick(page: Page): Promise<string> {
   await goToKeys(page);
   await page.getByText('Create New Wallet').click();
   await expect(page.getByText('New Wallet Created!')).toBeAttached({ timeout: 10000 });
-  // Wallet addresses are testnet base58 (e.g. m…/n…), not PQ hex.
-  const addressEl = page.locator('text=/^[mn][1-9A-HJ-NP-Za-km-z]{25,34}$/').first();
+  // Wallet addresses are base58 P2PKH (mainnet '1…' by default, testnet
+  // 'm…/n…'), not PQ hex.
+  const addressEl = page.locator('text=/^[1mn][1-9A-HJ-NP-Za-km-z]{25,34}$/').first();
   await expect(addressEl).toBeAttached({ timeout: 10000 });
   return (await addressEl.textContent())!;
 }
@@ -28,7 +29,7 @@ test.describe('Wallet Flow', () => {
     });
     await waitForApp(page);
     const address = await createWalletQuick(page);
-    expect(address).toMatch(/^[mn][1-9A-HJ-NP-Za-km-z]{25,34}$/);
+    expect(address).toMatch(/^[1mn][1-9A-HJ-NP-Za-km-z]{25,34}$/);
 
     // Save with password (tested once)
     await page.getByText('Save with Password').click();
@@ -57,8 +58,14 @@ test.describe('Wallet Flow', () => {
     await goToKeys(page);
     await expect(page.getByText(address).first()).toBeAttached({ timeout: 10000 });
     await expect(page.getByText('Locked').first()).toBeAttached({ timeout: 5000 });
-    await page.getByPlaceholder('Enter wallet password').fill('TestPassword123!');
-    await page.getByText('Unlock Wallet').click();
+    // Another screen (Payment) also keeps an unlock input with the same
+    // placeholder mounted — the Keys one is the only visible one.
+    await page.getByPlaceholder('Enter wallet password')
+      .locator('visible=true')
+      .fill('TestPassword123!');
+    // The Transaction screen keeps an inline unlock with the same label mounted
+    // (hidden) — click the visible one on the Keys screen.
+    await page.getByText('Unlock Wallet').locator('visible=true').click();
     await expect(page.getByText('Unlocked').first()).toBeAttached({ timeout: 10000 });
     console.log('Wallet persisted, locked on reload, and re-unlocked with password');
   });

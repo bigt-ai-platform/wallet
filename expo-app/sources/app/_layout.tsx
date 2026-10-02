@@ -9,6 +9,7 @@ import { View, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { WalletProvider } from '@/state/wallet';
 import { initSecureStorage } from '@/storage';
 import { checkForUpdate, confirmUpdate, installUpdate } from '@/services/updater';
+import { startAutoSelection, stopAutoSelection } from '@/services/discovery';
 import Sidebar from '@/components/Sidebar';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
 import { MenuIcon } from '@/components/Icons';
@@ -138,6 +139,16 @@ export default function RootLayout() {
             })();
         }, 4000);
         return () => clearTimeout(timer);
+    }, [isReady]);
+
+    // Background server selection (auto-discover setting, default ON): pick the
+    // healthiest L0/L1 endpoints by the checkchains.sh criteria and keep
+    // re-checking every AUTO_SELECT_INTERVAL_MS. A no-op when the setting is
+    // off (the tick re-reads the flag).
+    React.useEffect(() => {
+        if (!isReady) return;
+        startAutoSelection();
+        return () => stopAutoSelection();
     }, [isReady]);
 
     if (!isReady) {

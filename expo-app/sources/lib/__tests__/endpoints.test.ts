@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FIN_LAG_MAX,
+  RATE_WINDOW_MS,
+  SPREAD_MAX,
   activeUrlsForChain,
   cacheStale,
   demote,
@@ -8,15 +11,18 @@ import {
   orderOnionLast,
   parseChainProbe,
   rankProbes,
+  selectAndRank,
   withSlash,
+  type ChainSample,
   type ProbeResult,
   type RankedEndpoint,
 } from '../endpoints';
 
-const p = (url: string, chainLength: number, latencyMs: number): ProbeResult => ({
+const p = (url: string, chainLength: number, latencyMs: number, extra: Partial<ProbeResult> = {}): ProbeResult => ({
   url,
   chainLength,
   latencyMs,
+  ...extra,
 });
 
 describe('parseChainProbe', () => {
@@ -92,6 +98,115 @@ describe('rankProbes', () => {
 
   it('returns [] for no successful probes', () => {
     expect(rankProbes([])).toEqual([]);
+  });
+});
+
+describe('selectAndRank (checkchains.sh pass criteria)', () => {
+  const now = 1_000_000;
+  const prevAt = now - (RATE_WINDOW_MS + 1000);
+  const sample = (chainLength: number, at = prevAt): ChainSample => ({ at, chainLength });
+
+  it('ranks survivors by chain length, then latency', () => {
+    const { ranked, excluded } = selectAndRank(
+      [p('a', 100, 10), p('b', 104, 50), p('c', 104, 5)],
+      { now },
+    );
+    expect(ranked.map((r) => r.url)).toEqual(['c', 'b', 'a']);
+    expect(excluded).toEqual([]);
+    expect(ranked.every((r) => r.at === now)).toBe(true);
+  });
+
+  it('excludes nodes more than SPREAD_MAX behind the head', () => {
+    const { ranked, excluded } = selectAndRank(
+      [p('head', 100, 10), p('edge', 100 - SPREAD_MAX, 5), p('laggard', 100 - SPREAD_MAX - 1, 1)],
+      { now },
+    );
+    expect(excluded).toEqual([{ url: 'laggard', reason: 'behind' }]);
+    expect(ranked.map((r) => r.url)).toEqual(['head', 'edge']);
+  });
+
+  it('excludes a node whose finality lag exceeds FIN_LAG_MAX', () => {
+    const { ranked, excluded } = selectAndRank(
+      [
+        p('stuck-finality', 130, 5, { finalizedChainLength: 130 - FIN_LAG_MAX - 1 }),
+        p('finalized', 130, 10, { finalizedChainLength: 120 }),
+        p('no-finality', 130, 20, { finalizedChainLength: null }),
+      ],
+      { now },
+    );
+    expect(excluded).toEqual([{ url: 'stuck-finality', reason: 'finality-lag' }]);
+    expect(ranked.map((r) => r.url)).toEqual(['finalized', 'no-finality']);
+  });
+
+  it('excludes a minority head hash at the same chain length', () => {
+    const { ranked, excluded } = selectAndRank(
+      [
+        p('a', 100, 10, { head: 'aaa' }),
+        p('b', 100, 20, { head: 'aaa' }),
+        p('forked', 100, 1, { head: 'ccc' }),
+      ],
+      { now },
+    );
+    expect(excluded).toEqual([{ url: 'forked', reason: 'fork' }]);
+    expect(ranked.map((r) => r.url)).toEqual(['a', 'b']);
+  });
+
+  it('keeps everyone when heads at the same length tie or are unknown', () => {
+    const tie = selectAndRank([p('a', 100, 1, { head: 'aaa' }), p('b', 100, 2, { head: 'ccc' })], { now });
+    expect(tie.excluded).toEqual([]);
+    expect(tie.ranked.map((r) => r.url)).toEqual(['a', 'b']);
+
+    const unknown = selectAndRank([p('a', 100, 1, { head: 'aaa' }), p('b', 100, 2, { head: '' })], { now });
+    expect(unknown.excluded).toEqual([]);
+    expect(unknown.ranked.map((r) => r.url)).toEqual(['a', 'b']);
+  });
+
+  it('excludes a node that stopped advancing while others did', () => {
+    const { ranked, excluded } = selectAndRank(
+      [p('advancing', 105, 10), p('stalled', 100, 5)],
+      {
+        now,
+        prev: { advancing: sample(100), stalled: sample(100) },
+      },
+    );
+    expect(excluded).toEqual([{ url: 'stalled', reason: 'stalled' }]);
+    expect(ranked.map((r) => r.url)).toEqual(['advancing']);
+  });
+
+  it('keeps everyone on a chain-wide stall or before the rate window elapses', () => {
+    const wide = selectAndRank([p('a', 100, 10), p('b', 100, 5)], {
+      now,
+      prev: { a: sample(100), b: sample(101) },
+    });
+    expect(wide.excluded).toEqual([]);
+    expect(wide.ranked.map((r) => r.url)).toEqual(['b', 'a']);
+
+    const fresh = selectAndRank([p('a', 105, 10), p('b', 100, 5)], {
+      now,
+      prev: { a: sample(100, now - 1000), b: sample(100, now - 1000) },
+    });
+    expect(fresh.excluded).toEqual([]);
+    expect(fresh.ranked.map((r) => r.url)).toEqual(['a', 'b']);
+  });
+
+  it('never returns an empty selection when probes exist', () => {
+    const allLagging = [
+      p('a', 130, 10, { finalizedChainLength: 1 }),
+      p('b', 130, 20, { finalizedChainLength: 1 }),
+    ];
+    const { ranked, excluded } = selectAndRank(allLagging, { now });
+    expect(ranked.map((r) => r.url)).toEqual(['a', 'b']);
+    expect(excluded.map((e) => e.reason)).toEqual(['finality-lag', 'finality-lag']);
+
+    // mirrors rankProbes: with no progress at all, the responsive set is kept
+    expect(selectAndRank([p('dead', 0, 1)], { now }).ranked.map((r) => r.url)).toEqual(['dead']);
+    expect(selectAndRank([], { now })).toEqual({ ranked: [], excluded: [] });
+  });
+
+  it('drops chainless nodes the same way rankProbes does', () => {
+    const { ranked, excluded } = selectAndRank([p('ok', 50, 10), p('dead', 0, 1)], { now });
+    expect(ranked.map((r) => r.url)).toEqual(['ok']);
+    expect(excluded).toEqual([]);
   });
 });
 

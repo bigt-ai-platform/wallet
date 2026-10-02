@@ -6,8 +6,9 @@ const E2E_L1_URL = process.env.E2E_L1_URL || '';
 const HAS_SERVER = !!E2E_SERVER_URL;
 const PASSWORD = 'TestPass123!';
 
-// MMKV web stores every key under `mmkv.default\` in localStorage.
-const TRACKING_KEY = 'mmkv.default\\tracking.records';
+// The web build's storage abstraction reads plain dot-joined localStorage
+// keys (mmkv.default\ namespacing is native-only).
+const TRACKING_KEY = 'tracking.records';
 
 async function importKey(page: Page, privKeyHex: string) {
   await page.getByText('Import Private Key').click();
@@ -129,8 +130,13 @@ async function seedTracking(page: Page, records: any[]) {
 async function configureUrlsDirect(page: Page, serverUrl: string, l1Url: string) {
   await page.evaluate(
     ([sUrl, chains]) => {
-      localStorage.setItem('mmkv.default\\settings.serverUrl', sUrl);
-      localStorage.setItem('mmkv.default\\settings.l1Chains', chains);
+      // Plain dot-joined keys — the web build's storage abstraction reads
+      // localStorage directly (mmkv.default\ namespacing is native-only).
+      localStorage.setItem('settings.serverUrl', sUrl);
+      localStorage.setItem('settings.l1Chains', chains);
+      // Local infra is testnet; without this the app uses mainnet address
+      // params and rejects testnet addresses.
+      localStorage.setItem('settings.useTestnet', 'true');
     },
     [serverUrl, JSON.stringify([{ name: 'Default', url: l1Url }])]
   );

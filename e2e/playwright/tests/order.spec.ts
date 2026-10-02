@@ -34,8 +34,13 @@ async function saveWallet(page: Page, password: string) {
 async function configureUrlsDirect(page: Page, serverUrl: string, l1Url: string) {
   await page.evaluate(
     ([sUrl, chains]) => {
-      localStorage.setItem('mmkv.default\\settings.serverUrl', sUrl);
-      localStorage.setItem('mmkv.default\\settings.l1Chains', chains);
+      // Plain dot-joined keys — the web build's storage abstraction reads
+      // localStorage directly (mmkv.default\ namespacing is native-only).
+      localStorage.setItem('settings.serverUrl', sUrl);
+      localStorage.setItem('settings.l1Chains', chains);
+      // Local infra is testnet; without this the app uses mainnet address
+      // params and rejects testnet addresses.
+      localStorage.setItem('settings.useTestnet', 'true');
     },
     [serverUrl, JSON.stringify([{ name: 'Default', url: l1Url }])]
   );
@@ -216,8 +221,12 @@ test.describe('Order Screen', () => {
     });
 
     await clickTab(page, 'Order');
-    await expect(page.getByText(tokenName)).toBeAttached({ timeout: 30000 });
-    await page.getByTestId('order-screen').getByText('Sell').click();
+    const orderScreen = page.getByTestId('order-screen');
+    // The sidebar "Order" item lands on ?view=orders (the My Orders segment);
+    // the mocked market price list renders behind the "Order" segment.
+    await orderScreen.getByRole('tab', { name: 'Order', exact: true }).click();
+    await expect(orderScreen.getByText(tokenName)).toBeAttached({ timeout: 30000 });
+    await orderScreen.getByText('Sell').click();
     await expect(page.getByText(`Sell ${tokenName}`)).toBeAttached({ timeout: 10000 });
 
     // 6. Fill the order sheet (price pre-filled from the mocked ticker). The

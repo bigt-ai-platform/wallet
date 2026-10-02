@@ -3,6 +3,11 @@ import { View, Text, TextInput, Switch, ScrollView, TouchableOpacity, Alert } fr
 import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
+import {
+  autoDiscoverEnabled,
+  refresh as refreshDiscovery,
+  setAutoDiscoverEnabled,
+} from '@/services/discovery';
 import { MONO_FONT } from '@/constants/fonts';
 import { APP_VERSION, DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET } from '@/constants/app';
 import ChainBadge from '@/components/ChainBadge';
@@ -76,6 +81,30 @@ export default function SettingsScreen() {
     setActiveChainId(httpService.getActiveL1ChainId());
   }), []);
   const appVersion = APP_VERSION;
+
+  // Auto server selection (checkchains.sh-based, default ON): the endpoints the
+  // request layer would use first right now.
+  const [autoDiscover, setAutoDiscover] = React.useState(() => autoDiscoverEnabled());
+  const [activeEndpoints, setActiveEndpoints] = React.useState({ l0: '', l1: '' });
+  const updateActiveEndpoints = React.useCallback(() => {
+    setActiveEndpoints({
+      l0: httpService.l0Bases()[0] ?? '',
+      l1: httpService.l1Bases()[0] ?? '',
+    });
+  }, []);
+  React.useEffect(() => { updateActiveEndpoints(); }, [updateActiveEndpoints]);
+
+  const toggleAutoDiscover = (val: boolean) => {
+    setAutoDiscover(val);
+    setAutoDiscoverEnabled(val);
+    if (val) {
+      // pick immediately instead of waiting for the next scheduler tick
+      void refreshDiscovery('l0').catch(() => {}).finally(() => updateActiveEndpoints());
+      void refreshDiscovery('l1').catch(() => {}).finally(() => updateActiveEndpoints());
+    } else {
+      updateActiveEndpoints();
+    }
+  };
 
   const toggleTestnet = (val: boolean) => {
     setUseTestnet(val);
@@ -207,6 +236,9 @@ export default function SettingsScreen() {
     setL1Chains(httpService.getL1Chains());
     setActiveChainId(httpService.getActiveL1ChainId());
     setServerUrl(httpService.getDefaultServerUrl());
+    setAutoDiscover(true);
+    setAutoDiscoverEnabled(true);
+    updateActiveEndpoints();
     Alert.alert('', t('settings.resetDone'));
   };
 
@@ -223,6 +255,23 @@ export default function SettingsScreen() {
           <Switch value={useTestnet} onValueChange={toggleTestnet}
             trackColor={{ false: s.switchOff.color, true: s.switchOn.color }}
             thumbColor={useTestnet ? s.switchThumb.color : '#f4f3f4'} testID="testnet-toggle" />
+        </View>
+      </View>
+
+      <View style={s.card}>
+        <View style={s.settingRow}>
+          <View style={s.settingLeft}>
+            <Text style={s.settingLabel}>{t('settings.autoDiscover')}</Text>
+            <Text style={s.settingDesc}>{t('settings.autoDiscoverDesc')}</Text>
+            {autoDiscover && !!activeEndpoints.l0 && (
+              <Text style={s.settingDesc} testID="auto-discover-active">
+                {t('settings.autoDiscoverUsing', { l0: activeEndpoints.l0, l1: activeEndpoints.l1 })}
+              </Text>
+            )}
+          </View>
+          <Switch value={autoDiscover} onValueChange={toggleAutoDiscover}
+            trackColor={{ false: s.switchOff.color, true: s.switchOn.color }}
+            thumbColor={autoDiscover ? s.switchThumb.color : '#f4f3f4'} testID="autodiscover-toggle" />
         </View>
       </View>
 

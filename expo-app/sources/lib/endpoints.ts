@@ -36,6 +36,10 @@ export interface ProbeResult {
   /** Confirmed DAG chain length (`txReward.chainLength`) — the freshness key. */
   chainLength: number;
   latencyMs: number;
+  /** Last finalized length (`finalizedChainLength`), when the node reports one. */
+  finalizedChainLength?: number | null;
+  /** Head block hash (`txReward.blockHashHex`), for head-agreement checks. */
+  head?: string;
 }
 
 export interface RankedEndpoint extends ProbeResult {
@@ -97,6 +101,140 @@ export function rankProbes(
   return usable
     .sort((a, b) => b.chainLength - a.chainLength || a.latencyMs - b.latencyMs)
     .map((r) => ({ ...r, at: now }));
+}
+
+/** Spread cap: a candidate more than this many blocks behind the chain head is
+ * not used (checkchains.sh `SPREAD_MAX`). */
+export const SPREAD_MAX = 8;
+/** Finality lag cap: chainLength - finalizedChainLength (checkchains.sh
+ * `FIN_LAG_MAX`). */
+export const FIN_LAG_MAX = 128;
+/** Minimum elapsed time between two samples before a node can be called stalled
+ * (checkchains.sh advance-rate window). */
+export const RATE_WINDOW_MS = 60 * 1000;
+
+/** A previous probe of one URL, for stall detection across scheduler runs. */
+export interface ChainSample {
+  at: number;
+  chainLength: number;
+}
+
+export type ExcludeReason = 'behind' | 'finality-lag' | 'fork' | 'stalled';
+
+export interface ExcludedEndpoint {
+  url: string;
+  reason: ExcludeReason;
+}
+
+export interface Selection {
+  ranked: RankedEndpoint[];
+  excluded: ExcludedEndpoint[];
+}
+
+export interface SelectOptions {
+  now?: number;
+  spreadMax?: number;
+  finLagMax?: number;
+  rateWindowMs?: number;
+  /** Previous sample per URL (`discovery-samples` storage), for stall checks. */
+  prev?: Record<string, ChainSample>;
+}
+
+/**
+ * Select the endpoints to actually use, applying the `bigtai/check/checkchains.sh`
+ * pass criteria in order, then rank the survivors by chain progress + latency:
+ *
+ * 1. `behind` — more than `SPREAD_MAX` behind the chain head.
+ * 2. `finality-lag` — `chainLength - finalizedChainLength` over `FIN_LAG_MAX`.
+ * 3. `fork` — a minority head hash at the same chainLength as other nodes
+ *    (head agreement; a tie keeps everyone, the transient-race case).
+ * 4. `stalled` — no chain progress over `RATE_WINDOW_MS` while other nodes
+ *    advanced (chain-wide stall keeps everyone: no node can be singled out).
+ *
+ * Never returns an empty selection when probes exist: if every filter would
+ * remove everyone (e.g. the whole chain lags on finality) the unfiltered
+ * responsive set is ranked instead — a degraded pick beats no pick.
+ */
+export function selectAndRank(results: ProbeResult[], opts: SelectOptions = {}): Selection {
+  const now = opts.now ?? 0;
+  const spreadMax = opts.spreadMax ?? SPREAD_MAX;
+  const finLagMax = opts.finLagMax ?? FIN_LAG_MAX;
+  const rateWindowMs = opts.rateWindowMs ?? RATE_WINDOW_MS;
+  const prev = opts.prev ?? {};
+  const excluded: ExcludedEndpoint[] = [];
+  if (results.length === 0) return { ranked: [], excluded };
+
+  const alive = results.filter((r) => r.chainLength > 0);
+  if (alive.length === 0) return { ranked: rankProbes(results, { now }), excluded };
+  const maxLength = Math.max(...alive.map((r) => r.chainLength));
+
+  const spreadKept: ProbeResult[] = [];
+  for (const r of alive) {
+    if (maxLength - r.chainLength > spreadMax) {
+      excluded.push({ url: r.url, reason: 'behind' });
+    } else {
+      spreadKept.push(r);
+    }
+  }
+
+  const finKept: ProbeResult[] = [];
+  for (const r of spreadKept) {
+    const fin = r.finalizedChainLength;
+    if (fin !== null && fin !== undefined && r.chainLength - fin > finLagMax) {
+      excluded.push({ url: r.url, reason: 'finality-lag' });
+    } else {
+      finKept.push(r);
+    }
+  }
+
+  // Head agreement: group by chainLength; a minority head hash is a fork suspect.
+  const byLength = new Map<number, ProbeResult[]>();
+  for (const r of finKept) {
+    const group = byLength.get(r.chainLength);
+    if (group) group.push(r);
+    else byLength.set(r.chainLength, [r]);
+  }
+  let forkKept: ProbeResult[] = [];
+  for (const group of byLength.values()) {
+    const counts = new Map<string, number>();
+    for (const r of group) {
+      if (!r.head) continue;
+      counts.set(r.head, (counts.get(r.head) ?? 0) + 1);
+    }
+    const top = Math.max(0, ...counts.values());
+    const leaders = [...counts.entries()].filter(([, n]) => n === top).map(([h]) => h);
+    if (counts.size <= 1 || leaders.length > 1) {
+      // one head, no heads, or a tie: keep everyone (cannot single out a fork)
+      forkKept = forkKept.concat(group);
+      continue;
+    }
+    const majority = leaders[0];
+    for (const r of group) {
+      if (!r.head || r.head === majority) forkKept.push(r);
+      else excluded.push({ url: r.url, reason: 'fork' });
+    }
+  }
+
+  // Advance rate: two samples `rateWindowMs` apart; a node that did not advance
+  // while others did is stalled.
+  const suspects: ProbeResult[] = [];
+  const advanced: ProbeResult[] = [];
+  const noSample: ProbeResult[] = [];
+  for (const r of forkKept) {
+    const p = prev[r.url];
+    if (!p || typeof p.chainLength !== 'number' || now - p.at < rateWindowMs) noSample.push(r);
+    else if (r.chainLength > p.chainLength) advanced.push(r);
+    else suspects.push(r);
+  }
+  // Chain-wide stall (nobody advanced) keeps everyone: no node can be singled out.
+  const stallKept = advanced.length > 0 ? [...advanced, ...noSample] : [...advanced, ...noSample, ...suspects];
+  if (advanced.length > 0) {
+    for (const r of suspects) excluded.push({ url: r.url, reason: 'stalled' });
+  }
+
+  if (stallKept.length > 0) return { ranked: rankProbes(stallKept, { now }), excluded };
+  // every survivor was filtered out — fall back to the responsive set
+  return { ranked: rankProbes(alive, { now }), excluded };
 }
 
 /** True when there is no usable cached ranking or it is older than `ttlMs`. */

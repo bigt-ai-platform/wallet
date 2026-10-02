@@ -11,7 +11,16 @@
  *
  * Health is defined the same way as the operator-side
  * `bigtai/check/checkchain.sh`: a node serves only with HTTP 200, no
- * `errorcode`, and a `txReward.chainLength` (see `parseChainProbe`).
+ * `errorcode`, and a `txReward.chainLength` (see `parseChainProbe`). Selection
+ * additionally applies the checkchains.sh pass criteria (spread, finality lag,
+ * head agreement, advance rate — see `selectAndRank`).
+ *
+ * The whole loop is switchable: the `settings.autoDiscover` flag (default ON)
+ * controls seed discovery, cache-driven ordering, and a background scheduler
+ * (`startAutoSelection`) that re-probes every `AUTO_SELECT_INTERVAL_MS`. With
+ * the flag off the wallet is manual: the preferred URL first, then the
+ * candidate list in its fixed order — no probing, no seed refresh, no
+ * cache-driven reordering.
  */
 import { device } from '@/storage';
 import {
@@ -36,9 +45,10 @@ import {
   orderEndpoints,
   orderOnionLast,
   parseChainProbe,
-  rankProbes,
+  selectAndRank,
   withSlash,
   type ChainProbe,
+  type ChainSample,
   type ProbeResult,
   type RankedEndpoint,
 } from '@/lib/endpoints';
@@ -52,6 +62,23 @@ export type Role = 'l0' | 'l1';
 export const CACHE_TTL_MS = 10 * 60 * 1000;
 /** Per-candidate probe timeout. */
 export const PROBE_TIMEOUT_MS = 4000;
+/** Background re-selection cadence while auto-discover is on. */
+export const AUTO_SELECT_INTERVAL_MS = 5 * 60 * 1000;
+
+/**
+ * Whether the wallet discovers and ranks servers by itself (default ON).
+ * OFF = manual mode: the preferred URL first and the candidate list in its
+ * fixed order, no seed refresh, no background probing.
+ */
+export function autoDiscoverEnabled(): boolean {
+  return device.get(['settings', 'autoDiscover']) !== 'false';
+}
+
+/** Persist the auto-discover flag and re-arm the background scheduler. */
+export function setAutoDiscoverEnabled(enabled: boolean): void {
+  device.set(['settings', 'autoDiscover'], enabled ? 'true' : 'false');
+  restartAutoSelection();
+}
 
 interface Cache {
   at: number;
@@ -260,6 +287,33 @@ function readCache(role: Role): Cache | null {
   }
 }
 
+function samplesKey(role: Role): string[] {
+  return ['discovery-samples', netTag(), role];
+}
+
+/** Last probe of each URL (per network + role), for stall detection. */
+function readSamples(role: Role): Record<string, ChainSample> {
+  const raw = device.get(samplesKey(role));
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, ChainSample>;
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Record<string, ChainSample> = {};
+    for (const [url, s] of Object.entries(parsed)) {
+      if (s && typeof s.at === 'number' && typeof s.chainLength === 'number') out[url] = s;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function writeSamples(role: Role, results: ProbeResult[], now: number): void {
+  const out: Record<string, ChainSample> = {};
+  for (const r of results) out[r.url] = { at: now, chainLength: r.chainLength };
+  device.set(samplesKey(role), JSON.stringify(out));
+}
+
 /**
  * Fetch + parse one endpoint's `getChainNumber`. A node is healthy only when it
  * is HTTP 200, reports no `errorcode`, and exposes a `txReward.chainLength`
@@ -295,7 +349,15 @@ async function fetchProbe(
 /** Probe one endpoint's health + progress via the cheap `getChainNumber`. */
 export async function probe(url: string, timeoutMs = PROBE_TIMEOUT_MS): Promise<ProbeResult | null> {
   const r = await fetchProbe(url, timeoutMs);
-  return r ? { url, chainLength: r.probe.chainLength, latencyMs: r.latencyMs } : null;
+  return r
+    ? {
+        url,
+        chainLength: r.probe.chainLength,
+        latencyMs: r.latencyMs,
+        finalizedChainLength: r.probe.finalizedChainLength,
+        head: r.probe.head,
+      }
+    : null;
 }
 
 /** Full `getChainNumber` state of one endpoint (for the chain-status page). */
@@ -347,36 +409,80 @@ export async function currentEndpointHealth(
 }
 
 /**
- * Probe every candidate in parallel and persist the ranked result. The
- * DNS-published seed list is refreshed first (native mainnet), so newly
- * published seeds are folded into the candidate set.
+ * Probe every candidate in parallel, apply the checkchains.sh selection
+ * criteria (`selectAndRank`), and persist the ranked result + fresh samples.
+ * The DNS-published seed list is refreshed first (native mainnet), so newly
+ * published seeds are folded into the candidate set. No-op in manual mode
+ * (auto-discover off) and while another refresh for the role is in flight.
  */
 export async function refresh(role: Role): Promise<RankedEndpoint[]> {
-  await Promise.all([refreshDnsSeeds(role), refreshRegistrySeeds(role)]).catch(() => {});
-  const defaults = candidatesFor(role);
-  if (defaults.length <= 1) return [];
-  const results = (await Promise.all(defaults.map((u) => probe(u)))).filter(
-    (r): r is ProbeResult => r !== null,
-  );
-  const ranked = rankProbes(results, { now: Date.now() });
-  if (ranked.length > 0) {
-    device.set(cacheKey(role), JSON.stringify({ at: Date.now(), ranked } satisfies Cache));
+  if (refreshing.has(role)) return readCache(role)?.ranked ?? [];
+  refreshing.add(role);
+  try {
+    if (!autoDiscoverEnabled()) return [];
+    await Promise.all([refreshDnsSeeds(role), refreshRegistrySeeds(role)]).catch(() => {});
+    const defaults = candidatesFor(role);
+    if (defaults.length <= 1) return [];
+    const results = (await Promise.all(defaults.map((u) => probe(u)))).filter(
+      (r): r is ProbeResult => r !== null,
+    );
+    const now = Date.now();
+    const { ranked } = selectAndRank(results, { now, prev: readSamples(role) });
+    writeSamples(role, results, now);
+    if (ranked.length > 0) {
+      device.set(cacheKey(role), JSON.stringify({ at: now, ranked } satisfies Cache));
+    }
+    return ranked;
+  } finally {
+    refreshing.delete(role);
   }
-  return ranked;
 }
 
 function backgroundRefresh(role: Role): void {
-  if (refreshing.has(role)) return;
-  refreshing.add(role);
-  void refresh(role)
-    .catch(() => {})
-    .finally(() => refreshing.delete(role));
+  void refresh(role).catch(() => {});
+}
+
+/**
+ * Re-probe both roles now (the background scheduler tick + the immediate
+ * selection when the setting is turned on). Silent on failure.
+ */
+export async function selectNow(): Promise<void> {
+  if (!autoDiscoverEnabled()) return;
+  await Promise.all([refresh('l0'), refresh('l1')]).catch(() => {});
+}
+
+let autoTimer: ReturnType<typeof setInterval> | null = null;
+
+function autoSelectTick(): void {
+  void selectNow().catch(() => {});
+}
+
+/** Arm the background re-selection loop (idempotent, no-op when the setting is off). */
+export function startAutoSelection(): void {
+  if (autoTimer || !autoDiscoverEnabled()) return;
+  autoSelectTick();
+  autoTimer = setInterval(autoSelectTick, AUTO_SELECT_INTERVAL_MS);
+}
+
+/** Disarm the background re-selection loop. */
+export function stopAutoSelection(): void {
+  if (autoTimer) {
+    clearInterval(autoTimer);
+    autoTimer = null;
+  }
+}
+
+/** Re-arm the loop after the setting changed; disabled = disarmed. */
+export function restartAutoSelection(): void {
+  stopAutoSelection();
+  if (autoDiscoverEnabled()) startAutoSelection();
 }
 
 /**
  * Ordered candidate bases for a role: user-preferred first, cached ranking
  * next, remaining defaults last. Triggers a background refresh when the cache
- * is missing/stale.
+ * is missing/stale. Manual mode (auto-discover off) skips the discovery
+ * ordering and refresh: preferred URL first, then the candidate list as-is.
  */
 export function orderedBases(role: Role, preferred?: string): string[] {
   const defaults = candidatesFor(role);
@@ -385,6 +491,13 @@ export function orderedBases(role: Role, preferred?: string): string[] {
   // alone — never silently fail over to a different network's defaults.
   if (preferred && !defaults.includes(preferred)) return [preferred];
   if (defaults.length === 1) return defaults;
+
+  if (!autoDiscoverEnabled()) {
+    const manual = preferred ? [preferred, ...defaults.filter((d) => d !== preferred)] : defaults.slice();
+    let manualOrder = manual;
+    for (const url of down) manualOrder = demote(manualOrder, url);
+    return manualOrder;
+  }
 
   const cached = readCache(role);
   if (cacheStale(cached, CACHE_TTL_MS, Date.now())) backgroundRefresh(role);

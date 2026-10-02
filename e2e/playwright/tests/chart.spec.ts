@@ -15,8 +15,13 @@ test.skip(!HAS_SERVER || !E2E_L1_URL, 'E2E_SERVER_URL / E2E_L1_URL not set');
 async function configureUrlsDirect(page: Page, serverUrl: string, l1Url: string) {
   await page.evaluate(
     ([sUrl, chains]) => {
-      localStorage.setItem('mmkv.default\\settings.serverUrl', sUrl);
-      localStorage.setItem('mmkv.default\\settings.l1Chains', chains);
+      // Plain dot-joined keys — the web build's storage abstraction reads
+      // localStorage directly (mmkv.default\ namespacing is native-only).
+      localStorage.setItem('settings.serverUrl', sUrl);
+      localStorage.setItem('settings.l1Chains', chains);
+      // Local infra is testnet; without this the app uses mainnet address
+      // params and rejects testnet addresses.
+      localStorage.setItem('settings.useTestnet', 'true');
     },
     [serverUrl, JSON.stringify([{ name: 'Default', url: l1Url }])]
   );
@@ -212,6 +217,9 @@ test.describe.serial('Chart & Market Data', () => {
 
     await clickTab(page, 'Order');
     const screen = page.getByTestId('order-screen');
+    // The sidebar "Order" item lands on ?view=orders (the My Orders segment);
+    // the mocked market price list renders behind the "Order" segment.
+    await screen.getByRole('tab', { name: 'Order', exact: true }).click();
     await expect(screen.getByText(ctx.tokenName)).toBeAttached({ timeout: 15000 });
     await expect(screen.getByText('1000', { exact: true })).toBeAttached({ timeout: 5000 });
     await expect(screen.getByText('Buy')).toBeAttached({ timeout: 5000 });

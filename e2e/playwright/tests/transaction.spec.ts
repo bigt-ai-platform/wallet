@@ -107,7 +107,12 @@ test.describe('Payment', () => {
     await page.getByPlaceholder('0.00').first().fill('0.001');
 
     // window.confirm (web confirm dialog) — auto-accept so the send proceeds.
-    page.on('dialog', (d) => d.accept().catch(() => {}));
+    // Log the message: an error showAlert() also lands here (window.alert),
+    // and swallowing it silently hides the real failure.
+    page.on('dialog', (d) => {
+      console.log(`[dialog:${d.type()}] ${d.message()}`);
+      return d.accept().catch(() => {});
+    });
     // The screen has a "Send Payment" heading AND button — click the button.
     // The payment must actually be submitted: wait for the L0 submitTransaction
     // request from the app's broadcastTransaction.
@@ -250,7 +255,9 @@ test.describe('L1 Test Tab', () => {
     await openL1Test(page);
     await page.waitForTimeout(1000);
     await page.getByPlaceholder('e.g. bc for BIG').first().fill('bc');
-    await page.getByPlaceholder('0.00').first().fill('0.001');
+    // Placeholder "0.00" exists on several mounted-but-hidden screens (Order,
+    // Payment…) — target the L1 Test input by its testID.
+    await page.getByTestId('l1-pay-amount-input').fill('0.001');
     await page.getByPlaceholder('L1 address on order chain').first().fill('n3MotdMXgRKwrSwDLwAdr3gPaXQsFXdNDs');
     await expect(page.getByText('Pay L1 Chain').last()).toBeAttached();
   });
@@ -263,7 +270,9 @@ test.describe('L1 Test Tab', () => {
     await page.getByText('Pay Back L1→L0').click();
     await page.waitForTimeout(500);
     await page.getByPlaceholder('e.g. bc for BIG').first().fill('bc');
-    await page.getByPlaceholder('0.00').first().fill('0.001');
+    // Placeholder "0.00" exists on several mounted-but-hidden screens (Order,
+    // Payment…) — target the L1 Test input by its testID.
+    await page.getByTestId('l1-payback-amount-input').fill('0.001');
     await page.getByPlaceholder('L0 address').first().fill('n3MotdMXgRKwrSwDLwAdr3gPaXQsFXdNDs');
     await expect(page.getByText('Pay Back to L0').last()).toBeAttached();
   });

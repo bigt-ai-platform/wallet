@@ -39,6 +39,18 @@ export async function goToKeys(page: Page) {
 
 export async function configureServerUrl(page: Page, serverUrl: string, l1Url?: string) {
   await clickTab(page, 'Settings');
+  // The local e2e infra is testnet (m…/n… addresses), but the exported web
+  // build defaults to mainnet params — Address.fromBase58 then rejects
+  // testnet addresses, so sends die before submitTransaction (the resulting
+  // window.alert is auto-accepted, failing silently). Enable testnet first:
+  // setTestnet() resets the L1 chain list, so it must precede URL edits.
+  const testnetOn = await page.evaluate(
+    () => localStorage.getItem('settings.useTestnet') === 'true',
+  );
+  if (!testnetOn) {
+    await page.locator('[data-testid="testnet-toggle"]').click();
+    await page.waitForTimeout(800);
+  }
   const input = page.locator('[data-testid="server-url-input"]');
   await input.fill('');
   await input.fill(serverUrl);
