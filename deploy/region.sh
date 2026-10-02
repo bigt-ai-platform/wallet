@@ -153,14 +153,17 @@ ${dom}, www.${dom} {
     encode gzip
     # Same-origin chain APIs: the browser bundle calls the relative /l0/* and
     # /l1/* paths (an HTTPS page cannot call the plain-http MainNetParams
-    # seeds, and the chain nodes have CORS disabled). Forward them to the
-    # public HTTPS nodes.
-    handle_path /l0/* {
-        reverse_proxy ${L0_API}
-    }
-    handle_path /l1/* {
-        reverse_proxy ${L1_API}
-    }
+    # seeds, and the chain nodes have CORS disabled). The default /l0/, /l1/
+    # map to the primary node; the per-node paths (/l0/eu1|eu2|eu3,
+    # /l1/ordereu1|ordereu2|ordereu3) let the Chains page list every node.
+    # Keep in sync with PROD_WEB_L0_NODES / PROD_WEB_L1_NODES in app.ts and
+    # with the location blocks in nginx.conf.
+    handle_path /l0/eu2/* { reverse_proxy https://eu2.bigtangle.org }
+    handle_path /l0/eu3/* { reverse_proxy https://eu3.bigtangle.org }
+    handle_path /l0/* { reverse_proxy ${L0_API} }
+    handle_path /l1/ordereu2/* { reverse_proxy https://ordereu2.bigtangle.org }
+    handle_path /l1/ordereu3/* { reverse_proxy https://ordereu3.bigtangle.org }
+    handle_path /l1/* { reverse_proxy ${L1_API} }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}
     }
@@ -189,12 +192,13 @@ CADDYEOF
 # bapp apex (${APEX_REGION}) — ${apex} / www.${apex} → web
 ${apex}, www.${apex} {
     encode gzip
-    handle_path /l0/* {
-        reverse_proxy ${L0_API}
-    }
-    handle_path /l1/* {
-        reverse_proxy ${L1_API}
-    }
+    # Per-node same-origin proxies for the Chains page (see the region vhost).
+    handle_path /l0/eu2/* { reverse_proxy https://eu2.bigtangle.org }
+    handle_path /l0/eu3/* { reverse_proxy https://eu3.bigtangle.org }
+    handle_path /l0/* { reverse_proxy ${L0_API} }
+    handle_path /l1/ordereu2/* { reverse_proxy https://ordereu2.bigtangle.org }
+    handle_path /l1/ordereu3/* { reverse_proxy https://ordereu3.bigtangle.org }
+    handle_path /l1/* { reverse_proxy ${L1_API} }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}
     }

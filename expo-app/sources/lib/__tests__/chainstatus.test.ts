@@ -65,4 +65,24 @@ describe('buildChainTargets', () => {
   it('skips blank urls', () => {
     expect(buildChainTargets([''], [{ name: 'x', url: '  ' }], [''])).toEqual([]);
   });
+
+  it('names per-node web proxy rows from their L1 chain config', () => {
+    const rows = buildChainTargets(
+      ['/l0/eu1/', '/l0/eu2/', '/l0/eu3/'],
+      [
+        { name: 'ordereu1', url: '/l1/ordereu1/' },
+        { name: 'ordereu2', url: '/l1/ordereu2/' },
+        { name: 'ordereu3', url: '/l1/ordereu3/' },
+      ],
+      ['/l1/ordereu1/', '/l1/ordereu2/', '/l1/ordereu3/'],
+    );
+    expect(rows.map((r) => [r.role, r.name, r.url])).toEqual([
+      ['l0', 'L0', '/l0/eu1/'],
+      ['l0', 'L0', '/l0/eu2/'],
+      ['l0', 'L0', '/l0/eu3/'],
+      ['l1', 'ordereu1', '/l1/ordereu1/'],
+      ['l1', 'ordereu2', '/l1/ordereu2/'],
+      ['l1', 'ordereu3', '/l1/ordereu3/'],
+    ]);
+  });
 });

@@ -33,7 +33,9 @@ import {
   MAINNET_L0_URLS,
   MAINNET_L1_URLS,
   PROD_WEB_L0_BASE,
+  PROD_WEB_L0_NODES,
   PROD_WEB_L1_BASE,
+  PROD_WEB_L1_NODES,
   SEEDS_CHAIN_L0,
   SEEDS_CHAIN_L1,
   SEEDS_URLS,
@@ -269,6 +271,22 @@ export function candidatesFor(role: Role): string[] {
   // The registry also works on web when SEEDS_URLS is a same-origin path.
   const registry = SEEDS_URLS.length ? readRegistryCache(role)?.urls ?? [] : [];
   return orderOnionLast(dedupe([...base, ...dns, ...registry, ...learned]));
+}
+
+/**
+ * Candidate endpoints for the sidebar "Chains" page. On the web production
+ * build this expands to every mainnet node via its same-origin proxy path
+ * (each `handle_path` block in the deploy Caddy/nginx routes to one node), so
+ * the page lists all available chains — not just the single default `/l0/`,
+ * `/l1/` upstream that the request layer uses. All other platforms share the
+ * ordinary candidate set.
+ */
+export function networkCandidates(role: Role): string[] {
+  if (IS_WEB_BROWSER && !IS_DEV) {
+    const nodes = role === 'l0' ? PROD_WEB_L0_NODES : PROD_WEB_L1_NODES;
+    return nodes.map((n) => n.url);
+  }
+  return candidatesFor(role);
 }
 
 function cacheKey(role: Role): string[] {

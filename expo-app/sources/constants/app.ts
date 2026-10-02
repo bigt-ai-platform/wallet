@@ -94,6 +94,26 @@ export const SEEDS_CHAIN_L1 = 'ordermatch';
 export const PROD_WEB_L0_BASE = '/l0/';
 export const PROD_WEB_L1_BASE = '/l1/';
 
+/**
+ * Per-node same-origin proxy paths for the web production build (the browser
+ * can only reach the chain through the Caddy `/l0/`+`/l1/` proxy, which maps
+ * the default paths to the primary node and these per-node paths to each of
+ * the other mainnet nodes). Used by the sidebar "Chains" page so it lists
+ * every available L0/L1 node, not just the single default upstream. Must stay
+ * in sync with the `handle_path` blocks in deploy/region.sh and the `location`
+ * blocks in deploy/nginx.conf.
+ */
+export const PROD_WEB_L0_NODES = [
+  { name: 'eu1', url: `${PROD_WEB_L0_BASE}eu1/` },
+  { name: 'eu2', url: `${PROD_WEB_L0_BASE}eu2/` },
+  { name: 'eu3', url: `${PROD_WEB_L0_BASE}eu3/` },
+];
+export const PROD_WEB_L1_NODES = [
+  { name: 'ordereu1', url: `${PROD_WEB_L1_BASE}ordereu1/` },
+  { name: 'ordereu2', url: `${PROD_WEB_L1_BASE}ordereu2/` },
+  { name: 'ordereu3', url: `${PROD_WEB_L1_BASE}ordereu3/` },
+];
+
 /** Testnet L1 (order match) endpoint (no web proxy — testnet is dev-only). */
 export const DEFAULT_L1_TESTNET_URL = 'https://testm.bigtangle.org';
 

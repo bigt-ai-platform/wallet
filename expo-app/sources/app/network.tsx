@@ -6,9 +6,10 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
-import { candidatesFor, endpointInfo } from '@/services/discovery';
+import { networkCandidates, endpointInfo } from '@/services/discovery';
 import { buildChainTargets, hostOf, shortHash, type ChainTarget, type ChainRole } from '@/lib/chainstatus';
 import type { ChainProbe } from '@/lib/endpoints';
+import { IS_DEV, IS_WEB_BROWSER, PROD_WEB_L1_NODES } from '@/constants/app';
 
 /**
  * Chains page: every L0 candidate plus every configured L1 chain / L1 candidate,
@@ -149,10 +150,15 @@ export default function NetworkScreen() {
   React.useEffect(() => {
     let cancelled = false;
     const rebuild = () => {
+      // On the web production build each node is a distinct same-origin proxy
+      // path; label the L1 rows by node so "all available chains" is visible.
+      const l1Chains = IS_WEB_BROWSER && !IS_DEV
+        ? PROD_WEB_L1_NODES
+        : httpService.getL1Chains();
       const list = buildChainTargets(
-        candidatesFor('l0'),
-        httpService.getL1Chains(),
-        candidatesFor('l1'),
+        networkCandidates('l0'),
+        l1Chains,
+        networkCandidates('l1'),
       );
       if (cancelled) return;
       setTargets(list);
