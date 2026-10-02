@@ -6,7 +6,7 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
-import { networkCandidates, endpointInfo } from '@/services/discovery';
+import { networkCandidates, endpointInfo, selectedNodeName } from '@/services/discovery';
 import { buildChainTargets, hostOf, shortHash, type ChainTarget, type ChainRole } from '@/lib/chainstatus';
 import type { ChainProbe } from '@/lib/endpoints';
 import { IS_DEV, IS_WEB_BROWSER, PROD_WEB_L1_NODES } from '@/constants/app';
@@ -67,11 +67,12 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function ChainRow({ target, health, peers, expanded, onPress }: {
+function ChainRow({ target, health, peers, expanded, selected, onPress }: {
   target: ChainTarget;
   health?: Health;
   peers?: PeersInfo | 'loading';
   expanded: boolean;
+  selected: boolean;
   onPress: () => void;
 }) {
   const { theme } = useUnistyles();
@@ -86,16 +87,23 @@ function ChainRow({ target, health, peers, expanded, onPress }: {
       : dash;
   return (
     <TouchableOpacity
-      style={s.row}
+      style={[s.row, selected ? s.rowSelected : null]}
       onPress={onPress}
       activeOpacity={0.6}
       accessibilityRole="button"
-      accessibilityLabel={`${target.name} ${hostOf(target.url)}`}
+      accessibilityLabel={`${target.name} ${hostOf(target.url)}${selected ? ` ${t('network.selected')}` : ''}`}
       testID="network-row"
     >
       <View style={[s.dot, { backgroundColor: statusColor(status, theme) }]} testID={`network-status-${status}`} />
       <View style={s.rowMain}>
-        <Text style={s.rowName} numberOfLines={1}>{target.name}</Text>
+        <View style={s.nameLine}>
+          <Text style={s.rowName} numberOfLines={1}>{target.name}</Text>
+          {selected ? (
+            <View style={s.selectedBadge} testID="network-selected">
+              <Text style={s.selectedText}>{t('network.selected')}</Text>
+            </View>
+          ) : null}
+        </View>
         <Text style={s.rowHost} numberOfLines={1}>{hostOf(target.url)}</Text>
         {expanded ? (
           <View style={s.detail} testID="network-detail">
@@ -209,6 +217,10 @@ export default function NetworkScreen() {
   };
 
   const roleGroups: ChainRole[] = ['l0', 'l1'];
+  const selectedByRole: Partial<Record<ChainRole, string | null>> = {
+    l0: selectedNodeName('l0'),
+    l1: selectedNodeName('l1'),
+  };
 
   return (
     <View style={s.container} testID="network-screen">
@@ -235,6 +247,7 @@ export default function NetworkScreen() {
                   health={health[target.key]}
                   peers={peers[target.key]}
                   expanded={!collapsed.has(target.key)}
+                  selected={selectedByRole[role] != null && target.name === selectedByRole[role]}
                   onPress={() => toggle(target)}
                 />
               ))}
@@ -264,9 +277,19 @@ const s = StyleSheet.create((theme) => ({
     borderWidth: 1, borderColor: theme.colors.border,
     paddingHorizontal: 12, paddingVertical: 12, marginBottom: 8,
   },
+  rowSelected: {
+    borderColor: theme.colors.text.link,
+    backgroundColor: theme.colors.primarySoft,
+  },
   dot: { width: 9, height: 9, borderRadius: 5, marginTop: 4 },
   rowMain: { flex: 1 },
-  rowName: { fontSize: 14, fontWeight: '600', color: theme.colors.text.primary },
+  nameLine: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  rowName: { fontSize: 14, fontWeight: '600', color: theme.colors.text.primary, flexShrink: 1 },
+  selectedBadge: {
+    backgroundColor: theme.colors.text.link, borderRadius: 6,
+    paddingHorizontal: 6, paddingVertical: 1,
+  },
+  selectedText: { fontSize: 10, fontWeight: '700', color: '#fff' },
   rowHost: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 2 },
   rowValue: { fontSize: 12, fontWeight: '600', marginTop: 1 },
   detail: {

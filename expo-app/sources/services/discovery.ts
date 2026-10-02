@@ -289,6 +289,36 @@ export function networkCandidates(role: Role): string[] {
   return candidatesFor(role);
 }
 
+/** Node names (eu1…eu5 / ordereu1…ordereu5) per role. */
+function nodeNames(role: Role): string[] {
+  return role === 'l0'
+    ? ['eu1', 'eu2', 'eu3', 'eu4', 'eu5']
+    : ['ordereu1', 'ordereu2', 'ordereu3', 'ordereu4', 'ordereu5'];
+}
+
+/**
+ * The node (eu1…eu5 / ordereu1…ordereu5) that automatic selection currently
+ * prefers for a role — i.e. the first of `orderedBases`, which is the top
+ * `selectAndRank` result when auto-discover is on, or the default/primary
+ * otherwise. Returns null when there is no candidate or it doesn't map to a
+ * known node. Used by the Chains page to mark the selected row.
+ */
+export function selectedNodeName(role: Role): string | null {
+  const [base] = orderedBases(role);
+  if (!base) return null;
+  const nodes = nodeNames(role);
+  // Same-origin per-node proxy path, e.g. /l0/eu2/ or /l1/ordereu3/.
+  for (const n of nodes) if (base.includes(`/${n}/`)) return n;
+  // Bare primary proxy path (/l0/ or /l1/) proxies to the first node.
+  const trimmed = base.replace(/\/+$/, '');
+  if (trimmed === '/l0') return 'eu1';
+  if (trimmed === '/l1') return 'ordereu1';
+  // Native URL host, e.g. https://eu2.bigtangle.org or https://ordereu3.bigtangle.org.
+  const host = base.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/')[0];
+  const label = host.split('.')[0];
+  return nodes.includes(label) ? label : null;
+}
+
 function cacheKey(role: Role): string[] {
   return ['discovery', role];
 }
