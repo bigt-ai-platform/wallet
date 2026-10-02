@@ -201,10 +201,12 @@ describe("build wiring", () => {
     expect(src).not.toContain("stays unsigned");
   });
 
-  it("webapp.sh checks the artifact before it reaches a device", () => {
+  it("webapp.sh checks the artifact and no longer wipes data by default", () => {
     const src = read("webapp.sh");
     expect(src).toContain('signing.mjs" artifact');
     expect(src).toContain("resolve_jdk; resolve_android_sdk");
+    expect(src).toContain("--force-reinstall");
+    expect(src).not.toMatch(/install -r "\$APK" >\/dev\/null/);
   });
 
   it("deploy.apk.sh gates the upload on the same check", () => {

@@ -76,6 +76,7 @@ npm? # this repo uses yarn@1.22
 ./webapp.sh --skip-build       # reinstall/launch the existing APK only
 ./webapp.sh --release          # signed release APK
 ./webapp.sh --aab              # signed App Bundle
+./webapp.sh --force-reinstall  # uninstall first when install -r cannot update (wipes app data)
 ```
 
 `webapp.sh` resolves a JDK 21 (system JREs lack `javac`; Capacitor's AGP rejects
@@ -85,6 +86,11 @@ production certificate: `patch-android.mjs` refuses to run without
 `webapp/keystore.properties`, and `webapp.sh` re-checks the built APK against
 the `webapp/signing.sha256` pin before installing it (a second key anywhere
 turns the next upgrade into `INSTALL_FAILED_UPDATE_INCOMPATIBLE`).
+
+Debug and release builds share that certificate, so switching between them is
+an in-place `install -r` and never costs the device its data. When `install -r`
+still cannot update the installed package, `webapp.sh` prints adb's reason and
+stops instead of silently uninstalling; `--force-reinstall` opts into the wipe.
 
 ## Production release runbook
 

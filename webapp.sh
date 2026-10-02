@@ -6,6 +6,7 @@
 #   ./webapp.sh --device=ALHX6R…   # pick a device when several are attached
 #   ./webapp.sh --skip-build       # reuse the built APK (install + launch only)
 #   ./webapp.sh --no-install       # build the APK only
+#   ./webapp.sh --force-reinstall  # uninstall first when install -r cannot update (wipes app data)
 #   ./webapp.sh --release          # assembleRelease (needs webapp/keystore.properties, pinned in signing.sha256)
 #   ./webapp.sh --aab              # signed App Bundle
 #   ./webapp.sh --env=production   # OTA release channel baked into the app
@@ -28,6 +29,7 @@ BUILD_TYPE="debug"
 SKIP_BUILD=0
 DO_INSTALL=1
 DO_LAUNCH=1
+FORCE_REINSTALL=0
 DEVICE="${DEVICE:-}"
 APP_ENV="${APP_ENV:-preview}"
 
@@ -45,7 +47,8 @@ for a in "$@"; do
     --skip-build) SKIP_BUILD=1 ;;
     --no-install) DO_INSTALL=0 ;;
     --no-launch) DO_LAUNCH=0 ;;
-    --help|-h) sed -n '2,21p' "$0"; exit 0 ;;
+    --force-reinstall) FORCE_REINSTALL=1 ;;
+    --help|-h) sed -n '2,19p' "$0"; exit 0 ;;
     *) echo "unknown arg: $a" >&2; exit 1 ;;
   esac
 done
@@ -152,12 +155,23 @@ build_apk() {
 }
 
 install_and_run() {
-  if ! "$ADB" -s "$DEVICE" install -r "$APK" >/dev/null 2>&1; then
-    warn "install -r failed — uninstalling $PKG and retrying"
-    "$ADB" -s "$DEVICE" uninstall "$PKG" >/dev/null 2>&1 || true
-    "$ADB" -s "$DEVICE" install "$APK" >/dev/null 2>&1 || die "adb install failed"
+  local out
+  if out="$("$ADB" -s "$DEVICE" install -r "$APK" 2>&1)"; then
+    pass "installed $PKG"
+  else
+    printf '%s\n' "$out" >&2
+    if [ "$FORCE_REINSTALL" -eq 1 ]; then
+      warn "--force-reinstall: uninstalling $PKG (all its app data is lost)"
+      "$ADB" -s "$DEVICE" uninstall "$PKG" >/dev/null 2>&1 || true
+      if ! out="$("$ADB" -s "$DEVICE" install "$APK" 2>&1)"; then
+        printf '%s\n' "$out" >&2
+        die "adb install failed"
+      fi
+      pass "installed $PKG (fresh install — previous app data was wiped)"
+    else
+      die "adb install -r failed: the installed $PKG cannot be updated in place (see the reason above). Pass --force-reinstall to uninstall it first — that wipes its data."
+    fi
   fi
-  pass "installed $PKG"
   for p in "${REVERSE_PORTS[@]}"; do [ -n "$p" ] && "$ADB" -s "$DEVICE" reverse "tcp:$p" "tcp:$p" >/dev/null 2>&1 || true; done
   pass "reversed ${REVERSE_PORTS[*]} → host"
   if [ "$DO_LAUNCH" -eq 1 ]; then
