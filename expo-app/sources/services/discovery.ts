@@ -55,6 +55,7 @@ import {
   type RankedEndpoint,
 } from '@/lib/endpoints';
 import { fetchRegistryNodes } from '@/lib/registry';
+import { nodeNameForUrl } from '@/lib/chainstatus';
 
 export { isOnionUrl } from '@/lib/endpoints';
 
@@ -142,12 +143,17 @@ export function rememberPeer(role: Role, url: string): void {
 
 /**
  * Static seed endpoints for a role, platform and network. Testnet/dev have a
- * single usable endpoint, so discovery is a no-op there.
+ * single usable endpoint, so discovery is a no-op there. The web production
+ * build lists every mainnet node via its same-origin per-node proxy path so
+ * discovery can rank/fail over between them (each path is routed to one node by
+ * the deploy Caddy/nginx; see PROD_WEB_L0_NODES / PROD_WEB_L1_NODES).
  */
 function staticCandidates(role: Role): string[] {
   if (IS_DEV) return role === 'l0' ? [DEV_L0_URL] : [DEV_L1_URL];
   if (isTestnet()) return [];
-  if (IS_WEB_BROWSER) return role === 'l0' ? [PROD_WEB_L0_BASE] : [PROD_WEB_L1_BASE];
+  if (IS_WEB_BROWSER) {
+    return (role === 'l0' ? PROD_WEB_L0_NODES : PROD_WEB_L1_NODES).map((n) => n.url);
+  }
   return role === 'l0' ? MAINNET_L0_URLS.slice() : MAINNET_L1_URLS.slice();
 }
 
@@ -289,13 +295,6 @@ export function networkCandidates(role: Role): string[] {
   return candidatesFor(role);
 }
 
-/** Node names (eu1…eu5 / ordereu1…ordereu5) per role. */
-function nodeNames(role: Role): string[] {
-  return role === 'l0'
-    ? ['eu1', 'eu2', 'eu3', 'eu4', 'eu5']
-    : ['ordereu1', 'ordereu2', 'ordereu3', 'ordereu4', 'ordereu5'];
-}
-
 /**
  * The node (eu1…eu5 / ordereu1…ordereu5) that automatic selection currently
  * prefers for a role — i.e. the first of `orderedBases`, which is the top
@@ -305,18 +304,7 @@ function nodeNames(role: Role): string[] {
  */
 export function selectedNodeName(role: Role): string | null {
   const [base] = orderedBases(role);
-  if (!base) return null;
-  const nodes = nodeNames(role);
-  // Same-origin per-node proxy path, e.g. /l0/eu2/ or /l1/ordereu3/.
-  for (const n of nodes) if (base.includes(`/${n}/`)) return n;
-  // Bare primary proxy path (/l0/ or /l1/) proxies to the first node.
-  const trimmed = base.replace(/\/+$/, '');
-  if (trimmed === '/l0') return 'eu1';
-  if (trimmed === '/l1') return 'ordereu1';
-  // Native URL host, e.g. https://eu2.bigtangle.org or https://ordereu3.bigtangle.org.
-  const host = base.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/')[0];
-  const label = host.split('.')[0];
-  return nodes.includes(label) ? label : null;
+  return base ? nodeNameForUrl(base, role) : null;
 }
 
 function cacheKey(role: Role): string[] {
@@ -527,21 +515,38 @@ export function restartAutoSelection(): void {
 }
 
 /**
+ * Normalize a user-pinned/default base for the candidate check. On the web
+ * production build the pinned default is the bare proxy path (`/l0/`, `/l1/`),
+ * which is not a specific node — treat it as "no preference" so discovery's
+ * ranking decides (healthiest node first) instead of short-circuiting to one
+ * upstream. A genuinely custom pinned URL is returned unchanged.
+ */
+function normalizePreferred(role: Role, preferred?: string): string | undefined {
+  if (!preferred) return preferred;
+  if (IS_WEB_BROWSER && !IS_DEV) {
+    const base = role === 'l0' ? PROD_WEB_L0_BASE : PROD_WEB_L1_BASE;
+    if (preferred === base || preferred === base.replace(/\/+$/, '')) return undefined;
+  }
+  return preferred;
+}
+
+/**
  * Ordered candidate bases for a role: user-preferred first, cached ranking
  * next, remaining defaults last. Triggers a background refresh when the cache
  * is missing/stale. Manual mode (auto-discover off) skips the discovery
  * ordering and refresh: preferred URL first, then the candidate list as-is.
  */
 export function orderedBases(role: Role, preferred?: string): string[] {
+  const pref = normalizePreferred(role, preferred);
   const defaults = candidatesFor(role);
-  if (defaults.length === 0) return preferred ? [preferred] : [];
+  if (defaults.length === 0) return pref ? [pref] : [];
   // A user-pinned endpoint outside the known set (custom node/network) is used
   // alone — never silently fail over to a different network's defaults.
-  if (preferred && !defaults.includes(preferred)) return [preferred];
+  if (pref && !defaults.includes(pref)) return [pref];
   if (defaults.length === 1) return defaults;
 
   if (!autoDiscoverEnabled()) {
-    const manual = preferred ? [preferred, ...defaults.filter((d) => d !== preferred)] : defaults.slice();
+    const manual = pref ? [pref, ...defaults.filter((d) => d !== pref)] : defaults.slice();
     let manualOrder = manual;
     for (const url of down) manualOrder = demote(manualOrder, url);
     return manualOrder;
@@ -550,7 +555,7 @@ export function orderedBases(role: Role, preferred?: string): string[] {
   const cached = readCache(role);
   if (cacheStale(cached, CACHE_TTL_MS, Date.now())) backgroundRefresh(role);
 
-  let order = orderEndpoints(defaults, cached?.ranked ?? [], preferred);
+  let order = orderEndpoints(defaults, cached?.ranked ?? [], pref);
   for (const url of down) order = demote(order, url);
   return order;
 }

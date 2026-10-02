@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hostOf, normalizeUrl, shortHash, buildChainTargets } from '../chainstatus';
+import { hostOf, normalizeUrl, shortHash, buildChainTargets, nodeNameForUrl } from '../chainstatus';
 
 describe('hostOf', () => {
   it('strips scheme, path and trailing slash', () => {
@@ -90,5 +90,37 @@ describe('buildChainTargets', () => {
       ['l1', 'ordereu4', '/l1/ordereu4/'],
       ['l1', 'ordereu5', '/l1/ordereu5/'],
     ]);
+  });
+
+  it('names L0 rows from the optional l0Chains list', () => {
+    const rows = buildChainTargets(
+      ['/l0/eu1/', '/l0/eu2/'],
+      [],
+      [],
+      [
+        { name: 'eu1', url: '/l0/eu1/' },
+        { name: 'eu2', url: '/l0/eu2/' },
+      ],
+    );
+    expect(rows.map((r) => [r.role, r.name])).toEqual([
+      ['l0', 'eu1'],
+      ['l0', 'eu2'],
+    ]);
+  });
+});
+
+describe('nodeNameForUrl', () => {
+  it('maps web proxy paths, bare primary and native hosts', () => {
+    expect(nodeNameForUrl('/l0/eu3/', 'l0')).toBe('eu3');
+    expect(nodeNameForUrl('/l1/ordereu2/', 'l1')).toBe('ordereu2');
+    expect(nodeNameForUrl('/l0/', 'l0')).toBe('eu1');
+    expect(nodeNameForUrl('/l1/', 'l1')).toBe('ordereu1');
+    expect(nodeNameForUrl('https://eu4.bigtangle.org', 'l0')).toBe('eu4');
+    expect(nodeNameForUrl('https://ordereu5.bigtangle.org', 'l1')).toBe('ordereu5');
+  });
+
+  it('returns null for unknown or empty urls', () => {
+    expect(nodeNameForUrl('', 'l0')).toBeNull();
+    expect(nodeNameForUrl('https://example.com', 'l0')).toBeNull();
   });
 });

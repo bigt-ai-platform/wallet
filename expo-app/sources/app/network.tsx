@@ -7,9 +7,9 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
 import { networkCandidates, endpointInfo, selectedNodeName } from '@/services/discovery';
-import { buildChainTargets, hostOf, shortHash, type ChainTarget, type ChainRole } from '@/lib/chainstatus';
+import { buildChainTargets, hostOf, shortHash, nodeNameForUrl, type ChainTarget, type ChainRole } from '@/lib/chainstatus';
 import type { ChainProbe } from '@/lib/endpoints';
-import { IS_DEV, IS_WEB_BROWSER, PROD_WEB_L1_NODES } from '@/constants/app';
+import { IS_DEV, IS_WEB_BROWSER, PROD_WEB_L0_NODES, PROD_WEB_L1_NODES } from '@/constants/app';
 
 /**
  * Chains page: every L0 candidate plus every configured L1 chain / L1 candidate,
@@ -159,14 +159,15 @@ export default function NetworkScreen() {
     let cancelled = false;
     const rebuild = () => {
       // On the web production build each node is a distinct same-origin proxy
-      // path; label the L1 rows by node so "all available chains" is visible.
-      const l1Chains = IS_WEB_BROWSER && !IS_DEV
-        ? PROD_WEB_L1_NODES
-        : httpService.getL1Chains();
+      // path; label every row by node so "all available chains" is visible.
+      const web = IS_WEB_BROWSER && !IS_DEV;
+      const l1Chains = web ? PROD_WEB_L1_NODES : httpService.getL1Chains();
+      const l0Chains = web ? PROD_WEB_L0_NODES : [];
       const list = buildChainTargets(
         networkCandidates('l0'),
         l1Chains,
         networkCandidates('l1'),
+        l0Chains,
       );
       if (cancelled) return;
       setTargets(list);
@@ -247,7 +248,7 @@ export default function NetworkScreen() {
                   health={health[target.key]}
                   peers={peers[target.key]}
                   expanded={!collapsed.has(target.key)}
-                  selected={selectedByRole[role] != null && target.name === selectedByRole[role]}
+                  selected={selectedByRole[role] != null && nodeNameForUrl(target.url, role) === selectedByRole[role]}
                   onPress={() => toggle(target)}
                 />
               ))}
