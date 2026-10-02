@@ -107,11 +107,15 @@ export const PROD_WEB_L0_NODES = [
   { name: 'eu1', url: `${PROD_WEB_L0_BASE}eu1/` },
   { name: 'eu2', url: `${PROD_WEB_L0_BASE}eu2/` },
   { name: 'eu3', url: `${PROD_WEB_L0_BASE}eu3/` },
+  { name: 'eu4', url: `${PROD_WEB_L0_BASE}eu4/` },
+  { name: 'eu5', url: `${PROD_WEB_L0_BASE}eu5/` },
 ];
 export const PROD_WEB_L1_NODES = [
   { name: 'ordereu1', url: `${PROD_WEB_L1_BASE}ordereu1/` },
   { name: 'ordereu2', url: `${PROD_WEB_L1_BASE}ordereu2/` },
   { name: 'ordereu3', url: `${PROD_WEB_L1_BASE}ordereu3/` },
+  { name: 'ordereu4', url: `${PROD_WEB_L1_BASE}ordereu4/` },
+  { name: 'ordereu5', url: `${PROD_WEB_L1_BASE}ordereu5/` },
 ];
 
 /** Testnet L1 (order match) endpoint (no web proxy — testnet is dev-only). */
