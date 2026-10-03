@@ -6,12 +6,13 @@ import {
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
-import { decimalsFor } from '@/lib/tokenformat';
+import { decimalsFor, shortTokenId } from '@/lib/tokenformat';
 import { listOrders, recordOrder, refreshAllStatuses } from '@/services/tracking';
-import { CloseIcon } from '@/components/Icons';
+import { CloseIcon, CopyIcon } from '@/components/Icons';
 import SegmentedTabs from '@/components/SegmentedTabs';
 import ChainBadge from '@/components/ChainBadge';
 import { statusBadgeColor } from '@/utils/status';
@@ -395,7 +396,20 @@ export default function OrderScreen() {
                   </ScrollView>
                 ) : (
                   selectedToken && (
-                    <Text style={s.selectedTokenText} testID="order-selected-token">{selectedToken.tokenname} · {selectedToken.tokenid}</Text>
+                    <View style={s.selectedTokenRow}>
+                      <Text style={s.selectedTokenText} testID="order-selected-token" numberOfLines={1}>
+                        {selectedToken.tokenname} · {shortTokenId(selectedToken.tokenid)}
+                      </Text>
+                      <TouchableOpacity
+                        style={s.copyBtn}
+                        accessibilityRole="button"
+                        accessibilityLabel={t('receive.copy')}
+                        testID="order-token-copy"
+                        onPress={() => { Clipboard.setStringAsync(selectedToken.tokenid).catch(() => {}); }}
+                      >
+                        <CopyIcon size={14} color={theme.colors.text.link} />
+                      </TouchableOpacity>
+                    </View>
                   )
                 )}
               </View>
@@ -499,7 +513,9 @@ const s = StyleSheet.create((theme) => ({
   chipTextActive: { color: '#FFFFFF' },
   chipSub: { fontSize: 10, color: theme.colors.text.secondary, marginTop: 1 },
   chipSubActive: { color: '#FFFFFF', opacity: 0.85 },
-  selectedTokenText: { fontSize: 13, color: theme.colors.text.primary, marginTop: 8 },
+  selectedTokenRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  selectedTokenText: { flexShrink: 1, fontSize: 13, color: theme.colors.text.primary },
+  copyBtn: { padding: 4 },
   filterCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 12, marginBottom: 12 },
   filterLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
   dateRow: { flexDirection: 'row', gap: 8 },

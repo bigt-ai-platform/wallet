@@ -37,3 +37,12 @@ export function formatTokenAmount(value: bigint, decimals: number): string {
   const fracStr = frac === 0n ? '' : frac.toString().padStart(decimals, '0').replace(/0+$/, '');
   return `${neg ? '-' : ''}${whole.toString()}${fracStr ? '.' + fracStr : ''}`;
 }
+
+/**
+ * Short display form of a long token id (PQ-pubkey token ids are KBs long):
+ * keeps the identifying head and tail, mirroring the profile identity rows in
+ * the dai feeds app. Copy controls keep the full value.
+ */
+export function shortTokenId(tokenid: string): string {
+  return tokenid.length > 28 ? `${tokenid.slice(0, 14)}…${tokenid.slice(-6)}` : tokenid;
+}

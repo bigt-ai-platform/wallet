@@ -25,3 +25,10 @@ export const SendIcon = makeIcon('M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z');
 export const QrScanIcon = makeIcon('M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM13 13h5v5h-5zM19 15h2v2h-2zM15 20h2v2h-2zM13 22h2v2h-2z');
 export const SearchIcon = makeIcon('M11 19a8 8 0 100-16 8 8 0 000 16zM21 21l-4.35-4.35');
 export const BlocksIcon = makeIcon('M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5');
+
+export const CopyIcon: React.FC<IconProps> = ({ size = 22, color = 'currentColor', ...props }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <Rect x={9} y={9} width={12} height={12} rx={2} />
+    <Path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </Svg>
+);

@@ -6,9 +6,12 @@ import {
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import * as Clipboard from 'expo-clipboard';
 import Svg, { Polyline, Rect, Line as SvgLine, Text as SvgText } from 'react-native-svg';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
+import { CopyIcon } from '@/components/Icons';
+import { shortTokenId } from '@/lib/tokenformat';
 import type { MarketPrice } from '@/types/api';
 
 interface ChartPoint {
@@ -195,7 +198,22 @@ export default function ChartScreen() {
               ))}
             </ScrollView>
           ) : (
-            selectedToken && <Text style={s.selectedText} testID="chart-selected-token">{selectedToken.tokenname} · {selectedToken.tokenid}</Text>
+            selectedToken && (
+              <View style={s.selectedRow}>
+                <Text style={s.selectedText} testID="chart-selected-token" numberOfLines={1}>
+                  {selectedToken.tokenname} · {shortTokenId(selectedToken.tokenid)}
+                </Text>
+                <TouchableOpacity
+                  style={s.copyBtn}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('receive.copy')}
+                  testID="chart-token-copy"
+                  onPress={() => { Clipboard.setStringAsync(selectedToken.tokenid).catch(() => {}); }}
+                >
+                  <CopyIcon size={14} color={theme.colors.text.link} />
+                </TouchableOpacity>
+              </View>
+            )
           )}
         </View>
 
@@ -271,7 +289,9 @@ const s = StyleSheet.create((theme) => ({
   chipText: { fontSize: 12, fontWeight: '600', color: theme.colors.text.link },
   chipTextActive: { color: '#FFFFFF' },
   chipSub: { fontSize: 10, color: theme.colors.text.secondary, marginTop: 1 },
-  selectedText: { fontSize: 13, color: theme.colors.text.primary, marginTop: 8 },
+  selectedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  selectedText: { flexShrink: 1, fontSize: 13, color: theme.colors.text.primary },
+  copyBtn: { padding: 4 },
   chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   chartTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
   axisLabel: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 4, textAlign: 'center' },
