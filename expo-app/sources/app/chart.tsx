@@ -81,8 +81,8 @@ function buildPoints(
   const datas = [...chart.datas].sort((a, b) => a.time - b.time);
   const prices = datas.map((d) => d.price);
   const vols = datas.map((d) => d.executedQuantity);
-  let maxY = Math.max(...prices, 0);
-  let minY = Math.min(...prices, 0);
+  let maxY = Math.max(...prices);
+  let minY = Math.min(...prices);
   // Scale the price range around the traded values with headroom instead of
   // pinning the line to the chart edges: ±15% of the span (and at least ±2%
   // of the latest price) around min/max.
