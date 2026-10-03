@@ -52,6 +52,16 @@ function formatAxisValue(v: number): string {
   return v.toFixed(2);
 }
 
+/** Date label for the x-axis: day when the window is long, time when short. */
+function formatAxisDate(ms: number, withTime: boolean): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, '0');
+  const date = `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return withTime
+    ? `${date} ${p(d.getHours())}:${p(d.getMinutes())}`
+    : `${d.getFullYear()}-${date}`;
+}
+
 function buildPoints(
   chart: ChartData | null,
   chartHeight: number,
@@ -63,17 +73,25 @@ function buildPoints(
   bars: React.ReactNode[];
   maxY: number;
   minY: number;
+  maxVol: number;
 } {
   if (!chart || chart.datas.length === 0) {
-    return { line: '', bars: [], maxY: 0, minY: 0 };
+    return { line: '', bars: [], maxY: 0, minY: 0, maxVol: 0 };
   }
   const datas = [...chart.datas].sort((a, b) => a.time - b.time);
   const prices = datas.map((d) => d.price);
   const vols = datas.map((d) => d.executedQuantity);
   let maxY = Math.max(...prices, 0);
   let minY = Math.min(...prices, 0);
-  if (maxY === minY) { maxY = minY + 1; }
-  const maxVol = Math.max(...vols, 1);
+  // Scale the price range around the traded values with headroom instead of
+  // pinning the line to the chart edges: ±15% of the span (and at least ±2%
+  // of the latest price) around min/max.
+  const span0 = maxY - minY;
+  const lastPrice = prices[prices.length - 1] ?? 0;
+  const pad = Math.max(span0 * 0.15, Math.abs(lastPrice) * 0.02, 1);
+  maxY += pad;
+  minY = Math.max(0, minY - pad);
+  const maxVol = Math.max(...vols, 0);
   const span = maxY - minY;
   const step = (chartWidth - PAD * 2) / Math.max(datas.length - 1, 1);
   const x = (i: number) => PAD + i * step;
@@ -81,7 +99,7 @@ function buildPoints(
 
   const linePts = datas.map((d, i) => `${x(i).toFixed(1)},${y(d.price).toFixed(1)}`).join(' ');
   const bars = datas.map((d, i) => {
-    const h = Math.max((d.executedQuantity / maxVol) * (chartHeight - PAD * 2), 1);
+    const h = Math.max((d.executedQuantity / Math.max(maxVol, 1)) * (chartHeight - PAD * 2), 1);
     return (
       <Rect
         key={i}
@@ -94,7 +112,7 @@ function buildPoints(
       />
     );
   });
-  return { line: linePts, bars, maxY, minY };
+  return { line: linePts, bars, maxY, minY, maxVol };
 }
 
 export default function ChartScreen() {
@@ -165,10 +183,30 @@ export default function ChartScreen() {
     if (selectedToken) loadChart(selectedToken.tokenid, interval);
   }, [selectedToken, interval]);
 
+  // Preselect the yuan token when it exists, so the chart is not empty on
+  // first open. A token the user picks later simply replaces it.
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await httpService.searchExchangeTokens('yuan');
+        if (cancelled || !res.success || !res.data || res.data.length === 0) return;
+        const yuan = res.data.find((tk: any) => (tk.tokenname || '').trim().toLowerCase() === 'yuan')
+          || res.data[0];
+        selectToken({ tokenid: yuan.tokenid, tokenname: yuan.tokenname || yuan.tokenid?.slice(0, 8) || 'yuan' });
+      } catch { /* no default token available */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const VOL_H = 140;
   const { line, maxY, minY } = buildPoints(chart, CHART_H, chartW, theme.colors.positive, theme.colors.negative);
-  const { bars } = buildPoints(chart, VOL_H, chartW, theme.colors.positive, theme.colors.negative);
+  const { bars, maxVol } = buildPoints(chart, VOL_H, chartW, theme.colors.positive, theme.colors.negative);
   const baseToken = 'bc';
+  const sortedTimes = chart?.datas?.length ? [...chart.datas].sort((a, b) => a.time - b.time) : [];
+  const firstTime = sortedTimes[0]?.time ?? 0;
+  const lastTime = sortedTimes[sortedTimes.length - 1]?.time ?? 0;
+  const withTime = lastTime - firstTime <= 2 * 24 * 60 * 60 * 1000;
 
   return (
     <View style={s.container} testID="chart-screen">
@@ -252,6 +290,10 @@ export default function ChartScreen() {
                   </>
                 )}
               </Svg>
+              <View style={s.dateRow}>
+                <Text style={s.dateLabel}>{firstTime ? formatAxisDate(firstTime, withTime) : ''}</Text>
+                <Text style={s.dateLabel}>{lastTime ? formatAxisDate(lastTime, withTime) : ''}</Text>
+              </View>
               <Text style={s.axisLabel}>{t('chart.price')}</Text>
             </>
           )}
@@ -260,9 +302,16 @@ export default function ChartScreen() {
         <View style={s.card}>
           <Text style={s.chartTitle}>{t('chart.volume')}</Text>
           {chart && chart.datas.length > 0 ? (
-            <Svg width={chartW} height={VOL_H} testID="chart-volume">
-              {bars}
-            </Svg>
+            <>
+              <Svg width={chartW} height={VOL_H} testID="chart-volume">
+                <SvgText x={PAD + 2} y={PAD + 10} fill={theme.colors.text.secondary} fontSize={9}>{formatAxisValue(maxVol)}</SvgText>
+                {bars}
+              </Svg>
+              <View style={s.dateRow}>
+                <Text style={s.dateLabel}>{firstTime ? formatAxisDate(firstTime, withTime) : ''}</Text>
+                <Text style={s.dateLabel}>{lastTime ? formatAxisDate(lastTime, withTime) : ''}</Text>
+              </View>
+            </>
           ) : (
             <View style={s.emptyCard}><Text style={s.emptyText}>{t('chart.noData')}</Text></View>
           )}
@@ -295,6 +344,8 @@ const s = StyleSheet.create((theme) => ({
   chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
   chartTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
   axisLabel: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 4, textAlign: 'center' },
+  dateRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
+  dateLabel: { fontSize: 10, color: theme.colors.text.secondary },
   emptyCard: { alignItems: 'center', padding: 24 },
   emptyText: { fontSize: 13, color: theme.colors.text.secondary },
 }));
