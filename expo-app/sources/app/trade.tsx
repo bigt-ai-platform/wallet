@@ -165,7 +165,7 @@ export default function TradeScreen() {
     }
   };
 
-  const selectToken = (tk: { tokenid: string; tokenname?: string; decimals?: number }) => {
+  const selectToken = (tk: { tokenid: string; tokenname?: string; decimals?: number }, q: QuoteToken = quote) => {
     const next: SelectedToken = {
       tokenid: tk.tokenid,
       tokenname: tk.tokenname || tk.tokenid.slice(0, 8),
@@ -174,8 +174,8 @@ export default function TradeScreen() {
     setSelected(next);
     setTokenSearch(next.tokenname);
     setTokenResults([]);
-    loadChart(next, interval);
-    loadMarket(next);
+    loadChart(next, interval, q);
+    loadMarket(next, q);
   };
 
   const loadChart = async (token: SelectedToken, intervalMinutes: number, q: QuoteToken = quote) => {
@@ -260,16 +260,33 @@ export default function TradeScreen() {
     } catch (e) { console.error('Error loading L1 balances:', e); }
   }, [isUnlocked, publicInfo?.address, getUnlockedWallet]);
 
-  // Preselect a market that exists on the L1 chain so the screen is populated
-  // on first open (mirrors the /chart screen's "yuan" default).
+  // Preselect the default market on first open: Nvidia quoted in CNY when the
+  // chain has both, falling back to the old "yuan" market; the quote falls
+  // back to BC when the chain has no CNY token.
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await httpService.searchExchangeTokens('yuan');
-        if (cancelled || !res.success || !res.data || res.data.length === 0) return;
-        const yuan = res.data.find((tk: any) => (tk.tokenname || '').trim().toLowerCase() === 'yuan') || res.data[0];
-        selectToken({ tokenid: yuan.tokenid, tokenname: yuan.tokenname, decimals: yuan.decimals });
+        let defaultQuote = BC_QUOTE;
+        const qres = await httpService.searchExchangeTokens('CNY');
+        if (cancelled) return;
+        const cny = qres.success && qres.data
+          ? qres.data.find((tk) => (tk.tokenname || '').trim().toUpperCase() === 'CNY')
+          : undefined;
+        if (cny && cny.tokenid !== BC_QUOTE.tokenid) {
+          defaultQuote = { tokenid: cny.tokenid, tokenname: 'CNY', decimals: cny.decimals ?? 0 };
+        }
+        const findToken = async (name: string, firstIfNoExact = false) => {
+          const res = await httpService.searchExchangeTokens(name);
+          if (!res.success || !res.data || res.data.length === 0) return undefined;
+          const want = name.trim().toUpperCase();
+          return res.data.find((tk) => (tk.tokenname || '').trim().toUpperCase() === want)
+            ?? (firstIfNoExact ? res.data[0] : undefined);
+        };
+        const token = (await findToken('Nvidia')) ?? (await findToken('yuan', true));
+        if (cancelled || !token) return;
+        if (defaultQuote.tokenid !== BC_QUOTE.tokenid) setQuote(defaultQuote);
+        selectToken({ tokenid: token.tokenid, tokenname: token.tokenname, decimals: token.decimals }, defaultQuote);
       } catch { /* no default market available */ }
     })();
     return () => { cancelled = true; };

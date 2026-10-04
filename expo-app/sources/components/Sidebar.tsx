@@ -12,6 +12,7 @@ import {
 } from './Icons';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useTranslation } from 'react-i18next';
+import { httpService } from '@/services/http';
 
 interface NavItem {
   label: string;
@@ -61,6 +62,8 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
   const router = useRouter();
   const pathname = usePathname();
   const { t } = useTranslation();
+  // Testnet mode brands the title "bigT in Test" so test builds are obvious.
+  const isTestnet = httpService.getUseTestnet();
 
   const navSections: NavSection[] = [
     {
@@ -113,7 +116,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
   const renderContent = () => (
     <>
       <View style={[s.sidebarHeader, { borderBottomColor: theme.colors.border }]}>
-        <Text style={[s.logoText, { color: theme.colors.text.primary }]}>{t('sidebar.bigt')}</Text>
+        <Text style={[s.logoText, { color: theme.colors.text.primary }]}>{t(isTestnet ? 'sidebar.bigtTest' : 'sidebar.bigt')}</Text>
         {!persistent && (
           <TouchableOpacity onPress={onClose} style={s.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button" accessibilityLabel={t('common.cancel')}>
