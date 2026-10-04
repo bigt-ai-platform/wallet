@@ -253,15 +253,19 @@ test.describe('Order Screen', () => {
     console.log('Sell order submitted via Order UI to L1');
 
     // 7. The order book shows the open sell order (getOrders, order data).
+    // Wait specifically for OUR order: getOrders returns every token's open
+    // orders, so breaking on `length > 0` exits early whenever another market
+    // has an open order (e.g. a prior test left one).
     let sellOrders: any[] = [];
-    for (let i = 0; i < 40; i++) {
+    let ourSell: any;
+    for (let i = 0; i < 90; i++) {
       const resp = await postJson('getOrders', {});
       sellOrders = resp.allOrdersSorted || [];
-      if (sellOrders.length > 0) break;
+      ourSell = sellOrders.find((o: any) => o.offerTokenid === tokenid);
+      if (ourSell) break;
       await new Promise(r => setTimeout(r, 2000));
     }
     expect(sellOrders.length).toBeGreaterThanOrEqual(1);
-    const ourSell = sellOrders.find((o: any) => o.offerTokenid === tokenid);
     expect(ourSell).toBeDefined();
     console.log(`Sell order open in book: ${sellOrders.length} order(s)`);
 
@@ -273,10 +277,14 @@ test.describe('Order Screen', () => {
     );
     console.log(`Buy: ${tradeAmount} ${tokenName} @ price ${sellPrice}`);
 
+    // Wait for OUR orders to be fully matched (getOrders is shared across
+    // markets, so only count orders that touch this token).
     let remaining: any[] = [null];
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 90; i++) {
       const resp = await postJson('getOrders', {});
-      remaining = resp.allOrdersSorted || [];
+      remaining = (resp.allOrdersSorted || []).filter(
+        (o: any) => o.offerTokenid === tokenid || o.targetTokenid === tokenid,
+      );
       if (remaining.length === 0) break;
       await new Promise(r => setTimeout(r, 2000));
     }
