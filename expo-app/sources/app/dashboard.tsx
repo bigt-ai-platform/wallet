@@ -102,7 +102,9 @@ export default function DashboardScreen() {
     tokenNames[tokenid] || trading.find((b) => b.tokenid === tokenid)?.tokenname
     || (tokenid === 'bc' ? 'BIG' : shortTokenId(tokenid));
 
-  const holdings = trading.filter((b) => Number(b.balance) > 0);
+  const holdings = trading
+    .filter((b) => Number(b.balance) > 0)
+    .sort((a, b) => valueOf(b) - valueOf(a));
   const totalValue = holdings.reduce((sum, b) => sum + valueOf(b), 0);
   const bcTrading = holdings.find((b) => b.tokenid === 'bc');
   const bcLayer0 = layer0.find((b) => b.tokenid === 'bc');
@@ -153,7 +155,7 @@ export default function DashboardScreen() {
               ) : (
                 <>
                   <View style={s.tableHead}>
-                    <Text style={[s.colToken, s.th]}>{t('chart.selectToken')}</Text>
+                    <Text style={[s.colToken, s.th]}>{t('receive.tokenId')}</Text>
                     <Text style={[s.colNum, s.th]}>{t('dashboard.balance')}</Text>
                     <Text style={[s.colNum, s.th]}>{t('dashboard.price')}</Text>
                     <Text style={[s.colNum, s.th]}>{t('dashboard.value')}</Text>
@@ -247,8 +249,8 @@ const s = StyleSheet.create((theme) => ({
   tableHead: { flexDirection: 'row', alignItems: 'center', paddingBottom: 6, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
   th: { fontSize: 10, fontWeight: '700', color: theme.colors.text.secondary, textTransform: 'uppercase' },
   row: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  colToken: { flex: 1.6, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
-  colNum: { flex: 1, textAlign: 'right', fontSize: 13, color: theme.colors.text.primary },
+  colToken: { flex: 1.8, minWidth: 0, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  colNum: { flex: 1, textAlign: 'right', fontSize: 12, color: theme.colors.text.primary },
   mono: { fontFamily: MONO_FONT },
   valueText: { fontWeight: '700' },
   rowTitle: { fontSize: 13, fontWeight: '600', color: theme.colors.text.primary, flexShrink: 1 },
