@@ -7,113 +7,14 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
-import Svg, { Polyline, Rect, Line as SvgLine, Text as SvgText } from 'react-native-svg';
+import { PriceChart, VolumeChart, INTERVALS, formatAxisDate, type ChartData } from '@/components/MarketChart';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { ChevronDownIcon, CopyIcon } from '@/components/Icons';
 import { shortTokenId } from '@/lib/tokenformat';
 import type { MarketPrice } from '@/types/api';
 
-interface ChartPoint {
-  price: number;
-  executedQuantity: number;
-  time: number; // epoch ms
-}
-
-interface ChartData {
-  tokenid: string;
-  tokenname: string;
-  datas: ChartPoint[];
-}
-
-// Interval options (minutes). Mirrors the chartdata HTML selectors.
-const INTERVALS: { label: string; minutes: number }[] = [
-  { label: '1m', minutes: 1 },
-  { label: '3m', minutes: 3 },
-  { label: '5m', minutes: 5 },
-  { label: '15m', minutes: 15 },
-  { label: '30m', minutes: 30 },
-  { label: '1h', minutes: 60 },
-  { label: '2h', minutes: 120 },
-  { label: '4h', minutes: 240 },
-  { label: '6h', minutes: 360 },
-  { label: '12h', minutes: 720 },
-  { label: '1d', minutes: 1440 },
-  { label: '1w', minutes: 10080 },
-  { label: '1m', minutes: 43200 },
-];
-
 const CHART_H = 220;
-const PAD = 8;
-
-/** Formats an axis value: integers stay whole, fractions show at most 2 decimals. */
-function formatAxisValue(v: number): string {
-  if (Number.isInteger(v)) return String(v);
-  return v.toFixed(2);
-}
-
-/** Date label for the x-axis: day when the window is long, time when short. */
-function formatAxisDate(ms: number, withTime: boolean): string {
-  const d = new Date(ms);
-  const p = (n: number) => String(n).padStart(2, '0');
-  const date = `${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-  return withTime
-    ? `${date} ${p(d.getHours())}:${p(d.getMinutes())}`
-    : `${d.getFullYear()}-${date}`;
-}
-
-function buildPoints(
-  chart: ChartData | null,
-  chartHeight: number,
-  chartWidth: number,
-  posColor: string,
-  negColor: string,
-): {
-  line: string;
-  bars: React.ReactNode[];
-  maxY: number;
-  minY: number;
-  maxVol: number;
-} {
-  if (!chart || chart.datas.length === 0) {
-    return { line: '', bars: [], maxY: 0, minY: 0, maxVol: 0 };
-  }
-  const datas = [...chart.datas].sort((a, b) => a.time - b.time);
-  const prices = datas.map((d) => d.price);
-  const vols = datas.map((d) => d.executedQuantity);
-  let maxY = Math.max(...prices);
-  let minY = Math.min(...prices);
-  // Scale the price range around the traded values with headroom instead of
-  // pinning the line to the chart edges: ±15% of the span (and at least ±2%
-  // of the latest price) around min/max.
-  const span0 = maxY - minY;
-  const lastPrice = prices[prices.length - 1] ?? 0;
-  const pad = Math.max(span0 * 0.15, Math.abs(lastPrice) * 0.02, 1);
-  maxY += pad;
-  minY = Math.max(0, minY - pad);
-  const maxVol = Math.max(...vols, 0);
-  const span = maxY - minY;
-  const step = (chartWidth - PAD * 2) / Math.max(datas.length - 1, 1);
-  const x = (i: number) => PAD + i * step;
-  const y = (v: number) => PAD + (1 - (v - minY) / span) * (chartHeight - PAD * 2);
-
-  const linePts = datas.map((d, i) => `${x(i).toFixed(1)},${y(d.price).toFixed(1)}`).join(' ');
-  const bars = datas.map((d, i) => {
-    const h = Math.max((d.executedQuantity / Math.max(maxVol, 1)) * (chartHeight - PAD * 2), 1);
-    return (
-      <Rect
-        key={i}
-        x={x(i) - step / 4}
-        y={chartHeight - PAD - h}
-        width={Math.max(step / 2, 1)}
-        height={h}
-        fill={d.price >= (i > 0 ? datas[i - 1].price : d.price) ? posColor : negColor}
-        opacity={0.7}
-      />
-    );
-  });
-  return { line: linePts, bars, maxY, minY, maxVol };
-}
 
 export default function ChartScreen() {
   const { t } = useTranslation();
@@ -201,8 +102,6 @@ export default function ChartScreen() {
   }, []);
 
   const VOL_H = 140;
-  const { line, maxY, minY } = buildPoints(chart, CHART_H, chartW, theme.colors.positive, theme.colors.negative);
-  const { bars, maxVol } = buildPoints(chart, VOL_H, chartW, theme.colors.positive, theme.colors.negative);
   const baseToken = 'bc';
   const sortedTimes = chart?.datas?.length ? [...chart.datas].sort((a, b) => a.time - b.time) : [];
   const firstTime = sortedTimes[0]?.time ?? 0;
@@ -284,17 +183,17 @@ export default function ChartScreen() {
             <View style={s.emptyCard}><Text style={s.emptyText}>{t('chart.noData')}</Text></View>
           ) : (
             <>
-              <Svg width={chartW} height={CHART_H} testID="chart-price">
-                {chart && chart.datas.length > 0 && (
-                  <>
-                    <SvgLine x1={PAD} y1={PAD} x2={PAD} y2={CHART_H - PAD} stroke={theme.colors.divider} strokeWidth={1} />
-                    <SvgLine x1={PAD} y1={CHART_H - PAD} x2={chartW - PAD} y2={CHART_H - PAD} stroke={theme.colors.divider} strokeWidth={1} />
-                    <SvgText x={PAD + 2} y={PAD + 10} fill={theme.colors.text.secondary} fontSize={9}>{formatAxisValue(maxY)}</SvgText>
-                    <SvgText x={PAD + 2} y={CHART_H - PAD - 4} fill={theme.colors.text.secondary} fontSize={9}>{formatAxisValue(minY)}</SvgText>
-                    <Polyline points={line} fill="none" stroke={theme.colors.accent.blue} strokeWidth={2} />
-                  </>
-                )}
-              </Svg>
+              <PriceChart
+                chart={chart}
+                width={chartW}
+                height={CHART_H}
+                lineColor={theme.colors.accent.blue}
+                dividerColor={theme.colors.divider}
+                textColor={theme.colors.text.secondary}
+                posColor={theme.colors.positive}
+                negColor={theme.colors.negative}
+                testID="chart-price"
+              />
               <View style={s.dateRow}>
                 <Text style={s.dateLabel}>{firstTime ? formatAxisDate(firstTime, withTime) : ''}</Text>
                 <Text style={s.dateLabel}>{lastTime ? formatAxisDate(lastTime, withTime) : ''}</Text>
@@ -308,10 +207,15 @@ export default function ChartScreen() {
           <Text style={s.chartTitle}>{t('chart.volume')}</Text>
           {chart && chart.datas.length > 0 ? (
             <>
-              <Svg width={chartW} height={VOL_H} testID="chart-volume">
-                <SvgText x={PAD + 2} y={PAD + 10} fill={theme.colors.text.secondary} fontSize={9}>{formatAxisValue(maxVol)}</SvgText>
-                {bars}
-              </Svg>
+              <VolumeChart
+                chart={chart}
+                width={chartW}
+                height={VOL_H}
+                textColor={theme.colors.text.secondary}
+                posColor={theme.colors.positive}
+                negColor={theme.colors.negative}
+                testID="chart-volume"
+              />
               <View style={s.dateRow}>
                 <Text style={s.dateLabel}>{firstTime ? formatAxisDate(firstTime, withTime) : ''}</Text>
                 <Text style={s.dateLabel}>{lastTime ? formatAxisDate(lastTime, withTime) : ''}</Text>

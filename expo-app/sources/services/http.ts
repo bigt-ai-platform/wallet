@@ -24,6 +24,9 @@ import {
   type L1ChainConfig,
   type BridgeInfo,
   type OrderInfo,
+  type OrderBookData,
+  type OrderTickerData,
+  type RecentTrade,
   type ChainNumberInfo,
   type OutputDetail,
 } from '@/types/api';
@@ -890,6 +893,52 @@ export class HttpService {
     const response = await this.requestL1<any>('getOrdersTicker', 'POST', { tokenids, count: 50, basetoken: baseToken });
     if (response.success && response.data) return { success: true, data: response.data };
     return { success: false, error: response.error || 'Failed to get tickers' } as ApiResponse<any>;
+  }
+
+  /**
+   * Get the full open-order book for a market (L1 `getOrders`). The Java
+   * dispatcher filters on the singular `tokenid`; an unset token returns every
+   * open order across markets. `tokennames` carries the metadata decimals used
+   * to scale the raw long price/amount fields.
+   */
+  async getOrderBook(tokenId?: string): Promise<ApiResponse<OrderBookData>> {
+    const response = await this.requestL1<any>(
+      'getOrders',
+      'POST',
+      tokenId ? { tokenid: tokenId } : {},
+    );
+    if (response.success && response.data) {
+      return {
+        success: true,
+        data: {
+          orders: response.data.allOrdersSorted || response.data.orders || [],
+          tokennames: response.data.tokennames || {},
+        },
+      };
+    }
+    return { success: false, error: response.error || 'Failed to get order book' } as ApiResponse<OrderBookData>;
+  }
+
+  /**
+   * Get the last executed matches for a market (L1 `getOrdersTicker` in count
+   * mode → `getLastMatchingEvents`). Feeds the recent-trades list.
+   */
+  async getRecentTrades(tokenId: string, baseToken: string): Promise<ApiResponse<OrderTickerData>> {
+    const response = await this.requestL1<any>(
+      'getOrdersTicker',
+      'POST',
+      { tokenids: [tokenId], count: 50, basetoken: baseToken },
+    );
+    if (response.success && response.data) {
+      return {
+        success: true,
+        data: {
+          tickers: (response.data.tickers as RecentTrade[]) || [],
+          tokennames: response.data.tokennames || {},
+        },
+      };
+    }
+    return { success: false, error: response.error || 'Failed to get recent trades' } as ApiResponse<OrderTickerData>;
   }
 
   /**

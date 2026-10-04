@@ -346,3 +346,28 @@ export interface OrderInfo {
   tokenDecimals?: number;
   cancelPending?: boolean;
 }
+
+/**
+ * Full open-order book for a market returned by the L1 `getOrders` endpoint:
+ * the open orders plus the token metadata needed to scale raw price/amounts.
+ */
+export interface OrderBookData {
+  orders: OrderInfo[];
+  tokennames: Record<string, TokenItem>;
+}
+
+/** A single executed match from the L1 `getOrdersTicker` endpoint. */
+export interface RecentTrade {
+  price: number;
+  executedQuantity: number;
+  inserttime: number;
+  txhash?: string;
+  tokenid?: string;
+  basetokenid?: string;
+}
+
+/** Ticker response (`getOrdersTicker`) with matches and token metadata. */
+export interface OrderTickerData {
+  tickers: RecentTrade[];
+  tokennames: Record<string, TokenItem>;
+}
