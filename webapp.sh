@@ -106,6 +106,27 @@ resolve_device() {
   pass "device $DEVICE"
 }
 
+# Capacitor's CLI hard-fails on Node <22. Prefer a Node >=22 already on this
+# machine (PATH, /opt/node*, nvm) over the default `node`, which may be older.
+node_ge_22() { [ -x "$1" ] && "$1" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)' 2>/dev/null; }
+resolve_node() {
+  local c d dir
+  local -a cands=()
+  command -v node >/dev/null 2>&1 && cands+=("$(command -v node)")
+  for d in /opt/node*/bin "$HOME"/.nvm/versions/node/*/bin; do
+    [ -x "$d/node" ] && cands+=("$d/node")
+  done
+  for c in "${cands[@]}"; do
+    node_ge_22 "$c" || continue
+    dir="$(dirname "$c")"
+    case ":$PATH:" in *":$dir:"*) return 0 ;; esac
+    export PATH="$dir:$PATH"
+    info "node $($c -p 'process.versions.node') → $c"
+    return 0
+  done
+  die "Capacitor needs Node >=22 but none was found — install Node 22+ (e.g. /opt/node22) or set PATH"
+}
+
 resolve_jdk() {
   if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/javac" ]; then return 0; fi
   local c
@@ -143,7 +164,13 @@ build_apk() {
   info "Syncing Capacitor + building $BUILD_TYPE APK…"
   # patch-android verifies the production keystore through keytool, so resolve
   # the toolchain before the sync rather than just before gradle.
-  resolve_jdk; resolve_android_sdk
+  resolve_node; resolve_jdk; resolve_android_sdk
+  # android/ is generated and gitignored — bootstrap it on a fresh checkout.
+  if [ ! -d "$WEBAPP_DIR/android" ]; then
+    info "no android platform yet — npx cap add android"
+    ( cd "$WEBAPP_DIR" && npx cap add android && npx capacitor-assets generate --android ) \
+      || die "cap add android failed"
+  fi
   ( cd "$WEBAPP_DIR" && npx cap sync android && node scripts/patch-android.mjs ) || die "cap sync failed"
   local task="assembleDebug"
   [ "$BUILD_TYPE" = "release" ] && task="assembleRelease"
