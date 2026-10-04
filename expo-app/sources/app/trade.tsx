@@ -4,6 +4,7 @@ import {
   TextInput, Alert, RefreshControl, useWindowDimensions,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import { useWallet } from '@/state/wallet';
@@ -56,6 +57,7 @@ type OrderKind = 'buy' | 'sell';
  */
 export default function TradeScreen() {
   const { t } = useTranslation();
+  const router = useRouter();
   const { theme } = useUnistyles();
   const { isUnlocked, publicInfo, getUnlockedWallet } = useWallet();
   const { width } = useWindowDimensions();
@@ -662,7 +664,10 @@ export default function TradeScreen() {
     return (
       <View style={s.container} testID="trade-screen">
         <View style={s.pageHeader}>
-          <Text style={s.pageTitle}>{t('trade.title')}</Text>
+          <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back')}>
+          <Text style={s.backText}>←</Text>
+        </TouchableOpacity>
+        <Text style={s.pageTitle}>{t('trade.title')}</Text>
           {loading && <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginLeft: 'auto' }} />}
         </View>
         <ScrollView
@@ -692,6 +697,9 @@ export default function TradeScreen() {
   return (
     <View style={s.container} testID="trade-screen">
       <View style={s.pageHeader}>
+        <TouchableOpacity onPress={() => router.back()} style={s.backBtn} accessibilityRole="button" accessibilityLabel={t('common.back')}>
+          <Text style={s.backText}>←</Text>
+        </TouchableOpacity>
         <Text style={s.pageTitle}>{t('trade.title')}</Text>
         {loading && <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginLeft: 'auto' }} />}
       </View>
@@ -723,6 +731,8 @@ export default function TradeScreen() {
 const s = StyleSheet.create((theme) => ({
   container: { flex: 1, backgroundColor: theme.colors.groupped.background },
   pageHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingVertical: 14 },
+  backBtn: { padding: 4 },
+  backText: { fontSize: 22, color: theme.colors.text.link, fontWeight: '700' },
   pageTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text.primary },
   scroll: { flex: 1 },
   content: { padding: 12, paddingBottom: 40 },
