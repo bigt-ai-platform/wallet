@@ -29,7 +29,7 @@ async function configureUrlsDirect(page: Page, serverUrl: string, l1Url: string)
  * feeding the order book, the recent-trades list and the chart in one shot.
  * Mirrors the Java remote order test.
  */
-async function setupMarket(): Promise<{ tokenid: string; tokenName: string }> {
+async function setupMarket(quote: 'bc' | 'CNY' = 'bc'): Promise<{ tokenid: string; tokenName: string }> {
   const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
   const l1Url = E2E_L1_URL.replace(/\/+$/, '') + '/';
   const bcToken = sdk.NetworkParameters.BIGTANGLE_TOKENID_STRING;
@@ -43,7 +43,7 @@ async function setupMarket(): Promise<{ tokenid: string; tokenName: string }> {
     return res.json();
   };
 
-  const payBigTo = async (fromWallet: any, keys: any[], amount: bigint) => {
+  const payTo = async (fromWallet: any, keys: any[], amount: bigint, tokenid: string) => {
     const giveMoney = new Map<string, bigint>();
     for (const k of keys) {
       giveMoney.set(sdk.Address.fromKey(sdk.TestParams.get(), k).toString(), amount);
@@ -51,7 +51,7 @@ async function setupMarket(): Promise<{ tokenid: string; tokenName: string }> {
     const coinList = await fromWallet.calculateAllSpendCandidates(null, false);
     expect(coinList.length).toBeGreaterThan(0);
     const tx = await fromWallet.payMoneyToECKeyList(
-      null, giveMoney, new Uint8Array(sdk.Utils.HEX.decode(bcToken)),
+      null, giveMoney, new Uint8Array(sdk.Utils.HEX.decode(tokenid)),
       'e2e-trade', coinList,
     );
     expect(tx).not.toBeNull();
@@ -78,9 +78,53 @@ async function setupMarket(): Promise<{ tokenid: string; tokenName: string }> {
   const issuer = sdk.PQKey.createNew();
   const buyer = sdk.PQKey.createNew();
   const userFunds = sdk.CoinConstants.FEE_DEFAULT.getValue() * BigInt(500);
-  await payBigTo(wallet, [issuer, buyer], userFunds);
+  await payTo(wallet, [issuer, buyer], userFunds, bcToken);
   await waitForConfirmedBalance(issuer, bcToken);
   await waitForConfirmedBalance(buyer, bcToken);
+
+  // CNY quote: create (or reuse) the fixed-seed 0x05 "CNY" token on L1 and
+  // hand the buyer some supply, mirroring the remote order test.
+  let cnyTokenid = '';
+  if (quote === 'CNY') {
+    const cnyIssuer = sdk.PQKey.fromMLDSA(new Uint8Array(32).fill(0x05));
+    cnyTokenid = sdk.Utils.HEX.encode(cnyIssuer.getPrefixedPublicKeyBytes());
+    // The network fee on a token payment is still BC, so the issuer needs some.
+    await payTo(wallet, [cnyIssuer], userFunds, bcToken);
+    await waitForConfirmedBalance(cnyIssuer, bcToken);
+    const cnyWallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [cnyIssuer], l1Url);
+    cnyWallet.setServerURL(l1Url);
+    let cnyExists = true;
+    try {
+      await cnyWallet.checkTokenId(cnyTokenid);
+    } catch {
+      cnyExists = false;
+    }
+    if (!cnyExists) {
+      const cnyToken = new sdk.Token(cnyTokenid, 'CNY');
+      cnyToken.setDescription('e2e CNY quote token');
+      cnyToken.setDecimals(0);
+      cnyToken.setAmount(BigInt(100000000));
+      cnyToken.setTokenstop(true);
+      cnyToken.setTokenindex(0);
+      cnyToken.setSignnumber(0);
+      cnyToken.setDomainNameBlockHash('');
+      cnyToken.setPrevblockhash(sdk.Sha256Hash.ZERO_HASH);
+      cnyToken.setTokentype(sdk.TokenType.token);
+      const cnyAddr = new sdk.MultiSignAddress(
+        cnyTokenid, '', sdk.Utils.HEX.encode(cnyIssuer.getPrefixedPublicKeyBytes()), 0,
+      );
+      const cnyBlock = await wallet.createToken(
+        cnyIssuer, '', true, cnyToken, [cnyAddr], cnyIssuer.getPubKey(), new sdk.MemoInfo('coinbase'),
+      );
+      expect(cnyBlock).toBeDefined();
+      const signedCny = await wallet.multiSign(cnyTokenid, genesisKey, null);
+      expect(signedCny).not.toBeNull();
+    }
+    await waitForConfirmedBalance(cnyIssuer, cnyTokenid);
+    await payTo(cnyWallet, [buyer], BigInt(1000000), cnyTokenid);
+    await waitForConfirmedBalance(buyer, cnyTokenid);
+  }
+  const quoteTokenId = quote === 'CNY' ? cnyTokenid : bcToken;
 
   const tokenName = 'e2etradeui_' + Date.now().toString(36);
   const tokenid = sdk.Utils.HEX.encode(issuer.getPrefixedPublicKeyBytes());
@@ -106,16 +150,17 @@ async function setupMarket(): Promise<{ tokenid: string; tokenName: string }> {
   expect(signed).not.toBeNull();
   await waitForConfirmedBalance(issuer, tokenid);
 
-  const price = BigInt(1000);
+  // Raw price scale = token decimals (0) + quote shift (0 for bc, 6 for CNY).
+  const price = quote === 'CNY' ? BigInt(1000) * BigInt(1000000) : BigInt(1000);
   const sellAmount = BigInt(100);
   const buyAmount = BigInt(40);
   const issuerWallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [issuer], l1Url);
   issuerWallet.setServerURL(l1Url);
-  await issuerWallet.sellOrder(null, tokenid, price, sellAmount, null, null, bcToken, true);
+  await issuerWallet.sellOrder(null, tokenid, price, sellAmount, null, null, quoteTokenId, true);
 
   const buyerWallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [buyer], l1Url);
   buyerWallet.setServerURL(l1Url);
-  await buyerWallet.buyOrder(null, tokenid, price, buyAmount, null, null, bcToken, false);
+  await buyerWallet.buyOrder(null, tokenid, price, buyAmount, null, null, quoteTokenId, false);
 
   // Wait until the remainder ask is open AND the executed match shows up in
   // getOrdersTicker (the data behind the order book and recent trades).
@@ -124,7 +169,7 @@ async function setupMarket(): Promise<{ tokenid: string; tokenName: string }> {
   for (let i = 0; i < 60 && !(openAsk && matched); i++) {
     const book = await postJson('getOrders', {});
     openAsk = (book.allOrdersSorted || []).some((o: any) => o.offerTokenid === tokenid);
-    const tick = await postJson('getOrdersTicker', { tokenids: [tokenid], basetoken: bcToken, count: 10 });
+    const tick = await postJson('getOrdersTicker', { tokenids: [tokenid], basetoken: quoteTokenId, count: 10 });
     matched = (tick.tickers || []).some((t: any) => t.tokenid === tokenid);
     if (!(openAsk && matched)) await new Promise((r) => setTimeout(r, 2000));
   }
@@ -183,5 +228,43 @@ test.describe('Trade Screen', () => {
     await expect(trades).toBeAttached();
     await expect(trades.getByText(/1[,.]?000/).first()).toBeAttached({ timeout: 20000 });
     console.log('Trade screen rendered book + trades + chart for', ctx.tokenName);
+  });
+
+  test('renders a CNY-quoted market (requires L1)', async ({ page }) => {
+    test.skip(!L1_READY, 'E2E_SERVER_URL / E2E_L1_URL not set');
+    test.setTimeout(600000);
+
+    const ctx = await setupMarket('CNY');
+
+    await waitForApp(page);
+    await configureUrlsDirect(page, E2E_SERVER_URL, E2E_L1_URL);
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1500);
+
+    await page.getByRole('button', { name: 'Open navigation menu' }).click();
+    await page.getByRole('button', { name: 'Spot', exact: true }).click();
+    await expect(page.getByTestId('trade-screen')).toBeAttached({ timeout: 10000 });
+
+    await page.getByTestId('trade-token-search').fill(ctx.tokenName);
+    const chip = page.getByTestId('trade-token-results').getByText(ctx.tokenName);
+    await expect(chip).toBeAttached({ timeout: 15000 });
+    await chip.click();
+    await expect(page.getByTestId('trade-selected-token')).toBeAttached({ timeout: 10000 });
+
+    // The quote selector discovered CNY on the L1 chain; switch the pair over.
+    const cnyChip = page.getByTestId('trade-quote-cny');
+    await expect(cnyChip).toBeAttached({ timeout: 15000 });
+    await cnyChip.click();
+    await expect(page.getByTestId('trade-selected-token')).toContainText('CNY');
+
+    // The book/chart/trades are now fetched with basetoken = the CNY id and
+    // the shift-6 price scale (raw 1e9 renders as 1000).
+    await expect(page.locator('[data-testid="trade-chart-price"] polyline')).toBeAttached({ timeout: 20000 });
+    const asks = page.getByTestId('trade-asks');
+    await expect(asks.getByText(/1[,.]?000/)).toBeAttached({ timeout: 20000 });
+    const trades = page.getByTestId('trade-recent-trades');
+    await expect(trades.getByText(/1[,.]?000/).first()).toBeAttached({ timeout: 20000 });
+    console.log('Trade screen rendered CNY-quoted book + trades + chart for', ctx.tokenName);
   });
 });

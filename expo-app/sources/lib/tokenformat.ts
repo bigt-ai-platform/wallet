@@ -24,6 +24,16 @@ export function decimalsFor(tokenid: string, tokenDecimals?: number | null): num
 }
 
 /**
+ * Extra scale shift of the raw order price for a quote token, mirroring Java
+ * `NetworkParameters.getOrderPriceShift`: the raw long stored on chain is
+ * `price * 10^(tokenDecimals + shift)`, with shift 0 when the quote is the
+ * base token "bc" and 6 for every token quote (e.g. CNY).
+ */
+export function orderPriceShift(baseTokenId: string): number {
+  return baseTokenId === NetworkParameters.BIGTANGLE_TOKENID_STRING ? 0 : 6;
+}
+
+/**
  * Format a raw smallest-unit amount like Java
  * `MonetaryFormat.FIAT.format(value, decimals)`: exact BigInt math, no
  * floating point, trailing zeros trimmed, "0" for zero.

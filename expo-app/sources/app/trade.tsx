@@ -11,7 +11,7 @@ import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
 import { recordOrder } from '@/services/tracking';
-import { decimalsFor } from '@/lib/tokenformat';
+import { BC_DECIMALS, decimalsFor, orderPriceShift } from '@/lib/tokenformat';
 import { CopyIcon } from '@/components/Icons';
 import {
   PriceChart, VolumeChart, INTERVALS,
@@ -20,14 +20,29 @@ import {
 import { MONO_FONT } from '@/constants/fonts';
 import type { MarketPrice, OrderInfo, RecentTrade, TokenItem, WalletAccountItem } from '@/types/api';
 
-const BASE_TOKEN = 'bc';
 const PERCENTS = [25, 50, 75, 100] as const;
+
+/**
+ * Quote assets the screen can price a token against: the chain base "bc"
+ * plus the fixed tokens that exist on the L1 order chain, matched by name at
+ * runtime (see the quote discovery effect). Binance-style pair labels keep
+ * the traded token on the left and the quote on the right, e.g. BTC/CNY.
+ */
+const QUOTE_SYMBOLS = ['CNY'] as const;
 
 interface SelectedToken {
   tokenid: string;
   tokenname: string;
   decimals: number;
 }
+
+type QuoteToken = SelectedToken;
+
+const BC_QUOTE: QuoteToken = {
+  tokenid: 'bc',
+  tokenname: 'BC',
+  decimals: BC_DECIMALS,
+};
 
 interface BookLevel {
   price: number;
@@ -90,6 +105,13 @@ export default function TradeScreen() {
   const [submitting, setSubmitting] = React.useState<OrderKind | null>(null);
 
   const [balances, setBalances] = React.useState<WalletAccountItem[]>([]);
+  const [quote, setQuote] = React.useState<QuoteToken>(BC_QUOTE);
+  const [quotes, setQuotes] = React.useState<QuoteToken[]>([BC_QUOTE]);
+
+  // Raw order prices carry the quote shift too: scale = tokenDecimals +
+  // priceShift(quote), 6 for CNY against 0 for bc.
+  const priceShift = orderPriceShift(quote.tokenid);
+  const priceDecimals = tokenDecimals + priceShift;
 
   /** Raw long → human number using the token's decimals. */
   const toHuman = (raw: number | undefined, dec: number) => (Number(raw) || 0) / Math.pow(10, dec);
@@ -112,6 +134,35 @@ export default function TradeScreen() {
     finally { setSearching(false); }
   };
 
+  // Resolve the known quote assets (BC plus CNY when this L1 chain has it).
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const found: QuoteToken[] = [BC_QUOTE];
+      for (const symbol of QUOTE_SYMBOLS) {
+        try {
+          const res = await httpService.searchExchangeTokens(symbol);
+          if (!res.success || !res.data) continue;
+          const tk = res.data.find((t) => (t.tokenname || '').trim().toUpperCase() === symbol);
+          if (tk?.tokenid && tk.tokenid !== BC_QUOTE.tokenid) {
+            found.push({ tokenid: tk.tokenid, tokenname: symbol, decimals: tk.decimals ?? 0 });
+          }
+        } catch { /* chain has no such quote token */ }
+      }
+      if (!cancelled) setQuotes(found);
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const selectQuote = (next: QuoteToken) => {
+    if (next.tokenid === quote.tokenid) return;
+    setQuote(next);
+    if (selected) {
+      loadChart(selected, interval, next);
+      loadMarket(selected, next);
+    }
+  };
+
   const selectToken = (tk: { tokenid: string; tokenname?: string; decimals?: number }) => {
     const next: SelectedToken = {
       tokenid: tk.tokenid,
@@ -125,16 +176,17 @@ export default function TradeScreen() {
     loadMarket(next);
   };
 
-  const loadChart = async (token: SelectedToken, intervalMinutes: number) => {
+  const loadChart = async (token: SelectedToken, intervalMinutes: number, q: QuoteToken = quote) => {
     try {
-      const res = await httpService.getOrdersTickerSeries(token.tokenid, intervalMinutes, BASE_TOKEN);
+      const res = await httpService.getOrdersTickerSeries(token.tokenid, intervalMinutes, q.tokenid);
       if (res.success && res.data) {
         const resp = res.data as { tickers?: any[]; tokennames?: Record<string, TokenItem> };
         const dec = decimalsFor(token.tokenid, resp.tokennames?.[token.tokenid]?.decimals ?? token.decimals);
+        const pdec = dec + orderPriceShift(q.tokenid);
         const datas: ChartPoint[] = (resp.tickers || [])
           .filter((tk: any) => tk.tokenid === token.tokenid)
           .map((tk: any) => ({
-            price: toHuman(tk.price, dec),
+            price: toHuman(tk.price, pdec),
             executedQuantity: toHuman(tk.executedQuantity, dec),
             time: Number(tk.inserttime) * 1000,
           }))
@@ -144,20 +196,20 @@ export default function TradeScreen() {
     } catch (e) { console.error('Error loading chart:', e); }
   };
 
-  const loadMarket = async (token: SelectedToken) => {
+  const loadMarket = async (token: SelectedToken, q: QuoteToken = quote) => {
     setLoading(true);
     try {
       const [bookRes, tradesRes, dayRes] = await Promise.all([
         httpService.getOrderBook(token.tokenid),
-        httpService.getRecentTrades(token.tokenid, BASE_TOKEN),
-        httpService.getOrdersTickerSeries(token.tokenid, 1440, BASE_TOKEN),
+        httpService.getRecentTrades(token.tokenid, q.tokenid),
+        httpService.getOrdersTickerSeries(token.tokenid, 1440, q.tokenid),
       ]);
 
       if (bookRes.success && bookRes.data) {
-        // Keep only orders whose traded leg is this token against the bc base.
+        // Keep only orders whose traded leg is this token against the quote.
         setOrders(bookRes.data.orders.filter((o) =>
           (o.offerTokenid === token.tokenid || o.targetTokenid === token.tokenid) &&
-          (o.offerTokenid === BASE_TOKEN || o.targetTokenid === BASE_TOKEN)));
+          (o.offerTokenid === q.tokenid || o.targetTokenid === q.tokenid)));
       }
 
       if (tradesRes.success && tradesRes.data) {
@@ -167,10 +219,11 @@ export default function TradeScreen() {
       if (dayRes.success && dayRes.data) {
         const resp = dayRes.data as { tickers?: any[]; tokennames?: Record<string, TokenItem> };
         const dec = decimalsFor(token.tokenid, resp.tokennames?.[token.tokenid]?.decimals ?? token.decimals);
+        const pdec = dec + orderPriceShift(q.tokenid);
         const pts = (resp.tickers || [])
           .filter((tk: any) => tk.tokenid === token.tokenid)
           .map((tk: any) => ({
-            price: toHuman(tk.price, dec),
+            price: toHuman(tk.price, pdec),
             qty: toHuman(tk.executedQuantity, dec),
             time: Number(tk.inserttime) * 1000,
           }))
@@ -238,7 +291,7 @@ export default function TradeScreen() {
   const balOf = (tokenid: string) =>
     Number(balances.find((b) => b.tokenid === tokenid)?.balance || 0);
   const availableFor = (kind: OrderKind) =>
-    kind === 'buy' ? balOf(BASE_TOKEN) : selected ? balOf(selected.tokenid) : 0;
+    kind === 'buy' ? balOf(quote.tokenid) : selected ? balOf(selected.tokenid) : 0;
 
   const amountOf = (kind: OrderKind) => (kind === 'buy' ? amountBuy : amountSell);
   const setAmountOf = (kind: OrderKind, v: string) => (kind === 'buy' ? setAmountBuy(v) : setAmountSell(v));
@@ -282,22 +335,23 @@ export default function TradeScreen() {
     try {
       const dec = tokenDecimals;
       const scale = Math.pow(10, dec);
+      const rawScale = Math.pow(10, dec + priceShift);
       const txHash = await orderOnLayer1({
         side: kind,
         privateKeyHex: wallet.wallet.privateKey,
         keyType: wallet.wallet.keyType,
         l1Url: httpService.l1Bases(l1Url)[0] ?? l1Url,
         tokenId: selected.tokenid,
-        price: BigInt(Math.floor(priceNum * scale)),
+        price: BigInt(Math.floor(priceNum * rawScale)),
         amount: BigInt(Math.floor(amountNum * scale)),
-        baseToken: BASE_TOKEN,
+        baseToken: quote.tokenid,
         decimals: dec,
       });
       recordOrder({
         side: kind,
         tokenId: selected.tokenid,
         tokenName: selected.tokenname,
-        baseToken: BASE_TOKEN,
+        baseToken: quote.tokenid,
         price,
         amount: amountOf(kind),
         decimals: dec,
@@ -324,8 +378,8 @@ export default function TradeScreen() {
       const rawPrice = Number(o.price) || 0;
       if (rawPrice <= 0) continue;
       const s = (o.side || '').toUpperCase();
-      const isBuy = s === 'BUY' || (s !== 'SELL' && o.offerTokenid === (o.orderBaseToken || BASE_TOKEN));
-      const levelPrice = toHuman(rawPrice, tokenDecimals);
+      const isBuy = s === 'BUY' || (s !== 'SELL' && o.offerTokenid === (o.orderBaseToken || quote.tokenid));
+      const levelPrice = toHuman(rawPrice, priceDecimals);
       const amountRaw = isBuy ? o.targetValue : o.offerValue;
       const levelAmount = toHuman(Number(amountRaw), tokenDecimals);
       const map = isBuy ? bidMap : askMap;
@@ -339,7 +393,7 @@ export default function TradeScreen() {
       return levels.slice(0, 12);
     };
     return { asks: build(askMap, false), bids: build(bidMap, true) };
-  }, [orders, tokenDecimals]);
+  }, [orders, tokenDecimals, priceDecimals, quote.tokenid]);
 
   const myOrders = React.useMemo(
     () => (publicInfo?.address
@@ -355,13 +409,13 @@ export default function TradeScreen() {
       .map((tr, i, arr) => {
         const prev = arr[i + 1];
         return {
-          price: toHuman(tr.price, tokenDecimals),
+          price: toHuman(tr.price, priceDecimals),
           amount: toHuman(tr.executedQuantity, tokenDecimals),
           time: Number(tr.inserttime) * 1000,
           up: !prev || Number(tr.price) >= Number(prev.price),
         };
       }),
-    [trades, tokenDecimals],
+    [trades, tokenDecimals, priceDecimals],
   );
 
   const fmtNum = (v: number, maxFrac = 6) =>
@@ -426,7 +480,7 @@ export default function TradeScreen() {
           ) : selected ? (
             <View style={s.selectedRow}>
               <Text style={s.selectedText} testID="trade-selected-token" numberOfLines={1}>
-                {selected.tokenname} / {BASE_TOKEN}
+                {selected.tokenname} / {quote.tokenname}
               </Text>
               <TouchableOpacity
                 style={s.copyBtn}
@@ -439,6 +493,22 @@ export default function TradeScreen() {
               </TouchableOpacity>
             </View>
           ) : null}
+          {quotes.length > 1 && (
+            <View style={s.quoteRow} testID="trade-quote-options">
+              {quotes.map((q) => (
+                <TouchableOpacity
+                  key={q.tokenid}
+                  style={[s.chip, quote.tokenid === q.tokenid && s.chipActive]}
+                  onPress={() => selectQuote(q)}
+                  testID={`trade-quote-${q.tokenname.toLowerCase()}`}
+                >
+                  <Text style={[s.chipText, quote.tokenid === q.tokenid && s.chipTextActive]}>
+                    {q.tokenname.toUpperCase()}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
         </View>
         {isWide && <View style={s.statsInline}>{statItems}</View>}
       </View>
@@ -450,7 +520,7 @@ export default function TradeScreen() {
     <View style={s.card} testID="trade-orderbook">
       <Text style={s.cardTitle}>{t('trade.orderBook')}</Text>
       <View style={s.bookHead}>
-        <Text style={[s.bookHeadText, s.bookPrice]}>{t('trade.price')}({BASE_TOKEN})</Text>
+        <Text style={[s.bookHeadText, s.bookPrice]}>{t('trade.price')}({quote.tokenname})</Text>
         <Text style={[s.bookHeadText, s.bookAmount]}>{t('order.amount')}</Text>
         <Text style={[s.bookHeadText, s.bookTotal]}>{t('order.total')}</Text>
       </View>
@@ -492,7 +562,7 @@ export default function TradeScreen() {
     <View style={s.card} testID="trade-recent-trades">
       <Text style={s.cardTitle}>{t('trade.recentTrades')}</Text>
       <View style={s.bookHead}>
-        <Text style={[s.bookHeadText, s.bookPrice]}>{t('trade.price')}({BASE_TOKEN})</Text>
+        <Text style={[s.bookHeadText, s.bookPrice]}>{t('trade.price')}({quote.tokenname})</Text>
         <Text style={[s.bookHeadText, s.bookAmount]}>{t('order.amount')}</Text>
         <Text style={[s.bookHeadText, s.bookTotal]}>{t('trade.time')}</Text>
       </View>
@@ -521,7 +591,7 @@ export default function TradeScreen() {
               {isBuy ? t('order.buy') : t('order.sell')}
             </Text>
             <Text style={[s.bookAmount, s.mono]}>{fmtNum(toHuman(isBuy ? o.targetValue : o.offerValue, tokenDecimals))}</Text>
-            <Text style={[s.bookTotal, s.mono]}>{fmtNum(toHuman(Number(o.price), tokenDecimals))}</Text>
+            <Text style={[s.bookTotal, s.mono]}>{fmtNum(toHuman(Number(o.price), priceDecimals))}</Text>
           </View>
         );
       })}
@@ -531,7 +601,7 @@ export default function TradeScreen() {
   const chartCard = (
     <View style={s.card} onLayout={(e) => setChartW(Math.max(e.nativeEvent.layout.width - 28, 160))}>
       <View style={s.chartHeader}>
-        <Text style={s.cardTitle}>{selected ? `${selected.tokenname} / ${BASE_TOKEN}` : t('trade.title')}</Text>
+        <Text style={s.cardTitle}>{selected ? `${selected.tokenname} / ${quote.tokenname}` : t('trade.title')}</Text>
         {loading && <ActivityIndicator size="small" color={theme.colors.primary} />}
       </View>
       {selected && (
@@ -589,7 +659,7 @@ export default function TradeScreen() {
     const amount = isBuy ? amountBuy : amountSell;
     const total = isBuy ? totalBuy : totalSell;
     const avbl = availableFor(kind);
-    const unit = isBuy ? BASE_TOKEN : selected?.tokenname ?? '';
+    const unit = isBuy ? quote.tokenname : selected?.tokenname ?? '';
     const accent = isBuy ? theme.colors.accent.emerald : theme.colors.accent.red;
     return (
       <View style={[s.card, s.orderPanel]} testID={`trade-${kind}-panel`}>
@@ -604,7 +674,7 @@ export default function TradeScreen() {
           <Text style={s.avblValue}>{fmtNum(avbl)} {unit}</Text>
         </View>
         <View style={s.fieldGroup}>
-          <Text style={s.fieldLabel}>{t('trade.priceLabel', { token: BASE_TOKEN })}</Text>
+          <Text style={s.fieldLabel}>{t('trade.priceLabel', { token: quote.tokenname })}</Text>
           <TextInput
             style={s.input} value={price}
             onChangeText={(v) => {
@@ -639,7 +709,7 @@ export default function TradeScreen() {
         </View>
         <View style={s.totalRow}>
           <Text style={s.totalLabel}>{t('order.total')}</Text>
-          <Text style={s.totalValue}>{total || '0'} {BASE_TOKEN.toUpperCase()}</Text>
+          <Text style={s.totalValue}>{total || '0'} {quote.tokenname.toUpperCase()}</Text>
         </View>
         <TouchableOpacity
           style={[s.submitBtn, { backgroundColor: accent }]}
@@ -655,7 +725,7 @@ export default function TradeScreen() {
   };
 
   function baseTokenLabel() {
-    return selected ? `${selected.tokenname} / ${BASE_TOKEN}` : BASE_TOKEN;
+    return selected ? `${selected.tokenname} / ${quote.tokenname}` : quote.tokenname;
   }
 
   // ---- layout ---------------------------------------------------------------
@@ -753,6 +823,7 @@ const s = StyleSheet.create((theme) => ({
   selectedRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
   selectedText: { flexShrink: 1, fontSize: 16, fontWeight: '700', color: theme.colors.text.primary, fontFamily: MONO_FONT },
   copyBtn: { padding: 4 },
+  quoteRow: { flexDirection: 'row', gap: 6, marginTop: 8 },
   statsInline: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, flexShrink: 0, maxWidth: '60%' },
   statsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, marginTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 10 },
   statItem: { minWidth: 72 },
