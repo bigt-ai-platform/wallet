@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   View, Text, ScrollView, ActivityIndicator, TouchableOpacity,
-  TextInput, Alert, RefreshControl, useWindowDimensions,
+  TextInput, Alert, RefreshControl, useWindowDimensions, Modal,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { useRouter } from 'expo-router';
@@ -12,6 +12,7 @@ import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
 import { recordOrder } from '@/services/tracking';
 import { BC_DECIMALS, decimalsFor, orderPriceShift } from '@/lib/tokenformat';
+import { utcOffsetLabel } from '@/lib/timeformat';
 import { CopyIcon } from '@/components/Icons';
 import {
   PriceChart, VolumeChart, INTERVALS,
@@ -85,6 +86,7 @@ export default function TradeScreen() {
   const tokenDecimals = selected ? decimalsFor(selected.tokenid, selected.decimals) : 0;
 
   const [interval, setIntervalMinutes] = React.useState(1440);
+  const [intervalOpen, setIntervalOpen] = React.useState(false);
   const [chart, setChart] = React.useState<ChartData | null>(null);
   const [chartW, setChartW] = React.useState(320);
   const [loading, setLoading] = React.useState(false);
@@ -423,6 +425,8 @@ export default function TradeScreen() {
   const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const maxTotal = Math.max(book.asks[book.asks.length - 1]?.total ?? 0, book.bids[book.bids.length - 1]?.total ?? 0, 1);
   const intervalLabel = INTERVALS.find((iv) => iv.minutes === interval)?.label ?? '1d';
+  // Times are rendered in the device timezone; label it next to the selector.
+  const tzLabel = utcOffsetLabel(Date.now());
   const sortedTimes = chart?.datas?.length ? [...chart.datas].sort((a, b) => a.time - b.time) : [];
   const firstTime = sortedTimes[0]?.time ?? 0;
   const lastTime = sortedTimes[sortedTimes.length - 1]?.time ?? 0;
@@ -564,7 +568,7 @@ export default function TradeScreen() {
       <View style={s.bookHead}>
         <Text style={[s.bookHeadText, s.bookPrice]}>{t('trade.price')}({quote.tokenname})</Text>
         <Text style={[s.bookHeadText, s.bookAmount]}>{t('order.amount')}</Text>
-        <Text style={[s.bookHeadText, s.bookTotal]}>{t('trade.time')}</Text>
+        <Text style={[s.bookHeadText, s.bookTotal]}>{t('trade.time')} ({tzLabel})</Text>
       </View>
       {recentTrades.length === 0 ? (
         <View style={s.emptyCard}><Text style={s.emptyText}>{t('trade.noTrades')}</Text></View>
@@ -605,19 +609,39 @@ export default function TradeScreen() {
         {loading && <ActivityIndicator size="small" color={theme.colors.primary} />}
       </View>
       {selected && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.intervalRow} testID="trade-intervals">
-          {INTERVALS.map((iv) => (
-            <TouchableOpacity
-              key={iv.minutes}
-              onPress={() => changeInterval(iv.minutes)}
-              style={[s.intervalChip, interval === iv.minutes && s.intervalChipActive]}
-              testID={`trade-interval-${iv.minutes}`}
-            >
-              <Text style={[s.intervalText, interval === iv.minutes && s.intervalTextActive]}>{iv.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        <View style={s.intervalRow} testID="trade-intervals">
+          <TouchableOpacity
+            onPress={() => setIntervalOpen(true)}
+            style={s.intervalSelect}
+            testID="trade-interval-select"
+            accessibilityRole="button"
+            accessibilityLabel={intervalLabel}
+          >
+            <Text style={s.intervalSelectText}>{intervalLabel}</Text>
+            <Text style={s.intervalCaret}>▾</Text>
+          </TouchableOpacity>
+          <Text style={s.tzText}>{tzLabel}</Text>
+        </View>
       )}
+      <Modal visible={intervalOpen} transparent animationType="fade" onRequestClose={() => setIntervalOpen(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setIntervalOpen(false)}>
+          <View style={s.intervalDialog}>
+            <ScrollView style={s.intervalList} showsVerticalScrollIndicator={false}>
+              {INTERVALS.map((iv) => (
+                <TouchableOpacity
+                  key={iv.minutes}
+                  onPress={() => { setIntervalOpen(false); changeInterval(iv.minutes); }}
+                  style={[s.intervalOption, interval === iv.minutes && s.intervalOptionActive]}
+                  testID={`trade-interval-${iv.minutes}`}
+                >
+                  <Text style={[s.intervalOptionText, interval === iv.minutes && s.intervalOptionTextActive]}>{iv.label}</Text>
+                  {interval === iv.minutes && <Text style={s.intervalOptionCheck}>✓</Text>}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
       {!selected ? (
         <View style={s.emptyCard}><Text style={s.emptyText}>{t('trade.selectFirst')}</Text></View>
       ) : chart && chart.datas.length === 0 ? (
@@ -832,11 +856,19 @@ const s = StyleSheet.create((theme) => ({
 
   // chart
   chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  intervalRow: { gap: 6, paddingVertical: 6 },
-  intervalChip: { paddingHorizontal: 9, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.border },
-  intervalChipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  intervalText: { fontSize: 11, fontWeight: '600', color: theme.colors.text.secondary },
-  intervalTextActive: { color: '#FFFFFF' },
+  intervalRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
+  intervalSelect: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.groupped.background },
+  intervalSelectText: { fontSize: 12, fontWeight: '700', color: theme.colors.text.primary },
+  intervalCaret: { fontSize: 10, color: theme.colors.text.secondary },
+  tzText: { fontSize: 10, fontWeight: '600', color: theme.colors.text.secondary },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
+  intervalDialog: { width: 200, maxWidth: '80%', borderRadius: theme.borderRadius.xl, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.groupped.surface, paddingVertical: 6 },
+  intervalList: { maxHeight: 320 },
+  intervalOption: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 10 },
+  intervalOptionActive: { backgroundColor: theme.colors.groupped.background },
+  intervalOptionText: { fontSize: 14, color: theme.colors.text.primary },
+  intervalOptionTextActive: { fontWeight: '700' },
+  intervalOptionCheck: { fontSize: 14, color: theme.colors.text.link },
   dateRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2, marginBottom: 6 },
   dateLabel: { fontSize: 10, color: theme.colors.text.secondary },
 
