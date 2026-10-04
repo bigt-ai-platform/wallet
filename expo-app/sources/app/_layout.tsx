@@ -64,6 +64,7 @@ function AppShell() {
                         <Stack.Screen name="blocks" options={{ headerShown: false }} />
                         <Stack.Screen name="network" options={{ headerShown: false }} />
                         <Stack.Screen name="chart" options={{ headerShown: false }} />
+                        <Stack.Screen name="dashboard" options={{ headerShown: false }} />
                     </Stack>
                 </View>
             </View>
