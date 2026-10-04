@@ -181,6 +181,7 @@ test.describe.serial('Chart & Market Data', () => {
     await expect(page.getByText(`${ctx.tokenName} / bc`)).toBeAttached({ timeout: 5000 });
 
     // Switching to a shorter interval reloads the series and keeps the chart.
+    await page.getByTestId('chart-interval-select').click();
     await page.getByTestId('chart-interval-5').click();
     await expect(page.locator('[data-testid="chart-price"] polyline')).toBeAttached({ timeout: 20000 });
     console.log('Chart rendered for', ctx.tokenName);

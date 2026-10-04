@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   View, Text, ScrollView, ActivityIndicator, TouchableOpacity,
-  TextInput, useWindowDimensions,
+  TextInput, Modal, useWindowDimensions,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
@@ -10,7 +10,7 @@ import * as Clipboard from 'expo-clipboard';
 import Svg, { Polyline, Rect, Line as SvgLine, Text as SvgText } from 'react-native-svg';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
-import { CopyIcon } from '@/components/Icons';
+import { ChevronDownIcon, CopyIcon } from '@/components/Icons';
 import { shortTokenId } from '@/lib/tokenformat';
 import type { MarketPrice } from '@/types/api';
 
@@ -128,6 +128,7 @@ export default function ChartScreen() {
   const [searching, setSearching] = React.useState(false);
   const [selectedToken, setSelectedToken] = React.useState<{ tokenid: string; tokenname: string } | null>(null);
   const [interval, setInterval] = React.useState(1440);
+  const [intervalOpen, setIntervalOpen] = React.useState(false);
   const [chart, setChart] = React.useState<ChartData | null>(null);
   const [loading, setLoading] = React.useState(false);
 
@@ -207,6 +208,7 @@ export default function ChartScreen() {
   const firstTime = sortedTimes[0]?.time ?? 0;
   const lastTime = sortedTimes[sortedTimes.length - 1]?.time ?? 0;
   const withTime = lastTime - firstTime <= 2 * 24 * 60 * 60 * 1000;
+  const currentInterval = INTERVALS.find((iv) => iv.minutes === interval) ?? INTERVALS[0];
 
   return (
     <View style={s.container} testID="chart-screen">
@@ -255,16 +257,19 @@ export default function ChartScreen() {
           )}
         </View>
 
-        {/* Interval selector */}
+        {/* Interval selector: a select list, like the language switcher */}
         <View style={s.card}>
           <Text style={s.cardLabel}>{t('chart.interval')}</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }} testID="chart-intervals">
-            {INTERVALS.map((iv, i) => (
-              <TouchableOpacity key={i} style={[s.chip, interval === iv.minutes && s.chipActive]} onPress={() => setInterval(iv.minutes)} testID={`chart-interval-${iv.minutes}`}>
-                <Text style={[s.chipText, interval === iv.minutes && s.chipTextActive]}>{iv.label}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
+          <TouchableOpacity
+            style={s.selectTrigger}
+            onPress={() => setIntervalOpen(true)}
+            accessibilityRole="button"
+            accessibilityLabel={t('chart.interval')}
+            testID="chart-interval-select"
+          >
+            <Text style={s.selectValue}>{currentInterval.label}</Text>
+            <ChevronDownIcon size={16} color={theme.colors.text.secondary} />
+          </TouchableOpacity>
         </View>
 
         {/* Chart */}
@@ -317,6 +322,28 @@ export default function ChartScreen() {
           )}
         </View>
       </ScrollView>
+
+      <Modal visible={intervalOpen} transparent animationType="fade" onRequestClose={() => setIntervalOpen(false)}>
+        <TouchableOpacity style={s.overlay} activeOpacity={1} onPress={() => setIntervalOpen(false)}>
+          <View style={s.dialog} testID="chart-interval-options">
+            <Text style={s.dialogTitle}>{t('chart.interval')}</Text>
+            <ScrollView>
+              {INTERVALS.map((iv) => (
+                <TouchableOpacity
+                  key={iv.minutes}
+                  onPress={() => { setInterval(iv.minutes); setIntervalOpen(false); }}
+                  style={[s.option, interval === iv.minutes && s.optionActive]}
+                  accessibilityRole="button"
+                  testID={`chart-interval-${iv.minutes}`}
+                >
+                  <Text style={[s.optionText, interval === iv.minutes && s.optionTextActive]}>{iv.label}</Text>
+                  {interval === iv.minutes && <Text style={s.checkmark}>✓</Text>}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </TouchableOpacity>
+      </Modal>
     </View>
   );
 }
@@ -346,6 +373,16 @@ const s = StyleSheet.create((theme) => ({
   axisLabel: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 4, textAlign: 'center' },
   dateRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
   dateLabel: { fontSize: 10, color: theme.colors.text.secondary },
+  selectTrigger: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.background, paddingHorizontal: 12, paddingVertical: 10 },
+  selectValue: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary },
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center' },
+  dialog: { backgroundColor: theme.colors.groupped.surface, borderRadius: 16, width: 260, maxWidth: '90%', maxHeight: '70%', paddingVertical: 6, borderWidth: 1, borderColor: theme.colors.border },
+  dialogTitle: { fontSize: 13, fontWeight: '700', color: theme.colors.text.secondary, textTransform: 'uppercase', letterSpacing: 0.5, paddingHorizontal: 14, paddingVertical: 8 },
+  option: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 14, paddingVertical: 12 },
+  optionActive: { backgroundColor: theme.colors.groupped.background },
+  optionText: { fontSize: 15, color: theme.colors.text.primary },
+  optionTextActive: { fontWeight: '700', color: theme.colors.primary },
+  checkmark: { fontSize: 14, color: theme.colors.primary, fontWeight: '700' },
   emptyCard: { alignItems: 'center', padding: 24 },
   emptyText: { fontSize: 13, color: theme.colors.text.secondary },
 }));
