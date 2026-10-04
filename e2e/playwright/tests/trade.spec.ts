@@ -139,7 +139,7 @@ test.describe('Trade Screen', () => {
   test('trade screen is reachable from the sidebar', async ({ page }) => {
     await waitForApp(page);
     await page.getByRole('button', { name: 'Open navigation menu' }).click();
-    await page.getByRole('button', { name: 'Spot Trade' }).click();
+    await page.getByRole('button', { name: 'Spot', exact: true }).click();
     await expect(page.getByTestId('trade-screen')).toBeAttached({ timeout: 10000 });
     // The three Binance panels are mounted (order book, chart, recent trades).
     await expect(page.getByTestId('trade-orderbook')).toBeAttached();
@@ -159,7 +159,7 @@ test.describe('Trade Screen', () => {
     await page.waitForTimeout(1500);
 
     await page.getByRole('button', { name: 'Open navigation menu' }).click();
-    await page.getByRole('button', { name: 'Spot Trade' }).click();
+    await page.getByRole('button', { name: 'Spot', exact: true }).click();
     await expect(page.getByTestId('trade-screen')).toBeAttached({ timeout: 10000 });
 
     // Search the L1 exchange tokens and select the market.
