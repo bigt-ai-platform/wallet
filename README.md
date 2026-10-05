@@ -235,7 +235,7 @@ yarn e2e:build:ios && yarn e2e:test:ios      # macOS / iOS simulator
 ## Deployment (web)
 
 `deploy/` ships the static Expo web export as a single nginx container behind
-a host Caddy vhost — fully containerised, mirroring `../aifeeds/deploy`; the
+a host Caddy vhost — fully containerised, mirroring `../dai/deploy`; the
 chain itself is **not** part of this stack (the app talks to the prod chain
 from the browser). See `deploy/README.md`.
 

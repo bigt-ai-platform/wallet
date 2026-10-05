@@ -63,7 +63,7 @@ else
   fi
 fi
 
-# Single shared image (analog dai IMAGE=aifeeds-app). APP_IMAGE env is honoured
+# Single shared image (analog dai IMAGE=dai-app). APP_IMAGE env is honoured
 # as an alias so `APP_IMAGE=... ./deploy/deploy.sh` also works. Any :tag suffix
 # (region.conf defaults APP_IMAGE to :latest) is stripped — the release train
 # always pins :vX.Y.Z / :latest itself.

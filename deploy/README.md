@@ -1,7 +1,7 @@
 # Deploy — bapp (Bigtangle wallet) web
 
 Serves the bapp web wallet (expo static export) on a region VM — **fully
-containerised**, mirroring `../aifeeds/deploy`. Unlike aifeeds there is no app
+containerised**, mirroring `../dai/deploy`. Unlike dai there is no app
 tier: the wallet talks to the **existing prod chain** straight from the browser
 (mainnet L0/L1 through the same-origin `/l0/*` + `/l1/*` Caddy proxies to
 `L0_API` / `L1_API`, defaults `https://eu1.bigtangle.org` /
