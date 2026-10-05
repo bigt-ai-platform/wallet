@@ -9,10 +9,9 @@
 
 ## 2. 应用配置
 
-- [ ] **更改 Android 包名**
-  - 当前：`com.example.bapp`（占位符）
-  - 需改为真实域名，如 `com.bigtangle.bapp` 或 `ai.bigt.bapp`
-  - 修改位置：`expo-app/app.config.js` 中的 `android.package`
+- [x] **更改 Android 包名**
+  - 已改为 `ai.bigt.wallet`（`expo-app/app.config.js` 的 `android.package`、
+    `webapp/capacitor.config.json` 的 `appId`）
 
 - [ ] **更新应用版本号**
   - 当前：`1.0.0`

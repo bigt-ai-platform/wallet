@@ -171,8 +171,9 @@ yarn start            # Expo dev server: i = iOS, a = Android, w = web
 ## Build variants
 
 The app reads `APP_ENV` (`development` | `preview` | `production`) to pick the
-network defaults and bundle id (currently placeholders `com.example.bapp.*` —
-replace in `expo-app/app.config.js` before release):
+network defaults and bundle id (`ai.bigt.wallet.*`, see
+`expo-app/app.config.js`; the Capacitor app id in
+`webapp/capacitor.config.json` is `ai.bigt.wallet`):
 
 ```bash
 cd expo-app

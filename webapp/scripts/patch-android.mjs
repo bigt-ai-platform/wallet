@@ -32,7 +32,10 @@ const xmlDir = path.join(app, "res", "xml");
 const nsc = path.join(xmlDir, "network_security_config.xml");
 const buildGradle = path.join(root, "android", "app", "build.gradle");
 const keystoreProps = path.join(root, "keystore.properties");
-const pkgDir = path.join("com", "example", "bapp", "webapp");
+const appId = "ai.bigt.wallet";
+const pkgDir = path.join("ai", "bigt", "wallet");
+// Package dirs a previous id left behind in the generated (gitignored) project.
+const STALE_PKG_DIRS = [["com", "example", "bapp"]];
 
 if (!fs.existsSync(manifest)) {
   console.error("patch-android: no android/ project — run `npx cap add android` first");
@@ -101,26 +104,74 @@ if (capConfig.appName && fs.existsSync(stringsXml)) {
   console.log(`patch-android: app name → ${capConfig.appName}`);
 }
 
-// ── 1c. OTA updater: install permission + status receiver ──────────────────
-let mx = fs.readFileSync(manifest, "utf8");
-if (!mx.includes("REQUEST_INSTALL_PACKAGES")) {
-  mx = mx.replace(
-    /<uses-permission android:name="android.permission.INTERNET" \/>/,
-    '<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />',
-  );
+// ── 1c. app id: keep the generated project in step with capacitor.config ────
+// `cap add` bakes applicationId/namespace/java package once and `cap sync`
+// never rewrites them. Since android/ is generated+gitignored, apply the
+// configured id here on every sync — otherwise renaming the package silently
+// ships a build that still installs as the old id (and can no longer upgrade
+// the copies already on a device).
+if (capConfig.appId) {
+  const want = capConfig.appId;
+  let g = fs.readFileSync(buildGradle, "utf8");
+  const gradleBefore = g;
+  g = g.replace(/namespace\s*=\s*"[^"]*"/, `namespace = "${want}"`);
+  g = g.replace(/applicationId\s+"[^"]*"/, `applicationId "${want}"`);
+  if (g !== gradleBefore) {
+    fs.writeFileSync(buildGradle, g);
+    console.log(`patch-android: app id → ${want}`);
+  }
+  const sxPath = path.join(app, "res", "values", "strings.xml");
+  if (fs.existsSync(sxPath)) {
+    let sx = fs.readFileSync(sxPath, "utf8");
+    const sxBefore = sx;
+    sx = sx.replace(/(<string name="package_name">)[^<]*(<\/string>)/, `$1${want}$2`);
+    sx = sx.replace(/(<string name="custom_url_scheme">)[^<]*(<\/string>)/, `$1${want}$2`);
+    if (sx !== sxBefore) fs.writeFileSync(sxPath, sx);
+  }
+  for (const stale of STALE_PKG_DIRS) {
+    const dir = path.join(app, "java", ...stale);
+    if (fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+      console.log(`patch-android: removed stale java package ${path.relative(app, dir)}`);
+      // ...and the now-empty parents it left behind.
+      for (let i = stale.length - 1; i > 0; i -= 1) {
+        const parent = path.join(app, "java", ...stale.slice(0, i));
+        try {
+          fs.rmdirSync(parent);
+        } catch {
+          break;
+        }
+      }
+    }
+  }
 }
+
+// ── 1d. OTA updater: install permission + status receiver ───────────────────
+// REQUEST_INSTALL_PACKAGES is required: without it the system installer
+// aborts the session before ever showing the confirm screen
+// (E/InstallStart: "Requesting uid ... needs to declare permission
+// android.permission.REQUEST_INSTALL_PACKAGES" → "Abort the installation").
+// Play Protect is a separate concern and is not affected by this permission.
+let mx = fs.readFileSync(manifest, "utf8");
+const installPerm = `    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />\n`;
+if (!mx.includes("android.permission.REQUEST_INSTALL_PACKAGES")) {
+  mx = mx.replace(/(<uses-permission[^>]*\/>\r?\n)/, `$1${installPerm}`);
+}
+// Drop whatever UpdateReceiver entry is there (a previous id may have written
+// one) and re-add the one matching the current package.
+mx = mx.replace(/^\s*<receiver android:name="[^"]*UpdateReceiver"[^>]*\/>\r?\n/m, "");
 if (!mx.includes("UpdateReceiver")) {
   mx = mx.replace(
     "</application>",
-    `        <receiver android:name="com.example.bapp.webapp.UpdateReceiver" android:exported="false" />\n    </application>`,
+    `        <receiver android:name="${appId}.UpdateReceiver" android:exported="false" />\n    </application>`,
   );
 }
 if (mx !== fs.readFileSync(manifest, "utf8")) {
   fs.writeFileSync(manifest, mx);
-  console.log("patch-android: OTA install permission + UpdateReceiver added");
+  console.log("patch-android: OTA UpdateReceiver added");
 }
 
-// ── 1d. native plugin sources ───────────────────────────────────────────────
+// ── 1e. native plugin sources ───────────────────────────────────────────────
 // `android/` is generated+gitignored, so native plugins live in tracked
 // templates under native/<name> and are copied in on every sync. The updater
 // template also carries MainActivity with the plugin-registering override.

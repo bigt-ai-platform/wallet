@@ -1,5 +1,5 @@
 {
-  "appId": "com.example.bapp.webapp",
+  "appId": "ai.bigt.wallet",
   "appName": "Wallet",
   "webDir": "../expo-app/dist",
   "server": {

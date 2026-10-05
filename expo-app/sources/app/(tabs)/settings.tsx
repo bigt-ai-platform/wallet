@@ -11,7 +11,7 @@ import {
 import { MONO_FONT } from '@/constants/fonts';
 import { APP_VERSION, DEFAULT_L1_CHAINS_MAINNET, DEFAULT_L1_CHAINS_TESTNET } from '@/constants/app';
 import ChainBadge from '@/components/ChainBadge';
-import { checkForUpdate, confirmUpdate, currentVersion, installUpdate } from '@/services/updater';
+import { checkForUpdate, confirmUpdate, currentVersion, installFailureText, installUpdate } from '@/services/updater';
 import type { L1ChainConfig } from '@/types/api';
 
 /** OTA updates: show the installed version and offer a manual check + install
@@ -34,8 +34,10 @@ function UpdatesCard() {
       if (!info) { setStatus(t('updates.unavailable')); return; }
       if (!info.hasUpdate) { setStatus(t('updates.upToDate')); return; }
       if (!info.mandatory && !(await confirmUpdate(info.versionName))) return;
-      const done = await installUpdate(info);
-      setStatus(done ? t('updates.installing') : t('updates.failed'));
+      const res = await installUpdate(info);
+      setStatus(res.ok ? t('updates.installing') : installFailureText(res));
+    } catch {
+      setStatus(t('updates.failed'));
     } finally {
       setBusy(false);
     }

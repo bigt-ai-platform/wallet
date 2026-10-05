@@ -1,4 +1,4 @@
-package com.example.bapp.webapp;
+package ai.bigt.wallet;
 
 import com.getcapacitor.BridgeActivity;
 

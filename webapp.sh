@@ -35,7 +35,7 @@ APP_ENV="${APP_ENV:-preview}"
 
 # Wallet node (dev) + anything extra; space/comma separated.
 REVERSE_PORTS=(${REVERSE_PORTS:-8088})
-PKG="com.example.bapp.webapp"
+PKG="ai.bigt.wallet"
 ACTIVITY="$PKG/.MainActivity"
 
 for a in "$@"; do

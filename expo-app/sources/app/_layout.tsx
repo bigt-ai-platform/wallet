@@ -8,7 +8,8 @@ import { useUnistyles } from 'react-native-unistyles';
 import { View, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { WalletProvider } from '@/state/wallet';
 import { initSecureStorage } from '@/storage';
-import { checkForUpdate, confirmUpdate, installUpdate } from '@/services/updater';
+import { checkForUpdate, confirmUpdate, installFailureText, installUpdate, notify } from '@/services/updater';
+import i18n from '@/lib/i18n';
 import { startAutoSelection, stopAutoSelection } from '@/services/discovery';
 import Sidebar from '@/components/Sidebar';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
@@ -134,7 +135,11 @@ export default function RootLayout() {
                     const info = await checkForUpdate();
                     if (!info?.hasUpdate) return;
                     if (!info.mandatory && !(await confirmUpdate(info.versionName))) return;
-                    await installUpdate(info);
+                    const res = await installUpdate(info);
+                    // A blocked/failed install (Play Protect, storage, a
+                    // downgrade) must not vanish — the app just looks stuck on
+                    // the old version otherwise.
+                    if (!res.ok) notify(i18n.t('updates.title'), installFailureText(res));
                 } catch {
                     /* update checks must never break startup */
                 }

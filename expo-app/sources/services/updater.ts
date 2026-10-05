@@ -109,13 +109,75 @@ export function confirmUpdate(versionName: string): Promise<boolean> {
 }
 
 /** Download + verify + install a newer APK (no-op off-device). */
-export async function installUpdate(info: UpdateInfo): Promise<boolean> {
+export type InstallErrorCode =
+  | "aborted"
+  | "invalid"
+  | "conflict"
+  | "storage"
+  | "blocked"
+  | "checksum"
+  | "download"
+  | "incompatible"
+  | "timeout"
+  | "unknown";
+
+export type InstallResult = { ok: true } | { ok: false; code: InstallErrorCode; detail?: string };
+
+/** PackageInstaller.STATUS_* → why the session failed (`UpdateReceiver` rejects
+ *  with `install status <code>`; 0 never reaches us). Values are the SDK
+ *  constants, not sequential: 2=BLOCKED, 3=ABORTED, 4=INVALID, 5=CONFLICT,
+ *  6=STORAGE, 7=INCOMPATIBLE, 8=TIMEOUT. */
+const STATUS_REASON: Record<number, InstallErrorCode> = {
+  1: "unknown", // STATUS_FAILURE
+  2: "blocked", // STATUS_FAILURE_BLOCKED — Play Protect / device policy
+  3: "aborted", // STATUS_FAILURE_ABORTED
+  4: "invalid", // STATUS_FAILURE_INVALID — not newer than the installed build
+  5: "conflict", // STATUS_FAILURE_CONFLICT — signature mismatch
+  6: "storage", // STATUS_FAILURE_STORAGE
+  7: "incompatible", // STATUS_FAILURE_INCOMPATIBLE — SDK/ABI
+  8: "timeout", // STATUS_FAILURE_TIMEOUT
+};
+
+function classify(err: unknown): InstallResult {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  const status = /install status (\d+)/.exec(msg);
+  if (status) return { ok: false, code: STATUS_REASON[Number(status[1])] ?? "unknown", detail: msg };
+  if (msg.includes("sha256 mismatch")) return { ok: false, code: "checksum", detail: msg };
+  if (msg.startsWith("download failed")) return { ok: false, code: "download", detail: msg };
+  return { ok: false, code: "unknown", detail: msg || undefined };
+}
+
+export async function installUpdate(info: UpdateInfo): Promise<InstallResult> {
   const p = plugin();
-  if (!p || !info.url) return false;
+  if (!p || !info.url) return { ok: false, code: "unknown" };
   try {
     const res = await p.install({ url: info.url, sha256: info.sha256 });
-    return !!res?.success;
-  } catch {
-    return false;
+    if (res?.success) return { ok: true };
+    return { ok: false, code: "unknown", detail: res ? `status ${res.status}` : undefined };
+  } catch (e) {
+    return classify(e);
   }
+}
+
+/** Localized sentence for a failed install, for callers without a status line. */
+export function installFailureText(res: Extract<InstallResult, { ok: false }>): string {
+  return i18n.t("updates.failedDetail", { reason: i18n.t(`updates.err.${res.code}`) });
+}
+
+/**
+ * Show a native dialog. react-native-web's `Alert.alert` is a no-op in the
+ * Capacitor WebView; `window.alert` goes through the BridgeWebChromeClient and
+ * renders natively there (it degrades to the RN Alert in a native build).
+ */
+export function notify(title: string, message: string): void {
+  const shell = globalThis as unknown as { alert?: (m: string) => void };
+  if (typeof shell.alert === "function") {
+    try {
+      shell.alert(`${title}\n\n${message}`);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  Alert.alert(title, message);
 }

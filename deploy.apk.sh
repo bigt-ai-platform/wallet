@@ -139,6 +139,17 @@ if [ "$LATEST" -eq 1 ] && [ "$BUILD_TYPE" = "release" ] \
   LIVE_VER="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(String(j.versionName ?? "?")+" / code "+String(j.versionCode ?? "?"))' "$OUT_DIR/$LIVE_JSON" 2>/dev/null || echo unknown)"
   LIVE_URL="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(typeof j.url === "string" ? j.url : "")' "$OUT_DIR/$LIVE_JSON" 2>/dev/null || true)"
   LIVE_KEY="${LIVE_URL#*"$S3_PREFIX/"}"
+  # versionCode must strictly increase. The OTA updater compares codes, and
+  # Android refuses a same-or-older install, so publishing a regression would
+  # hand every device an update it can never take (today the code comes from
+  # `git describe`, which goes backwards after a tag moves).
+  LIVE_CODE="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));console.log(Number(j.versionCode)||0)' "$OUT_DIR/$LIVE_JSON" 2>/dev/null || echo 0)"
+  if [ "${LIVE_CODE:-0}" -ge "$VERSION_CODE" ]; then
+    echo "refusing to publish: the live manifest is versionCode $LIVE_CODE but this build is $VERSION_CODE" >&2
+    echo "    versionCode must strictly increase — pass APP_VERSION=<newer> (and tag it)." >&2
+    rm -f "$OUT_DIR/$LIVE_JSON" "$OUT_DIR/$LIVE_APK"
+    exit 1
+  fi
   if [ -n "$LIVE_URL" ] && [ "$LIVE_KEY" != "$LIVE_URL" ] \
     && mc_cp "up/$S3_BUCKET/$S3_PREFIX/$LIVE_KEY" "/out/$LIVE_APK" 2>/dev/null; then
     if LIVE_SIGNING="$(node "$ROOT/webapp/scripts/signing.mjs" artifact "$OUT_DIR/$LIVE_APK" 2>&1)"; then

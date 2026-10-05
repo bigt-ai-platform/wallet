@@ -1,9 +1,9 @@
 const variant = process.env.APP_ENV || 'development';
 const name = "Wallet";
 const bundleId = {
-    development: "com.example.bapp.dev",
-    preview: "com.example.bapp.preview",
-    production: "com.example.bapp"
+    development: "ai.bigt.wallet.dev",
+    preview: "ai.bigt.wallet.preview",
+    production: "ai.bigt.wallet"
 }[variant];
 
 export default {

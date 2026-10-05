@@ -4,7 +4,7 @@
 
 与 Android 相同，发布前需先解除 MainNet 阻塞：
 - [ ] 修复 `MainNetParams` EC/PQ 密钥不匹配（Issue #7）
-- [ ] 替换占位符 bundle ID `com.example.bapp` 为真实域名
+- [x] 替换占位符 bundle ID `com.example.bapp` 为真实域名（`ai.bigt.wallet`）
 
 ## 2. Apple 开发者账号
 

@@ -1,4 +1,4 @@
-package com.example.bapp.webapp;
+package ai.bigt.wallet;
 
 import android.app.Activity;
 import android.app.PendingIntent;

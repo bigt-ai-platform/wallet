@@ -22,9 +22,9 @@ const DEV = "55037948d5e9d596a86aeb35d4f3eadf5834c2b2182a6c8e9acdab8f88213abf";
 const PRISTINE = `apply plugin: 'com.android.application'
 
 android {
-    namespace = "com.example.bapp.webapp"
+    namespace = "ai.bigt.wallet"
     defaultConfig {
-        applicationId "com.example.bapp.webapp"
+        applicationId "ai.bigt.wallet"
         versionCode 1
         versionName "1.0"
     }
@@ -181,7 +181,7 @@ describe("applySigningGradle", () => {
     const out = applySigningGradle(PRISTINE);
     expect(out).toContain("versionCode 1");
     expect(out).toContain("proguardFiles getDefaultProguardFile('proguard-android.txt')");
-    expect(out).toContain('applicationId "com.example.bapp.webapp"');
+    expect(out).toContain('applicationId "ai.bigt.wallet"');
   });
 
   it("refuses a project it cannot recognize", () => {
