@@ -1,5 +1,5 @@
 #!/bin/bash
-# deploy/tag.sh — build the bapp web image on the HOST and publish it.
+# deploy/tag.sh — build the wallet web image on the HOST and publish it.
 #
 # The prod bundle is a static expo export. Building it needs the node toolchain
 # (node + yarn + the workspace deps), which only lives on a dev/CI host — never
@@ -10,9 +10,9 @@
 #   3. either pushes to a registry image ($APP_IMAGE) or saves a docker tar that
 #      deploy/region.sh loads onto the VM (no registry needed).
 #
-#   ./deploy/tag.sh                  # build bapp-web:latest, save to deploy/.image/
-#   ./deploy/tag.sh 1.2.0            # also tag bapp-web:v1.2.0
-#   APP_IMAGE=ghcr.io/you/bapp-web:latest ./deploy/tag.sh   # push to registry
+#   ./deploy/tag.sh                  # build wallet-web:latest, save to deploy/.image/
+#   ./deploy/tag.sh 1.2.0            # also tag wallet-web:v1.2.0
+#   APP_IMAGE=ghcr.io/you/wallet-web:latest ./deploy/tag.sh   # push to registry
 #
 # The release train is MAINNET only: before the export, deploy/network.sh
 # (assert_mainnet_default) verifies expo-app/sources still pins the mainnet
@@ -32,12 +32,12 @@ source "$SCRIPT_DIR/network.sh"
 VERSION="${1:-}"
 # Bake the release version into the web bundle (shown in Settings/About).
 export EXPO_PUBLIC_APP_VERSION="${VERSION:-$(node -p "require('./expo-app/package.json').version" 2>/dev/null || echo 0.0.0)}"
-IMAGE_BASE="${IMAGE_BASE:-bapp-web}"
+IMAGE_BASE="${IMAGE_BASE:-wallet-web}"
 APP_IMAGE="${APP_IMAGE:-}"
 TAR_DIR="${SCRIPT_DIR}/.image"
-TAR="${TAR_DIR}/bapp-web.latest.tar"
+TAR="${TAR_DIR}/wallet-web.latest.tar"
 
-[ -f package.json ] || { echo -e "${RED}run from the bapp repo root${NC}"; exit 1; }
+[ -f package.json ] || { echo -e "${RED}run from the wallet repo root${NC}"; exit 1; }
 
 if ! command -v docker >/dev/null 2>&1; then echo -e "${RED}docker not found${NC}"; exit 1; fi
 

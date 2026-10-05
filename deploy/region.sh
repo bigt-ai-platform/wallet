@@ -1,7 +1,7 @@
 #!/bin/bash
-# deploy/region.sh — provision a full bapp web region VM.
+# deploy/region.sh — provision a full wallet web region VM.
 #
-# Model (deploy/README.md): the bapp wallet is a STATIC web export served by an
+# Model (deploy/README.md): the wallet is a STATIC web export served by an
 # nginx container (deploy/compose.prod.yml). It talks to the EXISTING prod chain
 # from the browser (mainnet L0/L1 same-origin /l0/* + /l1/* via this script's
 # Caddy vhost → $L0_API/$L1_API), so no chain/DB containers exist here.
@@ -106,14 +106,14 @@ ensure_image() {
   if [ -n "$APP_IMAGE" ]; then
     ssh_run "$r" "docker pull $APP_IMAGE"
   else
-    local tar="${SCRIPT_DIR}/.image/bapp-web.latest.tar"
+    local tar="${SCRIPT_DIR}/.image/wallet-web.latest.tar"
     if [ ! -f "$tar" ]; then
-      echo -e "${RED}deploy/.image/bapp-web.latest.tar not found and APP_IMAGE is empty — run ./deploy/tag.sh first (or export APP_IMAGE)${NC}"
+      echo -e "${RED}deploy/.image/wallet-web.latest.tar not found and APP_IMAGE is empty — run ./deploy/tag.sh first (or export APP_IMAGE)${NC}"
       exit 1
     fi
     ssh_run "$r" "mkdir -p $REMOTE_REPO/.image"
-    scp ${SSH_OPTS} -i "$(vm_key "$r")" "$tar" "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/.image/bapp-web.latest.tar"
-    ssh_run "$r" "docker load -i $REMOTE_REPO/.image/bapp-web.latest.tar"
+    scp ${SSH_OPTS} -i "$(vm_key "$r")" "$tar" "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/.image/wallet-web.latest.tar"
+    ssh_run "$r" "docker load -i $REMOTE_REPO/.image/wallet-web.latest.tar"
   fi
 }
 
@@ -289,7 +289,7 @@ APEXEOF
 
 deploy_region() {
   local r="$1"
-  echo -e "\n${GREEN}=== Deploy bapp → $r ===${NC}"
+  echo -e "\n${GREEN}=== Deploy wallet → $r ===${NC}"
   require_region "$r"
   preflight "$r" || { echo -e "${RED}preflight failed${NC}"; exit 1; }
   ensure_image "$r" || { echo -e "${RED}image failed — deploy aborted${NC}"; exit 1; }
@@ -304,10 +304,10 @@ status_region() {
   local r="$1"; require_region "$r"
   echo -e "\n${GREEN}=== Status: $r ($(vm_ip "$r")) ===${NC}"
   ssh_run "$r" "REGION=$r bash -s" <<'EOF'
-echo "--- bapp container ---"
+echo "--- wallet container ---"
 docker ps --filter "name=bapp-$REGION-web" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 echo "--- web image ---"
-docker images --format "{{.Repository}}:{{.Tag}}" | grep -E 'bapp-web|^REPOSITORY' | head -5 || true
+docker images --format "{{.Repository}}:{{.Tag}}" | grep -E 'wallet-web|^REPOSITORY' | head -5 || true
 EOF
   echo "  container port :$WEB_PORT → $(ssh_run "$r" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:$WEB_PORT/ 2>/dev/null || echo 000")"
 }
@@ -343,13 +343,13 @@ env_region() {
     echo "  apex        : ${APEX_DOMAIN:-wallet.bigt.ai} (served from $r)"
   fi
   [ -n "$APP_IMAGE" ] && echo "  app image   : $APP_IMAGE (registry pull)" \
-                      || echo "  app image   : deploy/.image/bapp-web.latest.tar (docker load)"
+                      || echo "  app image   : deploy/.image/wallet-web.latest.tar (docker load)"
 }
 
 destroy_region() {
   local r="$1"; require_region "$r"
   local sudo; sudo="$(sudo_cmd "$r")"
-  echo -e "${RED}=== Destroy bapp on $r ($(vm_ip "$r")) ===${NC}"
+  echo -e "${RED}=== Destroy wallet on $r ($(vm_ip "$r")) ===${NC}"
   ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r bash -s" <<'EOF'
 cd "$REMOTE_REPO" 2>/dev/null || exit 0
 docker compose -f deploy/compose.prod.yml down 2>/dev/null || true

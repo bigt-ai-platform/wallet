@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # deploy/deploy.sh — release train: bump the patch tag → build+push the shared
-# bapp-web image (deploy/tag.sh) → deploy every region (deploy/region.sh
+# wallet-web image (deploy/tag.sh) → deploy every region (deploy/region.sh
 # deploy <r>) pinned to the exact vX.Y.Z image so each VM pulls what was just
 # built. Analog ../dai/deploy/deploy.sh.
 #
@@ -67,7 +67,7 @@ fi
 # as an alias so `APP_IMAGE=... ./deploy/deploy.sh` also works. Any :tag suffix
 # (region.conf defaults APP_IMAGE to :latest) is stripped — the release train
 # always pins :vX.Y.Z / :latest itself.
-IMAGE="${IMAGE:-${APP_IMAGE:-ghcr.io/bigt-ai-platform/bapp-web}}"
+IMAGE="${IMAGE:-${APP_IMAGE:-ghcr.io/bigt-ai-platform/wallet-web}}"
 if [[ "${IMAGE##*/}" == *:* ]]; then IMAGE="${IMAGE%:*}"; fi
 [ "$DEPLOY_ONLY" = 1 ] && TAGGED="$IMAGE:latest" || TAGGED="$IMAGE:v$VERSION"
 
@@ -81,7 +81,7 @@ else
   done
 fi
 
-echo -e "${GREEN}=== bapp-web release ${VERSION:+v$VERSION} → $TAGGED${NC}"
+echo -e "${GREEN}=== wallet-web release ${VERSION:+v$VERSION} → $TAGGED${NC}"
 echo "    regions: ${DEPLOY_REGIONS_ARR[*]}"
 echo "    apex: ${APEX_DOMAIN:-wallet.bigt.ai} (via ${APEX_REGION:-europa})"
 echo "    build+push: $([ "$DEPLOY_ONLY" = 1 ] && echo 'no (deploy-only)' || echo 'yes (deploy/tag.sh)')"
@@ -113,7 +113,7 @@ if [ "$DEPLOY_ONLY" != 1 ]; then
     fi
   fi
   echo -e "\n${GREEN}--- git tag v$VERSION ---${NC}"
-  git tag -a "v$VERSION" -m "bapp-web $VERSION"
+  git tag -a "v$VERSION" -m "wallet-web $VERSION"
 
   echo -e "\n${GREEN}--- deploy/tag.sh $VERSION ($TAGGED) ---${NC}"
   APP_IMAGE="$TAGGED" ./deploy/tag.sh "$VERSION"

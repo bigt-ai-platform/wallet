@@ -1,6 +1,6 @@
-# Deploy — bapp (Bigtangle wallet) web
+# Deploy — Bigtangle wallet web
 
-Serves the bapp web wallet (expo static export) on a region VM — **fully
+Serves the wallet web app (expo static export) on a region VM — **fully
 containerised**, mirroring `../dai/deploy`. Unlike dai there is no app
 tier: the wallet talks to the **existing prod chain** straight from the browser
 (mainnet L0/L1 through the same-origin `/l0/*` + `/l1/*` Caddy proxies to
@@ -60,9 +60,9 @@ port `:8084` (dai uses `:3000`) with its own Caddy vhosts. The apex
 ## Build once, deploy anywhere
 
 ```bash
-./deploy/tag.sh                 # expo export → bapp-web:latest → deploy/.image/bapp-web.latest.tar
+./deploy/tag.sh                 # expo export → wallet-web:latest → deploy/.image/wallet-web.latest.tar
 # or push to a registry the VMs can pull:
-APP_IMAGE=ghcr.io/your-org/bapp-web ./deploy/tag.sh
+APP_IMAGE=ghcr.io/your-org/wallet-web ./deploy/tag.sh
 ```
 
 `tag.sh` needs the node toolchain (node, yarn, workspace deps) — run it on a
@@ -107,7 +107,7 @@ fleet, `oraclevpc.key`).
 ```
 
 `deploy` is idempotent: it loads the image (registry pull, or `docker load` of
-`deploy/.image/bapp-web.latest.tar`), syncs the compose file, starts the
+`deploy/.image/wallet-web.latest.tar`), syncs the compose file, starts the
 container and (re)writes the Caddy vhost. The remote working dir is resolved
 per SSH user when `REMOTE_REPO` is empty: root → `/srv/bapp`,
 ubuntu → `/home/<user>/bapp` (override with `REMOTE_REPO=...`). Redeploy after

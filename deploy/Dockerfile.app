@@ -1,4 +1,4 @@
-# bapp web runtime image — static export only, no compile in-image.
+# wallet web runtime image — static export only, no compile in-image.
 #
 # deploy/tag.sh runs `expo export` on the host (node toolchain lives there) and
 # drops the bundle at <repo-root>/web-build; this image just packages it under
@@ -8,7 +8,7 @@
 #
 # Build with the repo root as the context (so `web-build/` and `deploy/` are in
 # scope; see the root .dockerignore):
-#   docker build -f deploy/Dockerfile.app -t bapp-web:latest .
+#   docker build -f deploy/Dockerfile.app -t wallet-web:latest .
 FROM nginx:1.27-alpine
 
 COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf

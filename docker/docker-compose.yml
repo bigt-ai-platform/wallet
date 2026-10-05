@@ -24,7 +24,7 @@ services:
   l0-server:
     build:
       context: /home/jcui/git/blockchain
-      dockerfile: /home/jcui/git/bapp/docker/Dockerfile
+      dockerfile: /home/jcui/git/wallet/docker/Dockerfile
     image: bigtangle-l0:dev
     container_name: l0-svr
     networks: [l0-test-net]
@@ -52,7 +52,7 @@ services:
   l0-mcmc:
     build:
       context: /home/jcui/git/blockchain
-      dockerfile: /home/jcui/git/bapp/docker/Dockerfile
+      dockerfile: /home/jcui/git/wallet/docker/Dockerfile
     image: bigtangle-l0:dev
     container_name: l0-mcmc
     networks: [l0-test-net]
@@ -105,7 +105,7 @@ services:
   l1-order-server:
     build:
       context: /home/jcui/git/blockchain
-      dockerfile: /home/jcui/git/bapp/docker/Dockerfile
+      dockerfile: /home/jcui/git/wallet/docker/Dockerfile
     image: bigtangle-l0:dev
     container_name: l1-order-svr
     networks: [l0-test-net]
@@ -133,7 +133,7 @@ services:
   l1-order-mcmc:
     build:
       context: /home/jcui/git/blockchain
-      dockerfile: /home/jcui/git/bapp/docker/Dockerfile
+      dockerfile: /home/jcui/git/wallet/docker/Dockerfile
     image: bigtangle-l0:dev
     container_name: l1-order-mcmc
     networks: [l0-test-net]

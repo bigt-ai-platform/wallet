@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-IMAGE="bapp-android-builder"
+IMAGE="wallet-android-builder"
 
 if ! command -v docker &>/dev/null; then
   echo "Error: docker not found. Install Docker first."

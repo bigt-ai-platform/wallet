@@ -1,5 +1,5 @@
 /**
- * Capture UI screenshots for all screens in the bapp wallet, in each supported
+ * Capture UI screenshots for all screens in the wallet, in each supported
  * language.
  * Usage: node capture-screenshots.mjs
  * Environment: BASE_URL (default: http://localhost:8081), HEADLESS (default: true)

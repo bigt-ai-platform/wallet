@@ -1,4 +1,4 @@
-# deploy/network.sh — mainnet enforcement for the bapp web release train.
+# deploy/network.sh — mainnet enforcement for the wallet web release train.
 #
 # The production export defaults to mainnet only by convention: `expo export`
 # bakes __DEV__=false, and expo-app/sources/constants/app.ts +
@@ -11,7 +11,7 @@
 # assert_mainnet_default() fails the release when the checked-in source no
 # longer pins the canonical mainnet defaults. It is sourced by deploy/tag.sh
 # (before the export) and deploy/deploy.sh (before tagging). ROOT must be set
-# to the bapp repo root before sourcing.
+# to the wallet repo root before sourcing.
 assert_mainnet_default() {
   local app_ts="$ROOT/expo-app/sources/constants/app.ts"
   local http_ts="$ROOT/expo-app/sources/services/http.ts"
