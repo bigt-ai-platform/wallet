@@ -1,5 +1,5 @@
 {
-  "name": "bapp-monorepo",
+  "name": "wallet-monorepo",
   "private": true,
   "workspaces": {
     "packages": [

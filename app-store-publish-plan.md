@@ -4,7 +4,7 @@
 
 与 Android 相同，发布前需先解除 MainNet 阻塞：
 - [ ] 修复 `MainNetParams` EC/PQ 密钥不匹配（Issue #7）
-- [x] 替换占位符 bundle ID `com.example.bapp` 为真实域名（`ai.bigt.wallet`）
+- [x] 替换占位符 bundle ID 为真实域名（`ai.bigt.wallet`）
 
 ## 2. Apple 开发者账号
 
@@ -25,7 +25,7 @@
   - 平台：iOS
   - 名称：bigt.ai
   - 语言：Simplified Chinese（或 English）
-  - Bundle ID：选择或创建（如 `com.bigtangle.bapp`）
+  - Bundle ID：选择或创建（如 `ai.bigt.wallet`）
   - SKU：`BIGTAI_001`
   - **记录 App ID**（`ascAppId`），填入 `eas.json`
 - [ ] **创建 Bundle ID**

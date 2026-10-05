@@ -88,7 +88,7 @@ fleet, `oraclevpc.key`).
 ### The VM must already have
 - **docker** (compose plugin) and a user able to run it.
 - **Caddy** as the host TLS gateway (shared with other tenants on the VM). The
-  region vhost is written to `/etc/caddy/Caddyfile.d/bapp-<region>.caddy` and
+  region vhost is written to `/etc/caddy/Caddyfile.d/wallet-<region>.caddy` and
   reloaded. If Caddy is missing, install it first (or serve the app directly
   with the nginx container publishing on :80/:443 instead).
 - The region domain pointing (DNS-only A record) at the VM IP. Caddy
@@ -109,8 +109,8 @@ fleet, `oraclevpc.key`).
 `deploy` is idempotent: it loads the image (registry pull, or `docker load` of
 `deploy/.image/wallet-web.latest.tar`), syncs the compose file, starts the
 container and (re)writes the Caddy vhost. The remote working dir is resolved
-per SSH user when `REMOTE_REPO` is empty: root → `/srv/bapp`,
-ubuntu → `/home/<user>/bapp` (override with `REMOTE_REPO=...`). Redeploy after
+per SSH user when `REMOTE_REPO` is empty: root → `/srv/wallet`,
+ubuntu → `/home/<user>/wallet` (override with `REMOTE_REPO=...`). Redeploy after
 `./deploy/tag.sh`
 produces a new image. There are no systemd units and no data volumes — a wiped
 VM is fully rebuilt by `deploy`.

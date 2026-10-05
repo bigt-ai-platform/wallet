@@ -1,5 +1,5 @@
 {
-  "name": "bapp",
+  "name": "wallet",
   "main": "index.ts",
   "version": "1.0.0",
   "scripts": {

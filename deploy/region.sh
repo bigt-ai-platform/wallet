@@ -58,10 +58,10 @@ vm_key()  { echo "${REGION_SSH_KEY[$1]}"; }
 domain()  { echo "${REGION_DOMAIN[$1]}"; }
 
 # Resolve the VM working dir per SSH user when REMOTE_REPO was left empty:
-# root regions keep the stack at /srv/bapp, ubuntu regions at /home/<user>/bapp.
+# root regions keep the stack at /srv/wallet, ubuntu regions at /home/<user>/wallet.
 default_repo() {
   local u; u="$(vm_user "$1")"
-  [ "$u" = "root" ] && echo "/srv/bapp" || echo "/home/$u/bapp"
+  [ "$u" = "root" ] && echo "/srv/wallet" || echo "/home/$u/wallet"
 }
 
 ssh_run() { local r="$1"; shift; ssh ${SSH_OPTS} -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" "$@"; }
@@ -99,6 +99,18 @@ sync_repo() {
     --exclude test-results --exclude playwright-report --exclude logs \
     --exclude '.env' --exclude 'deploy/env' \
     "${PROJECT_DIR}/" "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/"
+  # legacy rename /srv/bapp (or /home/<user>/bapp) → the resolved REMOTE_REPO:
+  # drop the old default dir only after the new one has the tree, and never
+  # when REMOTE_REPO was overridden to stay where it is
+  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO bash -s" <<'EOF'
+set -e
+u="$(id -un)"
+legacy=$([ "$u" = "root" ] && echo "/srv/bapp" || echo "/home/$u/bapp")
+if [ "$legacy" != "$REMOTE_REPO" ] && [ -d "$legacy" ]; then
+  rm -rf "$legacy"
+  echo "removed legacy repo dir $legacy"
+fi
+EOF
 }
 
 ensure_image() {
@@ -155,8 +167,8 @@ config_caddy() {
   local apex="${APEX_DOMAIN:-wallet.bigt.ai}"
   echo -e "${GREEN}--- Caddy vhosts for $dom on $(vm_ip "$r") ---${NC}"
   ssh ${SSH_OPTS} -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" \
-    "${sudo} tee /etc/caddy/Caddyfile.d/bapp-${r}.caddy > /dev/null" <<CADDYEOF
-# bapp $r — wallet web app (static nginx container on 127.0.0.1:${WEB_PORT})
+    "${sudo} tee /etc/caddy/Caddyfile.d/wallet-${r}.caddy > /dev/null" <<CADDYEOF
+# wallet $r — wallet web app (static nginx container on 127.0.0.1:${WEB_PORT})
 ${dom}, www.${dom} {
     encode gzip
     # Same-origin chain APIs: the browser bundle calls the relative /l0/* and
@@ -212,7 +224,7 @@ ${dom}, www.${dom} {
         Referrer-Policy "strict-origin-when-cross-origin"
     }
     log {
-        output file /var/log/caddy/bapp-${r}-access.log
+        output file /var/log/caddy/wallet-${r}-access.log
     }
 }
 
@@ -225,9 +237,9 @@ CADDYEOF
   # their own <region>.wallet.bigt.ai domain.
   if [ "$r" = "${APEX_REGION:-}" ]; then
     ssh ${SSH_OPTS} -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" \
-      "${sudo} tee -a /etc/caddy/Caddyfile.d/bapp-${r}.caddy > /dev/null" <<APEXEOF
+      "${sudo} tee -a /etc/caddy/Caddyfile.d/wallet-${r}.caddy > /dev/null" <<APEXEOF
 
-# bapp apex (${APEX_REGION}) — ${apex} / www.${apex} → web
+# wallet apex (${APEX_REGION}) — ${apex} / www.${apex} → web
 ${apex}, www.${apex} {
     encode gzip
     # Per-node same-origin proxies for the Chains page (see the region vhost).
@@ -277,7 +289,7 @@ ${apex}, www.${apex} {
         Referrer-Policy "strict-origin-when-cross-origin"
     }
     log {
-        output file /var/log/caddy/bapp-${r}-apex-access.log
+        output file /var/log/caddy/wallet-${r}-apex-access.log
     }
 }
 
@@ -286,6 +298,9 @@ http://${apex}, http://www.${apex} {
 }
 APEXEOF
   fi
+  # legacy rename bapp-<r>.caddy → wallet-<r>.caddy: drop the old vhost file
+  # before the reload — two site blocks for the same domain would fail it
+  ssh_run "$r" "${sudo} rm -f /etc/caddy/Caddyfile.d/bapp-${r}.caddy"
   ssh_run "$r" "${sudo} systemctl reload caddy 2>/dev/null || ${sudo} caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || true"
   echo -e "${GREEN}    Caddy configured for $dom${NC}"
   if [ "$r" = "${APEX_REGION:-}" ]; then
@@ -363,7 +378,7 @@ cd "$REMOTE_REPO" 2>/dev/null || exit 0
 docker compose -f deploy/compose.prod.yml down 2>/dev/null || true
 docker rm -f "bapp-$REGION-web" >/dev/null 2>&1 || true
 EOF
-  ssh_run "$r" "${sudo} rm -f /etc/caddy/Caddyfile.d/bapp-${r}.caddy"
+  ssh_run "$r" "${sudo} rm -f /etc/caddy/Caddyfile.d/wallet-${r}.caddy /etc/caddy/Caddyfile.d/bapp-${r}.caddy"
   ssh_run "$r" "${sudo} systemctl reload caddy 2>/dev/null || ${sudo} caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || true"
   echo -e "${GREEN}=== $r destroyed ===${NC}"
 }

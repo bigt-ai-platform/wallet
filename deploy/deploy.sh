@@ -139,8 +139,8 @@ for x in "${APEX_REGION:-}" "${DEPLOY_REGIONS_ARR[@]}"; do
 done
 for r in "${ordered[@]}"; do
   echo -e "\n${GREEN}=== deploy → $r ($TAGGED) ===${NC}"
-  # region.sh resolves the per-user working dir (/srv/bapp for root,
-  # /home/<user>/bapp for ubuntu) from REMOTE_REPO being empty.
+  # region.sh resolves the per-user working dir (/srv/wallet for root,
+  # /home/<user>/wallet for ubuntu) from REMOTE_REPO being empty.
   APP_IMAGE="$TAGGED" ./deploy/region.sh deploy "$r"
 done
 
