@@ -112,6 +112,8 @@ APK="$OUT_DIR/wallet-$APP_ENV-$BUILD_TYPE.apk"
 # signing key makes every upgrade of the installed app fail as incompatible.
 node "$ROOT/webapp/scripts/signing.mjs" artifact "$SRC" \
   || { echo "signing check failed — $SRC is not signed with the production key" >&2; exit 1; }
+node "$ROOT/webapp/scripts/appid.mjs" artifact "$SRC" \
+  || { echo "package check failed — $SRC declares the wrong Android package" >&2; exit 1; }
 cp -f "$SRC" "$APK"
 sha256sum "$APK"
 
@@ -200,6 +202,8 @@ GOT_SHA="$(sha256sum "$OUT_DIR/$VERIFY_APK" | awk '{print $1}')"
   echo "uploaded object sha256 $GOT_SHA != built $WANT_SHA" >&2; exit 1; }
 node "$ROOT/webapp/scripts/signing.mjs" artifact "$OUT_DIR/$VERIFY_APK" \
   || { echo "uploaded object is not signed with the production key" >&2; exit 1; }
+node "$ROOT/webapp/scripts/appid.mjs" artifact "$OUT_DIR/$VERIFY_APK" \
+  || { echo "uploaded object declares the wrong Android package" >&2; exit 1; }
 rm -f "$OUT_DIR/$VERIFY_APK"
 echo "verified: $S3_PREFIX/$NAME ($GOT_SHA, production key)"
 

@@ -220,4 +220,8 @@ fi
 # signing key makes every upgrade of the installed app fail as incompatible.
 node "$WEBAPP_DIR/scripts/signing.mjs" artifact "$APK" \
   || die "$APK is not signed with the production key — see above"
+# A stale Android package (cap sync does not rename it) installs alongside the
+# real app instead of upgrading it, so the wallet file lands in the wrong app.
+node "$WEBAPP_DIR/scripts/appid.mjs" artifact "$APK" \
+  || die "$APK declares the wrong Android package — see above"
 if [ "$DO_INSTALL" -eq 1 ]; then install_and_run; else info "APK ready: $APK"; fi

@@ -372,6 +372,7 @@ export default function KeysScreen() {
         loadFilePassword,
       );
 
+      setWalletAddress(wallet.wallet.address);
       setLoadFileStep("done");
       Alert.alert(t("keys.successHead"), t("keys.loadSuccess"));
     } catch (error) {
