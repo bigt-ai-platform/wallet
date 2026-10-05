@@ -411,7 +411,14 @@ export default function TradeScreen() {
       for (const l of levels) { cum += l.amount; l.total = cum; }
       return levels.slice(0, 12);
     };
-    return { asks: build(askMap, false), bids: build(bidMap, true) };
+    // Binance layout: both sides descend top→bottom and the best price sits
+    // nearest the last-price row in the middle — asks are built best-first
+    // (for the cheapest-12 slice + totals) then reversed for display.
+    let askVol = 0;
+    for (const v of askMap.values()) askVol += v;
+    let bidVol = 0;
+    for (const v of bidMap.values()) bidVol += v;
+    return { asks: build(askMap, false).reverse(), bids: build(bidMap, true), askVol, bidVol };
   }, [orders, tokenDecimals, priceDecimals, quote.tokenid]);
 
   const myOrders = React.useMemo(
@@ -441,6 +448,10 @@ export default function TradeScreen() {
     Number.isFinite(v) ? v.toLocaleString(undefined, { maximumFractionDigits: maxFrac }) : '0';
   const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   const maxTotal = Math.max(book.asks[book.asks.length - 1]?.total ?? 0, book.bids[book.bids.length - 1]?.total ?? 0, 1);
+  // Binance's buy/sell pressure split under the book.
+  const bookDepth = book.askVol + book.bidVol;
+  const bidPct = bookDepth > 0 ? (book.bidVol / bookDepth) * 100 : 50;
+  const askPct = 100 - bidPct;
   const intervalLabel = INTERVALS.find((iv) => iv.minutes === interval)?.label ?? '1d';
   // Times are rendered in the device timezone; label it next to the selector.
   const tzLabel = utcOffsetLabel(Date.now());
@@ -551,6 +562,7 @@ export default function TradeScreen() {
         <View style={s.emptyCard}><Text style={s.emptyText}>{t('trade.noOrders')}</Text></View>
       ) : (
         <>
+          <Text style={[s.bookSide, { color: theme.colors.negative }]} testID="trade-asks-label">{t('order.sell')}</Text>
           <View testID="trade-asks">
             {book.asks.map((l) => (
               <View key={`a-${l.price}`} style={s.bookRow}>
@@ -564,6 +576,7 @@ export default function TradeScreen() {
           <View style={s.midPrice}>
             <Text style={[s.midPriceText, { color: changeColor }]}>{fmtNum(stats.last)}</Text>
           </View>
+          <Text style={[s.bookSide, { color: theme.colors.positive }]} testID="trade-bids-label">{t('order.buy')}</Text>
           <View testID="trade-bids">
             {book.bids.map((l) => (
               <View key={`b-${l.price}`} style={s.bookRow}>
@@ -573,6 +586,14 @@ export default function TradeScreen() {
                 <Text style={[s.bookTotal, s.mono]}>{fmtNum(l.total)}</Text>
               </View>
             ))}
+          </View>
+          <View style={s.bookRatio} testID="trade-book-ratio">
+            <Text style={[s.bookRatioLabel, { color: theme.colors.positive }]}>{`B ${bidPct.toFixed(2)}%`}</Text>
+            <View style={s.bookRatioBar}>
+              <View style={[s.bookRatioSeg, { width: (`${bidPct}%` as `${number}%`), backgroundColor: theme.colors.positive }]} />
+              <View style={[s.bookRatioSeg, { width: (`${askPct}%` as `${number}%`), backgroundColor: theme.colors.negative }]} />
+            </View>
+            <Text style={[s.bookRatioLabel, { color: theme.colors.negative }]}>{`${askPct.toFixed(2)}% S`}</Text>
           </View>
         </>
       )}
@@ -933,6 +954,11 @@ const s = StyleSheet.create((theme) => ({
   mono: { fontFamily: MONO_FONT },
   midPrice: { alignItems: 'center', paddingVertical: 6 },
   midPriceText: { fontSize: 16, fontWeight: '800', fontFamily: MONO_FONT },
+  bookSide: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5, paddingVertical: 3 },
+  bookRatio: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
+  bookRatioLabel: { fontSize: 10, fontWeight: '700', fontFamily: MONO_FONT },
+  bookRatioBar: { flex: 1, height: 6, borderRadius: 3, overflow: 'hidden', flexDirection: 'row', backgroundColor: theme.colors.border },
+  bookRatioSeg: { height: '100%' },
   emptyCard: { alignItems: 'center', padding: 20 },
   emptyText: { fontSize: 12, color: theme.colors.text.secondary, textAlign: 'center' },
 }));
