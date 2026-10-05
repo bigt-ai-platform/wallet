@@ -75,10 +75,11 @@ preflight() {
   case "$(domain "$r")" in *CHANGE_ME*) echo -e "${RED}region.conf domain still CHANGE_ME for '$r'${NC}"; exit 1;; esac
   echo -n "  SSH $(vm_user "$r")@$(vm_ip "$r") ... "
   ssh_run "$r" "echo OK" 2>/dev/null | grep -q OK && echo -e "${GREEN}OK${NC}" || { echo -e "${RED}FAILED${NC}"; exit 1; }
-  # refuse to serve a port another process already owns
+  # refuse to serve a port another process already owns (bapp- = legacy name,
+  # still recognized so an un-migrated VM passes its own preflight)
   local busy; busy=$(ssh_run "$r" "PORT=$WEB_PORT bash -s" <<'EOF' 2>/dev/null
 if ss -tln 2>/dev/null | grep -qE ":$PORT\s" && \
-   ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^bapp-.*-web$"; then
+   ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "^(bapp|wallet)-.*-web$"; then
   echo BUSY
 fi
 EOF
@@ -123,6 +124,13 @@ infra_up() {
   ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r WEB_PORT=$WEB_PORT APP_IMAGE=$APP_IMAGE bash -s" <<'EOF'
 set -e
 cd "$REMOTE_REPO"
+# legacy rename bapp-<region>-web → wallet-<region>-web: the old container
+# still owns the published port, so drop it before the new project comes up
+if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "bapp-$REGION-web"; then
+  docker rm -f "bapp-$REGION-web" >/dev/null 2>&1 || true
+  docker network rm "bapp-${REGION}_default" >/dev/null 2>&1 || true
+  echo "removed legacy container bapp-$REGION-web"
+fi
 docker compose -f deploy/compose.prod.yml up -d
 echo "container up"
 EOF
@@ -305,7 +313,7 @@ status_region() {
   echo -e "\n${GREEN}=== Status: $r ($(vm_ip "$r")) ===${NC}"
   ssh_run "$r" "REGION=$r bash -s" <<'EOF'
 echo "--- wallet container ---"
-docker ps --filter "name=bapp-$REGION-web" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+docker ps --filter "name=wallet-$REGION-web" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 echo "--- web image ---"
 docker images --format "{{.Repository}}:{{.Tag}}" | grep -E 'wallet-web|^REPOSITORY' | head -5 || true
 EOF
@@ -353,6 +361,7 @@ destroy_region() {
   ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r bash -s" <<'EOF'
 cd "$REMOTE_REPO" 2>/dev/null || exit 0
 docker compose -f deploy/compose.prod.yml down 2>/dev/null || true
+docker rm -f "bapp-$REGION-web" >/dev/null 2>&1 || true
 EOF
   ssh_run "$r" "${sudo} rm -f /etc/caddy/Caddyfile.d/bapp-${r}.caddy"
   ssh_run "$r" "${sudo} systemctl reload caddy 2>/dev/null || ${sudo} caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || true"
