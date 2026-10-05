@@ -13,7 +13,7 @@ export default defineConfig({
   timeout: 60000,
   use: {
     baseURL: process.env.APP_URL || 'http://localhost:8081',
-    headless: true,
+    headless: process.env.HEADED !== '1',
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     navigationTimeout: 15000,
