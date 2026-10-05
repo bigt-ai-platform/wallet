@@ -216,7 +216,7 @@ test.describe.serial('Chart & Market Data', () => {
       });
     });
 
-    await clickTab(page, 'Order');
+    await clickTab(page, 'Orders');
     const screen = page.getByTestId('order-screen');
     // The sidebar "Order" item lands on ?view=orders (the My Orders segment);
     // the mocked market price list renders behind the "Order" segment.

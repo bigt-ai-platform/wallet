@@ -49,21 +49,21 @@ async function configureUrlsDirect(page: Page, serverUrl: string, l1Url: string)
 test.describe('Order Screen', () => {
   test('order screen is in the DOM after navigating to tab', async ({ page }) => {
     await waitForApp(page);
-    await clickTab(page, 'Order');
+    await clickTab(page, 'Orders');
     const screen = await getElement(page, 'order-screen');
     await expect(screen).toBeAttached({ timeout: 10000 });
   });
 
   test('shows order tabs (Order and My Orders)', async ({ page }) => {
     await waitForApp(page);
-    await clickTab(page, 'Order');
+    await clickTab(page, 'Orders');
     await expect(page.getByText('Order').first()).toBeAttached({ timeout: 10000 });
     await expect(page.getByText('My Orders').first()).toBeAttached({ timeout: 5000 });
   });
 
   test('shows My Orders tab content', async ({ page }) => {
     await waitForApp(page);
-    await clickTab(page, 'Order');
+    await clickTab(page, 'Orders');
     await page.getByText('My Orders').click();
     await expect(page.getByText('Your Orders')).toBeAttached({ timeout: 5000 });
   });
@@ -220,7 +220,7 @@ test.describe('Order Screen', () => {
       });
     });
 
-    await clickTab(page, 'Order');
+    await clickTab(page, 'Orders');
     const orderScreen = page.getByTestId('order-screen');
     // The sidebar "Order" item lands on ?view=orders (the My Orders segment);
     // the mocked market price list renders behind the "Order" segment.
