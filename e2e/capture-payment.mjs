@@ -33,17 +33,42 @@ const PWD = 'AlicePass123!';
  *  unreliable for automation). */
 async function configureAppUrls(page, serverUrl, l1Url) {
   await page.evaluate(([sUrl, chains]) => {
-    localStorage.setItem('mmkv.default\\settings.serverUrl', sUrl);
-    localStorage.setItem('mmkv.default\\settings.l1Chains', chains);
+    // Plain dot-joined keys — the web build's storage reads localStorage
+    // directly (mmkv.default\ namespacing is native-only). Local infra is
+    // testnet; without useTestnet the app derives mainnet addresses and
+    // rejects the TestParams addresses used below.
+    localStorage.setItem('settings.serverUrl', sUrl);
+    localStorage.setItem('settings.l1Chains', chains);
+    localStorage.setItem('settings.useTestnet', 'true');
   }, [serverUrl, JSON.stringify([{ name: 'Default', url: l1Url }])]);
+}
+
+/** Navigate via the sidebar drawer — the bottom tab bar no longer exists on
+ *  these screens, so mirror the Playwright helper's clickTab. Full-screen
+ *  views (e.g. Balance) hide the drawer and expose Back instead. */
+async function clickNav(page, label) {
+  const menu = page.getByRole('button', { name: 'Open navigation menu' });
+  if (await menu.isVisible().catch(() => false)) {
+    await menu.click();
+    await page.waitForTimeout(400);
+  } else {
+    const back = page.getByRole('button', { name: 'Back' });
+    if (await back.isVisible().catch(() => false)) {
+      await back.click();
+      await page.waitForTimeout(800);
+    }
+    if (await menu.isVisible().catch(() => false)) {
+      await menu.click();
+      await page.waitForTimeout(400);
+    }
+  }
+  await page.getByRole('button', { name: label, exact: true }).first().click();
+  await page.waitForTimeout(1500);
 }
 
 /** Import a private key into the app wallet and save it with a password. */
 async function importKeyIntoWallet(page, privHex) {
-  await page.getByRole('tab', { name: 'Wallet', exact: true }).click();
-  await page.waitForTimeout(1000);
-  await page.locator('[data-testid="wallet-screen"]').getByText('Manage Wallet').click();
-  await page.waitForURL('**/wallet/keys**');
+  await clickNav(page, 'Keys');
   await page.getByText('Import Private Key').click();
   await page.waitForTimeout(500);
   await page.getByPlaceholder('Enter private key (hex or WIF)').fill(privHex);
@@ -65,31 +90,37 @@ async function importKeyIntoWallet(page, privHex) {
 async function unlockWallet(page) {
   await page.goto(APP, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2000);
-  await page.getByRole('tab', { name: 'Transaction', exact: true }).click();
-  await page.waitForTimeout(1000);
+  // The unlock form renders on the landing (Payment) screen — no tab needed.
   await page.getByPlaceholder('Enter wallet password').fill(PWD);
   await page.getByText('Unlock Wallet').click();
   await page.waitForTimeout(3000);
 }
 
 /**
- * Wait until the Wallet tab shows a positive balance for a token. The asset
- * card renders tokenname + a numeric balance; rather than assume the exact DOM
- * layout we poll the whole screen for the token name AND a positive decimal
- * balance (so the screenshot cannot show an empty "No Assets" state).
+ * Wait until the Balance screen's UTXO list is populated. This mirrors the
+ * spec assertion in genesis-wallet-balance.spec / old-wallet-balance.spec:
+ * the empty state text is gone and a "N UTXOs" header row is rendered.
+ * (The screen is a UTXO list keyed by tokenid/name — it never renders the
+ * uppercase symbol 'BIG', so do not match on that.)
  */
-async function waitForAssetBalance(page, tokenName, timeoutMs = 30000) {
+async function waitForUtxos(page, timeoutMs = 60000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const ok = await page.evaluate((name) => {
+    // The UTXO list loads once on mount — re-run the query each poll so a
+    // just-confirmed output (indexer/L1 lag) shows up without a remount.
+    await page.getByText('Apply / Refresh').first().click({ timeout: 3000 }).catch(() => {});
+    await page.waitForTimeout(1500);
+    const ok = await page.evaluate(() => {
       const text = document.body.innerText || '';
-      if (!text.includes(name)) return false;
-      const m = text.match(/(\d+\.?\d*)/g);
-      return !!m && m.some((n) => parseFloat(n) > 0);
-    }, tokenName);
+      if (text.includes('No UTXOs found for the selected filters.')) return false;
+      return /\d+ UTXOs?/.test(text);
+    });
     if (ok) return;
     if (Date.now() > deadline) {
-      throw new Error(`Timed out waiting for positive ${tokenName} balance in Wallet assets`);
+      const text = await page.evaluate(() => document.body.innerText || '');
+      console.log('DEBUG balance screen:', JSON.stringify(text.replace(/\s+/g, ' ').slice(0, 600)));
+      await page.screenshot({ path: '/tmp/opencode/balance-debug.png' }).catch(() => {});
+      throw new Error('Timed out waiting for funded UTXOs on the Balance screen');
     }
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -118,13 +149,23 @@ async function main() {
   // output, i.e. this address; we later import his key to show his assets.
   const bobKey = PQKey.createNew();
   const BOB = Address.fromKey(TestParams.get(), bobKey).toString();
-  const fundRes = await fetch(SVR + 'fundAddresses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ addresses: [{ address: aliceAddress, value: 10000000000 }] }),
-  });
-  const fundBody = await fundRes.json();
-  if (fundBody.errorcode !== 0) throw new Error('Funding failed: ' + JSON.stringify(fundBody));
+  // The Java server removed the fundAddresses faucet (fa3935f7f — bootstrap is
+  // via genesis CSV), so pay real BIG from the genesis wallet (ML-DSA-87 seed
+  // 0x01) the same way the Playwright helpers do.
+  const genesisKey = PQKey.fromMLDSA(new Uint8Array(32).fill(0x01));
+  const genesisWallet = Wallet.fromKeysURL(TestParams.get(), [genesisKey], SVR);
+  genesisWallet.setServerURL(SVR);
+  const giveMoney = new Map([[aliceAddress, BigInt(10000000000)]]);
+  const fundCoins = await genesisWallet.calculateAllSpendCandidates(null, false);
+  if (fundCoins.length === 0) throw new Error('Genesis wallet has no spend candidates');
+  const fundTx = await genesisWallet.payMoneyToECKeyList(
+    null,
+    giveMoney,
+    new Uint8Array(sdk.Utils.HEX.decode(sdk.NetworkParameters.BIGTANGLE_TOKENID_STRING)),
+    'e2e-payment-pdf',
+    fundCoins,
+  );
+  if (!fundTx) throw new Error('Genesis funding produced no transaction');
 
   const browser = await chromium.launch({ headless: true });
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 } });
@@ -137,13 +178,14 @@ async function main() {
   await page.screenshot({ path: `${SHOTS}/01-transaction-locked.png` });
   console.log('ok 01-transaction-locked');
 
-  // Import Alice's key into the app wallet
-  await importKeyIntoWallet(page, aliceKey.getPrivateKeyHex());
+  // Point the app at the local servers first (the specs configure before
+  // importing), then import Alice's key into the app wallet.
   await configureAppUrls(page, SVR, L1);
+  await importKeyIntoWallet(page, aliceKey.getPrivateKeyHex());
   await unlockWallet(page);
 
-  // 2. Wait for the funding coinbase to be CONFIRMED on L0 before sending —
-  //    spending an unconfirmed coinbase can leave the payment stuck at BATCHED.
+  // 2. Wait until the genesis-funded BIG is CONFIRMED on L0 before sending —
+  //    spending an unconfirmed output can leave the payment stuck at BATCHED.
   const aliceWallet = Wallet.fromKeysURL(TestParams.get(), [aliceKey], SVR);
   let ready = false;
   for (let i = 0; i < 30; i++) {
@@ -163,17 +205,25 @@ async function main() {
   await page.screenshot({ path: `${SHOTS}/02-transaction-unlocked.png` });
   console.log('ok 02-transaction-unlocked');
 
-  // Screenshot 3: Wallet screen with BIG balance (sender's assets) — wait for
+  // Screenshot 3: Balance screen with BIG balance (sender's assets) — wait for
   //               the funded BIG balance to render so the shot is not empty.
-  await page.getByRole('tab', { name: 'Wallet', exact: true }).click();
-  await waitForAssetBalance(page, 'BIG');
+  await clickNav(page, 'Balance');
+  await waitForUtxos(page);
   await page.screenshot({ path: `${SHOTS}/03-wallet-balance.png` });
   console.log('ok 03-wallet-balance');
 
   // Screenshot 4: send form with recipient filled (amount added next so the
   //               screenshot clearly shows "how the user sends a payment")
-  await page.getByRole('tab', { name: 'Transaction', exact: true }).click();
-  await page.waitForTimeout(2000);
+  await clickNav(page, 'Payment');
+  // Positive-balance proof (selector proven by old-wallet-balance.spec): the
+  // token dropdown shows the funded amount before we fill the form in.
+  await page.waitForFunction(
+    () => /Available: [1-9]\d* BIG/.test(document.body.innerText || ''),
+    null,
+    { timeout: 30000 },
+  ).catch(() => {
+    throw new Error('Timed out waiting for a positive BIG balance on the Payment screen');
+  });
   await page.getByPlaceholder('Recipient').fill(BOB);
   await page.screenshot({ path: `${SHOTS}/04-send-form-filled.png` });
   console.log('ok 04-send-form-filled');
@@ -239,14 +289,17 @@ async function main() {
   await bobPage.addInitScript(() => { try { delete globalThis.showSaveFilePicker; } catch {} });
   await bobPage.goto(APP, { waitUntil: 'networkidle', timeout: 15000 });
   await bobPage.waitForTimeout(1500);
-  await importKeyIntoWallet(bobPage, bobKey.getPrivateKeyHex());
+  // Configure BEFORE importing — the address derivation follows the network
+  // setting, so importing first yields a mainnet-format address that never
+  // matches the testnet payment (same ordering as the specs and as Alice).
   await configureAppUrls(bobPage, SVR, L1);
+  await importKeyIntoWallet(bobPage, bobKey.getPrivateKeyHex());
   await unlockWallet(bobPage);
 
   // Bob received the BIG payment from Alice — wait for his asset list to show
   // a positive BIG balance so the shot proves the funds arrived.
-  await bobPage.getByRole('tab', { name: 'Wallet', exact: true }).click();
-  await waitForAssetBalance(bobPage, 'BIG');
+  await clickNav(bobPage, 'Balance');
+  await waitForUtxos(bobPage);
   await bobPage.screenshot({ path: `${SHOTS}/07-bob-wallet-assets.png` });
   console.log('ok 07-bob-wallet-assets');
 

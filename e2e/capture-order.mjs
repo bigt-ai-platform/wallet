@@ -44,17 +44,42 @@ async function postJson(endpoint, body) {
 /** Point the app at L0/L1 by writing settings storage directly. */
 async function configureAppUrls(page, serverUrl, l1Url) {
   await page.evaluate(([sUrl, chains]) => {
-    localStorage.setItem('mmkv.default\\settings.serverUrl', sUrl);
-    localStorage.setItem('mmkv.default\\settings.l1Chains', chains);
+    // Plain dot-joined keys — the web build's storage reads localStorage
+    // directly (mmkv.default\ namespacing is native-only). Local infra is
+    // testnet; without useTestnet the app derives mainnet addresses and
+    // rejects the TestParams addresses used below.
+    localStorage.setItem('settings.serverUrl', sUrl);
+    localStorage.setItem('settings.l1Chains', chains);
+    localStorage.setItem('settings.useTestnet', 'true');
   }, [serverUrl, JSON.stringify([{ name: 'Default', url: l1Url }])]);
+}
+
+/** Navigate via the sidebar drawer — the bottom tab bar no longer exists on
+ *  these screens, so mirror the Playwright helper's clickTab. Full-screen
+ *  views (e.g. Balance) hide the drawer and expose Back instead. */
+async function clickNav(page, label) {
+  const menu = page.getByRole('button', { name: 'Open navigation menu' });
+  if (await menu.isVisible().catch(() => false)) {
+    await menu.click();
+    await page.waitForTimeout(400);
+  } else {
+    const back = page.getByRole('button', { name: 'Back' });
+    if (await back.isVisible().catch(() => false)) {
+      await back.click();
+      await page.waitForTimeout(800);
+    }
+    if (await menu.isVisible().catch(() => false)) {
+      await menu.click();
+      await page.waitForTimeout(400);
+    }
+  }
+  await page.getByRole('button', { name: label, exact: true }).first().click();
+  await page.waitForTimeout(1500);
 }
 
 /** Import a private key into the app wallet and save it with a password. */
 async function importKeyIntoWallet(page, privHex) {
-  await page.getByRole('tab', { name: 'Wallet', exact: true }).click();
-  await page.waitForTimeout(1000);
-  await page.locator('[data-testid="wallet-screen"]').getByText('Manage Wallet').click();
-  await page.waitForURL('**/wallet/keys**');
+  await clickNav(page, 'Keys');
   await page.getByText('Import Private Key').click();
   await page.waitForTimeout(500);
   await page.getByPlaceholder('Enter private key (hex or WIF)').fill(privHex);
@@ -76,8 +101,7 @@ async function importKeyIntoWallet(page, privHex) {
 async function unlockWallet(page) {
   await page.goto(APP, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2000);
-  await page.getByRole('tab', { name: 'Transaction', exact: true }).click();
-  await page.waitForTimeout(1000);
+  // The unlock form renders on the landing (Payment) screen — no tab needed.
   await page.getByPlaceholder('Enter wallet password').fill(WALLET_PWD);
   await page.getByText('Unlock Wallet').click();
   await page.waitForTimeout(3000);
@@ -159,11 +183,18 @@ async function main() {
   // The app wallet is funded on the L0 payment base (same as the payment flow);
   // the L1 order chain balances were already funded by the genesis wallet above.
   const sellerAddress = sdk.Address.fromKey(sdk.TestParams.get(), issuer).toString();
-  await fetch(SVR + 'fundAddresses', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ addresses: [{ address: sellerAddress, value: 10000000000 }] }),
-  });
+  // The Java server removed the fundAddresses faucet (fa3935f7f — bootstrap is
+  // via genesis CSV), so pay the seller's L0 app balance from the genesis
+  // wallet instead (the L1 balances above were already genesis-paid).
+  const l0Genesis = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [genesisKey], SVR);
+  l0Genesis.setServerURL(SVR);
+  const l0Give = new Map([[sellerAddress, BigInt(10000000000)]]);
+  const l0Coins = await l0Genesis.calculateAllSpendCandidates(null, false);
+  if (l0Coins.length === 0) throw new Error('Genesis wallet has no L0 spend candidates');
+  const l0FundTx = await l0Genesis.payMoneyToECKeyList(
+    null, l0Give, new Uint8Array(sdk.Utils.HEX.decode(bcToken)), 'e2e-order-pdf-l0', l0Coins,
+  );
+  if (!l0FundTx) throw new Error('L0 funding tx failed');
 
   const browser = await chromium.launch({ headless: true });
 
@@ -201,8 +232,10 @@ async function main() {
   const seller = await setupAccount(issuer.getPrivateKeyHex());
   const page = seller.page;
 
-  // Order screen — market price list (screenshot 1)
-  await page.getByRole('tab', { name: 'Order', exact: true }).click();
+  // Order screen — market price list (screenshot 1). The sidebar 'Orders'
+  // item lands on the My Orders segment; switch to the market 'Order' segment.
+  await clickNav(page, 'Orders');
+  await page.getByTestId('order-screen').getByRole('tab', { name: 'Order', exact: true }).click();
   await page.getByText(tokenName).waitFor({ state: 'visible', timeout: 30000 });
   await page.waitForTimeout(1500);
   await page.screenshot({ path: `${SHOTS}/order-01-market-list.png` });
@@ -247,7 +280,8 @@ async function main() {
   const buyerAcct = await setupAccount(buyer.getPrivateKeyHex());
   const bp = buyerAcct.page;
 
-  await bp.getByRole('tab', { name: 'Order', exact: true }).click();
+  await clickNav(bp, 'Orders');
+  await bp.getByTestId('order-screen').getByRole('tab', { name: 'Order', exact: true }).click();
   await bp.getByText(tokenName).waitFor({ state: 'visible', timeout: 30000 });
 
   // Buyer opens the buy sheet and fills it (screenshot 3).
@@ -398,10 +432,9 @@ async function main() {
   await bp.screenshot({ path: `${SHOTS}/order-04-buyer-orders.png` });
   console.log('ok order-04-buyer-orders');
 
-  // The chart screen was opened via the nav menu; go back so the seller's
-  // Order screen (with its My Orders tab) is visible again.
-  await page.getByRole('button', { name: 'Back' }).click();
-  await page.getByRole('tab', { name: 'Order', exact: true }).first().click();
+  // The chart screen was opened via the nav menu; navigate back to the
+  // seller's Orders screen (the sidebar 'Orders' lands on My Orders).
+  await clickNav(page, 'Orders');
   await page.waitForTimeout(2000);
   await page.getByText('My Orders', { exact: true }).first().click();
   await page.waitForTimeout(2000);

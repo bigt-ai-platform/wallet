@@ -41,9 +41,37 @@ async function postJson(endpoint, body) {
 /** Point the app at L0/L1 by writing settings storage directly. */
 async function configureAppUrls(page, serverUrl, l1Url) {
   await page.evaluate(([sUrl, chains]) => {
-    localStorage.setItem('mmkv.default\\settings.serverUrl', sUrl);
-    localStorage.setItem('mmkv.default\\settings.l1Chains', chains);
+    // Plain dot-joined keys — the web build's storage reads localStorage
+    // directly (mmkv.default\ namespacing is native-only). Local infra is
+    // testnet; without useTestnet the app derives mainnet addresses and
+    // rejects the TestParams addresses used below.
+    localStorage.setItem('settings.serverUrl', sUrl);
+    localStorage.setItem('settings.l1Chains', chains);
+    localStorage.setItem('settings.useTestnet', 'true');
   }, [serverUrl, JSON.stringify([{ name: 'Default', url: l1Url }])]);
+}
+
+/** Navigate via the sidebar drawer — the bottom tab bar no longer exists on
+ *  these screens, so mirror the Playwright helper's clickTab. Full-screen
+ *  views (e.g. Balance) hide the drawer and expose Back instead. */
+async function clickNav(page, label) {
+  const menu = page.getByRole('button', { name: 'Open navigation menu' });
+  if (await menu.isVisible().catch(() => false)) {
+    await menu.click();
+    await page.waitForTimeout(400);
+  } else {
+    const back = page.getByRole('button', { name: 'Back' });
+    if (await back.isVisible().catch(() => false)) {
+      await back.click();
+      await page.waitForTimeout(800);
+    }
+    if (await menu.isVisible().catch(() => false)) {
+      await menu.click();
+      await page.waitForTimeout(400);
+    }
+  }
+  await page.getByRole('button', { name: label, exact: true }).first().click();
+  await page.waitForTimeout(1500);
 }
 
 async function main() {
@@ -53,8 +81,9 @@ async function main() {
   wallet.setServerURL(SVR);
   wallet.setFee(false);
 
-  const genesisAddr = sdk.Address.fromKey(sdk.TestParams.get(), genesisKey).toString();
-  await postJson('fundAddresses', { addresses: [{ address: genesisAddr, value: 100000000000 }] });
+  // The Java server removed the fundAddresses faucet (fa3935f7f — bootstrap is
+  // via genesis CSV): the genesis wallet already holds the coins, so no
+  // self-funding call here — just wait until its BIG is confirmed spendable.
 
   const waitBc = async () => {
     for (let i = 0; i < 60; i++) {
@@ -100,8 +129,9 @@ async function main() {
       token.setTokenstop(true);
       token.setTokentype(sdk.TokenType.token);
 
-      const tokenAddr = sdk.Address.fromKey(sdk.TestParams.get(), tokenKey).toString();
-      await postJson('fundAddresses', { addresses: [{ address: tokenAddr, value: 10000000000 }] });
+      // No issuer funding: the Java server removed the fundAddresses faucet
+      // (fa3935f7f) and its virtual coinbases could not pay L0 fees anyway —
+      // the genesis wallet pays the creation fee (same path as tokens.spec).
 
       const addr = new sdk.MultiSignAddress(tokenid, '', sdk.Utils.HEX.encode(tokenKey.getPrefixedPublicKeyBytes()), 0);
       const block = await wallet.createToken(tokenKey, '', false, token, [addr], tokenKey.getPubKey(), new sdk.MemoInfo('coinbase'));
@@ -139,11 +169,13 @@ async function main() {
   await page.goto(APP, { waitUntil: 'networkidle', timeout: 20000 });
   await page.waitForTimeout(1500);
   await configureAppUrls(page, SVR, L1);
-  await page.reload({ waitUntil: 'networkidle' });
+  // Root goto, not reload(): after the router client-navigates (e.g. /home/payment),
+  // a reload would hit the static server with a deep path and 404 to a blank page.
+  await page.goto(APP, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2000);
 
   // Screenshot 1: token browse list (BIG + created token).
-  await page.getByRole('tab', { name: 'Tokens', exact: true }).first().click();
+  await clickNav(page, 'Tokens');
   await page.getByText(tokenName).first().waitFor({ state: 'visible', timeout: 30000 });
   await page.waitForTimeout(1500);
   await page.screenshot({ path: `${SHOTS}/token-01-browse.png` });
