@@ -463,6 +463,10 @@ class RemoteOrderTests extends RemoteTest {
   ): Promise<void> {
     for (let attempt = 1; attempt <= 5; attempt++) {
       await this.awaitSpendable(w, tokenId, amount);
+      // A late confirmation from an earlier attempt may already be open: never
+      // submit a second sell for the same order - the single buy would fill
+      // the first one and leave the duplicate resting.
+      if ((await this.ordersForPair(tokenId, baseToken)).length > stale) return;
       try {
         const sellTx = await w.sellOrder(null, tokenId, price, amount, null, null, baseToken, true);
         console.log(`Sell submitted: tx ${sellTx.getHash()} (attempt ${attempt})`);
