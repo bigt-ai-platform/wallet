@@ -9,11 +9,11 @@ SERVER_PORT="${SERVER_PORT:-18088}"
 L1_PORT="${L1_PORT:-18086}"
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | token | blocks | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | token | blocks | p2p | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" token "|" blocks "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, blocks, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" token "|" blocks "|" p2p "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, blocks, p2p, remaining, tests, demo";;
 esac
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -60,6 +60,44 @@ verify_payment_status() {
     sleep 3
   done
   fail "On-chain verification FAILED: L0 getTransactionStatus=$api_status (expected CONFIRMED) for txHash=$txhash"
+}
+
+# Independently verify the p2p settlement handoff (both wallet legs) on-chain:
+# the spec writes escrow/release txHash+address to
+# test-results/p2p-settlement.json; each leg must be CONFIRMED and pay the
+# address it claims — the same evidence bigtai's chain gate re-checks.
+verify_p2p_legs() {
+  local handoff="$E2E_DIR/test-results/p2p-settlement.json"
+  if [[ ! -f "$handoff" ]]; then
+    fail "P2P settlement handoff missing: $handoff (p2p spec did not confirm both legs)"
+  fi
+  local leg txhash address
+  for leg in escrow release; do
+    txhash=$(node -e "const v=require('$handoff'); process.stdout.write((v['$leg']||{}).txHash||'')" 2>/dev/null)
+    address=$(node -e "const v=require('$handoff'); process.stdout.write((v['$leg']||{}).address||'')" 2>/dev/null)
+    if [[ -z "$txhash" || -z "$address" ]]; then
+      fail "P2P $leg leg invalid in handoff: $(cat "$handoff")"
+    fi
+    local body api_status api_address
+    for i in $(seq 1 30); do
+      body=$(curl -sf -X POST "http://localhost:${SERVER_PORT}/getTransactionStatus" \
+        -H 'Content-Type: application/json' \
+        -d "{\"txHash\":\"$txhash\"}" 2>/dev/null || true)
+      api_status=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).status||'')" "$body" 2>/dev/null)
+      if [[ "$api_status" == "CONFIRMED" ]]; then
+        api_address=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).address||'')" "$body" 2>/dev/null)
+        if [[ -n "$api_address" && "$api_address" != "$address" ]]; then
+          fail "P2P $leg leg pays $api_address, expected $address (txHash=$txhash)"
+        fi
+        log "P2P $leg leg verified on-chain: txHash=$txhash address=$address"
+        break
+      fi
+      if [[ "$i" == "30" ]]; then
+        fail "P2P $leg leg L0 getTransactionStatus=$api_status (expected CONFIRMED) for txHash=$txhash"
+      fi
+      sleep 3
+    done
+  done
 }
 
 cleanup() {
@@ -154,6 +192,21 @@ E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list blocks.spec.ts 2>&1
 log "Block explorer e2e tests passed."
+fi
+
+# 4b5. Run the p2p settlement wallet legs (escrow lock + release) standalone.
+#      `all` covers the spec via the remaining greps.
+if [[ "$CMD" == "p2p" ]]; then
+info "Running p2p settlement legs..."
+cd "$E2E_DIR"
+APP_URL="http://localhost:${WEB_PORT}/" \
+E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
+E2E_L1_URL="http://localhost:${L1_PORT}/" \
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep "P2P Settlement" 2>&1
+log "P2P settlement legs passed."
+
+# Re-check both legs via the L0 getTransactionStatus API.
+verify_p2p_legs
 fi
 
 # 4c. Run remaining specs (tokens, settings, order, wallet-flow, L1 Test Tab,
