@@ -7,13 +7,16 @@ WEB_BUILD="$ROOT/e2e/web-build"
 WEB_PORT="${WEB_PORT:-18081}"
 SERVER_PORT="${SERVER_PORT:-18088}"
 L1_PORT="${L1_PORT:-18086}"
+P2P_PORT="${P2P_PORT:-18089}"
+P2P_ENGINE_URL="http://localhost:${P2P_PORT}"
+P2P_PID=""
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | token | blocks | p2p | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | token | blocks | p2p | p2p-ui | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" token "|" blocks "|" p2p "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, blocks, p2p, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" token "|" blocks "|" p2p "|" p2p-ui "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, blocks, p2p, p2p-ui, remaining, tests, demo";;
 esac
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -102,20 +105,59 @@ verify_p2p_legs() {
 
 cleanup() {
   info "Cleaning up..."
+  [[ -n "$P2P_PID" ]] && kill "$P2P_PID" 2>/dev/null || true
   pkill -f "http-server.*web-build" 2>/dev/null || true
   log "Done."
 }
 trap cleanup EXIT
 
-info "Checking infrastructure..."
-curl -sf "http://localhost:${SERVER_PORT}/" >/dev/null 2>&1 || fail "Infra not ready — run ./e2e/infra.sh first"
-log "Infrastructure ready."
+# Build and start the P2P settlement engine (mem store, insecure PayPal, no
+# chain check) so the wallet P2P UI can be driven end-to-end. Self-contained —
+# the flow needs no L0/L1.
+start_p2p_engine() {
+  info "Building p2p engine..."
+  for pkg in did p2p-protocol record-sig; do
+    ( cd "$ROOT/packages/$pkg" && npm run build >/dev/null 2>&1 ) || fail "build $pkg failed"
+  done
+  # The engine runs from an esbuild bundle: bigtangle-ts ships extensionless
+  # ESM + CJS-interop deps that plain `node dist/server.js` cannot load.
+  ( cd "$ROOT/services/p2p-engine" && npm run build >/dev/null 2>&1 && npm run bundle >/dev/null 2>&1 ) || fail "build/bundle p2p-engine failed"
 
-# 1. Build web app
-if [[ ! -d "$WEB_BUILD" ]]; then
-  info "Building web app..."
+  info "Starting p2p engine on $P2P_ENGINE_URL ..."
+  PORT="$P2P_PORT" HOST=127.0.0.1 \
+    SETTLEMENT_STORE=mem \
+    SETTLEMENT_PAYPAL_INSECURE=1 \
+    SETTLEMENT_ADMIN_TOKEN=adm \
+    CORS_ORIGIN="http://localhost:${WEB_PORT},http://127.0.0.1:${WEB_PORT}" \
+    node "$ROOT/services/p2p-engine/dist/server.bundle.mjs" >/tmp/p2p-engine.log 2>&1 &
+  P2P_PID=$!
+  for i in $(seq 1 30); do
+    curl -sf "http://localhost:${P2P_PORT}/healthz" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  curl -sf "http://localhost:${P2P_PORT}/healthz" >/dev/null 2>&1 || fail "p2p engine not ready (see /tmp/p2p-engine.log)"
+  log "P2P engine ready."
+}
+
+# The P2P UI flow (p2p-ui) is self-contained: it never touches L0/L1, so the
+# infra gate is skipped for it.
+if [[ "$CMD" != "p2p-ui" ]]; then
+  info "Checking infrastructure..."
+  curl -sf "http://localhost:${SERVER_PORT}/" >/dev/null 2>&1 || fail "Infra not ready — run ./e2e/infra.sh first"
+  log "Infrastructure ready."
+fi
+
+# 1. Build web app. The P2P engine URL is inlined by `expo export`, so rebuild
+#    whenever it changes (a stale build would point the app at the wrong port).
+export EXPO_PUBLIC_P2P_ENGINE_URL="$P2P_ENGINE_URL"
+NEED_BUILD=0
+[[ -d "$WEB_BUILD" ]] || NEED_BUILD=1
+if [[ -d "$WEB_BUILD" && "$(cat "$WEB_BUILD/.p2p-url" 2>/dev/null)" != "$P2P_ENGINE_URL" ]]; then NEED_BUILD=1; fi
+if [[ "$NEED_BUILD" == "1" ]]; then
+  info "Building web app (P2P engine: $P2P_ENGINE_URL)..."
   cd "$ROOT/expo-app"
   npm run web:build 2>&1 | tail -3
+  echo "$P2P_ENGINE_URL" > "$WEB_BUILD/.p2p-url"
   log "Web app built."
 else
   info "Web build already exists, skipping build."
@@ -133,6 +175,11 @@ for i in $(seq 1 15); do
 done
 curl -sf "http://localhost:$WEB_PORT/" >/dev/null 2>&1 || fail "Web server not ready"
 log "Web server on http://localhost:$WEB_PORT"
+
+# Start the P2P engine for the parts that drive the wallet P2P UI.
+if [[ "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "remaining" || "$CMD" == "p2p-ui" ]]; then
+  start_p2p_engine
+fi
 
 # 4. Run Playwright payment test
 if [[ "$CMD" == "all" || "$CMD" == "payment" || "$CMD" == "tests" ]]; then
@@ -209,6 +256,18 @@ log "P2P settlement legs passed."
 verify_p2p_legs
 fi
 
+# 4b6. Run the wallet P2P UI flow (order book / match / lock / pay) against the
+#      engine started above. Self-contained (no L0/L1), so `p2p-ui` needs no
+#      infra. `all`/`remaining` cover it via the remaining greps.
+if [[ "$CMD" == "p2p-ui" ]]; then
+info "Running P2P UI flow..."
+cd "$E2E_DIR"
+APP_URL="http://localhost:${WEB_PORT}/" \
+E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep "P2P Page|P2P Flow" 2>&1
+log "P2P UI flow passed."
+fi
+
 # 4c. Run remaining specs (tokens, settings, order, wallet-flow, L1 Test Tab,
 #     desktop, demo-flow) not covered by the Payment/Tracking greps.
 if [[ "$CMD" == "all" || "$CMD" == "remaining" || "$CMD" == "tests" ]]; then
@@ -217,6 +276,7 @@ cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
+E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep-invert "Payment|Tracking" 2>&1
 log "Remaining e2e specs passed."
 fi

@@ -1,0 +1,38 @@
+# P2P settlement engine runtime image (docs/p2p.md).
+#
+# Build from the repo root so the workspace packages are in scope:
+#   docker build -f deploy/Dockerfile.p2p-engine -t wallet-p2p-engine:latest .
+#
+# The engine depends on the workspace packages `bigtangle-ts`, `did`,
+# `record-sig` and `p2p-protocol` (built in dependency order below).
+FROM node:20-slim AS build
+WORKDIR /app
+ENV NODE_ENV=development
+
+COPY package.json yarn.lock ./
+COPY packages ./packages
+COPY services/p2p-engine ./services/p2p-engine
+
+# The engine's workspace deps are the four packages above; a full-workspace
+# install (expo/webapp) is neither available nor wanted in this image.
+RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines \
+    --production=false 2>/dev/null || yarn install --ignore-scripts --ignore-engines
+
+RUN yarn workspace bigtangle-ts build \
+ && yarn workspace p2p-protocol build \
+ && yarn workspace did build \
+ && yarn workspace record-sig build \
+ && yarn workspace p2p-engine build \
+ && yarn workspace p2p-engine bundle
+
+FROM node:20-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/packages ./packages
+COPY --from=build /app/services/p2p-engine ./services/p2p-engine
+WORKDIR /app/services/p2p-engine
+EXPOSE 8108
+# Runs the esbuild bundle: bigtangle-ts ships extensionless ESM + CJS-interop
+# deps that plain `node dist/server.js` cannot load under Node's ESM resolver.
+CMD ["node", "dist/server.bundle.mjs"]

@@ -67,6 +67,7 @@ function AppShell() {
                         <Stack.Screen name="chart" options={{ headerShown: false }} />
                         <Stack.Screen name="dashboard" options={{ headerShown: false }} />
                         <Stack.Screen name="trade" options={{ headerShown: false }} />
+                        <Stack.Screen name="p2p" options={{ title: t('p2p.title') }} />
                     </Stack>
                 </View>
             </View>

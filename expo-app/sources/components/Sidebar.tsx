@@ -82,6 +82,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       titleKey: 'sidebar.trade',
       items: [
         { label: t('trade.title'), key: 'spotTrade', icon: MarketIcon, route: '/trade' },
+        { label: t('p2p.title'), key: 'p2p', icon: SendIcon, route: '/p2p' },
         { label: t('sidebar.buy'), key: 'buy', icon: MarketIcon, route: '/buy' },
         { label: t('sidebar.sell'), key: 'sell', icon: MarketIcon, route: '/sell' },
         { label: t('sidebar.orders'), key: 'order', icon: OrderIcon, route: '/order', view: 'orders' },

@@ -5,6 +5,7 @@
     "packages": [
       "expo-app",
       "packages/*",
+      "services/*",
       "webapp"
     ],
     "nohoist": [

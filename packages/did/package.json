@@ -1,0 +1,37 @@
+{
+  "name": "did",
+  "version": "0.1.0",
+  "description": "Self-certifying did:key identity (Ed25519/secp256k1 + ML-DSA-87) for the wallet",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./pq": {
+      "types": "./dist/pq.d.ts",
+      "import": "./dist/pq.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^3.1.0",
+    "@noble/hashes": "^2.2.0",
+    "secp256k1": "^5.0.1"
+  },
+  "peerDependencies": {
+    "bigtangle-ts": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/secp256k1": "^4.0.7",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.4"
+  }
+}

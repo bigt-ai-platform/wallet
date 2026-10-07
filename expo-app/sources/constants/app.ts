@@ -142,3 +142,11 @@ export const DEFAULT_L1_CHAINS_MAINNET = [
 export const DEFAULT_L1_CHAINS_TESTNET = [
   { chainId: 'ordermatch', name: IS_DEV ? 'Local' : 'Test', url: IS_DEV ? DEV_L1_URL : DEFAULT_L1_TESTNET_URL },
 ];
+
+/**
+ * P2P settlement engine base URL (services/p2p-engine). Unset in production
+ * unless baked at build time, so the P2P screen shows a not-configured state
+ * rather than failing on every call. Dev defaults to the engine's local port.
+ */
+export const P2P_ENGINE_URL =
+  process.env.EXPO_PUBLIC_P2P_ENGINE_URL || (IS_DEV ? 'http://127.0.0.1:8108' : '');

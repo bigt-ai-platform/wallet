@@ -1,0 +1,70 @@
+# P2P settlement engine stack (docs/p2p.md) — the service half of the wallet's
+# P2P feature. Separate from the static web stack (compose.prod.yml): the engine
+# holds PayPal merchant secrets and a database, which a client app must not.
+#
+#   REGION=europa P2P_PORT=8108 POSTGRES_PASSWORD=… \
+#     docker compose -f deploy/compose.p2p-engine.yml up -d
+#
+# The engine anchors swap events on L1-SOCIAL (SETTLEMENT_L1_URL) and proves
+# escrow on L0 (SETTLEMENT_L0_URL). Both are external chain endpoints; this
+# stack only adds the engine + its rebuildable Postgres projection.
+#
+# Secrets to provide (never commit): SETTLEMENT_ENGINE_KEY (ML-DSA seed hex),
+# PAYPAL_CLIENT_ID / PAYPAL_CLIENT_SECRET / PAYPAL_WEBHOOK_ID, and
+# SETTLEMENT_ADMIN_TOKEN.
+
+name: wallet-p2p-${REGION:-wallet}
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: wallet-p2p-${REGION:-wallet}-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: p2p
+      POSTGRES_USER: p2p
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - p2p-db:/var/lib/postgresql/data
+      - ../services/p2p-engine/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U p2p -d p2p"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  engine:
+    image: ${P2P_IMAGE:-wallet-p2p-engine:latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.p2p-engine
+    container_name: wallet-p2p-${REGION:-wallet}-engine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      POSTGRES_URL: postgres://p2p:${POSTGRES_PASSWORD}@db:5432/p2p
+      PORT: "8108"
+      HOST: "0.0.0.0"
+      # chains (external)
+      SETTLEMENT_L0_URL: ${SETTLEMENT_L0_URL:-}
+      SETTLEMENT_L1_URL: ${SETTLEMENT_L1_URL:-}
+      # engine identity: ML-DSA-87 seed hex (signs records + funds the anchor tx)
+      SETTLEMENT_ENGINE_KEY: ${SETTLEMENT_ENGINE_KEY:-}
+      SETTLEMENT_ENGINE_DID: ${SETTLEMENT_ENGINE_DID:-}
+      # escrow key: 2-of-3 P2SH participant (0x05-prefixed PQ pubkey hex)
+      SETTLEMENT_ENGINE_PUBKEY: ${SETTLEMENT_ENGINE_PUBKEY:-}
+      # PayPal (Invoices v2 in / Payouts v1 out / RSA webhook)
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
+      PAYPAL_API_BASE: ${PAYPAL_API_BASE:-https://api-m.sandbox.paypal.com}
+      # admin-gated reads/retries; CORS for the wallet SPA origin
+      SETTLEMENT_ADMIN_TOKEN: ${SETTLEMENT_ADMIN_TOKEN:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+    ports:
+      - "127.0.0.1:${P2P_PORT:-8108}:8108"
+
+volumes:
+  p2p-db:
