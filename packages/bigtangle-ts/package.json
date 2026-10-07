@@ -1,6 +1,6 @@
 {
   "name": "bigtangle-ts",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "A TypeScript library for working with the Bigtangle blockchain protocol",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

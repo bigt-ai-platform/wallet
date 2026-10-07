@@ -64,7 +64,8 @@ describe('ScriptChunkTest', () => {
         
         // Test for opcode chunk without data (should be valid)
         const opcodeChunk = new ScriptChunk(42, null);
-        expect(opcodeChunk.isOpCode()).toBe(true);
+        // Java's isOpCode() is `opcode > OP_PUSHDATA4`; 42 is a 42-byte push opcode.
+        expect(opcodeChunk.isOpCode()).toBe(false);
         expect(() => {
             const builder = new ScriptBuilder();
             builder.addChunk(opcodeChunk);

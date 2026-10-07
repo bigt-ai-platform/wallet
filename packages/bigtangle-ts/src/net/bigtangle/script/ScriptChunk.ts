@@ -42,38 +42,14 @@ export class ScriptChunk {
      * If this chunk is a single byte of non-pushdata content (could be OP_RESERVED or some invalid Opcode)
      */
     isOpCode(): boolean {
-        // Opcodes are any value that is not a pushdata operation and not a small number opcode
-        return !this.isPushData();
+        return this.opcode > OP_PUSHDATA4;
     }
 
     /**
      * Returns true if this chunk is pushdata content, including the single-byte pushdatas.
      */
     isPushData(): boolean {
-        // Valid push operations:
-        // 1. OP_0, OP_1-OP_16, OP_1NEGATE (handled by isSmallNumOpCode)
-        // 2. Single-byte push operations (1-75 bytes) - only for actual data pushes
-        // 3. Explicit push data opcodes (OP_PUSHDATA1, OP_PUSHDATA2, OP_PUSHDATA4)
-        
-        // First, check if it's a small number opcode
-        if (this.isSmallNumOpCode(this.opcode)) {
-            return true;
-        }
-        
-        // Check for explicit push data opcodes
-        if (this.opcode === OP_PUSHDATA1 || 
-            this.opcode === OP_PUSHDATA2 || 
-            this.opcode === OP_PUSHDATA4) {
-            return true;
-        }
-        
-        // Check for single-byte push operations (1-75 bytes)
-        // Only return true if this is an actual data push (data exists)
-        if (this.opcode > 0 && this.opcode <= 75 && this.data !== null) {
-            return true;
-        }
-        
-        return false;
+        return this.opcode <= OP_16;
     }
 
     getStartLocationInProgram(): number {

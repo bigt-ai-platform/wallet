@@ -47,7 +47,8 @@ describe('TransactionTest', () => {
 
     test('coinbaseInputInNonCoinbaseTX', () => {
         expect(() => {
-            const script = ScriptBuilder.createOpReturnScript(Buffer.from([10]));
+            // Java: `new ScriptBuilder().data(new byte[10]).build()`.
+            const script = new ScriptBuilder().data(new Uint8Array(10)).build();
             const input = TransactionInput.fromScriptBytes(PARAMS, tx, script.getProgram());
             tx.addInput(input);
             tx.verify();

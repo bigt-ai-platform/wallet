@@ -60,7 +60,7 @@ export class Script {
     private creationTimeSeconds: number;
 
     private static readonly log = console; // LoggerFactory.getLogger(Script.class);
-    static readonly MAX_SCRIPT_ELEMENT_SIZE = 520;  // bytes
+    static readonly MAX_SCRIPT_ELEMENT_SIZE = 50000;  // bytes (increased for PQ keys)
     static readonly SIG_SIZE = 75;
     /** Max number of sigops allowed in a standard p2sh redeem script */
     static readonly MAX_P2SH_SIGOPS = 15;
@@ -84,7 +84,10 @@ export class Script {
             this.creationTimeSeconds = Utils.currentTimeSeconds();
         } else if (Array.isArray(param1)) {
             this.chunks = [...param1]; // Copy the array
-            this.program = this.getProgram(); // Generate program bytes from chunks
+            // Java keeps `program` null here and serializes lazily in getProgram();
+            // serializing eagerly would fail on chunks whose opcode only becomes a
+            // valid push when data is present.
+            this.program = new Uint8Array();
             this.creationTimeSeconds = Utils.currentTimeSeconds();
         } else if (param1 instanceof Uint8Array) {
             this.program = param1;
@@ -841,8 +844,8 @@ export class Script {
      * is useful if you need more precise control or access to the final state of the stack. This interface is very
      * likely to change in future.
      */
-    static async executeScript(txContainingThis: any | null, index: number,
-                         script: Script, stack: Uint8Array[], verifyFlags: Set<Script.VerifyFlag>): Promise<void> {
+    static executeScript(txContainingThis: any | null, index: number,
+                         script: Script, stack: Uint8Array[], verifyFlags: Set<Script.VerifyFlag>): void {
         let opCount = 0;
         let lastCodeSepLocation = 0;
 
@@ -1225,25 +1228,13 @@ export class Script {
                         numericOPresult = (numericOPnum1 <= numericOPnum2) ? 1n : 0n;
                         break;
                     case OP_GREATERTHANOREQUAL:
-                        if (numericOPnum1.compareTo(numericOPnum2) >= 0) {
-                            numericOPresult = 1n;
-                        } else {
-                            numericOPresult = 0n;
-                        }
+                        numericOPresult = (numericOPnum1 >= numericOPnum2) ? 1n : 0n;
                         break;
                     case OP_MIN:
-                        if (numericOPnum1.compareTo(numericOPnum2) < 0) {
-                            numericOPresult = numericOPnum1;
-                        } else {
-                            numericOPresult = numericOPnum2;
-                        }
+                        numericOPresult = numericOPnum1 < numericOPnum2 ? numericOPnum1 : numericOPnum2;
                         break;
                     case OP_MAX:
-                        if (numericOPnum1.compareTo(numericOPnum2) > 0) {
-                            numericOPresult = numericOPnum1;
-                        } else {
-                            numericOPresult = numericOPnum2;
-                        }
+                        numericOPresult = numericOPnum1 > numericOPnum2 ? numericOPnum1 : numericOPnum2;
                         break;
                     default:
                         throw new Error("Opcode switched at runtime?");
@@ -1490,34 +1481,34 @@ export class Script {
         if (stack.length < 2) {
             throw new ScriptException("Attempted OP_CHECKMULTISIG(VERIFY) on a stack with size < 2");
         }
-        const pubKeyCount = Script.castToBigInteger(stack.pop()!) as any;
-        if (pubKeyCount.lt(0) || pubKeyCount.gt(20)) { // Using big-integer methods for comparison
+        const pubKeyCount = Number(Script.castToBigInteger(stack.pop()!));
+        if (pubKeyCount < 0 || pubKeyCount > 20) {
             throw new ScriptException("OP_CHECKMULTISIG(VERIFY) with pubkey count out of range");
         }
-        opCount += pubKeyCount.toJSNumber(); // Convert BigInteger to number for addition
+        opCount += pubKeyCount;
         if (opCount > 201) {
             throw new ScriptException("Total op count > 201 during OP_CHECKMULTISIG(VERIFY)");
         }
-        if (stack.length < pubKeyCount.toJSNumber() + 1) { // Convert BigInteger to number for addition
+        if (stack.length < pubKeyCount + 1) {
             throw new ScriptException("Attempted OP_CHECKMULTISIG(VERIFY) on a stack with size < num_of_pubkeys + 2");
         }
 
         const pubkeys: Uint8Array[] = [];
-        for (let i = 0; i < pubKeyCount.toJSNumber(); i++) { // Convert BigInteger to number for loop
+        for (let i = 0; i < pubKeyCount; i++) {
             const pubKey = stack.pop()!;
             pubkeys.push(pubKey);
         }
 
-        const sigCount = Script.castToBigInteger(stack.pop()!) as any;
-        if (sigCount.lt(0) || sigCount.gt(pubKeyCount)) { // Using big-integer methods for comparison
+        const sigCount = Number(Script.castToBigInteger(stack.pop()!));
+        if (sigCount < 0 || sigCount > pubKeyCount) {
             throw new ScriptException("OP_CHECKMULTISIG(VERIFY) with sig count out of range");
         }
-        if (stack.length < sigCount.toJSNumber() + 1) { // Convert BigInteger to number for addition
+        if (stack.length < sigCount + 1) {
             throw new ScriptException("Attempted OP_CHECKMULTISIG(VERIFY) on a stack with size < num_of_pubkeys + num_of_signatures + 3");
         }
 
         const sigs: Uint8Array[] = [];
-        for (let i = 0; i < sigCount.toJSNumber(); i++) { // Convert BigInteger to number for loop
+        for (let i = 0; i < sigCount; i++) {
             const sig = stack.pop()!;
             sigs.push(sig);
         }
@@ -1590,8 +1581,8 @@ export class Script {
      * @param verifyFlags Each flag enables one validation rule. If in doubt, use {@link #correctlySpends(Transaction, long, Script)}
      *                    which sets all flags.
      */
-    async correctlySpends(txContainingThis: any, scriptSigIndex: number, scriptPubKey: Script,
-                    verifyFlags: Set<Script.VerifyFlag>): Promise<void> {
+    correctlySpends(txContainingThis: any, scriptSigIndex: number, scriptPubKey: Script,
+                    verifyFlags: Set<Script.VerifyFlag>): void {
         // Clone the transaction because executing the script involves editing it, and if we die, we'll leave
         // the tx half broken (also it's not so thread safe to work on it directly)
         let clonedTx: any;
@@ -1609,8 +1600,8 @@ export class Script {
             throw new Error(e);   // Should not happen unless we were given a totally broken transaction.
         }
        
-        if (this.getProgram().length > 10000 || scriptPubKey.getProgram().length > 10000) {
-            throw new ScriptException("Script larger than 10,000 bytes");
+        if (this.getProgram().length > 50000 || scriptPubKey.getProgram().length > 50000) {
+            throw new ScriptException("Script larger than 50,000 bytes");
         }
 
         const stack: Uint8Array[] = [];
