@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { MONO_FONT } from '@/constants/fonts';
+import WalletUnlock from '@/components/WalletUnlock';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
 import {
   confirmPayment, createOrder, fetchInstructions, getMyProfiles, listOpenOrders, matchOrder,
@@ -378,6 +379,8 @@ export default function P2pScreen() {
               </View>
             ))}
         </>
+      ) : !isUnlocked ? (
+        <WalletUnlock fullScreen={false} subtitle={t('p2p.unlockFirst')} testID="p2p-need-unlock" />
       ) : !identity ? (
         <Text style={s.emptyText} testID="p2p-need-unlock">{t('p2p.unlockFirst')}</Text>
       ) : (

@@ -14,6 +14,7 @@ import { recordOrder } from '@/services/tracking';
 import { BC_DECIMALS, decimalsFor, orderPriceShift } from '@/lib/tokenformat';
 import { utcOffsetLabel } from '@/lib/timeformat';
 import { CopyIcon } from '@/components/Icons';
+import WalletUnlock from '@/components/WalletUnlock';
 import {
   PriceChart, VolumeChart, INTERVALS,
   type ChartData, type ChartPoint,
@@ -809,15 +810,21 @@ export default function TradeScreen() {
         >
           {pairHeader}
           {chartCard}
-          <View style={s.sideToggle}>
-            <TouchableOpacity style={[s.sideBtn, mobileSide === 'buy' && s.sideBuyActive]} onPress={() => setMobileSide('buy')} testID="trade-tab-buy">
-              <Text style={[s.sideBtnText, mobileSide === 'buy' && s.sideBtnTextActive]}>{t('order.buy')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={[s.sideBtn, mobileSide === 'sell' && s.sideSellActive]} onPress={() => setMobileSide('sell')} testID="trade-tab-sell">
-              <Text style={[s.sideBtnText, mobileSide === 'sell' && s.sideBtnTextActive]}>{t('order.sell')}</Text>
-            </TouchableOpacity>
-          </View>
-          {orderPanel(mobileSide)}
+          {!isUnlocked ? (
+            <View style={s.card}><WalletUnlock fullScreen={false} subtitle={t('order.unlockFirst')} testID="trade-unlock" /></View>
+          ) : (
+            <>
+              <View style={s.sideToggle}>
+                <TouchableOpacity style={[s.sideBtn, mobileSide === 'buy' && s.sideBuyActive]} onPress={() => setMobileSide('buy')} testID="trade-tab-buy">
+                  <Text style={[s.sideBtnText, mobileSide === 'buy' && s.sideBtnTextActive]}>{t('order.buy')}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[s.sideBtn, mobileSide === 'sell' && s.sideSellActive]} onPress={() => setMobileSide('sell')} testID="trade-tab-sell">
+                  <Text style={[s.sideBtnText, mobileSide === 'sell' && s.sideBtnTextActive]}>{t('order.sell')}</Text>
+                </TouchableOpacity>
+              </View>
+              {orderPanel(mobileSide)}
+            </>
+          )}
           {orderBookCard}
           {recentTradesCard}
           {myOrdersCard}
@@ -845,10 +852,14 @@ export default function TradeScreen() {
           <View style={s.colBook}>{orderBookCard}</View>
           <View style={s.colCenter}>
             {chartCard}
-            <View style={s.formsRow}>
-              <View style={s.formCol}>{orderPanel('buy')}</View>
-              <View style={s.formCol}>{orderPanel('sell')}</View>
-            </View>
+            {!isUnlocked ? (
+              <View style={s.card}><WalletUnlock fullScreen={false} subtitle={t('order.unlockFirst')} testID="trade-unlock" /></View>
+            ) : (
+              <View style={s.formsRow}>
+                <View style={s.formCol}>{orderPanel('buy')}</View>
+                <View style={s.formCol}>{orderPanel('sell')}</View>
+              </View>
+            )}
           </View>
           <View style={s.colTrades}>
             {recentTradesCard}

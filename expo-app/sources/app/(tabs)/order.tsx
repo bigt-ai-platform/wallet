@@ -15,6 +15,7 @@ import { listOrders, recordOrder, refreshAllStatuses } from '@/services/tracking
 import { CloseIcon, CopyIcon } from '@/components/Icons';
 import SegmentedTabs from '@/components/SegmentedTabs';
 import ChainBadge from '@/components/ChainBadge';
+import WalletUnlock from '@/components/WalletUnlock';
 import { statusBadgeColor } from '@/utils/status';
 import { MONO_FONT } from '@/constants/fonts';
 import type { MarketPrice, OrderInfo, TrackedRecord } from '@/types/api';
@@ -98,7 +99,6 @@ export default function OrderScreen() {
   }, [activeTab]);
 
   const openOrder = (side: 'buy' | 'sell', token: MarketPrice) => {
-    if (!isUnlocked) { Alert.alert(t('wallet.locked'), t('order.unlockFirst')); return; }
     setOrderSide(side);
     setSelectedToken(token);
     setTokenSearch(token.tokenname || token.tokenid || '');
@@ -369,6 +369,10 @@ export default function OrderScreen() {
                 </TouchableOpacity>
               </View>
 
+              {!isUnlocked ? (
+                <WalletUnlock fullScreen={false} subtitle={t('order.unlockFirst')} testID="order-unlock" />
+              ) : (
+                <>
               <View style={s.sideToggle}>
                 <TouchableOpacity style={[s.sideBtn, orderSide === 'buy' && s.sideBuyActive]} onPress={() => setOrderSide('buy')}>
                   <Text style={[s.sideBtnText, orderSide === 'buy' && s.sideBtnTextActive]}>{t('order.buy')}</Text>
@@ -435,6 +439,8 @@ export default function OrderScreen() {
                 onPress={submitOrder} disabled={submitting}>
                 <Text style={s.submitBtnText}>{submitting ? t('order.placing') : t('order.placeOrder', { side: orderSide === 'buy' ? t('order.buy') : t('order.sell') })}</Text>
               </TouchableOpacity>
+                </>
+              )}
             </ScrollView>
           </View>
         </KeyboardAvoidingView>

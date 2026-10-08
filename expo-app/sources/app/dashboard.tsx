@@ -11,6 +11,7 @@ import { listOrders, refreshAllStatuses } from '@/services/tracking';
 import { statusBadgeColor } from '@/utils/status';
 import { shortTokenId } from '@/lib/tokenformat';
 import { MONO_FONT } from '@/constants/fonts';
+import WalletUnlock from '@/components/WalletUnlock';
 import type { OrderInfo, TrackedRecord, WalletAccountItem } from '@/types/api';
 
 interface Ticker {
@@ -127,7 +128,7 @@ export default function DashboardScreen() {
         refreshControl={<RefreshControl refreshing={loading} onRefresh={load} tintColor={theme.colors.primary} />}
       >
         {!isUnlocked ? (
-          <View style={s.emptyCard}><Text style={s.emptyText}>{t('order.unlockFirst')}</Text></View>
+          <WalletUnlock fullScreen={false} testID="dashboard-unlock" />
         ) : (
           <>
             {/* Total value */}
