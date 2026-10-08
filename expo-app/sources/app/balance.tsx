@@ -11,6 +11,7 @@ import { httpService } from '@/services/http';
 import { decimalsFor } from '@/lib/tokenformat';
 import { toBigInt, formatValue } from '@/lib/amountformat';
 import { MONO_FONT } from '@/constants/fonts';
+import WalletUnlock from '@/components/WalletUnlock';
 import type { UTXO } from '@/types/api';
 
 interface LayerUtxo extends UTXO {
@@ -236,12 +237,7 @@ export default function BalanceScreen() {
   if (!isUnlocked) {
     return (
       <View style={s.container} testID="balance-screen">
-        <View style={s.centered}>
-          <Text style={s.lockedTitle}>{t('wallet.locked')}</Text>
-          <TouchableOpacity style={s.primaryBtn} onPress={() => router.push('/home/keys')}>
-            <Text style={s.primaryBtnText}>{t('wallet.manageWallet')}</Text>
-          </TouchableOpacity>
-        </View>
+        <WalletUnlock />
       </View>
     );
   }
@@ -363,10 +359,6 @@ const s = StyleSheet.create((theme) => ({
   backBtn: { padding: 4 },
   backText: { fontSize: 22, color: theme.colors.text.link, fontWeight: '700' },
   pageTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text.primary },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  lockedTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 8 },
-  primaryBtn: { backgroundColor: theme.colors.primary, borderRadius: 10, paddingVertical: 15, paddingHorizontal: 32, alignItems: 'center' },
-  primaryBtnText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF' },
   filterCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 14, marginBottom: 12, marginHorizontal: 16 },
   cardLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.5 },
   dateRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },

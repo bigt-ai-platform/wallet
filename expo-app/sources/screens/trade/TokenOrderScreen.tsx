@@ -10,6 +10,7 @@ import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
 import { decimalsFor } from '@/lib/tokenformat';
 import { listOrders, recordOrder } from '@/services/tracking';
+import WalletUnlock from '@/components/WalletUnlock';
 import type { MarketPrice } from '@/types/api';
 import { MONO_FONT } from '@/constants/fonts';
 
@@ -156,6 +157,10 @@ export default function TokenOrderScreen({ side }: Props) {
         <ActivityIndicator size="large" color={theme.colors.primary} />
       </View>
     );
+  }
+
+  if (!isUnlocked) {
+    return <WalletUnlock subtitle={t('order.unlockFirst')} testID="token-order-unlock" />;
   }
 
   return (

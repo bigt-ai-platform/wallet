@@ -12,7 +12,8 @@ import { httpService } from "@/services/http";
 import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
 import { BC_DECIMALS, decimalsFor } from "@/lib/tokenformat";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
-import { WalletIcon, QrScanIcon } from "@/components/Icons";
+import { QrScanIcon } from "@/components/Icons";
+import WalletUnlock from "@/components/WalletUnlock";
 import ChainBadge from "@/components/ChainBadge";
 import SegmentedTabs from "@/components/SegmentedTabs";
 import QrScannerModal from "@/components/QrScannerModal";
@@ -116,7 +117,7 @@ function TokenSelect({ value, options, onChange, testID }: {
 export default function TransactionScreen() {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
-  const { publicInfo, isUnlocked, unlockWallet, getUnlockedWallet, getPassword } = useWallet();
+  const { publicInfo, isUnlocked, getUnlockedWallet, getPassword } = useWallet();
   const [selectedToken, setSelectedToken] = React.useState<LayerToken | null>(null);
   const [tokens, setTokens] = React.useState<LayerToken[]>([]);
   const [toAddress, setToAddress] = React.useState("");
@@ -131,8 +132,6 @@ export default function TransactionScreen() {
   const [historyToFilter, setHistoryToFilter] = React.useState("");
   const [payments, setPayments] = React.useState<TrackedRecord[]>([]);
   const [refreshingPayments, setRefreshingPayments] = React.useState(false);
-  const [unlockPwd, setUnlockPwd] = React.useState("");
-  const [unlocking, setUnlocking] = React.useState(false);
   const [qrOpen, setQrOpen] = React.useState(false);
   // When a scanned payment request names a token, remember it so the token
   // selection effect below can prefer it over the default BIG selection.
@@ -389,16 +388,6 @@ export default function TransactionScreen() {
     } finally { setLoading(false); }
   };
 
-  const handleUnlock = async () => {
-    if (!unlockPwd || unlocking) return;
-    setUnlocking(true);
-    try {
-      await unlockWallet(unlockPwd);
-    } catch (e: any) {
-      showAlert(t('transaction.error'), e.message || t('keys.wrongPassword'));
-    } finally { setUnlocking(false); }
-  };
-
   // Scanned a web url link — ask before leaving the app.
   const openScannedUrl = (url: string) => {
     const body = t('qr.openLinkBody', { url });
@@ -521,52 +510,9 @@ export default function TransactionScreen() {
   }, [urlParams.address]);
 
   if (!isUnlocked) {
-    const hasWallet = publicInfo?.hasEncryptedWallet;
     return (
       <View style={s.container} testID="transaction-screen">
-        <View style={s.centered}>
-          <WalletIcon size={48} color={theme.colors.text.secondary} />
-
-          {hasWallet ? (
-            // Wallet exists but locked — inline unlock
-            <>
-              <Text style={s.lockedTitle}>{t('transaction.locked')}</Text>
-              <Text style={s.lockedSub}>{t('transaction.lockedSub')}</Text>
-              <Text style={s.walletLabel}>{t('transaction.walletLabel', { address: `${(publicInfo?.address ?? '').slice(0, 10)}...` })}</Text>
-              <TextInput
-                style={s.unlockInput}
-                value={unlockPwd}
-                onChangeText={setUnlockPwd}
-                placeholder={t('wallet.passwordPlaceholder')}
-                placeholderTextColor={s.placeholder.color}
-                secureTextEntry
-                autoCapitalize="none"
-                returnKeyType="go"
-                onSubmitEditing={handleUnlock}
-                testID="wallet-password-input"
-              />
-              <TouchableOpacity
-                style={[s.primaryBtn, unlocking && s.btnDisabled]}
-                onPress={handleUnlock}
-                disabled={unlocking}
-              >
-                <Text style={s.primaryBtnText}>{unlocking ? t('keys.unlocking') : t('transaction.unlock')}</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            // No wallet at all — direct create/import
-            <>
-              <Text style={s.lockedTitle}>{t('wallet.noWalletFound')}</Text>
-              <Text style={s.lockedSub}>{t('wallet.noWalletFoundSub')}</Text>
-              <TouchableOpacity style={s.primaryBtn} onPress={() => router.push("/home/keys")}>
-                <Text style={s.primaryBtnText}>{t('wallet.createWallet')}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={s.secondaryBtn} onPress={() => router.push("/home/keys")}>
-                <Text style={s.secondaryBtnText}>{t('wallet.importExistingWallet')}</Text>
-              </TouchableOpacity>
-            </>
-          )}
-        </View>
+        <WalletUnlock subtitle={t('transaction.lockedSub')} />
       </View>
     );
   }
@@ -754,12 +700,7 @@ export default function TransactionScreen() {
 const s = StyleSheet.create((theme) => ({
   container: { flex: 1, backgroundColor: theme.colors.groupped.background },
   content: { padding: 16, paddingBottom: 40 },
-  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 32 },
-  lockedTitle: { fontSize: 20, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 8, marginTop: 12 },
-  lockedSub: { fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', marginBottom: 24, lineHeight: 20 },
   hintText: { fontSize: 12, color: theme.colors.text.secondary, textAlign: 'center', marginTop: 16, paddingHorizontal: 20 },
-  walletLabel: { fontSize: 13, color: theme.colors.text.secondary, marginBottom: 12, fontFamily: MONO_FONT },
-  unlockInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 15, width: '100%', maxWidth: 280, marginBottom: 12 },
   pageTitle: { fontSize: 22, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 16 },
   card: { backgroundColor: theme.colors.card?.background || theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.card?.border || theme.colors.border, padding: 16, marginBottom: 12 },
   cardLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
@@ -786,8 +727,6 @@ const s = StyleSheet.create((theme) => ({
   primaryBtnText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF' },
   requestBtn: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'center', borderRadius: 10, borderWidth: 1, borderColor: theme.colors.primary, paddingVertical: 14, marginTop: 10 },
   requestBtnText: { fontSize: 15, fontWeight: '600', color: theme.colors.primary },
-  secondaryBtn: { borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, paddingVertical: 14, paddingHorizontal: 32, alignItems: 'center', marginTop: 10 },
-  secondaryBtnText: { fontSize: 15, fontWeight: '600', color: theme.colors.text.secondary },
   btnDisabled: { opacity: 0.5 },
   txCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 14, marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
   txDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent.blue, marginRight: 12 },
