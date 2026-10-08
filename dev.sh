@@ -7,10 +7,14 @@ EXPO_DIR="$ROOT/expo-app"
 
 L0_PORT="${L0_PORT:-24089}"
 L1_PORT="${L1_PORT:-24086}"
+L1_SOCIAL_PORT="${L1_SOCIAL_PORT:-24091}"
 L0_URL="http://127.0.0.1:${L0_PORT}/"
 L1_URL="http://127.0.0.1:${L1_PORT}/"
+L1_SOCIAL_URL="http://127.0.0.1:${L1_SOCIAL_PORT}/"
+SOCIAL_SH="$ROOT/e2e/l1social.sh"
 # Override the dev command, e.g. DEV_CMD="yarn web" ./dev.sh
-# Default starts the blockchain infra and the Expo web client.
+# Default starts the blockchain infra (L0, L1-order, L1-SOCIAL) and the Expo
+# web client.
 DEV_CMD="${DEV_CMD:-yarn web}"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -30,6 +34,8 @@ cleanup() {
     kill "$DEV_PID" 2>/dev/null || true
     wait "$DEV_PID" 2>/dev/null || true
   fi
+  info "Stopping L1-SOCIAL..."
+  L1_SOCIAL_PORT="$L1_SOCIAL_PORT" "$SOCIAL_SH" down 2>/dev/null || true
   info "Stopping blockchain infra..."
   "$INFRA_SH" down 2>/dev/null || true
   log "Done."
@@ -40,10 +46,12 @@ case "$CMD" in
     ;;
   restart)
     info "Restarting infra: resetting DB and servers..."
+    L1_SOCIAL_PORT="$L1_SOCIAL_PORT" "$SOCIAL_SH" down 2>/dev/null || true
     "$INFRA_SH" down 2>/dev/null || true
     ;;
   down|stop)
     info "Stopping blockchain infra and any dev server..."
+    L1_SOCIAL_PORT="$L1_SOCIAL_PORT" "$SOCIAL_SH" down 2>/dev/null || true
     "$INFRA_SH" down 2>/dev/null || true
     log "Done."
     exit 0
@@ -75,6 +83,14 @@ for i in $(seq 1 120); do
 done
 [ "$READY" = "1" ] || fail "Timed out waiting for infrastructure."
 log "Infrastructure ready."
+
+# 2b. Start the L1-SOCIAL chain (CHAIN_ID=SOCIAL). Its bootstrap (genesis
+#     funding, validator stake + activation, first beacon) runs inside the
+#     helper and blocks until the chain produces blocks.
+info "Starting L1-SOCIAL ($L1_SOCIAL_URL)..."
+if ! L1_SOCIAL_PORT="$L1_SOCIAL_PORT" "$SOCIAL_SH" up; then
+  fail "L1-SOCIAL failed to start."
+fi
 
 # 3. Start the Expo dev server (foreground) in web mode by default. Press 'a'
 #    for Android or scan the QR code with Expo Go for manual testing.
