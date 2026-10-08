@@ -10,6 +10,8 @@ L1_PORT="${L1_PORT:-18086}"
 P2P_PORT="${P2P_PORT:-18089}"
 P2P_ENGINE_URL="http://localhost:${P2P_PORT}"
 P2P_PID=""
+HTTP_PID=""
+RAISE_PID=""
 
 # Optional first arg selects which part(s) to run:
 #   payment | tracking | order | token | blocks | p2p | p2p-ui | remaining | tests (all 4 greps) | demo | all (default)
@@ -106,10 +108,42 @@ verify_p2p_legs() {
 cleanup() {
   info "Cleaning up..."
   [[ -n "$P2P_PID" ]] && kill "$P2P_PID" 2>/dev/null || true
+  # Kill by saved PID: http-server rewrites its process title to just
+  # "http-server", so a `pkill -f` cmdline pattern can never match it and the
+  # 18081 listener would leak into the next run (EADDRINUSE).
+  [[ -n "$HTTP_PID" ]] && kill "$HTTP_PID" 2>/dev/null || true
+  [[ -n "$RAISE_PID" ]] && kill "$RAISE_PID" 2>/dev/null || true
   pkill -f "http-server.*web-build" 2>/dev/null || true
   log "Done."
 }
 trap cleanup EXIT
+
+# HEADED=1: Playwright's browser window can map behind an already-open
+# (typically maximized) browser on the X desktop, so nothing appears to
+# happen even though the tests are running. Watch for each new Playwright
+# window and raise/focus it as soon as it appears. No-op when headless, when
+# DISPLAY is unset, or when xdotool is unavailable.
+start_window_raiser() {
+  [[ "${HEADED:-}" == "1" ]] || return 0
+  [[ -n "${DISPLAY:-}" ]] || return 0
+  command -v xdotool >/dev/null 2>&1 || return 0
+  info "Headed mode: the Playwright window will be raised into view automatically."
+  (
+    raised=""
+    for _ in $(seq 1 1800); do
+      for wid in $(xdotool search --onlyvisible --name "Google Chrome for Testing" 2>/dev/null || true); do
+        case " $raised " in *" $wid "*) continue ;; esac
+        if xdotool windowactivate --sync "$wid" 2>/dev/null; then
+          xdotool windowraise "$wid" 2>/dev/null || true
+          raised="$raised $wid"
+        fi
+      done
+      sleep 1
+    done
+  ) &
+  RAISE_PID=$!
+}
+start_window_raiser
 
 # Build and start the P2P settlement engine (mem store, insecure PayPal, no
 # chain check) so the wallet P2P UI can be driven end-to-end. Self-contained —
@@ -167,6 +201,7 @@ fi
 # stall on registry resolution and the old fixed 2s sleep raced the bind).
 info "Starting web server..."
 "$ROOT/node_modules/.bin/http-server" "$WEB_BUILD" -p "$WEB_PORT" --silent &
+HTTP_PID=$!
 for i in $(seq 1 15); do
   if curl -sf "http://localhost:$WEB_PORT/" >/dev/null 2>&1; then
     break
