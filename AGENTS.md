@@ -71,3 +71,17 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   ```
   (The old GHCR-image path with "Unresolved compilation problems" jars only
   applied to the removed docker-compose flow.)
+
+## Notes as of 2026-10-08
+
+- **Pre-existing failures, unrelated to most diffs**: the repo-wide `vitest`
+  collection of `expo-app/e2e/tests/*` dies with `truncated ML-DSA private key`
+  (wallet unit tests are the `test/unit/` suites — 108 passing); and
+  `e2e/playwright/tests/trade.spec.ts` "renders a CNY-quoted market" has never
+  been observed green — every attempt was blocked by the L1 chain finality
+  livelock (missing predecessor around cl=772). Apply the Java-first rule above
+  before suspecting the TS code or the test.
+- **No standalone Chart screen**: it was removed (commit `9f85c11`) — the chart
+  lives inside Spot/trade only, `chart.spec.ts` is gone, `e2etest.sh` runs only
+  `order.spec.ts` in its order part, and `capture-order.mjs` captures the chart
+  from the Spot screen (`ok order-06-chart`).
