@@ -5,7 +5,7 @@
  * seed), so Postgres here is a projection, per AGENTS.md invariant #1 — the
  * append-only shape means a replay never mutates history.
  */
-import type { P2pOrder, P2pSwapEvent } from "./types.js";
+import type { PaymentProfile, PaymentProof, P2pOrder, P2pSwapEvent } from "./types.js";
 
 export interface SettlementStore {
   createOrder(o: P2pOrder): Promise<void>;
@@ -21,11 +21,21 @@ export interface SettlementStore {
   listSwapsForDid(did: string, limit?: number): Promise<P2pSwapEvent[]>;
   /** Resolve a swap by id, payout batch id, or invoice id (webhook correlation). */
   findSwapByRef(ref: string): Promise<P2pSwapEvent | null>;
+  /** The seller's CNY collection profile for one rail (docs/p2pcny.md §5). */
+  getProfile(sellerDid: string, method: string): Promise<PaymentProfile | null>;
+  /** All CNY profiles the seller has saved. */
+  listProfiles(sellerDid: string): Promise<PaymentProfile[]>;
+  upsertProfile(p: PaymentProfile): Promise<void>;
+  /** Append a buyer payment proof (multiple kept: overwrites before confirm). */
+  addProof(p: PaymentProof): Promise<void>;
+  proofs(swapId: string): Promise<PaymentProof[]>;
 }
 
 export class MemSettlementStore implements SettlementStore {
   readonly orders = new Map<string, P2pOrder>();
   readonly swapEvents = new Map<string, P2pSwapEvent[]>();
+  readonly paymentProfiles = new Map<string, PaymentProfile>();
+  readonly paymentProofs = new Map<string, PaymentProof[]>();
 
   async createOrder(o: P2pOrder): Promise<void> {
     if (!this.orders.has(o.orderId)) this.orders.set(o.orderId, o);
@@ -84,6 +94,28 @@ export class MemSettlementStore implements SettlementStore {
       if (latest && (latest.swapId === ref || latest.payoutRef === ref || latest.invoiceId === ref)) return latest;
     }
     return null;
+  }
+
+  async getProfile(sellerDid: string, method: string): Promise<PaymentProfile | null> {
+    return this.paymentProfiles.get(`${sellerDid}|${method}`) ?? null;
+  }
+
+  async listProfiles(sellerDid: string): Promise<PaymentProfile[]> {
+    return [...this.paymentProfiles.values()].filter((p) => p.sellerDid === sellerDid).sort((a, b) => a.method.localeCompare(b.method));
+  }
+
+  async upsertProfile(p: PaymentProfile): Promise<void> {
+    this.paymentProfiles.set(`${p.sellerDid}|${p.method}`, p);
+  }
+
+  async addProof(p: PaymentProof): Promise<void> {
+    const list = this.paymentProofs.get(p.swapId) ?? [];
+    list.push(p);
+    this.paymentProofs.set(p.swapId, list);
+  }
+
+  async proofs(swapId: string): Promise<PaymentProof[]> {
+    return [...(this.paymentProofs.get(swapId) ?? [])];
   }
 }
 
@@ -213,6 +245,69 @@ export class PgSettlementStore implements SettlementStore {
     );
     return res.rows[0] ? rowEvent(res.rows[0]) : null;
   }
+
+  async getProfile(sellerDid: string, method: string): Promise<PaymentProfile | null> {
+    const res = await this.db.query(`SELECT * FROM p2p_payment_profiles WHERE seller_did = $1 AND method = $2`, [
+      sellerDid,
+      method,
+    ]);
+    return res.rows[0] ? profileFromRow(res.rows[0]) : null;
+  }
+
+  async listProfiles(sellerDid: string): Promise<PaymentProfile[]> {
+    const res = await this.db.query(`SELECT * FROM p2p_payment_profiles WHERE seller_did = $1 ORDER BY method`, [
+      sellerDid,
+    ]);
+    return res.rows.map(profileFromRow);
+  }
+
+  async upsertProfile(p: PaymentProfile): Promise<void> {
+    await this.db.query(
+      `INSERT INTO p2p_payment_profiles (seller_did, method, account_name, account, bank_name, qr, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (seller_did, method) DO UPDATE
+         SET account_name = EXCLUDED.account_name, account = EXCLUDED.account,
+             bank_name = EXCLUDED.bank_name, qr = EXCLUDED.qr, updated_at = EXCLUDED.updated_at`,
+      [p.sellerDid, p.method, p.accountName, p.account, p.bankName ?? null, p.qr ?? null, new Date(p.updatedAt)],
+    );
+  }
+
+  async addProof(p: PaymentProof): Promise<void> {
+    await this.db.query(
+      `INSERT INTO p2p_payment_proofs (swap_id, tx_id, remark, receipt_sha256, receipt, paid_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+      [p.swapId, p.txId, p.remark ?? null, p.receiptSha256 ?? null, p.receipt ?? null, p.paidAt ?? null, new Date(p.createdAt)],
+    );
+  }
+
+  async proofs(swapId: string): Promise<PaymentProof[]> {
+    const res = await this.db.query(
+      `SELECT swap_id, tx_id, remark, receipt_sha256, receipt, paid_at, created_at
+       FROM p2p_payment_proofs WHERE swap_id = $1 ORDER BY seq`,
+      [swapId],
+    );
+    return res.rows.map((r: any) => ({
+      swapId: r.swap_id,
+      txId: r.tx_id,
+      ...(r.remark ? { remark: r.remark } : {}),
+      ...(r.receipt_sha256 ? { receiptSha256: r.receipt_sha256 } : {}),
+      ...(r.receipt ? { receipt: r.receipt } : {}),
+      ...(r.paid_at != null ? { paidAt: Number(r.paid_at) } : {}),
+      createdAt: new Date(r.created_at).getTime(),
+    }));
+  }
+}
+
+function profileFromRow(row: any): PaymentProfile {
+  return {
+    sellerDid: row.seller_did,
+    method: row.method,
+    accountName: row.account_name,
+    account: row.account,
+    ...(row.bank_name ? { bankName: row.bank_name } : {}),
+    ...(row.qr ? { qr: row.qr } : {}),
+    updatedAt: new Date(row.updated_at).getTime(),
+  };
 }
 
 function rowEvent(row: { payload: unknown }): P2pSwapEvent {

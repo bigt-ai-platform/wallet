@@ -9,13 +9,18 @@ import type { P2pSwapEvent, SwapAction } from "./types.js";
 export const VALID_TRANSITIONS: Record<P2pSwapStatus, readonly P2pSwapStatus[]> = {
   MATCHED: ["ESCROW_LOCKED", "CANCELLED", "EXPIRED"],
   ESCROW_LOCKED: ["PAYMENT_PENDING", "EXPIRED", "CANCELLED"],
-  PAYMENT_PENDING: ["PAYMENT_VERIFIED", "EXPIRED", "CANCELLED"],
+  // PAYMENT_PENDING is reached by the PayPal payment hint or, on the CNY rails,
+  // by the buyer pulling the seller's payment instructions (docs/p2pcny.md §3).
+  PAYMENT_PENDING: ["PAYMENT_CLAIMED", "PAYMENT_VERIFIED", "EXPIRED", "CANCELLED"],
+  // PAYMENT_CLAIMED is the CNY state: buyer uploaded proof, seller has not
+  // confirmed. It leaves via the seller's confirm, an admin dispute resolve
+  // (release), or the ordinary timeout/cancel path to a refund.
+  PAYMENT_CLAIMED: ["PAYMENT_VERIFIED", "EXPIRED", "CANCELLED"],
   PAYMENT_VERIFIED: ["ESCROW_RELEASED", "CANCELLED"],
   ESCROW_RELEASED: ["COMPLETED"],
-  // COMPLETED → COMPLETED exists only for `payout` (the one action that
-  // targets COMPLETED): a FAILED/HELD payout retries per docs/p2p.md with the
-  // same PayPal-Request-Id. No other action targets COMPLETED, so nothing can
-  // rewind or re-run a finished swap.
+  // COMPLETED → COMPLETED exists only for `payout` (PayPal retry) and
+  // `complete` (CNY: no fiat payout step — the seller already got the CNY).
+  // No other action targets COMPLETED, so nothing can rewind a finished swap.
   COMPLETED: ["COMPLETED"],
   EXPIRED: ["ESCROW_REFUNDED"],
   ESCROW_REFUNDED: [],
@@ -31,7 +36,14 @@ export const ACTION_STATUS: Record<SwapAction, P2pSwapStatus> = {
   expire: "EXPIRED",
   refund: "ESCROW_REFUNDED",
   cancel: "CANCELLED",
+  instructions: "PAYMENT_PENDING",
+  payment_proof: "PAYMENT_CLAIMED",
+  payment_confirm: "PAYMENT_VERIFIED",
+  complete: "COMPLETED",
 };
+
+/** Actions with a dedicated HTTP route (the generic transitions route rejects them). */
+export const DEDICATED_ACTIONS: ReadonlySet<string> = new Set(["instructions", "payment_proof", "payment_confirm"]);
 
 export function canTransition(from: P2pSwapStatus, to: P2pSwapStatus): boolean {
   return VALID_TRANSITIONS[from].includes(to);

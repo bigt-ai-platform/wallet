@@ -79,6 +79,9 @@ export function swapEventRecord(event: P2pSwapEvent, from: string): P2pSwapRecor
     paymentRail: event.paymentRail,
     paymentRef: event.paymentRef,
     payoutRef: event.payoutRef,
+    // CNY receipt evidence anchors as a hash only — the image stays in the
+    // engine store (docs/p2pcny.md §8).
+    receiptSha256: event.receiptSha256,
     ts: event.at,
   });
 }

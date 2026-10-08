@@ -14,11 +14,14 @@
 
 export const P2P_SWAP_TYPE = "social.p2p-swap";
 
-/** Swap lifecycle. Pre-release states may move to EXPIRED → ESCROW_REFUNDED, or CANCELLED. */
+/** Swap lifecycle. Pre-release states may move to EXPIRED → ESCROW_REFUNDED, or CANCELLED.
+ *  PAYMENT_CLAIMED is the CNY-rail state (docs/p2pcny.md): the buyer uploaded a
+ *  payment proof and the seller has not yet confirmed receipt. */
 export const P2P_SWAP_STATUSES = [
   "MATCHED",
   "ESCROW_LOCKED",
   "PAYMENT_PENDING",
+  "PAYMENT_CLAIMED",
   "PAYMENT_VERIFIED",
   "ESCROW_RELEASED",
   "COMPLETED",
@@ -53,6 +56,9 @@ export interface P2pSwapRecord {
   paymentRail?: string;
   paymentRef?: string;
   payoutRef?: string;
+  /** CNY rails: sha256 of the buyer's receipt evidence (docs/p2pcny.md) — a
+   *  hash only, so the image itself never reaches the chain. */
+  receiptSha256?: string;
 }
 
 export interface P2pSwapRecordInput extends Omit<P2pSwapRecord, "type" | "ts"> {
@@ -83,6 +89,7 @@ export function p2pSwapRecord(a: P2pSwapRecordInput): P2pSwapRecord {
   if (a.paymentRail !== undefined) record.paymentRail = a.paymentRail;
   if (a.paymentRef !== undefined) record.paymentRef = a.paymentRef;
   if (a.payoutRef !== undefined) record.payoutRef = a.payoutRef;
+  if (a.receiptSha256 !== undefined) record.receiptSha256 = a.receiptSha256;
   return record;
 }
 
@@ -123,6 +130,9 @@ export function validateP2pSwapRecord(r: Partial<P2pSwapRecord>): { ok: true } |
     if (v !== undefined && (typeof v !== "string" || !DECIMAL.test(v))) {
       return { ok: false, error: `invalid ${field} (decimal string)` };
     }
+  }
+  if (r.receiptSha256 !== undefined && !/^[0-9a-f]{64}$/.test(r.receiptSha256)) {
+    return { ok: false, error: "invalid receiptSha256 (sha256 hex)" };
   }
   if (typeof r.ts !== "number" || r.ts <= 0 || r.ts > Date.now() + MAX_SKEW_MS) {
     return { ok: false, error: "invalid ts" };

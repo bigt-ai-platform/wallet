@@ -10,8 +10,18 @@ import type { P2pSwapStatus } from "p2p-protocol";
 
 export type { P2pSwapStatus };
 
-/** Fiat rails the engine can originate/settle. PayPal is the built one. */
-export type PaymentRail = "paypal";
+/** Fiat rails the engine can originate/settle. PayPal is the built one; the
+ *  CNY rails (docs/p2pcny.md) settle peer-to-peer: buyer → seller directly,
+ *  with the seller confirming receipt instead of a rail webhook. */
+export type PaymentRail = "paypal" | "wechat" | "alipay" | "bank";
+
+/** Peer-to-peer CNY collection methods (WeChat Pay / Alipay / bank transfer). */
+export const CNY_RAILS = ["wechat", "alipay", "bank"] as const;
+export type CnyRail = (typeof CNY_RAILS)[number];
+
+export function isCnyRail(rail: string | undefined): rail is CnyRail {
+  return (CNY_RAILS as readonly string[]).includes(rail ?? "");
+}
 
 export interface P2pOrderInput {
   type: "limit_sell";
@@ -45,10 +55,23 @@ export const SWAP_ACTIONS = [
   "expire",
   "refund",
   "cancel",
+  // CNY rails (docs/p2pcny.md) — driven by the dedicated routes, but they are
+  // first-class actions so the transition table stays the single source of truth.
+  "instructions",
+  "payment_proof",
+  "payment_confirm",
+  "complete",
 ] as const;
 export type SwapAction = (typeof SWAP_ACTIONS)[number];
 
-export type SwapEventType = SwapAction | "match" | "invoice" | "payout_poll" | "paypal_webhook";
+export type SwapEventType =
+  | SwapAction
+  | "match"
+  | "invoice"
+  | "payout_poll"
+  | "paypal_webhook"
+  | "dispute_open"
+  | "dispute_resolve";
 
 /** One append-only swap event; a full snapshot of the swap after the event. */
 export interface P2pSwapEvent {
@@ -86,6 +109,16 @@ export interface P2pSwapEvent {
   paymentReversed?: boolean;
   /** CUSTOMER.DISPUTE state (OPEN/UPDATED blocks progress; RESOLVED clears). */
   dispute?: string;
+  /** CNY-rail dispute reason (buyer/seller supplied; store-only, never anchored). */
+  disputeReason?: string;
+  /** Admin arbitration outcome once RESOLVED: "refund" keeps the forward path frozen. */
+  disputeOutcome?: "release" | "refund";
+  /** CNY rails: per-swap remark code the buyer must include in the transfer. */
+  remark?: string;
+  /** CNY rails: sha256 of the buyer's uploaded receipt (store + anchor; never the image). */
+  receiptSha256?: string;
+  /** CNY rails: when the buyer claims they paid (unix ms). */
+  paidAt?: number;
   /** match-only, kept in the engine store but never anchored on chain. */
   receiveAddress?: string;
   paypalAccount?: string;
@@ -96,3 +129,29 @@ export interface P2pSwapEvent {
 
 /** Public-safe projection (PayPal account / receive address / buyer PII redacted). */
 export type P2pSwapView = Omit<P2pSwapEvent, "paypalAccount" | "receiveAddress" | "buyerEmail">;
+
+/** Seller's CNY collection profile — PII: engine store + instruction reveals only, never anchored. */
+export interface PaymentProfile {
+  sellerDid: string;
+  method: CnyRail;
+  /** 实名 account name (户名 for bank transfers). */
+  accountName: string;
+  /** Alipay/WeChat account (id or phone) or bank card number. */
+  account: string;
+  bankName?: string;
+  /** Optional collection QR image (data URL) shown to the matched buyer. */
+  qr?: string;
+  updatedAt: number;
+}
+
+/** The buyer's claim that they paid — receipt bytes live here (store-only), never on the swap event. */
+export interface PaymentProof {
+  swapId: string;
+  /** WeChat/Alipay/bank transaction id (流水号). */
+  txId: string;
+  remark?: string;
+  receiptSha256?: string;
+  receipt?: string;
+  paidAt?: number;
+  createdAt: number;
+}

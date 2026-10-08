@@ -9,12 +9,19 @@ import { useWallet } from '@/state/wallet';
 import { MONO_FONT } from '@/constants/fonts';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
 import {
-  createOrder, listOpenOrders, matchOrder, mySwaps, p2pConfigured,
-  sendPayment, transition,
-  type P2pIdentity, type P2pOrder, type P2pSwap, type P2pSwapAction,
+  confirmPayment, createOrder, fetchInstructions, getMyProfiles, listOpenOrders, matchOrder,
+  mySwaps, openDispute, p2pConfigured, saveProfile, sendPayment, submitProof, transition,
+  type P2pCnyRail, type P2pIdentity, type P2pOrder, type P2pPaymentProfile, type P2pSwap,
+  type P2pSwapAction,
 } from '@/services/p2p';
 
 type Tab = 'open' | 'mine';
+
+/** CNY rails (docs/p2pcny.md): settle peer-to-peer with manual confirmation. */
+const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank'];
+function isCnyRail(rail?: string): boolean {
+  return !!rail && CNY_RAILS.includes(rail);
+}
 
 /**
  * P2P trading screen: a public sell-order book (buy) and the wallet's own
@@ -36,6 +43,7 @@ export default function P2pScreen() {
   const [buyPaypal, setBuyPaypal] = React.useState('');
   const [buyEmail, setBuyEmail] = React.useState('');
   const [txHashes, setTxHashes] = React.useState<Record<string, string>>({});
+  const [txIds, setTxIds] = React.useState<Record<string, string>>({});
 
   const [giveToken, setGiveToken] = React.useState('');
   const [giveAmount, setGiveAmount] = React.useState('');
@@ -43,6 +51,14 @@ export default function P2pScreen() {
   const [wantCurrency, setWantCurrency] = React.useState('USD');
   const [wantAmount, setWantAmount] = React.useState('');
   const [validHours, setValidHours] = React.useState('24');
+  const [wantRail, setWantRail] = React.useState('paypal');
+
+  // seller's CNY collection profile (mine tab)
+  const [profiles, setProfiles] = React.useState<P2pPaymentProfile[]>([]);
+  const [profileMethod, setProfileMethod] = React.useState<P2pCnyRail>('wechat');
+  const [profileName, setProfileName] = React.useState('');
+  const [profileAccount, setProfileAccount] = React.useState('');
+  const [profileBank, setProfileBank] = React.useState('');
 
   const keyHex = isUnlocked ? getUnlockedWallet()?.wallet.privateKey : undefined;
   const keyType = getUnlockedWallet()?.wallet.keyType;
@@ -80,6 +96,27 @@ export default function P2pScreen() {
 
   React.useEffect(() => { refresh(); }, [refresh]);
 
+  const loadProfiles = React.useCallback(async () => {
+    if (!identity) { setProfiles([]); return; }
+    try {
+      const list = await getMyProfiles(identity);
+      setProfiles(list);
+    } catch {
+      setProfiles([]);
+    }
+  }, [identity]);
+
+  React.useEffect(() => {
+    if (tab === 'mine' && identity && p2pConfigured()) loadProfiles();
+  }, [tab, identity, loadProfiles]);
+
+  const pickRail = (rail: string) => {
+    setWantRail(rail);
+    // sensible currency default per rail (CNY rails quote CNY)
+    if (isCnyRail(rail) && wantCurrency.trim().toUpperCase() === 'USD') setWantCurrency('CNY');
+    if (!isCnyRail(rail) && wantCurrency.trim().toUpperCase() === 'CNY') setWantCurrency('USD');
+  };
+
   const requireIdentity = (): P2pIdentity | null => {
     if (!isUnlocked || !publicInfo?.address) { Alert.alert(t('wallet.locked'), t('p2p.unlockFirst')); return null; }
     if (!identity) { Alert.alert('', t('p2p.unlockFirst')); return null; }
@@ -102,7 +139,7 @@ export default function P2pScreen() {
         giveChain: giveChain.trim() || 'L0',
         wantCurrency: wantCurrency.trim() || 'USD',
         wantAmount: wantAmount.trim(),
-        wantRail: 'paypal',
+        wantRail,
         validUntil: Math.floor(Date.now() / 1000) + Math.floor(hours * 3600),
       });
       setGiveToken(''); setGiveAmount(''); setWantAmount('');
@@ -119,13 +156,14 @@ export default function P2pScreen() {
   const submitBuy = async (order: P2pOrder) => {
     const id = requireIdentity();
     if (!id) return;
-    if (!buyRecv.trim() || !buyPaypal.trim()) { Alert.alert('', t('p2p.buyFailed')); return; }
+    const cny = isCnyRail(order.wantRail);
+    if (!buyRecv.trim() || (!cny && !buyPaypal.trim())) { Alert.alert('', t('p2p.buyFailed')); return; }
     setBusy(true);
     try {
       const res = await matchOrder(id, order.orderId, {
         receiveAddress: buyRecv.trim(),
-        paypalAccount: buyPaypal.trim(),
-        buyerEmail: buyEmail.trim() || undefined,
+        ...(cny ? {} : { paypalAccount: buyPaypal.trim() }),
+        buyerEmail: cny ? undefined : buyEmail.trim() || undefined,
       });
       setSelected(null); setBuyRecv(''); setBuyPaypal(''); setBuyEmail('');
       Alert.alert(t('p2p.buyTitle'), `${res.swapId}\n${res.escrowAddress ?? ''}`);
@@ -166,6 +204,97 @@ export default function P2pScreen() {
     }
   };
 
+  // ── CNY rails (docs/p2pcny.md): instructions → proof → seller confirm ──
+
+  const showInstructions = async (swap: P2pSwap) => {
+    const id = requireIdentity();
+    if (!id) return;
+    setBusy(true);
+    try {
+      const ins = await fetchInstructions(id, swap.swapId);
+      Alert.alert(
+        t('p2p.instructionsTitle'),
+        [
+          `${ins.accountName}`,
+          ins.bankName ? `${ins.bankName} · ${ins.account}` : ins.account,
+          `${ins.amount} ${ins.currency}`,
+          `${t('p2p.remark')}: ${ins.remark}`,
+        ].join('\n'),
+      );
+      await loadSwaps();
+    } catch (e) {
+      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitPaid = async (swap: P2pSwap) => {
+    const id = requireIdentity();
+    if (!id) return;
+    const txId = (txIds[swap.swapId] ?? '').trim();
+    if (!txId) { Alert.alert('', t('p2p.errTxId')); return; }
+    setBusy(true);
+    try {
+      await submitProof(id, swap.swapId, { txId, ...(swap.remark ? { remark: swap.remark } : {}) });
+      setTxIds((m) => ({ ...m, [swap.swapId]: '' }));
+      await loadSwaps();
+    } catch (e) {
+      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmReceived = async (swap: P2pSwap) => {
+    const id = requireIdentity();
+    if (!id) return;
+    setBusy(true);
+    try {
+      await confirmPayment(id, swap.swapId);
+      await loadSwaps();
+    } catch (e) {
+      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doDispute = async (swap: P2pSwap) => {
+    const id = requireIdentity();
+    if (!id) return;
+    setBusy(true);
+    try {
+      await openDispute(id, swap.swapId);
+      await loadSwaps();
+    } catch (e) {
+      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveProfileForm = async () => {
+    const id = requireIdentity();
+    if (!id) return;
+    if (!profileName.trim() || !profileAccount.trim()) { Alert.alert('', t('p2p.errProfile')); return; }
+    setBusy(true);
+    try {
+      await saveProfile(id, {
+        method: profileMethod,
+        accountName: profileName.trim(),
+        account: profileAccount.trim(),
+        ...(profileMethod === 'bank' && profileBank.trim() ? { bankName: profileBank.trim() } : {}),
+      });
+      Alert.alert('', t('p2p.profileSaved'));
+      await loadProfiles();
+    } catch (e) {
+      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!p2pConfigured()) {
     return (
       <View style={s.centered}>
@@ -195,6 +324,24 @@ export default function P2pScreen() {
             <Field label={t('p2p.wantAmount')} value={wantAmount} onChange={setWantAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
             <Field label={t('p2p.wantCurrency')} value={wantCurrency} onChange={setWantCurrency} placeholder="USD" testID="p2p-want-currency" />
             <Field label={t('p2p.giveChain')} value={giveChain} onChange={setGiveChain} placeholder="L0" testID="p2p-give-chain" />
+            <View style={s.field}>
+              <Text style={s.fieldLabel}>{t('p2p.rail')}</Text>
+              <View style={s.chips}>
+                {['paypal', ...CNY_RAILS].map((rail) => (
+                  <TouchableOpacity
+                    key={rail}
+                    style={[s.chip, wantRail === rail && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
+                    onPress={() => pickRail(rail)}
+                    disabled={busy}
+                    testID={`p2p-rail-${rail}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: wantRail === rail }}
+                  >
+                    <Text style={[s.chipText, { color: wantRail === rail ? theme.colors.primary : theme.colors.text.secondary }]}>{rail}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
             <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.primary }]} onPress={submitOrder} disabled={busy} testID="p2p-create">
               <Text style={s.btnText}>{t('p2p.create')}</Text>
             </TouchableOpacity>
@@ -213,8 +360,12 @@ export default function P2pScreen() {
                 {selected?.orderId === o.orderId ? (
                   <View style={s.buyPanel}>
                     <Field label={t('p2p.receiveAddress')} value={buyRecv} onChange={setBuyRecv} testID="p2p-buy-recv" />
-                    <Field label={t('p2p.paypalAccount')} value={buyPaypal} onChange={setBuyPaypal} testID="p2p-buy-paypal" />
-                    <Field label={t('p2p.paypalEmail')} value={buyEmail} onChange={setBuyEmail} keyboardType="email-address" testID="p2p-buy-email" />
+                    {!isCnyRail(o.wantRail) ? (
+                      <>
+                        <Field label={t('p2p.paypalAccount')} value={buyPaypal} onChange={setBuyPaypal} testID="p2p-buy-paypal" />
+                        <Field label={t('p2p.paypalEmail')} value={buyEmail} onChange={setBuyEmail} keyboardType="email-address" testID="p2p-buy-email" />
+                      </>
+                    ) : null}
                     <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => submitBuy(o)} disabled={busy} testID="p2p-buy-confirm">
                       <Text style={s.btnText}>{t('p2p.buy')}</Text>
                     </TouchableOpacity>
@@ -229,27 +380,61 @@ export default function P2pScreen() {
         </>
       ) : !identity ? (
         <Text style={s.emptyText} testID="p2p-need-unlock">{t('p2p.unlockFirst')}</Text>
-      ) : loading ? (
-        <ActivityIndicator color={theme.colors.primary} style={s.loader} />
-      ) : swaps.length === 0 ? (
-        <Text style={s.emptyText}>{t('p2p.emptyMine')}</Text>
       ) : (
-        swaps.map((sw, i) => (
-          <SwapCard
-            key={sw.swapId}
-            swap={sw}
-            myDid={myDid}
-            busy={busy}
-            txHash={txHashes[sw.swapId] ?? ''}
-            onTxHash={(v) => setTxHashes((m) => ({ ...m, [sw.swapId]: v }))}
-            onLock={() => runTransition(sw, 'escrow_lock', { txHash: (txHashes[sw.swapId] ?? '').trim() })}
-            onPay={() => pay(sw)}
-            onExpire={() => runTransition(sw, 'expire')}
-            onRefund={() => runTransition(sw, 'refund')}
-            onCancel={() => runTransition(sw, 'cancel')}
-            index={i}
-          />
-        ))
+        <>
+          <View style={s.card} testID="p2p-profile-card">
+            <Text style={s.cardTitle}>{t('p2p.profileTitle')}</Text>
+            <View style={s.chips}>
+              {(['wechat', 'alipay', 'bank'] as const).map((m) => (
+                <TouchableOpacity
+                  key={m}
+                  style={[s.chip, profileMethod === m && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
+                  onPress={() => setProfileMethod(m)}
+                  disabled={busy}
+                  testID={`p2p-profile-method-${m}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: profileMethod === m }}
+                >
+                  <Text style={[s.chipText, { color: profileMethod === m ? theme.colors.primary : theme.colors.text.secondary }]}>{m}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <Field label={t('p2p.profileName')} value={profileName} onChange={setProfileName} testID="p2p-profile-name" />
+            <Field label={t('p2p.profileAccount')} value={profileAccount} onChange={setProfileAccount} testID="p2p-profile-account" />
+            {profileMethod === 'bank' ? (
+              <Field label={t('p2p.profileBank')} value={profileBank} onChange={setProfileBank} testID="p2p-profile-bank" />
+            ) : null}
+            <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.primary }]} onPress={saveProfileForm} disabled={busy} testID="p2p-profile-save">
+              <Text style={s.btnText}>{t('p2p.profileSave')}</Text>
+            </TouchableOpacity>
+            {profiles.length ? <Text style={s.sub}>{profiles.map((p) => p.method).join(' · ')}</Text> : null}
+          </View>
+
+          {loading ? <ActivityIndicator color={theme.colors.primary} style={s.loader} />
+            : swaps.length === 0 ? <Text style={s.emptyText}>{t('p2p.emptyMine')}</Text>
+            : swaps.map((sw, i) => (
+              <SwapCard
+                key={sw.swapId}
+                swap={sw}
+                myDid={myDid}
+                busy={busy}
+                txHash={txHashes[sw.swapId] ?? ''}
+                onTxHash={(v) => setTxHashes((m) => ({ ...m, [sw.swapId]: v }))}
+                txId={txIds[sw.swapId] ?? ''}
+                onTxId={(v) => setTxIds((m) => ({ ...m, [sw.swapId]: v }))}
+                onLock={() => runTransition(sw, 'escrow_lock', { txHash: (txHashes[sw.swapId] ?? '').trim() })}
+                onPay={() => pay(sw)}
+                onExpire={() => runTransition(sw, 'expire')}
+                onRefund={() => runTransition(sw, 'refund')}
+                onCancel={() => runTransition(sw, 'cancel')}
+                onInstructions={() => showInstructions(sw)}
+                onPaid={() => submitPaid(sw)}
+                onConfirm={() => confirmReceived(sw)}
+                onDispute={() => doDispute(sw)}
+                index={i}
+              />
+            ))}
+        </>
       )}
     </ScrollView>
   );
@@ -293,14 +478,18 @@ function Field({ label, value, onChange, placeholder, keyboardType, mono, testID
   );
 }
 
-function SwapCard({ swap, myDid, busy, txHash, onTxHash, onLock, onPay, onExpire, onRefund, onCancel, index }: {
+function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onPay, onExpire, onRefund, onCancel, onInstructions, onPaid, onConfirm, onDispute, index }: {
   swap: P2pSwap; myDid?: string; busy: boolean; txHash: string; onTxHash: (v: string) => void;
-  onLock: () => void; onPay: () => void; onExpire: () => void; onRefund: () => void; onCancel: () => void; index: number;
+  txId: string; onTxId: (v: string) => void;
+  onLock: () => void; onPay: () => void; onExpire: () => void; onRefund: () => void; onCancel: () => void;
+  onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void; index: number;
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isSeller = !!myDid && swap.sellerDid === myDid;
   const isBuyer = !!myDid && swap.buyerDid === myDid;
+  const isParty = isSeller || isBuyer;
+  const cny = isCnyRail(swap.wantRail);
   const st = swap.status;
 
   return (
@@ -310,11 +499,16 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, onLock, onPay, onExpire
         <Text style={[s.badge, { color: theme.colors.primary }]} testID={`p2p-swap-${index}-status`}>{st}</Text>
       </View>
       <Text style={s.subMono}>{swap.swapId}</Text>
+      <Text style={s.sub}>{t('p2p.giveChain')}: {swap.giveChain ?? '-'} · {swap.wantRail ?? '-'}</Text>
       {swap.escrowAddress ? <Text style={s.sub}>{t('p2p.escrowAddress')}: {swap.escrowAddress.slice(0, 20)}…</Text> : null}
       {swap.payoutStatus ? <Text style={s.sub}>payout: {swap.payoutStatus}</Text> : null}
       {swap.paymentReversed ? <Text style={s.sub}>{swap.dispute ? `dispute ${swap.dispute}` : 'reversed'}</Text> : null}
+      {swap.remark && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
+        <Text style={s.subMono}>{t('p2p.remark')}: {swap.remark}</Text>
+      ) : null}
+      {swap.dispute ? <Text style={s.sub}>{t('p2p.aDispute')}: {swap.dispute}{swap.disputeOutcome ? ` (${swap.disputeOutcome})` : ''}</Text> : null}
 
-      {isSeller && (st === 'MATCHED' || st === 'ESCROW_LOCKED' || st === 'PAYMENT_PENDING') ? (
+      {isSeller && (st === 'MATCHED' || st === 'ESCROW_LOCKED' || st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <View style={s.actions}>
           {st === 'MATCHED' ? (
             <>
@@ -322,8 +516,11 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, onLock, onPay, onExpire
               <Action label={t('p2p.aLock')} color={theme.colors.primary} onPress={onLock} disabled={busy} testID={`p2p-swap-${index}-lock`} />
             </>
           ) : null}
-          {(st === 'ESCROW_LOCKED' || st === 'PAYMENT_PENDING') ? (
+          {st !== 'MATCHED' ? (
             <Action label={t('p2p.aExpire')} color={theme.colors.accent.red} onPress={onExpire} disabled={busy} testID={`p2p-swap-${index}-expire`} />
+          ) : null}
+          {cny && st === 'PAYMENT_CLAIMED' ? (
+            <Action label={t('p2p.aConfirm')} color={theme.colors.accent.emerald} onPress={onConfirm} disabled={busy} testID={`p2p-swap-${index}-confirm`} />
           ) : null}
           <Action label={t('p2p.aCancel')} color={theme.colors.text.secondary} onPress={onCancel} disabled={busy} testID={`p2p-swap-${index}-cancel`} />
         </View>
@@ -337,8 +534,27 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, onLock, onPay, onExpire
 
       {isBuyer && st === 'ESCROW_LOCKED' ? (
         <View style={s.actions}>
-          <Action label={t('p2p.aPay')} color={theme.colors.accent.emerald} onPress={onPay} disabled={busy} testID={`p2p-swap-${index}-pay`} />
+          {cny ? (
+            <Action label={t('p2p.aInstructions')} color={theme.colors.accent.emerald} onPress={onInstructions} disabled={busy} testID={`p2p-swap-${index}-instructions`} />
+          ) : (
+            <Action label={t('p2p.aPay')} color={theme.colors.accent.emerald} onPress={onPay} disabled={busy} testID={`p2p-swap-${index}-pay`} />
+          )}
           <Action label={t('p2p.aCancel')} color={theme.colors.text.secondary} onPress={onCancel} disabled={busy} testID={`p2p-swap-${index}-cancel`} />
+        </View>
+      ) : null}
+
+      {isBuyer && cny && st === 'PAYMENT_PENDING' ? (
+        <View>
+          <Field label={t('p2p.txId')} value={txId} onChange={onTxId} testID={`p2p-swap-${index}-txid`} />
+          <View style={s.actions}>
+            <Action label={t('p2p.aPaid')} color={theme.colors.accent.emerald} onPress={onPaid} disabled={busy} testID={`p2p-swap-${index}-proof`} />
+          </View>
+        </View>
+      ) : null}
+
+      {isParty && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
+        <View style={s.actions}>
+          <Action label={t('p2p.aDispute')} color={theme.colors.accent.red} onPress={onDispute} disabled={busy} testID={`p2p-swap-${index}-dispute`} />
         </View>
       ) : null}
     </View>
@@ -382,4 +598,7 @@ const s = StyleSheet.create((theme) => ({
   actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
   action: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 14, paddingVertical: 8 },
   actionText: { fontSize: 13, fontWeight: '600' },
+  chips: { flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap' },
+  chip: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
+  chipText: { fontSize: 13, fontWeight: '600' },
 }));

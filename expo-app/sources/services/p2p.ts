@@ -11,6 +11,7 @@ export type P2pSwapStatus =
   | 'MATCHED'
   | 'ESCROW_LOCKED'
   | 'PAYMENT_PENDING'
+  | 'PAYMENT_CLAIMED'
   | 'PAYMENT_VERIFIED'
   | 'ESCROW_RELEASED'
   | 'COMPLETED'
@@ -26,7 +27,14 @@ export type P2pSwapAction =
   | 'payout'
   | 'expire'
   | 'refund'
-  | 'cancel';
+  | 'cancel'
+  | 'instructions'
+  | 'payment_proof'
+  | 'payment_confirm'
+  | 'complete';
+
+/** CNY collection rails (docs/p2pcny.md): settle peer-to-peer, manual confirm. */
+export type P2pCnyRail = 'wechat' | 'alipay' | 'bank';
 
 export interface P2pOrder {
   orderId: string;
@@ -67,6 +75,12 @@ export interface P2pSwap {
   invoiceUrl?: string;
   paymentReversed?: boolean;
   dispute?: string;
+  disputeOutcome?: 'release' | 'refund';
+  paymentRail?: string;
+  /** CNY rails: per-swap remark code the transfer must carry. */
+  remark?: string;
+  receiptSha256?: string;
+  paidAt?: number;
   txid?: string;
   at: number;
 }
@@ -88,8 +102,35 @@ export interface CreateOrderInput {
 
 export interface MatchOrderInput {
   receiveAddress: string;
-  paypalAccount: string;
+  /** PayPal rail only — the buyer's PayPal handle. CNY orders omit it. */
+  paypalAccount?: string;
   buyerEmail?: string;
+}
+
+/** Seller's CNY payment instructions for one swap (docs/p2pcny.md §5). */
+export interface P2pPaymentInstructions {
+  method: P2pCnyRail;
+  rail: string;
+  accountName: string;
+  account: string;
+  bankName?: string;
+  qr?: string;
+  amount: string;
+  currency: string;
+  remark: string;
+  /** Unix seconds: last moment the remark is guaranteed to be valid. */
+  payBy: number;
+}
+
+/** The seller's saved collection profile (PII — never leaves the party scope). */
+export interface P2pPaymentProfile {
+  sellerDid: string;
+  method: P2pCnyRail;
+  accountName: string;
+  account: string;
+  bankName?: string;
+  qr?: string;
+  updatedAt: number;
 }
 
 /** Whether a P2P engine endpoint is configured for this build. */
@@ -194,4 +235,64 @@ export async function getSwap(id: P2pIdentity, swapId: string): Promise<P2pSwap>
   const body = signedBody(id.key, id.did, { swapId });
   const data = await request<{ swap: P2pSwap }>('/swaps/get', body);
   return data.swap;
+}
+
+/**
+ * CNY rails: the buyer pulls the seller's payment instructions (account,
+ * amount, per-swap remark). Idempotent while PAYMENT_PENDING.
+ */
+export async function fetchInstructions(
+  id: P2pIdentity,
+  swapId: string,
+): Promise<P2pPaymentInstructions> {
+  const body = signedBody(id.key, id.did, {});
+  return request(`/swaps/${swapId}/payment-instructions`, body);
+}
+
+/**
+ * CNY rails: the buyer claims the transfer (流水号 required, receipt image
+ * optional). Only the receipt's sha256 is anchored — the image stays server-side.
+ */
+export async function submitProof(
+  id: P2pIdentity,
+  swapId: string,
+  input: { txId: string; remark?: string; receipt?: string },
+): Promise<{ swapId: string; status: string; txId: string; receiptSha256: string | null }> {
+  const body = signedBody(id.key, id.did, { ...input });
+  return request(`/swaps/${swapId}/proof`, body);
+}
+
+/** CNY rails: the seller confirms receipt on their own statements (→ verified). */
+export async function confirmPayment(
+  id: P2pIdentity,
+  swapId: string,
+): Promise<{ swapId: string; status: string }> {
+  const body = signedBody(id.key, id.did, {});
+  return request(`/swaps/${swapId}/confirm`, body);
+}
+
+/** Either party freezes a swap mid-review (tokens stay locked until resolved). */
+export async function openDispute(
+  id: P2pIdentity,
+  swapId: string,
+  reason?: string,
+): Promise<{ swapId: string; status: string; dispute: string }> {
+  const body = signedBody(id.key, id.did, reason ? { reason } : {});
+  return request(`/swaps/${swapId}/dispute`, body);
+}
+
+/** Seller: upsert a CNY collection profile. */
+export async function saveProfile(
+  id: P2pIdentity,
+  input: { method: P2pCnyRail; accountName: string; account: string; bankName?: string },
+): Promise<{ ok: boolean; method: string }> {
+  const body = signedBody(id.key, id.did, { ...input });
+  return request('/profiles', body);
+}
+
+/** Seller: list own collection profiles. */
+export async function getMyProfiles(id: P2pIdentity): Promise<P2pPaymentProfile[]> {
+  const body = signedBody(id.key, id.did, {});
+  const data = await request<{ profiles: P2pPaymentProfile[] }>('/profiles/mine', body);
+  return data.profiles ?? [];
 }
