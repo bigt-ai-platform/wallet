@@ -241,7 +241,7 @@ E2E_L1_URL="http://localhost:${L1_PORT}/" \
 log "Tracking tests passed."
 fi
 
-# 4b2. Run the order/chart/market-data tests (same base/env as the payment
+# 4b2. Run the order/market-data tests (same base/env as the payment
 #      tests: web app on WEB_PORT, L0 on SERVER_PORT, L1 order server on
 #      L1_PORT). Standalone only — `all` covers them via the remaining greps.
 if [[ "$CMD" == "order" ]]; then
@@ -250,7 +250,7 @@ cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
-  "$ROOT/node_modules/.bin/playwright" test --reporter=list order.spec.ts chart.spec.ts 2>&1
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list order.spec.ts 2>&1
 log "Order e2e tests passed."
 fi
 
@@ -330,7 +330,7 @@ log "PDF generated: demo-output/pdfs/payment-flow.pdf"
 fi
 
 # 5b. Capture order-flow screenshots (Order market list, buy/sell sheet,
-#     Chart) and generate order-flow.pdf. Creates a real matched trade on the
+#     Spot chart) and generate order-flow.pdf. Creates a real matched trade on the
 #     L1 order chain so the screenshots show real market/chart data.
 if [[ -z "${NO_PDF:-}" ]] && [[ "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "order" ]]; then
 info "Capturing order flow screenshots and generating PDF..."

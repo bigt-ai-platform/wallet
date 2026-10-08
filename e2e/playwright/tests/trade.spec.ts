@@ -8,7 +8,7 @@ const L1_READY = HAS_SERVER && !!E2E_L1_URL;
 
 /**
  * Point the app at the local L0/L1 servers by writing the settings storage
- * directly (same approach as order.spec / chart.spec — the Settings UI helper
+ * directly (same approach as order.spec — the Settings UI helper
  * is unreliable because the server-URL and L1-chain inputs share a placeholder).
  */
 async function configureUrlsDirect(page: Page, serverUrl: string, l1Url: string) {

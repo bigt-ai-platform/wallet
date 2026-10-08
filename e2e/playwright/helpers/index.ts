@@ -27,8 +27,7 @@ export async function clickTab(page: Page, label: string) {
 // they live at their own routes reachable through the sidebar. Navigate via the
 // sidebar (client-side) instead of direct /home/* URLs: the e2e web server
 // (http-server) has no SPA history fallback, so a full navigation to /home/keys
-// or /home/payment 404s (same reason chart.spec navigates to Chart via the
-// sidebar).
+// or /home/payment 404s).
 export async function goToPayment(page: Page) {
   await clickTab(page, 'Payment');
 }

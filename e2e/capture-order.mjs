@@ -8,9 +8,9 @@
  *   - seller: sell order sheet → places the sell order
  *   - buyer : buy order sheet → places the crossing buy order (matched)
  * The PDF then shows the match from both sides (My Orders FILLED/CONFIRMED on
- * each account) and the resulting price & volume chart:
+ * each account) and the resulting price & volume chart on the Spot screen:
  *   - how the user places an order (sell sheet, buy sheet)
- *   - the match (both accounts' My Orders + chart of the executed trade)
+ *   - the match (both accounts' My Orders + Spot chart of the executed trade)
  *
  * Usage: APP_URL=... E2E_SERVER_URL=... E2E_L1_URL=... node capture-order.mjs
  */
@@ -386,22 +386,24 @@ async function main() {
   }
   console.log(`Placed ${seriesPrices.length} crosses for the chart series`);
 
-  // ---- 2c. Chart screen — real price & volume from getOrdersTicker series.
+  // ---- 2c. Spot chart — real price & volume from getOrdersTicker series.
   // Capture the chart BEFORE My Orders so the multi-point series (the whole
-  // point of the chart) is guaranteed even if order-status is flaky.
+  // point of the chart) is guaranteed even if order-status is flaky. The
+  // price/volume chart lives on the Spot (trade) screen.
   await page.getByRole('button', { name: 'Open navigation menu' }).click();
-  await page.getByRole('button', { name: 'Chart' }).click();
-  await page.getByTestId('chart-screen').waitFor({ state: 'attached', timeout: 15000 });
-  await page.getByTestId('chart-token-search').fill(tokenName);
-  const chip = page.getByTestId('chart-token-results').getByText(tokenName);
+  await page.getByRole('button', { name: 'Spot', exact: true }).click();
+  await page.getByTestId('trade-screen').waitFor({ state: 'attached', timeout: 15000 });
+  await page.getByTestId('trade-token-search').fill(tokenName);
+  const chip = page.getByTestId('trade-token-results').getByText(tokenName);
   await chip.waitFor({ state: 'attached', timeout: 20000 });
   await chip.click();
+  await page.getByTestId('trade-selected-token').waitFor({ state: 'attached', timeout: 10000 });
   // Wait for a real multi-point price line: the polyline's points attribute
   // holds one "x,y" pair per chart point. Require at least 3 points AND real
   // y-variation (span >= 40px) — otherwise the chart is a flat strip pinned to
   // the top edge (all match prices nearly equal), which looks broken.
   await page.waitForFunction(() => {
-    const poly = document.querySelector('[data-testid="chart-price"] polyline');
+    const poly = document.querySelector('[data-testid="trade-chart-price"] polyline');
     if (!poly) return false;
     const pts = (poly.getAttribute('points') || '').trim().split(/\s+/).filter(Boolean);
     if (pts.length < 3) return false;
@@ -413,10 +415,9 @@ async function main() {
     throw e;
   });
   await page.waitForTimeout(1500);
-  // The chart cards sit far below the fold (token/interval selectors above), so
-  // scroll the price chart into view before screenshotting — otherwise the shot
+  // Scroll the price chart into view before screenshotting — otherwise the shot
   // captures the top of the screen (form fields) instead of the actual chart.
-  await page.getByTestId('chart-price').scrollIntoViewIfNeeded();
+  await page.getByTestId('trade-chart-price').scrollIntoViewIfNeeded();
   await page.waitForTimeout(1500);
   await page.screenshot({ path: `${SHOTS}/order-06-chart.png` });
   console.log('ok order-06-chart');
@@ -432,7 +433,7 @@ async function main() {
   await bp.screenshot({ path: `${SHOTS}/order-04-buyer-orders.png` });
   console.log('ok order-04-buyer-orders');
 
-  // The chart screen was opened via the nav menu; navigate back to the
+  // The Spot screen was opened via the nav menu; navigate back to the
   // seller's Orders screen (the sidebar 'Orders' lands on My Orders).
   await clickNav(page, 'Orders');
   await page.waitForTimeout(2000);

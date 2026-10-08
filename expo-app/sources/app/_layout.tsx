@@ -64,7 +64,6 @@ function AppShell() {
                         <Stack.Screen name="public-balance" options={{ headerShown: false }} />
                         <Stack.Screen name="blocks" options={{ headerShown: false }} />
                         <Stack.Screen name="network" options={{ headerShown: false }} />
-                        <Stack.Screen name="chart" options={{ headerShown: false }} />
                         <Stack.Screen name="dashboard" options={{ headerShown: false }} />
                         <Stack.Screen name="trade" options={{ headerShown: false }} />
                         <Stack.Screen name="p2p" options={{ title: t('p2p.title') }} />
