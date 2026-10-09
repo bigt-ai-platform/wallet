@@ -961,7 +961,9 @@ export class HttpService {
         tokenids: [tokenid],
         basetoken: baseToken,
         interval: String(intervalMinutes),
-        startDate: endDateMs - intervalMinutes * 60 * 1000,
+        // Cover enough intervals to fill the candle pane (≥24h) rather than a
+        // single bar, so the OHLC aggregation has data to work with.
+        startDate: endDateMs - Math.max(intervalMinutes * 60 * 1000 * 120, 24 * 60 * 60 * 1000),
         endDate: endDateMs,
       }
     );
