@@ -447,7 +447,13 @@ export default function TradeScreen() {
 
   const fmtNum = (v: number, maxFrac = 6) =>
     Number.isFinite(v) ? v.toLocaleString(undefined, { maximumFractionDigits: maxFrac }) : '0';
-  const fmtTime = (ms: number) => new Date(ms).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  // A bare clock time is ambiguous across days, so the AM/PM suffix is
+  // replaced by the date: "HH:mm:ss MM/DD" (24-hour).
+  const fmtTime = (ms: number) => {
+    const d = new Date(ms);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())} ${p(d.getMonth() + 1)}/${p(d.getDate())}`;
+  };
   const maxTotal = Math.max(book.asks[book.asks.length - 1]?.total ?? 0, book.bids[book.bids.length - 1]?.total ?? 0, 1);
   // Binance's buy/sell pressure split under the book.
   const bookDepth = book.askVol + book.bidVol;
