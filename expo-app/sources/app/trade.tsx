@@ -13,7 +13,7 @@ import { orderOnLayer1 } from '@/services/transaction';
 import { recordOrder } from '@/services/tracking';
 import { BC_DECIMALS, decimalsFor, orderPriceShift } from '@/lib/tokenformat';
 import { utcOffsetLabel } from '@/lib/timeformat';
-import { CopyIcon } from '@/components/Icons';
+import { CopyIcon, ExpandIcon, CloseIcon } from '@/components/Icons';
 import WalletUnlock from '@/components/WalletUnlock';
 import {
   PriceChart, VolumeChart, INTERVALS,
@@ -77,7 +77,7 @@ export default function TradeScreen() {
   const router = useRouter();
   const { theme } = useUnistyles();
   const { isUnlocked, publicInfo, getUnlockedWallet } = useWallet();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const isWide = width >= 820;
 
   const [tokenSearch, setTokenSearch] = React.useState('');
@@ -90,6 +90,10 @@ export default function TradeScreen() {
   const [intervalOpen, setIntervalOpen] = React.useState(false);
   const [chart, setChart] = React.useState<ChartData | null>(null);
   const [chartW, setChartW] = React.useState(320);
+  // Chart presentation: a close-price line (default, Binance's line type) or
+  // OHLC candles; and a full-screen mode that expands the pane.
+  const [chartMode, setChartMode] = React.useState<'line' | 'candles'>('line');
+  const [chartFull, setChartFull] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
 
@@ -651,7 +655,38 @@ export default function TradeScreen() {
     <View style={s.card} onLayout={(e) => setChartW(Math.max(e.nativeEvent.layout.width - 28, 160))}>
       <View style={s.chartHeader}>
         <Text style={s.cardTitle}>{selected ? `${selected.tokenname} / ${quote.tokenname}` : t('trade.title')}</Text>
-        {loading && <ActivityIndicator size="small" color={theme.colors.primary} />}
+        <View style={s.chartControls}>
+          {loading && <ActivityIndicator size="small" color={theme.colors.primary} />}
+          <View style={s.modeToggle} testID="trade-chart-mode">
+            <TouchableOpacity
+              onPress={() => setChartMode('line')}
+              style={[s.modeBtn, chartMode === 'line' && s.modeBtnActive]}
+              testID="trade-chart-mode-line"
+              accessibilityRole="button"
+              accessibilityState={{ selected: chartMode === 'line' }}
+            >
+              <Text style={[s.modeBtnText, chartMode === 'line' && s.modeBtnTextActive]}>{t('trade.line')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setChartMode('candles')}
+              style={[s.modeBtn, chartMode === 'candles' && s.modeBtnActive]}
+              testID="trade-chart-mode-candles"
+              accessibilityRole="button"
+              accessibilityState={{ selected: chartMode === 'candles' }}
+            >
+              <Text style={[s.modeBtnText, chartMode === 'candles' && s.modeBtnTextActive]}>{t('trade.candles')}</Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            onPress={() => setChartFull(true)}
+            style={s.expandBtn}
+            testID="trade-chart-expand"
+            accessibilityRole="button"
+            accessibilityLabel={t('trade.fullscreen')}
+          >
+            <ExpandIcon size={16} color={theme.colors.text.secondary} />
+          </TouchableOpacity>
+        </View>
       </View>
       {selected && (
         <View style={s.intervalRow} testID="trade-intervals">
@@ -698,6 +733,8 @@ export default function TradeScreen() {
             width={chartW}
             height={isWide ? 200 : 220}
             intervalMinutes={interval}
+            mode={chartMode}
+            lineColor={theme.colors.accent.blue}
             dividerColor={theme.colors.divider}
             textColor={theme.colors.text.secondary}
             posColor={theme.colors.positive}
@@ -874,6 +911,81 @@ export default function TradeScreen() {
           </View>
         </View>
       </ScrollView>
+
+      {/* Full-screen chart: the same pane expanded to the whole viewport. */}
+      <Modal visible={chartFull} animationType="fade" onRequestClose={() => setChartFull(false)}>
+        <View style={[s.fullScreen, { backgroundColor: theme.colors.groupped.background }]} testID="trade-chart-fullscreen">
+          <View style={s.fullHeader}>
+            <Text style={s.fullTitle} numberOfLines={1}>
+              {selected ? `${selected.tokenname} / ${quote.tokenname}` : t('trade.title')}
+            </Text>
+            <Text style={s.fullSub}>{intervalLabel}</Text>
+            <View style={s.modeToggle}>
+              <TouchableOpacity
+                onPress={() => setChartMode('line')}
+                style={[s.modeBtn, chartMode === 'line' && s.modeBtnActive]}
+                testID="trade-chart-fullscreen-mode-line"
+                accessibilityRole="button"
+                accessibilityState={{ selected: chartMode === 'line' }}
+              >
+                <Text style={[s.modeBtnText, chartMode === 'line' && s.modeBtnTextActive]}>{t('trade.line')}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => setChartMode('candles')}
+                style={[s.modeBtn, chartMode === 'candles' && s.modeBtnActive]}
+                testID="trade-chart-fullscreen-mode-candles"
+                accessibilityRole="button"
+                accessibilityState={{ selected: chartMode === 'candles' }}
+              >
+                <Text style={[s.modeBtnText, chartMode === 'candles' && s.modeBtnTextActive]}>{t('trade.candles')}</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              onPress={() => setChartFull(false)}
+              style={s.fullClose}
+              testID="trade-chart-fullscreen-close"
+              accessibilityRole="button"
+              accessibilityLabel={t('common.cancel')}
+            >
+              <CloseIcon size={20} color={theme.colors.text.primary} />
+            </TouchableOpacity>
+          </View>
+          {chart && chart.datas.length > 0 ? (
+            <View style={s.fullBody}>
+              <PriceChart
+                chart={chart}
+                width={width}
+                height={Math.round(height * 0.5)}
+                intervalMinutes={interval}
+                mode={chartMode}
+                lineColor={theme.colors.accent.blue}
+                dividerColor={theme.colors.divider}
+                textColor={theme.colors.text.secondary}
+                posColor={theme.colors.positive}
+                negColor={theme.colors.negative}
+                testID="trade-chart-fullscreen-price"
+              />
+              <View style={s.dateRow}>
+                <Text style={s.dateLabel}>{firstTime ? new Date(firstTime).toLocaleDateString() : ''}</Text>
+                <Text style={s.dateLabel}>{intervalLabel}</Text>
+                <Text style={s.dateLabel}>{lastTime ? new Date(lastTime).toLocaleDateString() : ''}</Text>
+              </View>
+              <VolumeChart
+                chart={chart}
+                width={width}
+                height={Math.round(height * 0.2)}
+                intervalMinutes={interval}
+                textColor={theme.colors.text.secondary}
+                posColor={theme.colors.positive}
+                negColor={theme.colors.negative}
+                testID="trade-chart-fullscreen-volume"
+              />
+            </View>
+          ) : (
+            <View style={s.emptyCard}><Text style={s.emptyText}>{t('chart.noData')}</Text></View>
+          )}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -912,6 +1024,19 @@ const s = StyleSheet.create((theme) => ({
 
   // chart
   chartHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  chartControls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  modeToggle: { flexDirection: 'row', borderRadius: 6, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border },
+  modeBtn: { paddingHorizontal: 8, paddingVertical: 4, backgroundColor: theme.colors.groupped.background },
+  modeBtnActive: { backgroundColor: theme.colors.primary },
+  modeBtnText: { fontSize: 11, fontWeight: '600', color: theme.colors.text.secondary },
+  modeBtnTextActive: { color: '#FFFFFF' },
+  expandBtn: { padding: 4, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.groupped.background },
+  fullScreen: { flex: 1 },
+  fullHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8 },
+  fullTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary, flexShrink: 1 },
+  fullSub: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary },
+  fullClose: { marginLeft: 'auto', padding: 6 },
+  fullBody: { flex: 1 },
   intervalRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6 },
   intervalSelect: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.groupped.background },
   intervalSelectText: { fontSize: 12, fontWeight: '700', color: theme.colors.text.primary },
