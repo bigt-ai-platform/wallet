@@ -1,194 +1,167 @@
-# P2P-Abwicklung — Cross-Rail-Swap mit KI-Prüfung
+# P2P-Abwicklung — wallet-nativer Tausch über zwei Zahlungswege
 
-**Status: Zielentwurf, nicht umgesetzt.** Alles nachfolgende beschreibt den Abwicklungs­fluss, den wir bauen: 2-von-3-P2SH-Eskrow auf Bigtangle L0 und echte PayPal-API-Prüfung. Der heute laufende Demo-Build ist eine State Machine auf Postgres mit simulierter Fiat-Strecke. Screenshots stammen aus diesem Demo-Build; das Design liegt im dai-Repository, `docs/p2p.md`.
+**Worum es geht.** Ein Peer-to-Peer-Tausch zwischen Krypto auf **Bigtangle L0**
+und Fiat über **PayPal** (oder die CNY-Wege — WeChat Pay / Alipay / Bank). Der
+Verkäufer hinterlegt Token in einer **2-von-3-P2SH-Adresse** (Verkäufer, Käufer,
+Engine); der Käufer zahlt eine Betragsgenaue Fiat-Forderung; die Engine weist die
+Zahlung nach und der Escrow wird freigegeben. Jeder unwiderrufliche Schritt wird
+mit dem eigenen PQ-Schlüssel der Wallet signiert, und die Engine kann einen
+Transfer immer nur **mit-signieren** — sie hält niemals dein Geld.
 
-Diese Anleitung demonstriert den KI-nativen P2P-Abwicklungsfluss: USDT zum Verkauf einstellen, mit einem Käufer matchen, Eskrow-Sperre, Fiat-Zahlung mit automatischer Prüfung, Eskrow-Freigabe und Rückerstattung bei Timeout. Kein manueller „Bestätigen"-Button — die Settlement Engine prüft die Zahlung anhand eines PayPal-Webhooks.
+**Wo.** Der Bildschirm **P2P** in der Wallet (Seitenleiste → Trade → P2P). Alles
+unten stammt aus diesem Bildschirm im lokalen Demo-Build.
 
----
+**Demo vs. Live.** Die Screenshots stammen aus dem Demo-Build: Die Engine läuft
+im Mock-PayPal-Modus (gestubbte Rechnungs-URLs und synthetische Transaktions-
+Hashes), und die Schritte Lock/Verify/Release werden mit einem lokalen
+Engine-Schlüssel signiert. Der Zustandsautomat, die Signaturen, das
+Append-only-Ereignisprotokoll und der On-Chain-Audit-Anker sind echt; nur die
+externen PayPal-Aufrufe und der L0-Broadcast sind gestubbt.
 
-## 1. Dashboard-Übersicht
-
-Das P2P-Dashboard zeigt alle aktiven Swaps mit Status, Kurs und Transaktionsreferenzen.
-
-![Dashboard](demo-output/screenshots/p2p-dashboard-de.png)
-
-Das Dashboard zeigt alle aktiven Swaps mit Status, Kurs und Transaktionsreferenzen. Jede Karte zeigt die Swap-ID, das Asset-Paar (z. B. 100 USDT ⇄ 101 USD), ein farbcodiertes Status-Badge und eine ausklappbare Timeline.
-
----
-
-## 2. Verkäufer stellt USDT ein
-
-Übergibt eine DID-signierte Limit-Order an die Settlement Engine.
-
-```typescript
-const signature = signPayload(
-  { sellerDid, giveToken: "USDT", giveAmount: "100",
-    giveChain: "L0", wantCurrency: "USD",
-    wantAmount: "101", wantRail: "paypal" },
-  sellerPriv,
-);
-```
-
-Der Verkäufer übergibt eine signierte Limit-Order: 100 USDT für 101 USD über PayPal verkaufen. Die Settlement Engine validiert die DID-Signatur. Status: ACTIVE. Die Order läuft nach validUntil ab.
+**Kein manuelles „Bestätigen“.** Auf dem PayPal-Weg gibt es keinen
+Verkäufer-„Bestätigen“-Knopf — die Engine prüft die Zahlung anhand ihrer eigenen
+Nachweise. (Die CNY-Wege ohne Webhook nutzen stattdessen eine ausdrückliche
+Bestätigung durch den Verkäufer; siehe `docs/p2pcny.md`.)
 
 ---
 
-## 3. Käufer matcht die Order
-
-Der Käufer übergibt eine signierte Market-Order. Der Kurs wird zum Matchzeitpunkt über einen Oracle gesichert, der Rechnungsbetrag ist ab diesem Moment fest.
-
-```typescript
-const signature = signPayload(
-  { orderId, buyerDid, amount: "100",
-    receiveAddress, paypalAccount },
-  buyerPriv,
-);
-```
-
-Der Käufer matcht die Order mit einer DID-signierten Market-Order und liefert die Adresse für die Eskrow-Freigabe sowie das zu zahlende PayPal-Konto. Status: MATCHED. Für den Lebenszyklus entsteht eine eindeutige swapId.
-
----
-
-## 4. Verkäufer sperrt USDT im 2-von-3-Eskrow
-
-Die Eskrow-Adresse ist ein P2SH-Skript mit drei Schlüsseln — Verkäufer, Käufer, Engine — und einer Schwelle von zwei.
-
-```typescript
-// redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
-const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "100");
-```
-
-Der Verkäufer finanziert die Eskrow-Adresse auf Bigtangle L0. Die Engine belegt die Sperre mit `getTransactionStatus` — `CONFIRMED`, Ziel `escrowAddress`, Betrag 100 — und schlägt fehlgeschlossen, wenn einer der drei Prüfpunkte nicht gilt. Status: ESCROW_LOCKED. Der Käufer sieht die gesicherten Mittel, bevor er Fiat sendet.
-
----
-
-## 5. Engine stellt Rechnung, Käufer zahlt via PayPal
-
-Die Engine erstellt eine PayPal-Rechnung mit exaktem Betrag und übergibt die gehostete URL an den Käufer.
-
-```typescript
-const res = await fetch("/api/p2p/payments/invoice", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", currency: "USD" }),
-});
-// → gehostete Checkout-URL; Rechnungsnummer = swapId
-```
-
-Der Käufer zahlt die gehostete Rechnung. Die Engine berührt das Geld nicht — PayPal hält es. Keine Bestätigung durch den Verkäufer nötig. Status: PAYMENT_PENDING. Der Timeout-Timer startet.
-
----
-
-## 6. Engine prüft Zahlung automatisch
-
-**Kerninnovation**: kein menschlicher „Bestätigen"-Button. Die Zahlung wird von PayPal belegt, nicht von einer Partei behauptet.
-
-```typescript
-// POST /api/webhooks/paypal — SHA256withRSA over transmissionId|time|webhookId|crc32(body)
-const ok = verifyPayPalWebhook(rawBody, headers);
-if (ok) await transitions(swapId, "verify");
-```
-
-Die Engine prüft den Webhook `INVOICING.INVOICE.PAID`, dedupliziert über `event.id`. Das ersetzt Binance P2Ps manuellen „Bestätigen"-Button. Kein Verkäufer kann den Nicht-Eingang der Zahlung bestreiten. Status: PAYMENT_VERIFIED.
-
----
-
-## 7. Engine und Käufer geben das Eskrow frei
-
-Zwei Signaturen erfüllen das Skript: die des Käufers und die der Engine. Keine einzelne Partei kann die Mittel bewegen.
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await buyerKey.signInput(tx, 0),
-  await engineKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-Der Freigabe-Spend wird zusammengesetzt und an `receiveAddress` broadcastet. Status: ESCROW_RELEASED. Der Käufer hält jetzt die Token; der Restaufgabe der Engine ist die Fiat-Auszahlung.
-
----
-
-## 8. Engine zahlt Verkäufer aus
-
-Die Engine sendet USD über Payouts v1 an das PayPal-Konto des Verkäufers, idempotent pro Swap.
-
-```typescript
-const res = await fetch("/api/p2p/payments/payout", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", paypalAccount: sellerPaypal }),
-});
-// → PayPal-Request-Id: swapId, sender_batch_id: swapId
-```
-
-Die Engine sendet USD an das PayPal-Konto des Verkäufers. Swap COMPLETED. Gesamtdauer: ~3-5 Minuten. Alles DID-signiert, jeder Schritt on-chain oder bei PayPal prüfbar.
-
----
-
-## 9. Timeout oder Fehler → Rückerstattung
-
-Wird die Rechnung nie bezahlt, unterzeichnen Engine und Verkäufer dasselbe Skript zurück an den Verkäufer.
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await engineKey.signInput(tx, 0),
-  await sellerKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-Die Rückerstattung braucht weder Zustimmung des Käufers noch einen Timelock — die Schwelle wird mit den anderen zwei Schlüsseln erreicht. Status: EXPIRED → ESCROW_REFUNDED. Keine Partei hält jemals die Mittel der anderen.
-
----
-
-## 10. Verlaufsansicht
-
-Abgeschlossene, abgelaufene und stornierte Swaps sind in der Verlaufsseite sichtbar.
-
-![Verlauf](demo-output/screenshots/p2p-history-de.png)
-
-Die Verlaufsseite listet abgeschlossene, abgelaufene und stornierte Swaps. Jeder Eintrag zeigt das Asset-Paar, den Endstatus, die Timeline-Schritte und die DIDs der Parteien.
-
----
-
-## Vergleich: Binance P2P vs. AI-Abwicklung
-
-| Funktion | Binance P2P | AI-Abwicklung |
-|---------|-------------|---------------|
-| Fiat-Prüfung | Verkäufer klickt „Bestätigen" (Ehrensystem) | PayPal-Webhook, RSA-verifiziert (deterministisch) |
-| Fiat-Custody | P2P (Käufer → Verkäufer) | PayPal hält bis zur Auszahlung (Käufer → PayPal → Verkäufer) |
-| Eskrow | Internes Ledger | 2-von-3-P2SH auf Bigtangle L0 (prüfbar) |
-| Rückerstattung | Support-Ticket | Engine + Verkäufer unterzeichnen, ohne Zustimmung des Käufers |
-| Streitlösung | Menschlicher Support (Tage) | On-chain-Tx-Beleg + PayPal-Ereignis (Minuten) |
-
----
-
-## Vollständige Timeline
+## Der Ablauf auf einen Blick
 
 ```
-MATCHED          14:20:00  Kurs gesichert, Rechnungsbetrag fest
-ESCROW_LOCKED    14:23:15  L0-Tx CONFIRMED auf der 2-von-3-Adresse
-PAYMENT_PENDING  14:24:00  Rechnung INV-7f3c91 erstellt
-PAYMENT_VERIFIED 14:24:10  Webhook INVOICING.INVOICE.PAID, RSA-verifiziert
-ESCROW_RELEASED  14:24:30  Ko-signierter Spend an receiveAddress
-COMPLETED        14:25:00  Auszahlungslauf PAYOUT-abc SUCCESS
+ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──payment──▶ PAYMENT_PENDING
+                                                                     │
+PAYMENT_PENDING ──verify──▶ PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──payout──▶ COMPLETED
 ```
+
+| # | Schritt | Wer handelt | On-Chain / Engine |
+|---|---|---|---|
+| 1 | Verkäufer stellt eine signierte Verkaufsorder ein | Verkäufer | Order gespeichert, nicht finanziert |
+| 2 | Käufer matcht (Empfangsadresse + PayPal-Konto) | Käufer | `swapId` erzeugt, Escrow-Adresse abgeleitet |
+| 3 | Verkäufer finanziert den 2-von-3-Escrow, Engine weist den Lock nach | Verkäufer + Engine | `ESCROW_LOCKED` auf L0 |
+| 4 | Käufer zahlt die betragsgenaue Rechnung und meldet sie | Käufer | `PAYMENT_PENDING` |
+| 5 | Engine verifiziert die Zahlung selbst | Engine | `PAYMENT_VERIFIED` |
+| 6 | Engine + Käufer signieren die Freigabe, Token bewegen sich | Engine + Käufer | `ESCROW_RELEASED` |
+| 7 | Engine zahlt den Verkäufer über PayPal Payouts aus | Engine | `COMPLETED` |
+
+Jeder Übergang wird als `social.p2p-swap`-Record auf der L1-SOCIAL-Kette
+verankert, sodass der gesamte Lebenszyklus öffentlich auditierbar ist, ohne die
+PayPal-Daten einer Seite offenzulegen.
 
 ---
 
-## Vollständiger Demo-Ablauf
+## 1. Der Verkäufer stellt eine Verkaufsorder ein
 
-```typescript
-// 1. Verkäufer sendet signierte Limit-Order (POST /api/p2p/orders)
-// 2. Käufer matcht mit signierter Market-Order (POST /api/p2p/orders/:id/match)
-// 3. Verkäufer finanziert 2-von-3-P2SH-Eskrow auf L0; Engine prüft (getTransactionStatus)
-// 4. Engine stellt PayPal-Rechnung; Käufer zahlt (POST /api/p2p/payments/invoice)
-// 5. Engine prüft Webhook INVOICING.INVOICE.PAID (POST /api/webhooks/paypal)
-// 6. Engine + Käufer ko-signieren den Freigabe-Spend (POST .../transitions, action: release)
-// 7. Engine zahlt Verkäufer aus (POST /api/p2p/payments/payout)
-// 8. Beide Parteien sehen COMPLETED-Status auf dem Dashboard
-```
+Im Tab **Open sells** füllst du die Order aus: das Token und die Menge, die du
+gibst, den gewünschten Fiat-Preis, die Währung, die Chain des Tokens und die
+**Zahlungsmethode** (PayPal oder ein CNY-Weg). Die Konditionen werden beim
+Einstellen in die Order geschrieben, daher wird dies mit deinem Wallet-Schlüssel
+signiert.
 
-Entscheidender Unterschied zu Binance P2P: **kein „Bestätigen"-Button des Verkäufers.** Die Zahlung wird durch einen PayPal-Webhook belegt, und die Mittel liegen in einem 2-von-3-Skript, das keine Partei allein kontrolliert — deterministisch, prüfbar, sofort.
+![Das Verkaufsorder-Formular, PayPal-Weg gewählt](/demo/p2p/p2p-01-order-de.png)
+
+Nach dem Einstellen ist die Order `ACTIVE` in der Engine und erscheint im
+öffentlichen Orderbuch (ohne persönliche Daten):
+
+![Die Order ist live im Buch](/demo/p2p/p2p-02-active-de.png)
+
+---
+
+## 2. Der Käufer matcht
+
+Der Käufer öffnet die Order und gibt die **Empfangsadresse** für die
+freigegebenen Token sowie das **PayPal-Konto** an, das die Rechnung erhalten soll
+(plus eine E-Mail für die Rechnung). Das Matchen verpflichtet den Käufer zu
+zahlen, daher wird auch dies signiert:
+
+![Der Käufer trägt Empfangsadresse und PayPal-Konto ein](/demo/p2p/p2p-03-match-de.png)
+
+Die Engine erzeugt eine eindeutige `swapId` für den Lebenszyklus, und der Tausch
+geht in `MATCHED` über, sichtbar im Tab **My swaps** des Käufers:
+
+![Der Tausch ist MATCHED](/demo/p2p/p2p-04-matched-de.png)
+
+---
+
+## 3. Escrow-Lock — der Verkäufer finanziert L0
+
+Der Verkäufer sendet die Token an die deterministische 2-von-3-Escrow-Adresse
+und meldet den `txHash` der Transaktion. Die Engine weist den Lock aus der Chain
+nach (`CONFIRMED`, Ziel `escrowAddress`, Betrag) und schlägt fehl, wenn eine
+Prüfung nicht hält. Der Tausch ist nun `ESCROW_LOCKED`:
+
+![Der Verkäufer sperrt den Escrow](/demo/p2p/p2p-05-escrow-locked-de.png)
+
+Der Käufer sieht die Mittel **vor** dem Senden von Fiat gesichert und erhält,
+sobald der Lock nachgewiesen ist, eine Aktion **I have paid** (Ich habe bezahlt):
+
+![Der Käufer sieht den gesperrten Escrow](/demo/p2p/p2p-06-buyer-locked-de.png)
+
+---
+
+## 4. Der Käufer zahlt
+
+Der Käufer zahlt die gehostete PayPal-Rechnung (PayPal hält das Geld — die
+Engine nie) und meldet die Zahlung. Dies ist nur ein *Hinweis*; die eigentliche
+Prüfung ist der Nachweis der Engine. Der Tausch ist `PAYMENT_PENDING`, und ein
+Timeout-Timer startet — wird die Rechnung nie bezahlt, kann der Verkäufer
+ablaufen lassen und den Escrow ohne Zustimmung des Käufers erstatten:
+
+![PAYMENT_PENDING](/demo/p2p/p2p-07-payment-pending-de.png)
+
+---
+
+## 5. Die Engine verifiziert die Zahlung
+
+Es ist keine Verkäuferbestätigung beteiligt. Die Engine prüft die Zahlung aus
+ihrer eigenen Quelle und setzt den Tausch auf `PAYMENT_VERIFIED` — der Escrow
+kann nun an die Empfangsadresse des Käufers freigegeben werden:
+
+![PAYMENT_VERIFIED](/demo/p2p/p2p-08-payment-verified-de.png)
+
+---
+
+## 6. Release — die Mittel bewegen sich
+
+Release bewegt die hinterlegten Token: Engine und Käufer signieren jeweils eine
+Ausgabe des Escrow-Outputs, und zwei Signaturen erfüllen das 2-von-3-Skript. Die
+Token landen auf der Empfangsadresse des Käufers, der Tausch ist
+`ESCROW_RELEASED`:
+
+![ESCROW_RELEASED](/demo/p2p/p2p-09-escrow-released-de.png)
+
+---
+
+## 7. Auszahlung — der Verkäufer erhält das Fiat
+
+Der letzte Schritt zahlt den Verkäufer über PayPal Payouts aus, und der Tausch
+erreicht `COMPLETED`:
+
+![COMPLETED](/demo/p2p/p2p-10-completed-de.png)
+
+Das Auszahlungsergebnis (`SUCCESS` / `FAILED` / `HELD` / `ONHOLD`) kommt per
+PayPal-Webhook oder wird als Fallback gepollt; ein Fehler kann aus `COMPLETED`
+wiederholt werden, ohne den Handel neu zu machen.
+
+---
+
+## Was dich schützt
+
+| Risiko | Gegenmaßnahme |
+|---|---|
+| Gegenseite springt ab | Mittel liegen in einer 2-von-3-P2SH-Adresse; niemand kann sie allein bewegen |
+| Unter- oder Überzahlung | Die Rechnung ist betragsgenau, sie wird also voll oder gar nicht bezahlt |
+| Falsche Zahlungsbehauptung | Die Engine verifiziert die Zahlung selbst — der Zahler kann sie nicht selbst behaupten |
+| Engine wird bösartig | Nur-Engine-Schritte benötigen die Engine-DID-Signatur; jeder Übergang wird verankert und ist öffentlich auditierbar |
+| Rückbuchung nach Release | `PAYMENT.CAPTURE.REVERSED` setzt eine Sperre: Vorwärtsschritte stoppen, Refund/Expire bleiben erreichbar |
+| Streitfall | `CUSTOMER.DISPUTE.*` pausiert den Tausch bis zur Klärung |
+| Auszahlungsfehler | `HELD`/`FAILED`/`BLOCKED` sind erstklassige Zustände; mit derselben Auszahlungsreferenz wiederholen |
+
+---
+
+## Live gehen
+
+Die Demo läuft gegen den In-Repo-Settlementservice mit Mock-PayPal. Für den
+echten Ablauf brauchst du ein PayPal-Business-Konto mit aktivierten Payouts,
+dessen API-Zugangsdaten und Webhook-ID sowie den an den L0-Broadcast
+angeschlossenen Escrow-Signer. Bis dahin läuft die Engine mit demselben
+Zustandsautomaten, ohne echtes Geld zu bewegen.

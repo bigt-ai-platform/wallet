@@ -1,194 +1,165 @@
-# Liquidación P2P — Swap entre rails con verificación IA
+# Liquidación P2P — intercambio entre rieles nativo del wallet
 
-**Estado: diseño objetivo, sin construir.** Todo lo que sigue describe el flujo de liquidación que estamos construyendo: depósito en garantía P2SH de 2-de-3 en Bigtangle L0 y verificación real contra la API de PayPal. La versión de demostración actual es una máquina de estados sobre Postgres con la pata fiat simulada. Las capturas son de esa versión; el diseño vive en el repositorio dai, `docs/p2p.md`.
+**Qué es.** Un intercambio entre pares de cripto en **Bigtangle L0** y fiat en
+**PayPal** (o los rieles CNY — WeChat Pay / Alipay / banco). El vendedor deposita
+los tokens en una **dirección P2SH 2-de-3** (vendedor, comprador, motor); el
+comprador paga una obligación fiat de **importe exacto**; el motor demuestra el
+pago y libera el depósito. Cada paso irreversible se firma con la clave PQ del
+wallet, y el motor solo puede **co-firmar** un gasto — nunca custodia tus fondos.
 
-Esta guía demuestra el flujo de liquidación P2P nativo de IA: publicar USDT en venta, emparejar con un comprador, bloqueo del depósito, pago fiat con verificación automática, liberación del depósito y reembolso por tiempo agotado. Sin botón manual de «Confirmar» — el Motor de Liquidación verifica el pago mediante un webhook de PayPal.
+**Dónde.** La pantalla **P2P** del wallet (barra lateral → Trade → P2P). Todo lo
+que sigue está capturado desde esa pantalla en la compilación de demostración
+local.
 
----
+**Demo vs. real.** Las capturas provienen de la demo: el motor funciona en modo
+PayPal simulado (URL de factura y hashes de transacción sintéticos) y los pasos
+lock/verify/release se firman con una clave de motor local. La máquina de estados,
+las firmas, el registro de eventos de solo-anexado y el anclaje de auditoría
+on-chain son reales; solo se simulan las llamadas externas a PayPal y la
+difusión en L0.
 
-## 1. Vista del panel
-
-El panel P2P muestra todos los swaps activos con su estado, tasa y referencias de transacción.
-
-![Panel](demo-output/screenshots/p2p-dashboard-es.png)
-
-El panel muestra todos los swaps activos con estado, tasa y referencias de transacción. Cada tarjeta muestra el ID del swap, el par de activos (p. ej. 100 USDT ⇄ 101 USD), una insignia de estado con código de colores y una línea de tiempo desplegable.
-
----
-
-## 2. El vendedor publica USDT
-
-Envía una orden limitada firmada con DID al Motor de Liquidación.
-
-```typescript
-const signature = signPayload(
-  { sellerDid, giveToken: "USDT", giveAmount: "100",
-    giveChain: "L0", wantCurrency: "USD",
-    wantAmount: "101", wantRail: "paypal" },
-  sellerPriv,
-);
-```
-
-El vendedor envía una orden limitada firmada: vender 100 USDT por 101 USD vía PayPal. El Motor de Liquidación valida la firma DID. Estado: ACTIVE. La orden caduca tras validUntil.
+**Sin «Confirmar» manual.** En el riel PayPal no hay botón de «Confirmar» del
+vendedor — el motor verifica el pago a partir de su propia evidencia. (Los rieles
+CNY, que no tienen webhook, usan en su lugar una confirmación explícita del
+vendedor; ver `docs/p2pcny.md`.)
 
 ---
 
-## 3. El comprador empareja la orden
-
-El comprador envía una orden de mercado firmada. La tasa se fija al momento del emparejamiento mediante un oráculo, y el importe de la factura queda fijo desde ese instante.
-
-```typescript
-const signature = signPayload(
-  { orderId, buyerDid, amount: "100",
-    receiveAddress, paypalAccount },
-  buyerPriv,
-);
-```
-
-El comprador empareja la orden con una orden de mercado firmada con DID, indicando la dirección que debe recibir la liberación y la cuenta PayPal a abonar. Estado: MATCHED. Se crea un swapId único para el ciclo de vida.
-
----
-
-## 4. El vendedor bloquea USDT en un depósito de 2-de-3
-
-La dirección de depósito es un script P2SH con tres claves — vendedor, comprador, motor — y un umbral de dos.
-
-```typescript
-// redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
-const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "100");
-```
-
-El vendedor financia la dirección de depósito en Bigtangle L0. El Motor demuestra el bloqueo con `getTransactionStatus` — `CONFIRMED`, destino `escrowAddress`, importe 100 — y falla en modo cerrado si cualquiera de las tres comprobaciones no se cumple. Estado: ESCROW_LOCKED. El comprador ve los fondos asegurados antes de enviar el fiat.
-
----
-
-## 5. El Motor emite la factura, el comprador paga con PayPal
-
-El Motor crea una factura PayPal de importe exacto y entrega la URL alojada al comprador.
-
-```typescript
-const res = await fetch("/api/p2p/payments/invoice", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", currency: "USD" }),
-});
-// → URL de pago alojada; número de factura = swapId
-```
-
-El comprador paga la factura alojada. El Motor no toca el dinero — PayPal lo retiene. No se necesita confirmación del vendedor. Estado: PAYMENT_PENDING. Arranca el temporizador de expiración.
-
----
-
-## 6. El Motor verifica automáticamente el pago
-
-**Innovación clave**: ningún botón humano de «Confirmar». El pago lo demuestra PayPal, no lo afirma una parte.
-
-```typescript
-// POST /api/webhooks/paypal — SHA256withRSA over transmissionId|time|webhookId|crc32(body)
-const ok = verifyPayPalWebhook(rawBody, headers);
-if (ok) await transitions(swapId, "verify");
-```
-
-El Motor verifica el webhook `INVOICING.INVOICE.PAID`, deduplicado por `event.id`. Esto sustituye al botón manual de «Confirmar» de Binance P2P. Ningún vendedor puede negar la recepción. Estado: PAYMENT_VERIFIED.
-
----
-
-## 7. El Motor y el comprador liberan el depósito
-
-Dos firmas satisfacen el script: la del comprador y la del motor. Ninguna parte por sí sola puede mover los fondos.
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await buyerKey.signInput(tx, 0),
-  await engineKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-El gasto de liberación se ensambla y se emite hacia `receiveAddress`. Estado: ESCROW_RELEASED. El comprador ya tiene los tokens; el trabajo restante del motor es el pago en fiat.
-
----
-
-## 8. El Motor paga al vendedor
-
-El Motor envía USD a la cuenta PayPal del vendedor mediante Payouts v1, de forma idempotente por swap.
-
-```typescript
-const res = await fetch("/api/p2p/payments/payout", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", paypalAccount: sellerPaypal }),
-});
-// → PayPal-Request-Id: swapId, sender_batch_id: swapId
-```
-
-El Motor envía USD a la cuenta PayPal del vendedor. Swap COMPLETED. Tiempo total: ~3-5 minutos. Todo firmado con DID, cada paso auditable en cadena o en PayPal.
-
----
-
-## 9. Tiempo agotado o fallo → reembolso
-
-Si la factura nunca se paga, el motor y el vendedor cosignan el mismo script de vuelta al vendedor.
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await engineKey.signInput(tx, 0),
-  await sellerKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-El reembolso no requiere consentimiento del comprador ni un bloqueo temporal — el umbral se alcanza con las otras dos claves. Estado: EXPIRED → ESCROW_REFUNDED. Ninguna parte retiene nunca los fondos de la otra.
-
----
-
-## 10. Vista de historial
-
-Los swaps completados, expirados y cancelados se ven en la página de historial.
-
-![Historial](demo-output/screenshots/p2p-history-es.png)
-
-La página de historial lista los swaps completados, expirados y cancelados. Cada entrada muestra el par de activos, el estado final, los pasos de la línea de tiempo y los DID de las partes.
-
----
-
-## Comparativa: Binance P2P vs liquidación IA
-
-| Función | Binance P2P | Liquidación IA |
-|---------|-------------|---------------|
-| Verificación fiat | El vendedor pulsa «Confirmar» (honor) | Webhook de PayPal, verificado con RSA (determinista) |
-| Custodia fiat | P2P (comprador → vendedor) | PayPal retiene hasta el pago (comprador → PayPal → vendedor) |
-| Depósito | Libro interno | P2SH de 2-de-3 en Bigtangle L0 (verificable) |
-| Reembolso | Ticket de soporte | Motor + vendedor cosignan, sin consentimiento del comprador |
-| Resolución de disputas | Soporte humano (días) | Prueba de transacción en cadena + evento PayPal (minutos) |
-
----
-
-## Línea de tiempo completa
+## El flujo de un vistazo
 
 ```
-MATCHED          14:20:00  Tasa fijada, importe de factura fijo
-ESCROW_LOCKED    14:23:15  Tx L0 CONFIRMED en la dirección de 2-de-3
-PAYMENT_PENDING  14:24:00  Factura INV-7f3c91 emitida
-PAYMENT_VERIFIED 14:24:10  Webhook INVOICING.INVOICE.PAID, verificado con RSA
-ESCROW_RELEASED  14:24:30  Gasto cosignado hacia receiveAddress
-COMPLETED        14:25:00  Lote de pago PAYOUT-abc SUCCESS
+ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──payment──▶ PAYMENT_PENDING
+                                                                     │
+PAYMENT_PENDING ──verify──▶ PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──payout──▶ COMPLETED
 ```
+
+| # | Paso | Quién actúa | On-chain / motor |
+|---|---|---|---|
+| 1 | El vendedor publica una orden de venta firmada | vendedor | orden guardada, sin financiar |
+| 2 | El comprador hace match (dirección de recepción + cuenta PayPal) | comprador | se crea `swapId`, se deriva la dirección de depósito |
+| 3 | El vendedor financia el depósito 2-de-3, el motor prueba el bloqueo | vendedor + motor | `ESCROW_LOCKED` en L0 |
+| 4 | El comprador paga la factura de importe exacto y la reporta | comprador | `PAYMENT_PENDING` |
+| 5 | El motor verifica el pago por sí mismo | motor | `PAYMENT_VERIFIED` |
+| 6 | Motor + comprador co-firman la liberación, los tokens se mueven | motor + comprador | `ESCROW_RELEASED` |
+| 7 | El motor paga al vendedor vía PayPal Payouts | motor | `COMPLETED` |
+
+Cada transición se ancla como un registro `social.p2p-swap` en la cadena
+L1-SOCIAL, de modo que todo el ciclo de vida es auditable públicamente sin
+exponer los datos de PayPal de ninguna parte.
 
 ---
 
-## Flujo completo de la demostración
+## 1. El vendedor publica una orden de venta
 
-```typescript
-// 1. El vendedor envía orden limitada firmada (POST /api/p2p/orders)
-// 2. El comprador empareja con orden de mercado firmada (POST /api/p2p/orders/:id/match)
-// 3. El vendedor financia el depósito P2SH de 2-de-3 en L0; el motor lo demuestra (getTransactionStatus)
-// 4. El Motor emite factura PayPal; el comprador paga (POST /api/p2p/payments/invoice)
-// 5. El Motor verifica el webhook INVOICING.INVOICE.PAID (POST /api/webhooks/paypal)
-// 6. Motor + comprador cosignan el gasto de liberación (POST .../transitions, action: release)
-// 7. El Motor paga al vendedor (POST /api/p2p/payments/payout)
-// 8. Ambas partes ven el estado COMPLETED en el panel
-```
+En la pestaña **Open sells**, completa la orden: el token y la cantidad que
+entregas, el precio fiat que quieres, la moneda, la cadena del token y el
+**método de pago** (PayPal o un riel CNY). Los términos se fijan en la orden al
+publicarla, así que esto se firma con la clave de tu wallet.
 
-Diferencia clave con Binance P2P: **sin botón de «Confirmar» del vendedor.** El pago lo demuestra un webhook de PayPal y los fondos residen en un script de 2-de-3 que ninguna parte controla por sí sola — determinista, auditable, instantáneo.
+![El formulario de orden de venta, riel PayPal elegido](/demo/p2p/p2p-01-order-es.png)
+
+Una vez publicada, la orden es `ACTIVE` en el motor y aparece en el libro de
+órdenes público (sin datos personales):
+
+![La orden está viva en el libro](/demo/p2p/p2p-02-active-es.png)
+
+---
+
+## 2. El comprador hace match
+
+El comprador abre la orden y facilita la **dirección de recepción** de los tokens
+liberados y la **cuenta PayPal** a la que facturar (y un correo para la factura).
+El match compromete al comprador a pagar, así que también se firma:
+
+![El comprador rellena la dirección de recepción y la cuenta PayPal](/demo/p2p/p2p-03-match-es.png)
+
+El motor crea un `swapId` único para el ciclo de vida y el intercambio pasa a
+`MATCHED`, visible en la pestaña **My swaps** del comprador:
+
+![El intercambio está MATCHED](/demo/p2p/p2p-04-matched-es.png)
+
+---
+
+## 3. Bloqueo del depósito — el vendedor financia L0
+
+El vendedor envía los tokens a la dirección de depósito determinista 2-de-3 y
+reporta el `txHash` de la transferencia. El motor prueba el bloqueo desde la
+cadena (`CONFIRMED`, destino `escrowAddress`, importe) y falla si alguna
+comprobación no se cumple. El intercambio es ahora `ESCROW_LOCKED`:
+
+![El vendedor bloquea el depósito](/demo/p2p/p2p-05-escrow-locked-es.png)
+
+El comprador ve los fondos asegurados **antes** de enviar fiat alguno, y obtiene
+una acción **I have paid** (He pagado) en cuanto se prueba el bloqueo:
+
+![El comprador ve el depósito bloqueado](/demo/p2p/p2p-06-buyer-locked-es.png)
+
+---
+
+## 4. El comprador paga
+
+El comprador paga la factura alojada de PayPal (PayPal custodia el dinero —
+nunca el motor) y reporta el pago. Esto es solo una *pista*; la verificación real
+es la evidencia propia del motor. El intercambio es `PAYMENT_PENDING`, y arranca
+un temporizador de espera — si la factura nunca se paga, el vendedor puede
+expirar y reembolsar el depósito sin el consentimiento del comprador:
+
+![PAYMENT_PENDING](/demo/p2p/p2p-07-payment-pending-es.png)
+
+---
+
+## 5. El motor verifica el pago
+
+No interviene ninguna confirmación del vendedor. El motor comprueba el pago
+desde su propia fuente y avanza el intercambio a `PAYMENT_VERIFIED` — el depósito
+ya puede liberarse a la dirección de recepción del comprador:
+
+![PAYMENT_VERIFIED](/demo/p2p/p2p-08-payment-verified-es.png)
+
+---
+
+## 6. Liberación — los fondos se mueven
+
+La liberación mueve los tokens depositados: el motor y el comprador firman cada
+uno un gasto de la salida del depósito, y dos firmas satisfacen el script 2-de-3.
+Los tokens llegan a la dirección de recepción del comprador y el intercambio es
+`ESCROW_RELEASED`:
+
+![ESCROW_RELEASED](/demo/p2p/p2p-09-escrow-released-es.png)
+
+---
+
+## 7. Pago — el vendedor recibe el fiat
+
+El último paso paga al vendedor mediante PayPal Payouts, y el intercambio llega a
+`COMPLETED`:
+
+![COMPLETED](/demo/p2p/p2p-10-completed-es.png)
+
+El resultado del pago (`SUCCESS` / `FAILED` / `HELD` / `ONHOLD`) llega por webhook
+de PayPal o se consulta como respaldo; un fallo puede reintentarse desde
+`COMPLETED` sin rehacer el intercambio.
+
+---
+
+## Qué te protege
+
+| Riesgo | Mitigación |
+|---|---|
+| La contraparte se marcha | Los fondos están en una dirección P2SH 2-de-3; nadie puede moverlos solo |
+| Pago de menos o de más | La factura es de importe exacto: se paga entera o queda sin pagar |
+| Reclamación de pago falsa | El motor verifica el pago por sí mismo — el pagador no puede autoatribuírselo |
+| Motor malicioso | Los pasos exclusivos del motor exigen la firma DID del motor; cada transición se ancla y es auditable públicamente |
+| Contracargo tras la liberación | `PAYMENT.CAPTURE.REVERSED` activa un congelamiento: los pasos hacia delante se detienen, reembolso/expiración siguen disponibles |
+| Disputa | `CUSTOMER.DISPUTE.*` pausa el intercambio hasta que se resuelva |
+| Fallo de pago | `HELD`/`FAILED`/`BLOCKED` son estados de primer nivel; reintentar con la misma referencia de pago |
+
+---
+
+## Pasar a producción
+
+La demo se ejecuta contra el servicio de liquidación del repositorio con PayPal
+simulado. Para el flujo real necesitas una cuenta business de PayPal con Payouts
+activados, sus credenciales API y su webhook id, y el firmante del depósito
+conectado al paso de difusión en L0. Hasta entonces, el motor ejecuta la misma
+máquina de estados sin tocar dinero real.

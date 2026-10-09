@@ -1,194 +1,157 @@
-# P2P セットルメント — AI 検証によるチェーン横断スワップ
+# P2P 決済 — ウォレット内蔵のクロスレール交換
 
-**ステータス: 目標設計、未構築。** 以下は私たちが構築しているセットルメントフローです — Bigtangle L0 上の 2-of-3 P2SH エスクローと、実際の PayPal API による検証。現在稼働中のデモ版は Postgres 上のステートマシンで、法定通貨側はモックです。スクリーンショットはそのデモ版のもので、設計は dai リポジトリの `docs/p2p.md` にあります。
+**これは何か。** **Bigtangle L0** 上の暗号資産と、**PayPal**（または人民元
+レール — WeChat Pay / Alipay / 銀行）の法定通貨を、二者間で交換します。売り手は
+トークンを **2-of-3 P2SH アドレス**（売り手・買い手・エンジン）に預託し、買い手は
+**正確な金額**の法定通貨債務を支払い、エンジンが支払いを証明して預託を解放します。
+不可逆な手順はすべてウォレット自身の PQ 鍵で署名され、エンジンは支出に
+**共同署名**できるだけです — あなたの資金を保有することはありません。
 
-このガイドは AI ネイティブ P2P セットルメントフローを示します — USDT の出品、買い手とのマッチング、エスクローロック、自動検証付きの法定通貨支払い、エスクロー解放、そしてタイムアウト時の返金。手動の「確認」ボタンはありません — セットルメントエンジンは PayPal Webhook から支払いを検証します。
+**どこで。** ウォレットの **P2P** 画面（サイドバー → Trade → P2P）。以下はすべて、
+ローカルのデモビルドにあるこの画面から取得したものです。
 
----
+**デモと本番。** スクリーンショットはデモビルドによるものです。エンジンはモック
+PayPal モード（ダミーの請求 URL と合成トランザクションハッシュ）で動作し、
+lock / verify / release の各手順はローカルのエンジン鍵で署名されます。状態機械、
+署名、追記専用のイベントログ、オンチェーンの監査アンカーは本物で、外部の
+PayPal 呼び出しと L0 ブロードキャストのみがスタブです。
 
-## 1. ダッシュボード概要
-
-P2P ダッシュボードは、すべてのアクティブなスワップの現在のステータス、レート、取引参照を表示します。
-
-![ダッシュボード](demo-output/screenshots/p2p-dashboard-ja.png)
-
-ダッシュボードはすべてのアクティブなスワップをステータス、レート、取引参照とともに表示します。各カードにはスワップ ID、資産ペア（例: 100 USDT ⇄ 101 USD）、色分けされたステータスバッジ、展開可能なタイムラインが表示されます。
-
----
-
-## 2. セラーが USDT を出品
-
-DID 署名付きの指値注文をセットルメントエンジンへ送信します。
-
-```typescript
-const signature = signPayload(
-  { sellerDid, giveToken: "USDT", giveAmount: "100",
-    giveChain: "L0", wantCurrency: "USD",
-    wantAmount: "101", wantRail: "paypal" },
-  sellerPriv,
-);
-```
-
-セラーは署名済みの指値注文を送信します: 100 USDT を PayPal 経由で 101 USD で売る。セットルメントエンジンは DID 署名を検証します。ステータス: ACTIVE。注文は validUntil で期限切れになります。
+**手動の「確認」はありません。** PayPal レールには売り手の「確認」ボタンは
+ありません — エンジンが自身の証拠から支払いを検証します。（webhook を持たない
+人民元レールでは、代わりに売り手の明示的な確認を使います。`docs/p2pcny.md` を
+参照。）
 
 ---
 
-## 3. 買い手が注文をマッチング
-
-買い手は署名済みの成行注文を送信します。レートはマッチング時にオラクルで固定され、その時点から請求額が確定します。
-
-```typescript
-const signature = signPayload(
-  { orderId, buyerDid, amount: "100",
-    receiveAddress, paypalAccount },
-  buyerPriv,
-);
-```
-
-買い手は DID 署名付きの成行注文でマッチングし、エスクロー解放の受取アドレスと入金先 PayPal アカウントを指定します。ステータス: MATCHED。ライフサイクル全体用の一意な swapId が作成されます。
-
----
-
-## 4. セラーが 2-of-3 エスクローに USDT をロック
-
-エスクローアドレスは 3 つの鍵 — セラー、買い手、エンジン — と閾値 2 の P2SH スクリプトです。
-
-```typescript
-// redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
-const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "100");
-```
-
-セラーは Bigtangle L0 上のエスクローアドレスに資金を投入します。エンジンは `getTransactionStatus` でロックを証明します — `CONFIRMED`、送信先 `escrowAddress`、金額 100 — 3 つの検証のいずれかが成立しなければフェイルクローズします。ステータス: ESCROW_LOCKED。買い手は法定通貨を送る前に資金が確保されているのを確認できます。
-
----
-
-## 5. エンジンが請求書を発行、買い手が PayPal で支払う
-
-エンジンは正確な金額の PayPal 請求書を作成し、ホスト型 URL を買い手に渡します。
-
-```typescript
-const res = await fetch("/api/p2p/payments/invoice", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", currency: "USD" }),
-});
-// → ホスト型チェックアウト URL; 請求書番号 = swapId
-```
-
-買い手はホスト型請求書を支払います。エンジンはお金に触れません — PayPal が預かります。セラーの確認は不要です。ステータス: PAYMENT_PENDING。タイムアウトタイマーが開始します。
-
----
-
-## 6. エンジンが支払いを自動検証
-
-**主要な革新**: 人手の「確認」ボタンはありません。支払いは当事者の主張ではなく PayPal が証明します。
-
-```typescript
-// POST /api/webhooks/paypal — SHA256withRSA over transmissionId|time|webhookId|crc32(body)
-const ok = verifyPayPalWebhook(rawBody, headers);
-if (ok) await transitions(swapId, "verify");
-```
-
-エンジンは `INVOICING.INVOICE.PAID` Webhook を `event.id` で重複排除しながら検証します。これは Binance P2P の手動「確認」ボタンを置き換えます。セラーは受領しなかったと嘘をつけません。ステータス: PAYMENT_VERIFIED。
-
----
-
-## 7. エンジンと買い手がエスクローを解放
-
-2 つの署名がスクリプトを満たします — 買い手の署名とエンジンの署名。単独の当事者は資金を動かせません。
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await buyerKey.signInput(tx, 0),
-  await engineKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-解放用の支出を組み立てて `receiveAddress` にブロードキャストします。ステータス: ESCROW_RELEASED。買い手はトークンを保持し、エンジンの残作業は法定通貨の送金です。
-
----
-
-## 8. エンジンがセラーに支払う
-
-エンジンは Payouts v1 でセラーの PayPal に USD を送金し、スワップ単位で冪等です。
-
-```typescript
-const res = await fetch("/api/p2p/payments/payout", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", paypalAccount: sellerPaypal }),
-});
-// → PayPal-Request-Id: swapId, sender_batch_id: swapId
-```
-
-エンジンはセラーの PayPal に USD を送金します。スワップは COMPLETED。合計所要時間は約 3〜5 分。すべて DID 署名で、各ステップはオンチェーンまたは PayPal で監査できます。
-
----
-
-## 9. タイムアウトまたは失敗 → 返金
-
-請求書が支払われない場合、エンジンとセラーは同じスクリプトに共同署名してセラーへ戻します。
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await engineKey.signInput(tx, 0),
-  await sellerKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-返金には買い手の同意もタイムロックも不要です — 残り 2 つの鍵で閾値に達します。ステータス: EXPIRED → ESCROW_REFUNDED。どちらの当事者も相手方の資金を保持しません。
-
----
-
-## 10. 履歴表示
-
-完了・期限切れ・キャンセルされたスワップは履歴ページで確認できます。
-
-![履歴](demo-output/screenshots/p2p-history-ja.png)
-
-履歴ページには完了・期限切れ・キャンセルされたスワップが一覧表示されます。各エントリには資産ペア、最終ステータス、タイムラインの各段階、当事者の DID が表示されます。
-
----
-
-## 比較: Binance P2P vs AI セットルメント
-
-| 機能 | Binance P2P | AI セットルメント |
-|---------|-------------|---------------|
-| 法定通貨の検証 | セラーが「確認」をクリック（ honor ベース） | PayPal Webhook、RSA 検証（決定的） |
-| 法定通貨の預託 | P2P（買い手 → セラー） | PayPal が送金まで預かる（買い手 → PayPal → セラー） |
-| エスクロー | 内部台帳 | Bigtangle L0 上の 2-of-3 P2SH（検証可能） |
-| 返金 | サポートチケット | エンジン + セラーが共同署名、買い手の同意不要 |
-| 紛争解決 | 人間のサポート（数日） | オンチェーンの取引証明 + PayPal イベント（数分） |
-
----
-
-## 完全なタイムライン
+## 流れの概要
 
 ```
-MATCHED          14:20:00  レート固定、請求額確定
-ESCROW_LOCKED    14:23:15  L0 トランザクションが 2-of-3 アドレスで CONFIRMED
-PAYMENT_PENDING  14:24:00  請求書 INV-7f3c91 を発行
-PAYMENT_VERIFIED 14:24:10  INVOICING.INVOICE.PAID Webhook、RSA 検証済み
-ESCROW_RELEASED  14:24:30  receiveAddress への共同署名の支出
-COMPLETED        14:25:00  支払いバッチ PAYOUT-abc SUCCESS
+ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──payment──▶ PAYMENT_PENDING
+                                                                     │
+PAYMENT_PENDING ──verify──▶ PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──payout──▶ COMPLETED
 ```
+
+| # | 手順 | 実行者 | オンチェーン / エンジン |
+|---|---|---|---|
+| 1 | 売り手が署名済みの売り注文を掲載 | 売り手 | 注文を保存、未資金化 |
+| 2 | 買い手がマッチ（受取アドレス + PayPal アカウント） | 買い手 | `swapId` を作成、預託アドレスを導出 |
+| 3 | 売り手が 2-of-3 預託に資金を入れ、エンジンがロックを証明 | 売り手 + エンジン | L0 上で `ESCROW_LOCKED` |
+| 4 | 買い手が正確な金額の請求書を支払い、報告 | 買い手 | `PAYMENT_PENDING` |
+| 5 | エンジンが自ら支払いを検証 | エンジン | `PAYMENT_VERIFIED` |
+| 6 | エンジン + 買い手が解放に共同署名し、トークンが移動 | エンジン + 買い手 | `ESCROW_RELEASED` |
+| 7 | エンジンが PayPal Payouts で売り手に支払う | エンジン | `COMPLETED` |
+
+すべての遷移は `social.p2p-swap` レコードとして L1-SOCIAL チェーンにアンカーされ、
+どちらの PayPal 情報も露出せずにライフサイクル全体を公開監査できます。
 
 ---
 
-## 完全なデモフロー
+## 1. 売り手が売り注文を掲載
 
-```typescript
-// 1. セラーが署名済み指値注文を送信（POST /api/p2p/orders）
-// 2. 買い手が署名済み成行注文でマッチング（POST /api/p2p/orders/:id/match）
-// 3. セラーが L0 の 2-of-3 P2SH エスクローに投入; エンジンが検証（getTransactionStatus）
-// 4. エンジンが PayPal 請求書を発行; 買い手が支払い（POST /api/p2p/payments/invoice）
-// 5. エンジンが INVOICING.INVOICE.PAID Webhook を検証（POST /api/webhooks/paypal）
-// 6. エンジン + 買い手が解放支出に共同署名（POST .../transitions, action: release）
-// 7. エンジンがセラーに支払い（POST /api/p2p/payments/payout）
-// 8. 両者がダッシュボードで COMPLETED を確認
-```
+**Open sells** タブで注文を入力します。与えるトークンと数量、希望する法定通貨価格、
+通貨、トークンのチェーン、そして**支払い方法**（PayPal または人民元レール）です。
+条件は掲載時に注文に固定されるため、これはウォレット鍵で署名されます。
 
-Binance P2P との最大の違い: **セラーの「確認」ボタンが不要。** 支払いは PayPal Webhook が証明し、資金は単独では制御できない 2-of-3 スクリプトにあります — 決定的、監査可能、即時。
+![売り注文フォーム、PayPal レールを選択](/demo/p2p/p2p-01-order-ja.png)
+
+掲載すると、注文はエンジン内で `ACTIVE` になり、公開オーダーブックに表示されます
+（個人情報は含みません）:
+
+![注文がオーダーブックに表示](/demo/p2p/p2p-02-active-ja.png)
+
+---
+
+## 2. 買い手がマッチ
+
+買い手は注文を開き、解放されるトークンの**受取アドレス**と、請求先の
+**PayPal アカウント**（および請求書用のメール）を入力します。マッチは買い手の
+支払いを約束させるため、これも署名されます:
+
+![買い手が受取アドレスと PayPal アカウントを入力](/demo/p2p/p2p-03-match-ja.png)
+
+エンジンはライフサイクル用の一意な `swapId` を作成し、交換は `MATCHED` になり、
+買い手の **My swaps** タブに表示されます:
+
+![交換は MATCHED](/demo/p2p/p2p-04-matched-ja.png)
+
+---
+
+## 3. 預託ロック — 売り手が L0 に資金を入れる
+
+売り手はトークンを決定論的な 2-of-3 預託アドレスへ送り、その転送の `txHash` を
+報告します。エンジンはチェーンからロックを証明し（`CONFIRMED`、宛先が
+`escrowAddress`、金額が一致）、いずれかの検査が成立しなければフェイルクローズ
+します。交換は `ESCROW_LOCKED` になります:
+
+![売り手が預託をロック](/demo/p2p/p2p-05-escrow-locked-ja.png)
+
+買い手は法定通貨を送る**前に**資金が確保されたことを確認でき、ロックが証明されると
+**I have paid**（支払いました）アクションが現れます:
+
+![買い手にロック済みの預託が見える](/demo/p2p/p2p-06-buyer-locked-ja.png)
+
+---
+
+## 4. 買い手が支払う
+
+買い手はホストされた PayPal 請求書を支払い（お金は PayPal が保持し、エンジンは
+決して保持しません）、支払いを報告します。これは単なる*ヒント*であり、本当の検証は
+エンジン自身の証拠です。交換は `PAYMENT_PENDING` で、タイムアウトタイマーが始まり
+ます — 請求書が支払われなければ、売り手は買い手の同意なしに期限切れにして預託を
+返金できます:
+
+![PAYMENT_PENDING](/demo/p2p/p2p-07-payment-pending-ja.png)
+
+---
+
+## 5. エンジンが支払いを検証
+
+売り手の確認は関与しません。エンジンは自身の情報源から支払いを確認し、交換を
+`PAYMENT_VERIFIED` へ進めます — 預託は買い手の受取アドレスへ解放可能になります:
+
+![PAYMENT_VERIFIED](/demo/p2p/p2p-08-payment-verified-ja.png)
+
+---
+
+## 6. 解放 — 資金が移動
+
+解放は預託されたトークンを移動します。エンジンと買い手が預託出力の支出にそれぞれ
+署名し、2 つの署名が 2-of-3 スクリプトを満たします。トークンは買い手の受取
+アドレスに届き、交換は `ESCROW_RELEASED` になります:
+
+![ESCROW_RELEASED](/demo/p2p/p2p-09-escrow-released-ja.png)
+
+---
+
+## 7. 支払い — 売り手が法定通貨を受け取る
+
+最後の手順で PayPal Payouts を通じて売り手に支払い、交換は `COMPLETED` に達します:
+
+![COMPLETED](/demo/p2p/p2p-10-completed-ja.png)
+
+支払い結果（`SUCCESS` / `FAILED` / `HELD` / `ONHOLD`）は PayPal の webhook で届くか、
+フォールバックとしてポーリングされます。失敗は `COMPLETED` からやり直さずに再試行
+できます。
+
+---
+
+## あなたを守るもの
+
+| リスク | 緩和策 |
+|---|---|
+| 相手が立ち去る | 資金は 2-of-3 P2SH アドレスにあり、誰も単独では動かせない |
+| 不足または過剰な支払い | 請求書は正確な金額なので、全額支払われるか未払いのままか |
+| 偽の支払い主張 | エンジンが自ら支払いを検証 — 支払い側が自称することはできない |
+| エンジンが不正 | エンジン専用の手順はエンジン DID 署名を要し、すべての遷移がアンカーされ公開監査可能 |
+| 解放後のチャージバック | `PAYMENT.CAPTURE.REVERSED` が凍結を設定: 前進手順は停止、返金/期限切れは可能なまま |
+| 紛争 | `CUSTOMER.DISPUTE.*` が解決まで交換を一時停止 |
+| 支払い失敗 | `HELD`/`FAILED`/`BLOCKED` は一級の状態。同じ支払い参照で再試行 |
+
+---
+
+## 本番へ
+
+デモはモック PayPal を使うリポジトリ内の決済サービスに対して動作します。実際の
+フローには、Payouts を有効化した PayPal ビジネスアカウント、その API 資格情報と
+webhook id、そして L0 ブロードキャスト手順に接続された預託署名器が必要です。
+それまでは、エンジンは実際の資金に触れずに同じ状態機械を実行します。

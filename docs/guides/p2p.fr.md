@@ -1,194 +1,166 @@
-# Règlement P2P — Swap entre rails avec vérification IA
+# Règlement P2P — échange inter-rails natif au wallet
 
-**Statut : conception cible, non construite.** Tout ce qui suit décrit le flux de règlement que nous construisons : séquestre P2SH 2-sur-3 sur Bigtangle L0 et vérification réelle via l'API PayPal. La version de démonstration actuelle est une machine à états sur Postgres avec une jambe fiat simulée. Les captures d'écran proviennent de cette version ; le design se trouve dans le dépôt dai, `docs/p2p.md`.
+**De quoi il s'agit.** Un échange pair à pair entre de la crypto sur
+**Bigtangle L0** et de la monnaie fiat sur **PayPal** (ou les rails CNY — WeChat
+Pay / Alipay / banque). Le vendeur place ses jetons sous séquestre dans une
+**adresse P2SH 2-sur-3** (vendeur, acheteur, moteur) ; l'acheteur paie une
+obligation fiat d'un **montant exact** ; le moteur prouve le paiement et libère
+le séquestre. Chaque étape irréversible est signée avec la clé PQ du wallet, et le
+moteur ne peut jamais que **co-signer** une dépense — il ne détient jamais vos
+fonds.
 
-Ce guide présente le flux de règlement P2P natif IA : inscription d'une annonce de vente d'USDT, appariement avec un acheteur, verrouillage du séquestre, paiement fiat avec vérification automatique, libération du séquestre et remboursement en cas de délai dépassé. Aucun bouton « Confirmer » manuel — le moteur de règlement vérifie le paiement à partir d'un webhook PayPal.
+**Où.** L'écran **P2P** du wallet (barre latérale → Trade → P2P). Tout ce qui suit
+est capturé depuis cet écran dans la version de démonstration locale.
 
----
+**Démo vs production.** Les captures proviennent de la démo : le moteur tourne en
+mode PayPal simulé (URL de facture factices et hachages de transaction
+synthétiques) et les étapes lock/verify/release sont signées par une clé de
+moteur locale. La machine à états, les signatures, le journal d'événements en
+append-only et l'ancrage d'audit on-chain sont réels ; seuls les appels PayPal
+externes et la diffusion L0 sont simulés.
 
-## 1. Vue du tableau de bord
-
-Le tableau de bord P2P affiche tous les swaps actifs avec leur statut, leur taux et leurs références de transaction.
-
-![Tableau de bord](demo-output/screenshots/p2p-dashboard-fr.png)
-
-Le tableau de bord affiche tous les swaps actifs avec leur statut, leur taux et leurs références de transaction. Chaque carte affiche l'ID du swap, la paire d'actifs (ex. 100 USDT ⇄ 101 USD), un badge de statut en couleurs et une chronologie dépliable.
-
----
-
-## 2. Le vendeur inscrit ses USDT
-
-Soumet une ordre limite signée par DID au moteur de règlement.
-
-```typescript
-const signature = signPayload(
-  { sellerDid, giveToken: "USDT", giveAmount: "100",
-    giveChain: "L0", wantCurrency: "USD",
-    wantAmount: "101", wantRail: "paypal" },
-  sellerPriv,
-);
-```
-
-Le vendeur soumet une ordre limite signée : vendre 100 USDT pour 101 USD via PayPal. Le moteur de règlement valide la signature DID. Statut : ACTIVE. L'ordre expire après validUntil.
+**Aucun « Confirmer » manuel.** Sur le rail PayPal, il n'y a pas de bouton
+« Confirmer » côté vendeur — le moteur vérifie le paiement à partir de ses
+propres preuves. (Les rails CNY, sans webhook, utilisent à la place une
+confirmation explicite du vendeur ; voir `docs/p2pcny.md`.)
 
 ---
 
-## 3. L'acheteur apparie l'ordre
-
-L'acheteur soumet une ordre de marché signée. Le taux est verrouillé au moment de l'appariement via un oracle, et le montant de la facture est fixé dès cet instant.
-
-```typescript
-const signature = signPayload(
-  { orderId, buyerDid, amount: "100",
-    receiveAddress, paypalAccount },
-  buyerPriv,
-);
-```
-
-L'acheteur apparie l'ordre avec une ordre de marché signée par DID, en fournissant l'adresse qui doit recevoir la libération du séquestre et le compte PayPal à créditer. Statut : MATCHED. Un swapId unique est créé pour le cycle de vie.
-
----
-
-## 4. Le vendeur verrouille ses USDT dans un séquestre 2-sur-3
-
-L'adresse de séquestre est un script P2SH à trois clés — vendeur, acheteur, moteur — avec un seuil de deux.
-
-```typescript
-// redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
-const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "100");
-```
-
-Le vendeur approvisionne l'adresse de séquestre sur Bigtangle L0. Le moteur prouve le verrouillage avec `getTransactionStatus` — `CONFIRMED`, destination `escrowAddress`, montant 100 — et échoue en mode fermé si l'une des trois vérifications ne tient pas. Statut : ESCROW_LOCKED. L'acheteur voit les fonds sécurisés avant d'envoyer le fiat.
-
----
-
-## 5. Le moteur émet la facture, l'acheteur paie via PayPal
-
-Le moteur crée une facture PayPal d'un montant exact et remet l'URL hébergée à l'acheteur.
-
-```typescript
-const res = await fetch("/api/p2p/payments/invoice", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", currency: "USD" }),
-});
-// → URL de paiement hébergée ; numéro de facture = swapId
-```
-
-L'acheteur paie la facture hébergée. Le moteur ne touche pas l'argent — PayPal le détient. Aucune confirmation du vendeur nécessaire. Statut : PAYMENT_PENDING. Le minuteur de délai démarre.
-
----
-
-## 6. Le moteur vérifie automatiquement le paiement
-
-**Innovation clé** : aucun bouton humain « Confirmer ». Le paiement est prouvé par PayPal, pas affirmé par une partie.
-
-```typescript
-// POST /api/webhooks/paypal — SHA256withRSA over transmissionId|time|webhookId|crc32(body)
-const ok = verifyPayPalWebhook(rawBody, headers);
-if (ok) await transitions(swapId, "verify");
-```
-
-Le moteur vérifie le webhook `INVOICING.INVOICE.PAID`, dédupliqué sur `event.id`. Cela remplace le bouton manuel « Confirmer » de Binance P2P. Aucun vendeur ne peut nier la réception. Statut : PAYMENT_VERIFIED.
-
----
-
-## 7. Le moteur et l'acheteur libèrent le séquestre
-
-Deux signatures satisfont le script : celle de l'acheteur et celle du moteur. Aucune partie seule ne peut déplacer les fonds.
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await buyerKey.signInput(tx, 0),
-  await engineKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-La dépense de libération est assemblée et diffusée vers `receiveAddress`. Statut : ESCROW_RELEASED. L'acheteur détient désormais les jetons ; le travail restant du moteur est le versement fiat.
-
----
-
-## 8. Le moteur verse le vendeur
-
-Le moteur envoie des USD au compte PayPal du vendeur via Payouts v1, de façon idempotente par swap.
-
-```typescript
-const res = await fetch("/api/p2p/payments/payout", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", paypalAccount: sellerPaypal }),
-});
-// → PayPal-Request-Id: swapId, sender_batch_id: swapId
-```
-
-Le moteur envoie des USD au compte PayPal du vendeur. Swap COMPLETED. Durée totale : ~3-5 minutes. Tout est signé par DID, chaque étape est auditable sur la chaîne ou chez PayPal.
-
----
-
-## 9. Délai dépassé ou échec → remboursement
-
-Si la facture n'est jamais payée, le moteur et le vendeur cosignent le même script en faveur du vendeur.
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await engineKey.signInput(tx, 0),
-  await sellerKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-Le remboursement ne demande ni consentement de l'acheteur ni time-lock — le seuil est atteint avec les deux autres clés. Statut : EXPIRED → ESCROW_REFUNDED. Aucune partie ne détient jamais les fonds de l'autre.
-
----
-
-## 10. Vue de l'historique
-
-Les swaps terminés, expirés et annulés sont visibles dans la page d'historique.
-
-![Historique](demo-output/screenshots/p2p-history-fr.png)
-
-La page d'historique liste les swaps terminés, expirés et annulés. Chaque entrée affiche la paire d'actifs, le statut final, les étapes de la chronologie et les DID des parties.
-
----
-
-## Comparaison : Binance P2P vs règlement IA
-
-| Fonctionnalité | Binance P2P | Règlement IA |
-|---------|-------------|---------------|
-| Vérification fiat | Le vendeur clique « Confirmer » (honneur) | Webhook PayPal, vérifié RSA (déterministe) |
-| Custody fiat | P2P (acheteur → vendeur) | PayPal détient jusqu'au versement (acheteur → PayPal → vendeur) |
-| Séquestre | Registre interne | P2SH 2-sur-3 sur Bigtangle L0 (vérifiable) |
-| Remboursement | Ticket support | Moteur + vendeur cosignent, sans consentement de l'acheteur |
-| Résolution de litige | Support humain (jours) | Preuve tx on-chain + événement PayPal (minutes) |
-
----
-
-## Chronologie complète
+## Le flux en un coup d'œil
 
 ```
-MATCHED          14:20:00  Taux verrouillé, montant de facture fixé
-ESCROW_LOCKED    14:23:15  Tx L0 CONFIRMÉE sur l'adresse 2-sur-3
-PAYMENT_PENDING  14:24:00  Facture INV-7f3c91 émise
-PAYMENT_VERIFIED 14:24:10  Webhook INVOICING.INVOICE.PAID, vérifié RSA
-ESCROW_RELEASED  14:24:30  Dépense cosignée vers receiveAddress
-COMPLETED        14:25:00  Lot de versement PAYOUT-abc SUCCESS
+ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──payment──▶ PAYMENT_PENDING
+                                                                     │
+PAYMENT_PENDING ──verify──▶ PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──payout──▶ COMPLETED
 ```
+
+| # | Étape | Qui agit | On-chain / moteur |
+|---|---|---|---|
+| 1 | Le vendeur publie un ordre de vente signé | vendeur | ordre stocké, non financé |
+| 2 | L'acheteur apparie (adresse de réception + compte PayPal) | acheteur | `swapId` créé, adresse de séquestre dérivée |
+| 3 | Le vendeur finance le séquestre 2-sur-3, le moteur prouve le verrou | vendeur + moteur | `ESCROW_LOCKED` sur L0 |
+| 4 | L'acheteur paie la facture exacte et la signale | acheteur | `PAYMENT_PENDING` |
+| 5 | Le moteur vérifie lui-même le paiement | moteur | `PAYMENT_VERIFIED` |
+| 6 | Moteur + acheteur co-signent la libération, les jetons bougent | moteur + acheteur | `ESCROW_RELEASED` |
+| 7 | Le moteur paie le vendeur via PayPal Payouts | moteur | `COMPLETED` |
+
+Chaque transition est ancrée comme un enregistrement `social.p2p-swap` sur la
+chaîne L1-SOCIAL, de sorte que tout le cycle de vie est auditable publiquement
+sans exposer les coordonnées PayPal de l'une ou l'autre partie.
 
 ---
 
-## Flux de démonstration complet
+## 1. Le vendeur publie un ordre de vente
 
-```typescript
-// 1. Le vendeur soumet une ordre limite signée (POST /api/p2p/orders)
-// 2. L'acheteur apparie avec une ordre de marché signée (POST /api/p2p/orders/:id/match)
-// 3. Le vendeur approvisionne le séquestre P2SH 2-sur-3 sur L0 ; le moteur le prouve (getTransactionStatus)
-// 4. Le moteur émet une facture PayPal ; l'acheteur paie (POST /api/p2p/payments/invoice)
-// 5. Le moteur vérifie le webhook INVOICING.INVOICE.PAID (POST /api/webhooks/paypal)
-// 6. Moteur + acheteur cosignent la dépense de libération (POST .../transitions, action: release)
-// 7. Le moteur verse le vendeur (POST /api/p2p/payments/payout)
-// 8. Les deux parties voient le statut COMPLETED sur le tableau de bord
-```
+Dans l'onglet **Open sells**, remplissez l'ordre : le jeton et le montant que
+vous donnez, le prix fiat souhaité, la devise, la chaîne du jeton et le
+**moyen de paiement** (PayPal ou un rail CNY). Les conditions sont figées dans
+l'ordre à la publication ; cette étape est donc signée avec votre clé de wallet.
 
-Différence clé avec Binance P2P : **pas de bouton « Confirmer » côté vendeur.** Le paiement est prouvé par un webhook PayPal et les fonds reposent dans un script 2-sur-3 que ni l'une ni l'autre des parties ne contrôle seule — déterministe, auditable, instantané.
+![Le formulaire d'ordre de vente, rail PayPal sélectionné](/demo/p2p/p2p-01-order-fr.png)
+
+Une fois publié, l'ordre est `ACTIVE` dans le moteur et apparaît dans le carnet
+d'ordres public (sans données personnelles) :
+
+![L'ordre est visible dans le carnet](/demo/p2p/p2p-02-active-fr.png)
+
+---
+
+## 2. L'acheteur apparie
+
+L'acheteur ouvre l'ordre et fournit l'**adresse de réception** des jetons libérés
+ainsi que le **compte PayPal** à facturer (et un e-mail pour la facture).
+L'appariement engage l'acheteur à payer, il est donc signé lui aussi :
+
+![L'acheteur saisit l'adresse de réception et le compte PayPal](/demo/p2p/p2p-03-match-fr.png)
+
+Le moteur crée un `swapId` unique pour le cycle de vie et l'échange passe à
+`MATCHED`, visible dans l'onglet **My swaps** de l'acheteur :
+
+![L'échange est MATCHED](/demo/p2p/p2p-04-matched-fr.png)
+
+---
+
+## 3. Verrouillage du séquestre — le vendeur finance L0
+
+Le vendeur envoie les jetons à l'adresse de séquestre déterministe 2-sur-3 et
+signale le `txHash` du transfert. Le moteur prouve le verrou depuis la chaîne
+(`CONFIRMED`, destination `escrowAddress`, montant) et échoue si une vérification
+ne tient pas. L'échange est désormais `ESCROW_LOCKED` :
+
+![Le vendeur verrouille le séquestre](/demo/p2p/p2p-05-escrow-locked-fr.png)
+
+L'acheteur voit les fonds sécurisés **avant** d'envoyer le moindre fiat, et
+obtient une action **I have paid** (J'ai payé) une fois le verrou prouvé :
+
+![L'acheteur voit le séquestre verrouillé](/demo/p2p/p2p-06-buyer-locked-fr.png)
+
+---
+
+## 4. L'acheteur paie
+
+L'acheteur paie la facture PayPal hébergée (PayPal détient l'argent — jamais le
+moteur) et signale le paiement. Ce n'est qu'un *indice* ; la vraie vérification
+est la preuve propre au moteur. L'échange est `PAYMENT_PENDING`, et un minuteur
+de délai démarre — si la facture n'est jamais payée, le vendeur peut expirer et
+rembourser le séquestre sans l'accord de l'acheteur :
+
+![PAYMENT_PENDING](/demo/p2p/p2p-07-payment-pending-fr.png)
+
+---
+
+## 5. Le moteur vérifie le paiement
+
+Aucune confirmation du vendeur n'intervient. Le moteur contrôle le paiement
+depuis sa propre source et fait passer l'échange à `PAYMENT_VERIFIED` — le
+séquestre peut désormais être libéré vers l'adresse de réception de l'acheteur :
+
+![PAYMENT_VERIFIED](/demo/p2p/p2p-08-payment-verified-fr.png)
+
+---
+
+## 6. Libération — les fonds bougent
+
+La libération déplace les jetons sous séquestre : le moteur et l'acheteur
+signent chacun une dépense de la sortie de séquestre, et deux signatures
+satisfont le script 2-sur-3. Les jetons arrivent à l'adresse de réception de
+l'acheteur et l'échange est `ESCROW_RELEASED` :
+
+![ESCROW_RELEASED](/demo/p2p/p2p-09-escrow-released-fr.png)
+
+---
+
+## 7. Versement — le vendeur reçoit le fiat
+
+La dernière étape paie le vendeur via PayPal Payouts, et l'échange atteint
+`COMPLETED` :
+
+![COMPLETED](/demo/p2p/p2p-10-completed-fr.png)
+
+Le résultat du versement (`SUCCESS` / `FAILED` / `HELD` / `ONHOLD`) arrive par
+webhook PayPal ou est interrogé en secours ; un échec peut être réessayé depuis
+`COMPLETED` sans refaire l'échange.
+
+---
+
+## Ce qui vous protège
+
+| Risque | Mesure |
+|---|---|
+| La contrepartie se retire | Les fonds sont dans une adresse P2SH 2-sur-3 ; personne ne peut les bouger seul |
+| Sous- ou surpaiement | La facture est d'un montant exact : elle est payée en totalité ou pas du tout |
+| Fausse déclaration de paiement | Le moteur vérifie le paiement lui-même — le payeur ne peut pas se l'attribuer |
+| Moteur malveillant | Les étapes réservées au moteur exigent la signature DID du moteur ; chaque transition est ancrée et publiquement auditable |
+| Rétrofacturation après libération | `PAYMENT.CAPTURE.REVERSED` déclenche un gel : les étapes en avant s'arrêtent, remboursement/expiration restent possibles |
+| Litige | `CUSTOMER.DISPUTE.*` met l'échange en pause jusqu'à résolution |
+| Échec de versement | `HELD`/`FAILED`/`BLOCKED` sont des états de premier ordre ; réessayer avec la même référence de versement |
+
+---
+
+## Passer en production
+
+La démo tourne contre le service de règlement du dépôt avec PayPal simulé. Pour
+le flux réel, il faut un compte business PayPal avec les Payouts activés, ses
+identifiants API et son webhook id, et le signataire de séquestre relié à l'étape
+de diffusion L0. D'ici là, le moteur exécute la même machine à états sans toucher
+à de l'argent réel.
