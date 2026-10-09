@@ -8,7 +8,7 @@ import { useRouter, usePathname, useGlobalSearchParams } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import {
   WalletIcon, MarketIcon, TokensIcon, SettingsIcon, CloseIcon,
-  OrderIcon, DataIcon, SendIcon, SearchIcon, BlocksIcon, GlobeIcon,
+  OrderIcon, DataIcon, SendIcon, SearchIcon, BlocksIcon, NetworkIcon,
 } from './Icons';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useTranslation } from 'react-i18next';
@@ -92,7 +92,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
     {
       titleKey: 'sidebar.network',
       items: [
-        { label: t('sidebar.chains'), key: 'chains', icon: GlobeIcon, route: '/network' },
+        { label: t('sidebar.chains'), key: 'chains', icon: NetworkIcon, route: '/network' },
       ],
     },
   ];
