@@ -1,13 +1,14 @@
 import * as React from 'react';
 import {
   View, Text, ScrollView, ActivityIndicator, TouchableOpacity,
-  TextInput, Image,
+  TextInput, Image, Linking,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { MONO_FONT } from '@/constants/fonts';
 import WalletUnlock from '@/components/WalletUnlock';
+import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
 import {
   confirmPayment, createOrder, fetchInstructions, getMyProfiles, listOpenOrders, matchOrder,
@@ -30,7 +31,7 @@ function isCnyRail(rail?: string): boolean {
  * with the wallet's PQ key; reads of own swaps are party-scoped by the engine.
  */
 export default function P2pScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { theme } = useUnistyles();
   const { publicInfo, isUnlocked, getUnlockedWallet } = useWallet();
 
@@ -301,10 +302,22 @@ export default function P2pScreen() {
     }
   };
 
+  // Help-center PDF, published to the regional docs buckets (lib/docs.ts).
+  const openGuide = () => {
+    const url = p2pPdfUrl(i18n.language, tzRegion());
+    Linking.openURL(url).catch(() => setNotice({ ok: false, text: t('p2p.actionFailed') }));
+  };
+  const guideLink = (
+    <TouchableOpacity onPress={openGuide} style={s.linkBtn} testID="p2p-guide" accessibilityRole="link">
+      <Text style={[s.refreshText, { color: theme.colors.primary }]}>{t('p2p.guide')}</Text>
+    </TouchableOpacity>
+  );
+
   if (!p2pConfigured()) {
     return (
       <View style={s.centered}>
         <Text style={s.emptyText} testID="p2p-not-configured">{t('p2p.notConfigured')}</Text>
+        {guideLink}
       </View>
     );
   }
@@ -319,6 +332,7 @@ export default function P2pScreen() {
         <TouchableOpacity onPress={refresh} style={s.refreshBtn} testID="p2p-refresh" accessibilityRole="button">
           <Text style={[s.refreshText, { color: theme.colors.primary }]}>{t('p2p.refresh')}</Text>
         </TouchableOpacity>
+        {guideLink}
       </View>
 
       {notice ? (
@@ -629,6 +643,7 @@ const s = StyleSheet.create((theme) => ({
   tab: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
   tabText: { fontSize: 14, fontWeight: '600' },
   refreshBtn: { marginLeft: 'auto', paddingHorizontal: 8, paddingVertical: 8 },
+  linkBtn: { paddingHorizontal: 8, paddingVertical: 8 },
   refreshText: { fontSize: 13, fontWeight: '600' },
   card: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 16, marginBottom: 12 },
   cardTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
