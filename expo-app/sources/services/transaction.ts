@@ -14,6 +14,8 @@ import { TransactionInput } from 'bigtangle-ts/dist/net/bigtangle/core/Transacti
 import { TransactionOutput } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutput';
 // @ts-ignore
 import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutPoint';
+// @ts-ignore
+import { WalletUtil } from 'bigtangle-ts/dist/net/bigtangle/utils/WalletUtil';
 import { httpService } from './http';
 import { IS_DEV } from '@/constants/app';
 import { withSlash } from '@/lib/endpoints';
@@ -598,6 +600,26 @@ export async function orderOnLayer1(params: {
     throw new Error(i18n.t('errors.createOrderTx'));
   }
   return tx.getHash().toString();
+}
+
+/**
+ * Cancel an open order on the L1 order chain. Builds a plain-key Wallet from
+ * the unlocked key (mirroring orderOnLayer1) and posts a signed
+ * BLOCKTYPE_ORDER_CANCEL block for the order's block hash.
+ */
+export async function cancelOrderOnLayer1(params: {
+  privateKeyHex: string;
+  keyType?: 'PQ' | 'EC';
+  l1Url: string;
+  initialBlockHashHex: string;
+  address: string;
+}): Promise<void> {
+  const { privateKeyHex, keyType, l1Url, initialBlockHashHex, address } = params;
+  const netParams = getNetParams();
+  const signKey = keyFromPrivateKey(privateKeyHex, keyType);
+  const wallet = await Wallet.fromKeysURL(netParams, [signKey], l1Url);
+  wallet.setFee(false);
+  await WalletUtil.cancelOrder(wallet, null, initialBlockHashHex, address, l1Url);
 }
 
 /**
