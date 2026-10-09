@@ -14,10 +14,23 @@
 #
 #   deploy/deploy.sh:  --yes -y --dry-run --commit --deploy-only <version>
 #   deploy.apk.sh:     --release --env= --skip-build --no-latest
+#
+# Remote tags are fetched up front, and the APK step auto-loads the S3 creds
+# from deploy/env/.env.europa (else ../dai's) when S3_ACCESS_KEY/S3_SECRET_KEY
+# are not already in the environment.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+
+# Refresh remote tags first: the patch bump (deploy/deploy.sh) and the APK
+# version (webapp/scripts/version.mjs) both read the highest `vX.Y.Z` tag, and
+# a fresh clone often lacks tags that point at commits not reachable from main
+# (releases land on rebased/cherry-picked commits). Without this the bump
+# collides with an already-published version and the tag push is rejected.
+# Non-fatal: a divergent local tag only warns, and the newer fetched tags still
+# advance the computed version.
+git fetch --tags --quiet origin 2>/dev/null || true
 
 [ -x deploy/deploy.sh ] || { echo "missing deploy/deploy.sh" >&2; exit 1; }
 [ -x deploy.apk.sh ] || { echo "missing deploy.apk.sh" >&2; exit 1; }
@@ -53,6 +66,15 @@ if [ "$APP" -eq 1 ]; then
   run ./deploy/deploy.sh ${APP_ARGS[@]+"${APP_ARGS[@]}"}
 fi
 if [ "$APK" -eq 1 ]; then
+  # deploy.apk.sh needs MinIO creds for the upload; load them from the fleet env
+  # file when the caller hasn't already exported S3_ACCESS_KEY/S3_SECRET_KEY
+  # (same file scripts/docs-upload.sh uses). Sourced after the web step so its
+  # other vars cannot leak into that build.
+  if [ -z "${S3_ACCESS_KEY:-}" ] || [ -z "${S3_SECRET_KEY:-}" ]; then
+    for f in "$ROOT/deploy/env/.env.europa" "$ROOT/../dai/deploy/env/.env.europa"; do
+      if [ -f "$f" ]; then set -a; . "$f"; set +a; break; fi
+    done
+  fi
   run ./deploy.apk.sh ${APK_ARGS[@]+"${APK_ARGS[@]}"}
 fi
 
