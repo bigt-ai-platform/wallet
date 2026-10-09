@@ -76,6 +76,25 @@ const SWAP_ID_RE = /^swap-[0-9a-f]{16}$/;
 /** Receipt/QR cap as data-URL characters (≈512 KiB binary image). */
 const MAX_RECEIPT_CHARS = 700_000;
 
+/**
+ * Decode a `data:image/…;base64,…` receipt to its bytes, or null when the
+ * payload is not base64. The anchored hash is taken over these bytes — not
+ * over the data-URL string — so `sha256 <the image file>` reproduces it
+ * (docs/p2pcny.md §8).
+ */
+function receiptBytes(receipt: string): Buffer | null {
+  const comma = receipt.indexOf(",");
+  if (comma < 0 || !receipt.slice(0, comma).endsWith(";base64")) return null;
+  const payload = receipt.slice(comma + 1).replace(/\s+/g, "");
+  if (!payload) return null;
+  const bytes = Buffer.from(payload, "base64");
+  if (!bytes.length) return null;
+  // Buffer.from is lenient — round-trip to reject payloads that were not
+  // actually base64 (URL-safe alphabets, truncated padding, garbage).
+  if (bytes.toString("base64").replace(/=+$/, "") !== payload.replace(/=+$/, "")) return null;
+  return bytes;
+}
+
 function redact(swap: P2pSwapEvent): P2pSwapView {
   const { paypalAccount: _p, receiveAddress: _r, buyerEmail: _b, ...view } = swap;
   return view;
@@ -696,9 +715,12 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     let sha = typeof body.receiptSha256 === "string" ? body.receiptSha256 : undefined;
     if (receipt !== undefined) {
       if (!receipt.startsWith("data:image/")) return reply.code(400).send({ error: "receipt must be an image data URL" });
-      // The engine recomputes the hash so it always matches the exact bytes
-      // stored alongside the proof (the client hash is advisory only).
-      sha = createHash("sha256").update(receipt, "utf8").digest("hex");
+      const bytes = receiptBytes(receipt);
+      if (!bytes) return reply.code(400).send({ error: "receipt must be base64 (data:image/…;base64,…)" });
+      // The engine hashes the decoded image bytes — a client-computed hash is
+      // advisory and is overwritten, so the anchor always matches the stored
+      // file (`sha256 <file>` reproduces it).
+      sha = createHash("sha256").update(bytes).digest("hex");
     }
     if (sha !== undefined && !/^[0-9a-f]{64}$/.test(sha)) return reply.code(400).send({ error: "invalid receiptSha256" });
 

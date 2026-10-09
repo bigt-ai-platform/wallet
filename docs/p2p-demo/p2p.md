@@ -4,6 +4,8 @@
 
 This guide demonstrates the AI-native P2P settlement flow: listing USDT for sale, matching with a buyer, escrow lock, fiat payment with automated verification, escrow release, and refund on timeout. No manual "Confirm" button — the Settlement Engine verifies payment from a PayPal webhook.
 
+For the **CNY rails** (WeChat Pay / Alipay / bank — where there is no webhook, so the seller's own confirmation *is* the fiat signal) see [p2p-cny.md](p2p-cny.md) → `assets/p2p-cny.pdf`.
+
 ---
 
 ## 1. Dashboard Overview

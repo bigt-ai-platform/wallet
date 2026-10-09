@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   View, Text, ScrollView, ActivityIndicator, TouchableOpacity,
-  TextInput, Alert, Platform,
+  TextInput, Image,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -12,8 +12,8 @@ import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
 import {
   confirmPayment, createOrder, fetchInstructions, getMyProfiles, listOpenOrders, matchOrder,
   mySwaps, openDispute, p2pConfigured, saveProfile, sendPayment, submitProof, transition,
-  type P2pCnyRail, type P2pIdentity, type P2pOrder, type P2pPaymentProfile, type P2pSwap,
-  type P2pSwapAction,
+  type P2pCnyRail, type P2pIdentity, type P2pOrder, type P2pPaymentInstructions,
+  type P2pPaymentProfile, type P2pSwap, type P2pSwapAction,
 } from '@/services/p2p';
 
 type Tab = 'open' | 'mine';
@@ -45,6 +45,19 @@ export default function P2pScreen() {
   const [buyEmail, setBuyEmail] = React.useState('');
   const [txHashes, setTxHashes] = React.useState<Record<string, string>>({});
   const [txIds, setTxIds] = React.useState<Record<string, string>>({});
+  // Inline feedback: react-native-web's Alert.alert is a no-op, so every P2P
+  // result (including the CNY payment instructions the buyer must read) has to
+  // render in the screen itself.
+  const [notice, setNotice] = React.useState<{ ok: boolean; text: string } | null>(null);
+  // Inline feedback replaces Alert.alert (a no-op on react-native-web); the
+  // banner clears itself so a stale success message cannot be mistaken for the
+  // result of a later action.
+  React.useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(null), 10000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  const [instructions, setInstructions] = React.useState<Record<string, P2pPaymentInstructions>>({});
 
   const [giveToken, setGiveToken] = React.useState('');
   const [giveAmount, setGiveAmount] = React.useState('');
@@ -89,7 +102,7 @@ export default function P2pScreen() {
       if (tab === 'open') await loadOrders();
       else await loadSwaps();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : String(e));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
       setLoading(false);
     }
@@ -119,8 +132,8 @@ export default function P2pScreen() {
   };
 
   const requireIdentity = (): P2pIdentity | null => {
-    if (!isUnlocked || !publicInfo?.address) { Alert.alert(t('wallet.locked'), t('p2p.unlockFirst')); return null; }
-    if (!identity) { Alert.alert('', t('p2p.unlockFirst')); return null; }
+    if (!isUnlocked || !publicInfo?.address) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return null; }
+    if (!identity) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return null; }
     return identity;
   };
 
@@ -129,7 +142,7 @@ export default function P2pScreen() {
     if (!id) return;
     const hours = parseFloat(validHours);
     if (!giveToken.trim() || !giveAmount.trim() || !wantAmount.trim() || !hours || hours <= 0) {
-      Alert.alert('', t('p2p.createFailed'));
+      setNotice({ ok: false, text: t('p2p.createFailed') });
       return;
     }
     setBusy(true);
@@ -144,11 +157,11 @@ export default function P2pScreen() {
         validUntil: Math.floor(Date.now() / 1000) + Math.floor(hours * 3600),
       });
       setGiveToken(''); setGiveAmount(''); setWantAmount('');
-      Alert.alert(t('p2p.created'), '');
+      setNotice({ ok: true, text: t('p2p.created') });
       setTab('mine');
       await loadSwaps();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : t('p2p.createFailed'));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.createFailed') });
     } finally {
       setBusy(false);
     }
@@ -158,7 +171,7 @@ export default function P2pScreen() {
     const id = requireIdentity();
     if (!id) return;
     const cny = isCnyRail(order.wantRail);
-    if (!buyRecv.trim() || (!cny && !buyPaypal.trim())) { Alert.alert('', t('p2p.buyFailed')); return; }
+    if (!buyRecv.trim() || (!cny && !buyPaypal.trim())) { setNotice({ ok: false, text: t('p2p.buyFailed') }); return; }
     setBusy(true);
     try {
       const res = await matchOrder(id, order.orderId, {
@@ -167,11 +180,11 @@ export default function P2pScreen() {
         buyerEmail: cny ? undefined : buyEmail.trim() || undefined,
       });
       setSelected(null); setBuyRecv(''); setBuyPaypal(''); setBuyEmail('');
-      Alert.alert(t('p2p.buyTitle'), `${res.swapId}\n${res.escrowAddress ?? ''}`);
+      setNotice({ ok: true, text: `${t('p2p.buyTitle')}: ${res.swapId}` });
       setTab('mine');
       await loadSwaps();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : t('p2p.buyFailed'));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.buyFailed') });
     } finally {
       setBusy(false);
     }
@@ -185,7 +198,7 @@ export default function P2pScreen() {
       await transition(id, swap.swapId, action, extra);
       await loadSwaps();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
     } finally {
       setBusy(false);
     }
@@ -199,7 +212,7 @@ export default function P2pScreen() {
       await sendPayment(id, swap.swapId, swap.swapId);
       await loadSwaps();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
     } finally {
       setBusy(false);
     }
@@ -213,18 +226,10 @@ export default function P2pScreen() {
     setBusy(true);
     try {
       const ins = await fetchInstructions(id, swap.swapId);
-      Alert.alert(
-        t('p2p.instructionsTitle'),
-        [
-          `${ins.accountName}`,
-          ins.bankName ? `${ins.bankName} · ${ins.account}` : ins.account,
-          `${ins.amount} ${ins.currency}`,
-          `${t('p2p.remark')}: ${ins.remark}`,
-        ].join('\n'),
-      );
+      setInstructions((m) => ({ ...m, [swap.swapId]: ins }));
       await loadSwaps();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
     } finally {
       setBusy(false);
     }
@@ -234,14 +239,14 @@ export default function P2pScreen() {
     const id = requireIdentity();
     if (!id) return;
     const txId = (txIds[swap.swapId] ?? '').trim();
-    if (!txId) { Alert.alert('', t('p2p.errTxId')); return; }
+    if (!txId) { setNotice({ ok: false, text: t('p2p.errTxId') }); return; }
     setBusy(true);
     try {
       await submitProof(id, swap.swapId, { txId, ...(swap.remark ? { remark: swap.remark } : {}) });
       setTxIds((m) => ({ ...m, [swap.swapId]: '' }));
       await loadSwaps();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
     } finally {
       setBusy(false);
     }
@@ -255,7 +260,7 @@ export default function P2pScreen() {
       await confirmPayment(id, swap.swapId);
       await loadSwaps();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
     } finally {
       setBusy(false);
     }
@@ -269,7 +274,7 @@ export default function P2pScreen() {
       await openDispute(id, swap.swapId);
       await loadSwaps();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
     } finally {
       setBusy(false);
     }
@@ -278,7 +283,7 @@ export default function P2pScreen() {
   const saveProfileForm = async () => {
     const id = requireIdentity();
     if (!id) return;
-    if (!profileName.trim() || !profileAccount.trim()) { Alert.alert('', t('p2p.errProfile')); return; }
+    if (!profileName.trim() || !profileAccount.trim()) { setNotice({ ok: false, text: t('p2p.errProfile') }); return; }
     setBusy(true);
     try {
       await saveProfile(id, {
@@ -287,10 +292,10 @@ export default function P2pScreen() {
         account: profileAccount.trim(),
         ...(profileMethod === 'bank' && profileBank.trim() ? { bankName: profileBank.trim() } : {}),
       });
-      Alert.alert('', t('p2p.profileSaved'));
+      setNotice({ ok: true, text: t('p2p.profileSaved') });
       await loadProfiles();
     } catch (e) {
-      Alert.alert('', e instanceof Error ? e.message : t('p2p.actionFailed'));
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
     } finally {
       setBusy(false);
     }
@@ -309,12 +314,23 @@ export default function P2pScreen() {
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
       <View style={s.tabs}>
-        <TabButton label={t('p2p.tabOpen')} active={tab === 'open'} onPress={() => setTab('open')} testID="p2p-tab-open" />
-        <TabButton label={t('p2p.tabMine')} active={tab === 'mine'} onPress={() => setTab('mine')} testID="p2p-tab-mine" />
+        <TabButton label={t('p2p.tabOpen')} active={tab === 'open'} onPress={() => { setNotice(null); setTab('open'); }} testID="p2p-tab-open" />
+        <TabButton label={t('p2p.tabMine')} active={tab === 'mine'} onPress={() => { setNotice(null); setTab('mine'); }} testID="p2p-tab-mine" />
         <TouchableOpacity onPress={refresh} style={s.refreshBtn} testID="p2p-refresh" accessibilityRole="button">
           <Text style={[s.refreshText, { color: theme.colors.primary }]}>{t('p2p.refresh')}</Text>
         </TouchableOpacity>
       </View>
+
+      {notice ? (
+        <View
+          style={[s.notice, { borderColor: notice.ok ? theme.colors.accent.emerald : theme.colors.accent.red }]}
+          testID="p2p-notice"
+        >
+          <Text style={[s.noticeText, { color: notice.ok ? theme.colors.accent.emerald : theme.colors.accent.red }]}>
+            {notice.text}
+          </Text>
+        </View>
+      ) : null}
 
       {tab === 'open' ? (
         <>
@@ -434,6 +450,7 @@ export default function P2pScreen() {
                 onPaid={() => submitPaid(sw)}
                 onConfirm={() => confirmReceived(sw)}
                 onDispute={() => doDispute(sw)}
+                instruction={instructions[sw.swapId]}
                 index={i}
               />
             ))}
@@ -481,11 +498,12 @@ function Field({ label, value, onChange, placeholder, keyboardType, mono, testID
   );
 }
 
-function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onPay, onExpire, onRefund, onCancel, onInstructions, onPaid, onConfirm, onDispute, index }: {
+function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onPay, onExpire, onRefund, onCancel, onInstructions, onPaid, onConfirm, onDispute, instruction, index }: {
   swap: P2pSwap; myDid?: string; busy: boolean; txHash: string; onTxHash: (v: string) => void;
   txId: string; onTxId: (v: string) => void;
   onLock: () => void; onPay: () => void; onExpire: () => void; onRefund: () => void; onCancel: () => void;
-  onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void; index: number;
+  onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void;
+  instruction?: P2pPaymentInstructions; index: number;
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
@@ -509,7 +527,26 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
       {swap.remark && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <Text style={s.subMono}>{t('p2p.remark')}: {swap.remark}</Text>
       ) : null}
+      {swap.paymentRef && (st === 'PAYMENT_CLAIMED' || st === 'PAYMENT_VERIFIED') ? (
+        <Text style={s.subMono} testID={`p2p-swap-${index}-paymentref`}>{t('p2p.txId')}: {swap.paymentRef}</Text>
+      ) : null}
       {swap.dispute ? <Text style={s.sub}>{t('p2p.aDispute')}: {swap.dispute}{swap.disputeOutcome ? ` (${swap.disputeOutcome})` : ''}</Text> : null}
+
+      {/* CNY payment instructions the buyer must transfer to (party-scoped, engine-signed). */}
+      {isBuyer && instruction && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
+        <View style={s.instructions} testID={`p2p-swap-${index}-instructions-panel`}>
+          <Text style={s.instructionsTitle}>{t('p2p.instructionsTitle')}</Text>
+          <Text style={s.instrLine}>{t('p2p.profileName')}: {instruction.accountName}</Text>
+          <Text style={s.instrLine}>
+            {instruction.bankName ? `${t('p2p.profileBank')}: ${instruction.bankName} · ` : ''}
+            {t('p2p.profileAccount')}: {instruction.account}
+          </Text>
+          <Text style={s.instrAmount}>{instruction.amount} {instruction.currency}</Text>
+          <Text style={s.instrLine}>{t('p2p.remark')}: {instruction.remark}</Text>
+          <Text style={s.sub}>{t('p2p.payBy')}: {new Date(instruction.payBy * 1000).toLocaleString()}</Text>
+          {instruction.qr ? <Image source={{ uri: instruction.qr }} style={s.instrQr} /> : null}
+        </View>
+      ) : null}
 
       {isSeller && (st === 'MATCHED' || st === 'ESCROW_LOCKED' || st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <View style={s.actions}>
@@ -523,7 +560,10 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
             <Action label={t('p2p.aExpire')} color={theme.colors.accent.red} onPress={onExpire} disabled={busy} testID={`p2p-swap-${index}-expire`} />
           ) : null}
           {cny && st === 'PAYMENT_CLAIMED' ? (
-            <Action label={t('p2p.aConfirm')} color={theme.colors.accent.emerald} onPress={onConfirm} disabled={busy} testID={`p2p-swap-${index}-confirm`} />
+            <>
+              <Text style={s.warn} testID={`p2p-swap-${index}-confirm-warn`}>{t('p2p.confirmWarn')}</Text>
+              <Action label={t('p2p.aConfirm')} color={theme.colors.accent.emerald} onPress={onConfirm} disabled={busy} testID={`p2p-swap-${index}-confirm`} />
+            </>
           ) : null}
           <Action label={t('p2p.aCancel')} color={theme.colors.text.secondary} onPress={onCancel} disabled={busy} testID={`p2p-swap-${index}-cancel`} />
         </View>
@@ -548,6 +588,11 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
 
       {isBuyer && cny && st === 'PAYMENT_PENDING' ? (
         <View>
+          {!instruction ? (
+            <View style={s.actions}>
+              <Action label={t('p2p.aInstructions')} color={theme.colors.accent.emerald} onPress={onInstructions} disabled={busy} testID={`p2p-swap-${index}-instructions`} />
+            </View>
+          ) : null}
           <Field label={t('p2p.txId')} value={txId} onChange={onTxId} testID={`p2p-swap-${index}-txid`} />
           <View style={s.actions}>
             <Action label={t('p2p.aPaid')} color={theme.colors.accent.emerald} onPress={onPaid} disabled={busy} testID={`p2p-swap-${index}-proof`} />
@@ -604,4 +649,12 @@ const s = StyleSheet.create((theme) => ({
   chips: { flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap' },
   chip: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
   chipText: { fontSize: 13, fontWeight: '600' },
+  notice: { borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 12, backgroundColor: theme.colors.groupped.surface },
+  noticeText: { fontSize: 13, fontWeight: '600' },
+  instructions: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, marginTop: 12, backgroundColor: theme.colors.groupped.background },
+  instructionsTitle: { fontSize: 13, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 6 },
+  instrLine: { fontSize: 13, color: theme.colors.text.primary, marginTop: 3, fontFamily: MONO_FONT },
+  instrAmount: { fontSize: 17, fontWeight: '700', color: theme.colors.text.primary, marginTop: 6, fontFamily: MONO_FONT },
+  instrQr: { width: 160, height: 160, marginTop: 10, alignSelf: 'center', borderRadius: 8 },
+  warn: { fontSize: 12, color: theme.colors.accent.red, marginTop: 10, width: '100%' },
 }));

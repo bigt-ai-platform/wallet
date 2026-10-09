@@ -159,6 +159,16 @@ describe("CNY rails (docs/p2pcny.md)", () => {
     expect(view.json().swap.remark).toBe(ins.json().remark);
     expect(view.json().swap.paypalAccount).toBeUndefined();
 
+    // a receipt that is not base64 is rejected before anything is stored
+    bump();
+    const badReceipt = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/proof`,
+      payload: signed(buyer, buyerDid, { txId: "4200001234567890", receipt: "data:image/png;base64,@@not-base64@@" }),
+    });
+    expect(badReceipt.statusCode).toBe(400);
+    expect(badReceipt.json().error).toMatch(/base64/);
+
     // buyer claims the transfer with a receipt image → PAYMENT_CLAIMED
     bump();
     const receipt = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
@@ -169,8 +179,12 @@ describe("CNY rails (docs/p2pcny.md)", () => {
     });
     expect(proof.statusCode).toBe(200);
     expect(proof.json()).toMatchObject({ status: "PAYMENT_CLAIMED", txId: "4200001234567890" });
-    const sha = createHash("sha256").update(receipt, "utf8").digest("hex");
+    // the hash covers the image bytes, not the data-URL string — `sha256 <file>`
+    // reproduces it (docs/p2pcny.md §8)
+    const bytes = Buffer.from(receipt.slice(receipt.indexOf(",") + 1), "base64");
+    const sha = createHash("sha256").update(bytes).digest("hex");
     expect(proof.json().receiptSha256).toBe(sha);
+    expect(sha).not.toBe(createHash("sha256").update(receipt, "utf8").digest("hex"));
 
     // receipt bytes live only in the proof store; the swap event carries the hash
     const proofs = await store.proofs(swapId);

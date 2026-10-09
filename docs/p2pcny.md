@@ -1,6 +1,12 @@
 # P2P CNY — 微信支付 / 支付宝 / 银行转账
 
-**Status: plan — not built.** Companion to [p2p.md](./p2p.md), which designs and
+**Status: built.** The manual-confirm MVP (C1) is implemented: engine routes
+`instructions → proof → confirm → dispute`, payment profiles, the
+`PAYMENT_CLAIMED` state, the wallet UI, and `services/p2p-engine/test/cny.test.ts`.
+A full walkthrough with screenshots is
+[p2p-demo/p2p-cny.md](p2p-demo/p2p-cny.md); the remaining open items (timers,
+per-trade caps, automatic release after confirm) are listed in its §6.
+Companion to [p2p.md](./p2p.md), which designs and
 documents the PayPal rail. This document covers the **China fiat leg**: how a
 buyer pays CNY to the seller over the three rails ordinary people actually use —
 WeChat Pay (微信支付), Alipay (支付宝) and bank transfer (银行转账) — while the
@@ -15,7 +21,7 @@ fiat steps (4, 5, 7 of the `p2p.md` sequence) change.
 
 ## 1. The one difference that shapes everything
 
-| | PayPal (built) | CNY rails (this plan) |
+| | PayPal (built) | CNY rails (built) |
 |---|---|---|
 | Machine-verifiable payment event | ✅ `INVOICING.INVOICE.PAID` webhook (RSA-verified) | ❌ none exists |
 | Engine receives the fiat | ✅ merchant invoice → merchant account | ❌ buyer pays **seller directly**, peer-to-peer |
@@ -122,7 +128,7 @@ ESCROW_LOCKED ──instructions shown──▶ PAYMENT_PENDING
 PAYMENT_PENDING ──buyer proof──▶ PAYMENT_CLAIMED   ← new
 PAYMENT_CLAIMED ──seller confirm──▶ PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──▶ COMPLETED
 
-any pre-release state ──dispute open──▶ frozen (status unchanged, `dispute` field set — same
+PAYMENT_PENDING / PAYMENT_CLAIMED ──dispute open──▶ frozen (status unchanged, `dispute` field set — same
                                         mechanism as the PayPal dispute flag in p2p.md)
 any pre-release state ──timeout / failure──▶ EXPIRED ──refund──▶ ESCROW_REFUNDED
 ```
@@ -140,7 +146,7 @@ New event types (`services/p2p-engine/src/types.ts` `SwapEventType`):
 
 | Event | Actor | Payload (store-only, never anchored raw) |
 |---|---|---|
-| `payment_instructions` | engine | which profile fields were revealed |
+| `instructions` | engine | which profile fields were revealed |
 | `payment_proof` | buyer | receipt file ref + sha256, claimed tx id (流水号), remark, paidAt |
 | `payment_confirm` | seller | confirmedAt, matched amount/remark |
 | `dispute_open` | buyer or seller | reason code |
@@ -157,20 +163,20 @@ All new endpoints are whole-body signed like the existing ones.
 
 | Endpoint | Who | Effect |
 |---|---|---|
-| `GET  /swaps/:id/payment-instructions` | buyer or seller | matched profile fields + exact CNY amount + remark code; 403 for non-parties; only after `ESCROW_LOCKED` |
-| `POST /swaps/:id/proof` | buyer | `payment_proof` → `PAYMENT_CLAIMED`. Body: receipt file (or object ref) + sha256, `txId`, `remark`. One claim per swap; overwrites before confirm are allowed and both kept (append-only) |
-| `POST /swaps/:id/confirm` | seller | checks: status `PAYMENT_CLAIMED`, no open dispute, lock still `CONFIRMED` (fail closed) → engine+buyer release broadcast → `PAYMENT_VERIFIED` → `ESCROW_RELEASED` |
+| `POST /swaps/:id/payment-instructions` | buyer | matched profile fields + exact CNY amount + remark code; 403 for non-parties; only after `ESCROW_LOCKED` (idempotent while `PAYMENT_PENDING`) |
+| `POST /swaps/:id/proof` | buyer | `payment_proof` → `PAYMENT_CLAIMED`. Body: required `txId` (1..64 alnum `._-`), matching `remark`, optional `receipt` image data URL (the engine recomputes its `sha256`; receipt bytes stay out of the chain) |
+| `POST /swaps/:id/confirm` | seller | checks: status `PAYMENT_CLAIMED`, no open dispute → `PAYMENT_VERIFIED`. The engine-signed `release` / `complete` follow as separate transitions (not fired automatically yet) |
 | `POST /swaps/:id/dispute` | buyer or seller | sets `dispute`, freezes the swap |
 | `POST /swaps/:id/dispute/resolve` | `SETTLEMENT_ADMIN_TOKEN` | `release` (buyer wins) or `refund` (seller wins); engine co-signs the matching spend |
-| `GET  /profiles/me`, `POST /profiles` | seller | payment profile CRUD (encrypted store, §8) |
+| `POST /profiles`, `POST /profiles/mine` | seller | payment profile upsert / list (store-only PII, §8) |
 
 New env config:
 
 ```
 SETTLEMENT_CNY_RAILS=wechat,alipay,bank   # enabled methods (empty = rail off)
 SETTLEMENT_CNY_REMARK_TTL=900             # seconds the remark code is valid
-SETTLEMENT_CNY_CONFIRM_TIMEOUT=900        # claim → confirm deadline before dispute prompt
-SETTLEMENT_CNY_MAX_CENTS=...              # per-trade cap, engine config (§7)
+SETTLEMENT_CNY_CONFIRM_TIMEOUT=900        # NOT IMPLEMENTED yet — claim → confirm deadline
+SETTLEMENT_CNY_MAX_CENTS=...              # NOT IMPLEMENTED yet — per-trade cap (§7)
 ```
 
 The PayPal endpoints and `POST /swaps/:id/invoice` stay; a swap picks its rail
