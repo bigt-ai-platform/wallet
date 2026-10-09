@@ -49,23 +49,33 @@ async function configureUrlsDirect(page: Page, serverUrl: string, l1Url: string)
 test.describe('Order Screen', () => {
   test('order screen is in the DOM after navigating to tab', async ({ page }) => {
     await waitForApp(page);
-    await clickTab(page, 'Orders');
+    await clickTab(page, 'My Orders');
     const screen = await getElement(page, 'order-screen');
     await expect(screen).toBeAttached({ timeout: 10000 });
   });
 
-  test('shows order tabs (Order and My Orders)', async ({ page }) => {
+  test('shows the My Orders page with status filters', async ({ page }) => {
     await waitForApp(page);
-    await clickTab(page, 'Orders');
-    await expect(page.getByText('Order').first()).toBeAttached({ timeout: 10000 });
-    await expect(page.getByText('My Orders').first()).toBeAttached({ timeout: 5000 });
+    await clickTab(page, 'My Orders');
+    await expect(page.getByText('Your Orders').first()).toBeAttached({ timeout: 10000 });
+    await expect(page.getByTestId('order-status-filter-pending')).toBeAttached({ timeout: 5000 });
+    await expect(page.getByTestId('order-status-filter-confirmed')).toBeAttached({ timeout: 5000 });
+    await expect(page.getByTestId('order-status-filter-cancelled')).toBeAttached({ timeout: 5000 });
+    await expect(page.getByTestId('order-status-filter-failed')).toBeAttached({ timeout: 5000 });
   });
 
-  test('shows My Orders tab content', async ({ page }) => {
+  test('toggles order status filters (multi-select)', async ({ page }) => {
     await waitForApp(page);
-    await clickTab(page, 'Orders');
-    await page.getByText('My Orders').click();
-    await expect(page.getByText('Your Orders')).toBeAttached({ timeout: 5000 });
+    await clickTab(page, 'My Orders');
+    const pending = page.getByTestId('order-status-filter-pending');
+    const confirmed = page.getByTestId('order-status-filter-confirmed');
+    await pending.click();
+    await confirmed.click();
+    // Multiple statuses can be active at once and the page stays usable.
+    await expect(page.getByTestId('my-orders-tab')).toBeAttached({ timeout: 5000 });
+    await pending.click();
+    await confirmed.click();
+    await expect(page.getByTestId('my-orders-tab')).toBeAttached({ timeout: 5000 });
   });
 
   /**
@@ -80,7 +90,7 @@ test.describe('Order Screen', () => {
    * genesis wallet) for the order transaction to be accepted — fundAddresses
    * coinbases are virtual and cannot be spent on the L1 order chain.
    */
-  test('place sell order via Order UI after wallet setup (requires server)', async ({ page }) => {
+  test('place sell order via Sell page UI after wallet setup (requires server)', async ({ page }) => {
     test.setTimeout(480000);
     test.skip(!HAS_SERVER || !E2E_L1_URL, 'E2E_SERVER_URL / E2E_L1_URL not set');
 
@@ -197,9 +207,9 @@ test.describe('Order Screen', () => {
     await page.getByText('Unlock Wallet').click();
     await page.waitForTimeout(2000);
 
-    // 5. Order tab UI. The Java L0 server does not implement getMarketPrices,
-    //    so feed the price list with our token to open the order sheet; the
-    //    sell order itself is submitted to the L1 order server.
+    // 5. Place the sell order through the dedicated Sell page. The Java L0
+    //    server does not implement getMarketPrices, so feed its price list with
+    //    our token; the order itself is submitted to the L1 order server.
     const sellPrice = BigInt(1000);
     const tradeAmount = BigInt(100);
     await page.route('**/getMarketPrices', async (route) => {
@@ -220,23 +230,11 @@ test.describe('Order Screen', () => {
       });
     });
 
-    await clickTab(page, 'Orders');
-    const orderScreen = page.getByTestId('order-screen');
-    // The sidebar "Order" item lands on ?view=orders (the My Orders segment);
-    // the mocked market price list renders behind the "Order" segment.
-    await orderScreen.getByRole('tab', { name: 'Order', exact: true }).click();
-    await expect(orderScreen.getByText(tokenName)).toBeAttached({ timeout: 30000 });
-    await orderScreen.getByText('Sell').click();
-    await expect(page.getByText(`Sell ${tokenName}`)).toBeAttached({ timeout: 10000 });
-
-    // 6. Fill the order sheet (price pre-filled from the mocked ticker). The
-    //    tab screens stay mounted in the DOM, so scope to the order modal —
-    //    global `getByPlaceholder('0.00')` also matches the hidden Transaction
-    //    screen's amount input.
-    const modal = page.getByRole('dialog');
-    const modalInputs = modal.getByPlaceholder('0.00');
-    await modalInputs.nth(0).fill('1000');
-    await modalInputs.nth(1).fill('100');
+    await clickTab(page, 'Sell');
+    // The Sell page auto-selects the first (mocked) market price.
+    await expect(page.getByTestId('token-selected')).toContainText(tokenName, { timeout: 30000 });
+    await page.getByTestId('token-order-price').fill('1000');
+    await page.getByTestId('token-order-amount').fill('100');
 
     // The UI submits the order transaction to the L1 order server. Alert.alert
     // is a no-op in react-native-web, so wait for the actual submit request
@@ -247,10 +245,10 @@ test.describe('Order Screen', () => {
         { timeout: 60000 }
       )
       .catch(() => null);
-    await page.getByText('Place Sell Order').click();
+    await page.getByTestId('token-order-submit').click();
     const req = await submitReq;
     expect(req).not.toBeNull();
-    console.log('Sell order submitted via Order UI to L1');
+    console.log('Sell order submitted via Sell page UI to L1');
 
     // 7. The order book shows the open sell order (getOrders, order data).
     // Wait specifically for OUR order: getOrders returns every token's open

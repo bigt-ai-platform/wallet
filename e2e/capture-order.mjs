@@ -232,22 +232,18 @@ async function main() {
   const seller = await setupAccount(issuer.getPrivateKeyHex());
   const page = seller.page;
 
-  // Order screen — market price list (screenshot 1). The sidebar 'Orders'
-  // item lands on the My Orders segment; switch to the market 'Order' segment.
-  await clickNav(page, 'Orders');
-  await page.getByTestId('order-screen').getByRole('tab', { name: 'Order', exact: true }).click();
-  await page.getByText(tokenName).waitFor({ state: 'visible', timeout: 30000 });
+  // Sell page — token order form (screenshot 1). The sidebar 'My Orders' page
+  // is now the user's order list only; orders are placed from the dedicated
+  // Sell / Buy pages.
+  await clickNav(page, 'Sell');
+  await page.getByTestId('token-selected').waitFor({ state: 'visible', timeout: 30000 });
   await page.waitForTimeout(1500);
   await page.screenshot({ path: `${SHOTS}/order-01-market-list.png` });
   console.log('ok order-01-market-list');
 
-  // Seller opens the sell sheet and fills it (screenshot 2).
-  await page.getByTestId('order-screen').getByText('Sell').click();
-  await page.getByRole('dialog').getByText(`Sell ${tokenName}`).waitFor({ state: 'visible', timeout: 10000 });
-  const modal = page.getByRole('dialog');
-  const modalInputs = modal.getByPlaceholder('0.00');
-  await modalInputs.nth(0).fill('1000');
-  await modalInputs.nth(1).fill('100');
+  // Seller fills the sell order form (screenshot 2).
+  await page.getByTestId('token-order-price').fill('1000');
+  await page.getByTestId('token-order-amount').fill('100');
   await waitForText(page, '100000');
   await page.screenshot({ path: `${SHOTS}/order-02-sell-sheet.png` });
   console.log('ok order-02-sell-sheet');
@@ -260,9 +256,9 @@ async function main() {
       { timeout: 60000 },
     )
     .catch(() => null);
-  await page.getByText('Place Sell Order').click();
+  await page.getByTestId('token-order-submit').click();
   if (!(await submitReq)) throw new Error('Place Sell Order did not submit a transaction');
-  console.log('Sell order placed via Order UI');
+  console.log('Sell order placed via Sell page UI');
 
   // Confirm the sell order is open in the book before the buyer crosses it.
   let sellOpen = false;
@@ -280,17 +276,11 @@ async function main() {
   const buyerAcct = await setupAccount(buyer.getPrivateKeyHex());
   const bp = buyerAcct.page;
 
-  await clickNav(bp, 'Orders');
-  await bp.getByTestId('order-screen').getByRole('tab', { name: 'Order', exact: true }).click();
-  await bp.getByText(tokenName).waitFor({ state: 'visible', timeout: 30000 });
-
-  // Buyer opens the buy sheet and fills it (screenshot 3).
-  await bp.getByTestId('order-screen').getByText('Buy').click();
-  await bp.getByRole('dialog').getByText(`Buy ${tokenName}`).waitFor({ state: 'visible', timeout: 10000 });
-  const bmodal = bp.getByRole('dialog');
-  const binputs = bmodal.getByPlaceholder('0.00');
-  await binputs.nth(0).fill('1000');
-  await binputs.nth(1).fill('100');
+  // Buyer opens the Buy page and fills it (screenshot 3).
+  await clickNav(bp, 'Buy');
+  await bp.getByTestId('token-selected').waitFor({ state: 'visible', timeout: 30000 });
+  await bp.getByTestId('token-order-price').fill('1000');
+  await bp.getByTestId('token-order-amount').fill('100');
   await waitForText(bp, '100000');
   await bp.screenshot({ path: `${SHOTS}/order-03-buy-sheet.png` });
   console.log('ok order-03-buy-sheet');
@@ -303,9 +293,9 @@ async function main() {
       { timeout: 60000 },
     )
     .catch(() => null);
-  await bp.getByText('Place Buy Order').click();
+  await bp.getByTestId('token-order-submit').click();
   if (!(await buySubmitReq)) throw new Error('Place Buy Order did not submit a transaction');
-  console.log('Buy order placed via buyer Order UI');
+  console.log('Buy order placed via buyer Buy page UI');
 
   // Wait for the match (a ticker for the token). The L1 chain occasionally
   // produces forked beacon branches that can orphan an order block, so poll
@@ -426,7 +416,7 @@ async function main() {
   // chain occasionally orphans an order block, which can leave a tracked order
   // showing pending rather than FILLED; that is fine for the shot (it still
   // demonstrates the status check) so wait tolerantly and capture regardless.
-  await bp.getByText('My Orders', { exact: true }).click();
+  await clickNav(bp, 'My Orders');
   await bp.waitForTimeout(2000);
   await bp.getByText('Refresh').first().click();
   await bp.waitForTimeout(4000);
@@ -434,10 +424,8 @@ async function main() {
   console.log('ok order-04-buyer-orders');
 
   // The Spot screen was opened via the nav menu; navigate back to the
-  // seller's Orders screen (the sidebar 'Orders' lands on My Orders).
-  await clickNav(page, 'Orders');
-  await page.waitForTimeout(2000);
-  await page.getByText('My Orders', { exact: true }).first().click();
+  // seller's My Orders screen.
+  await clickNav(page, 'My Orders');
   await page.waitForTimeout(2000);
   await page.getByText('Refresh').first().click();
   await page.waitForTimeout(4000);

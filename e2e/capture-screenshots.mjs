@@ -22,7 +22,7 @@ const DIR = "demo-output/screenshots";
 const SHOTS = [
   { topic: "wallet", name: "transaction-locked", tab: null, verify: "transaction-screen", desc: "Transaction screen (locked)" },
   { topic: "wallet", name: "wallet-locked", tab: "Wallet", verify: "wallet-screen", desc: "Wallet screen (locked)" },
-  { topic: "wallet", name: "market", tab: "Order", verify: "order-screen", desc: "Market prices" },
+  { topic: "wallet", name: "my-orders", tab: "My Orders", verify: "order-screen", desc: "My orders" },
   { topic: "wallet", name: "tokens", tab: "Tokens", verify: "tokens-screen", desc: "Token browser" },
   { topic: "wallet", name: "settings", tab: "Settings", verify: "settings-screen", desc: "Settings" },
   { topic: "wallet", name: "wallet-keys", tab: "Wallet", verify: "wallet-screen", desc: "Wallet keys management" },

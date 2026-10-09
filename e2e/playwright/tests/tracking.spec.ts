@@ -281,8 +281,7 @@ test.describe('Order Tracking', () => {
   test('My Orders tab renders tracked and live sections', async ({ page }) => {
     await seedTracking(page, [orderRecord('buy')]);
 
-    await clickTab(page, 'Orders');
-    await page.getByText('My Orders').click();
+    await clickTab(page, 'My Orders');
     await expect(page.getByText('Your Orders')).toBeAttached({ timeout: 10000 });
     await expect(page.getByText('Tracked (in-app)')).toBeAttached({ timeout: 5000 });
     await expect(page.getByText('Live on')).toBeAttached({ timeout: 5000 });
@@ -292,8 +291,7 @@ test.describe('Order Tracking', () => {
   test('tracked order status refreshes via L1 getOrders', async ({ page }) => {
     await seedTracking(page, [orderRecord('sell')]);
 
-    await clickTab(page, 'Orders');
-    await page.getByText('My Orders').click();
+    await clickTab(page, 'My Orders');
     await expect((await getElement(page, 'order-status')).first()).toBeAttached({ timeout: 10000 });
 
     // The live order book is queried on the configured L1 order server.

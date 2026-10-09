@@ -83,7 +83,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
         { label: t('p2p.title'), key: 'p2p', icon: SendIcon, route: '/p2p' },
         { label: t('sidebar.buy'), key: 'buy', icon: MarketIcon, route: '/buy' },
         { label: t('sidebar.sell'), key: 'sell', icon: MarketIcon, route: '/sell' },
-        { label: t('sidebar.orders'), key: 'order', icon: OrderIcon, route: '/order', view: 'orders' },
+        { label: t('order.myOrders'), key: 'order', icon: OrderIcon, route: '/order' },
         { label: t('sidebar.portfolio'), key: 'dashboard', icon: DataIcon, route: '/dashboard' },
       ],
     },

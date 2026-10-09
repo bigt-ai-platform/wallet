@@ -48,7 +48,7 @@ export default function TabsLayout() {
     >
       <Tabs.Screen name="buy" options={{ href: null, title: t('order.buy'), tabBarLabel: t('order.buy') }} />
       <Tabs.Screen name="sell" options={{ href: null, title: t('order.sell'), tabBarLabel: t('order.sell') }} />
-      <Tabs.Screen name="order" options={{ title: t('nav.order'), tabBarLabel: t('nav.order'), tabBarIcon: ({ color, size }) => <MarketIcon size={size} color={color} /> }} />
+      <Tabs.Screen name="order" options={{ title: t('order.myOrders'), tabBarLabel: t('order.myOrders'), tabBarIcon: ({ color, size }) => <MarketIcon size={size} color={color} /> }} />
       <Tabs.Screen name="tokens" options={{ title: t('nav.tokens'), tabBarLabel: t('nav.tokens'), tabBarIcon: ({ color, size }) => <TokensIcon size={size} color={color} /> }} />
       <Tabs.Screen name="settings" options={{ title: t('nav.settings'), tabBarLabel: t('nav.settings'), tabBarIcon: ({ color, size }) => <SettingsIcon size={size} color={color} /> }} />
     </Tabs>
