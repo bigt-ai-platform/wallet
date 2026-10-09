@@ -1,7 +1,17 @@
 # P2P settlement — 2-of-3 PQ escrow + PayPal rail (wallet-owned)
 
-**Status: designed and built in-repo, not yet live.** The reference
-implementation lives in `services/p2p-engine` (moved here from dai's
+**Status: the wallet UI and guide are built and shipped; the engine is in-repo
+but not yet live.** The client is complete in
+`expo-app/sources/screens/p2p/P2pScreen.tsx` — a Binance-P2P-style book (open
+sells / my swaps), order creation with token search and a rail picker, order
+match, payment profile, payment instructions, receipt/proof submission,
+confirm/dispute, and the lock / expire / refund / cancel transitions — covering
+both the PayPal rail and the CNY rails (WeChat Pay / Alipay / bank). The user
+guide ships in 12 languages (`docs/guides/p2p*.md`) with published PDFs
+(`docs/p2p-demo/assets/p2p*.pdf`), and step-by-step demos live under
+`docs/p2p-demo/`.
+
+The reference engine lives in `services/p2p-engine` (moved here from dai's
 `services/settlement`): state machine, whole-body signed API, RSA-verified
 PayPal webhook, invoice + payout legs, reversal/dispute freezes and chain
 anchoring. It runs in mock mode; before it moves real money it still needs the
@@ -465,8 +475,9 @@ is a wallet capability, so it lives in `bigtangle-ts`.
    signed requests, engine-only signer for `verify`/`release`/`payout`, PayPal
    Invoices v2 in / Payouts v1 out + RSA webhook, and the step-8 L1-SOCIAL
    anchor. Still to run for real: prerequisites 1-2, 4, 5.
-3. **UI + guide** — Binance-P2P-style order book / order detail / match /
-   co-sign screens in the wallet app; the guide moves here in all 12 languages.
+3. **UI + guide** — *delivered:* Binance-P2P-style order book / order detail /
+   match / pay / confirm / dispute screens in the wallet app, for both the
+   PayPal and CNY rails, plus the guide and PDFs in all 12 languages.
 4. **Drop the engine key** → 2-of-2 + timelock. **Blocked on protocol work:**
    consensus needs an `isFinal` rule (reject txs whose `locktime` is in the
    future) in both `MempoolService.verifyTransaction` and `ServiceBaseCheck`.
