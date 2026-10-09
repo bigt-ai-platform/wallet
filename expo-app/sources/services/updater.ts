@@ -14,6 +14,7 @@ import i18n from '@/lib/i18n';
 import {
   fetchManifest,
   manifestUrl,
+  parseManifest,
   updateInfo,
   type InstalledVersion,
   type OtaManifest,
@@ -24,6 +25,7 @@ export type { InstalledVersion, OtaManifest, UpdateInfo };
 
 export interface UpdaterPlugin {
   getVersion(): Promise<InstalledVersion>;
+  getManifest(opts: { url: string }): Promise<{ status: number; body: string }>;
   install(opts: { url: string; sha256?: string }): Promise<{ success: boolean; status: number }>;
 }
 
@@ -75,9 +77,33 @@ export async function currentVersion(): Promise<InstalledVersion | null> {
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
   const version = await currentVersion();
   if (!version) return null;
-  const manifest = await fetchManifest(manifestUrl(OTA_BASE, OTA_CHANNEL, OTA_TYPE));
+  const url = manifestUrl(OTA_BASE, OTA_CHANNEL, OTA_TYPE);
+  const manifest = await fetchManifestNative(url);
   if (!manifest) return null;
   return updateInfo(manifest, version.versionCode);
+}
+
+/**
+ * Fetch the manifest. On device this goes through the native plugin, NOT the
+ * WebView's `fetch`: CapacitorHttp patches `fetch` and its GET path (a
+ * localhost proxy) resolves the response but silently drops the enclosing
+ * async/await continuation, so the update check never resumes past the fetch.
+ * In a plain browser (no plugin) the ordinary fetch is used.
+ */
+async function fetchManifestNative(url: string): Promise<OtaManifest | null> {
+  const p = plugin();
+  if (p) {
+    try {
+      const res = await p.getManifest({ url });
+      if (res?.status >= 200 && res.status < 300) {
+        return parseManifest(JSON.parse(res.body));
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  return fetchManifest(url);
 }
 
 /**

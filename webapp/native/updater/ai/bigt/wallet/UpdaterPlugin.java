@@ -49,6 +49,47 @@ public class UpdaterPlugin extends Plugin {
     }
   }
 
+  /**
+   * GET the OTA manifest and return its raw body. Done natively (not via the
+   * WebView's CapacitorHttp-patched fetch) because a GET through that patch
+   * resolves the request but silently drops the enclosing async/await
+   * continuation — the update check then never proceeds past the fetch.
+   */
+  @PluginMethod
+  public void getManifest(PluginCall call) {
+    String url = call.getString("url");
+    if (url == null || url.isEmpty()) {
+      call.reject("no manifest url");
+      return;
+    }
+    getBridge().execute(() -> {
+      HttpURLConnection conn = null;
+      try {
+        conn = (HttpURLConnection) new URL(url).openConnection();
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(30000);
+        conn.setInstanceFollowRedirects(true);
+        int code = conn.getResponseCode();
+        InputStream in = code >= 200 && code < 300 ? conn.getInputStream() : conn.getErrorStream();
+        StringBuilder sb = new StringBuilder();
+        if (in != null) {
+          byte[] buf = new byte[8192];
+          int n;
+          while ((n = in.read(buf)) > 0) sb.append(new String(buf, 0, n, "UTF-8"));
+          in.close();
+        }
+        JSObject o = new JSObject();
+        o.put("status", code);
+        o.put("body", sb.toString());
+        call.resolve(o);
+      } catch (Exception e) {
+        call.reject("manifest fetch failed: " + e.getMessage());
+      } finally {
+        if (conn != null) conn.disconnect();
+      }
+    });
+  }
+
   private int currentVersionCode() {
     try {
       android.content.pm.PackageInfo pi =
