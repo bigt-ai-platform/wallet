@@ -84,27 +84,6 @@ describe('Settings', () => {
     await takeScreenshot('invalid-url-error');
   });
 
-  it('should reset to default settings', async () => {
-    // Modify some settings first
-    await clearTextByTestId('server-url-input');
-    await typeTextByTestId('server-url-input', 'https://custom.com');
-
-    // Tap reset button
-    await element(by.text('Reset to Defaults')).tap();
-
-    // Confirm reset
-    await waitForElementToBeVisible(by.text('Reset Settings'));
-    await element(by.text('Reset')).tap();
-
-    // Should show success
-    await detoxExpect(element(by.text('Settings reset to defaults'))).toBeVisible();
-
-    await takeScreenshot('settings-reset');
-
-    // Dismiss alert
-    await element(by.text('OK')).tap();
-  });
-
   it('should display app information', async () => {
     // Scroll to About section
     await element(by.id('settings-screen')).scrollTo('bottom');

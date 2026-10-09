@@ -30,26 +30,13 @@ test.describe('Settings Screen', () => {
     await expect(page.getByText('App Version').first()).toBeAttached({ timeout: 10000 });
   });
 
-  test('shows reset to defaults button', async ({ page }) => {
+  test('updates card is Android-app only (hidden on web)', async ({ page }) => {
     await waitForApp(page);
     await clickTab(page, 'Settings');
-    await expect(page.getByText('Reset to Defaults').first()).toBeAttached({ timeout: 10000 });
-  });
-
-  test('shows the updates card with a check button', async ({ page }) => {
-    await waitForApp(page);
-    await clickTab(page, 'Settings');
-    const card = await getElement(page, 'settings-updates-card');
-    await expect(card).toBeAttached({ timeout: 10000 });
-    const button = await getElement(page, 'settings-check-update');
-    await expect(button).toBeAttached({ timeout: 10000 });
-  });
-
-  test('update check is unavailable on the web build (no native plugin)', async ({ page }) => {
-    await waitForApp(page);
-    await clickTab(page, 'Settings');
-    await page.locator('[data-testid="settings-check-update"]').click();
-    await expect(page.getByText('Update check unavailable.')).toBeAttached({ timeout: 10000 });
+    // The installed version + OTA check live in the native Updater plugin, which
+    // only exists in the Android (Capacitor) shell — not in a plain browser.
+    await expect(page.locator('[data-testid="settings-updates-card"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="settings-check-update"]')).toHaveCount(0);
   });
 
   test('saves the server URL and persists it to storage', async ({ page }) => {

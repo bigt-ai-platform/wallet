@@ -34,6 +34,13 @@ function isNative(): boolean {
   return !!cap?.isNativePlatform?.();
 }
 
+/** True only inside the Capacitor (Android APK) shell, where the native
+ *  `Updater` plugin exists. False in a plain browser, so the Settings "Updates"
+ *  section (installed version + OTA check) is Android-app-only. */
+export function isUpdaterAvailable(): boolean {
+  return isNative();
+}
+
 let cached: UpdaterPlugin | null | undefined;
 
 /**
