@@ -691,7 +691,7 @@ export default function TradeScreen() {
             chart={chart}
             width={chartW}
             height={isWide ? 200 : 220}
-            lineColor={theme.colors.accent.blue}
+            intervalMinutes={interval}
             dividerColor={theme.colors.divider}
             textColor={theme.colors.text.secondary}
             posColor={theme.colors.positive}
@@ -707,6 +707,7 @@ export default function TradeScreen() {
             chart={chart}
             width={chartW}
             height={isWide ? 90 : 110}
+            intervalMinutes={interval}
             textColor={theme.colors.text.secondary}
             posColor={theme.colors.positive}
             negColor={theme.colors.negative}
