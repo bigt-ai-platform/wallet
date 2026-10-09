@@ -9,7 +9,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Clipboard from 'expo-clipboard';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
-import { orderOnLayer1 } from '@/services/transaction';
+import { orderOnLayer1, cancelOrderOnLayer1 } from '@/services/transaction';
 import { decimalsFor, shortTokenId } from '@/lib/tokenformat';
 import { listOrders, recordOrder, refreshAllStatuses } from '@/services/tracking';
 import { CloseIcon, CopyIcon } from '@/components/Icons';
@@ -68,6 +68,7 @@ export default function OrderScreen() {
   const [trackedOrders, setTrackedOrders] = React.useState<TrackedRecord[]>([]);
   const [loadingOrders, setLoadingOrders] = React.useState(false);
   const [refreshingOrders, setRefreshingOrders] = React.useState(false);
+  const [cancellingId, setCancellingId] = React.useState<string | null>(null);
 
   React.useEffect(() => { loadPrices(); }, []);
 
@@ -97,6 +98,42 @@ export default function OrderScreen() {
   React.useEffect(() => {
     if (activeTab === 'orders') loadMyOrders();
   }, [activeTab]);
+
+  const cancelLiveOrder = async (o: OrderInfo) => {
+    if (!publicInfo?.address) return;
+    if (!isUnlocked) { Alert.alert('', t('order.unlockFirst')); return; }
+    const wallet = getUnlockedWallet();
+    if (!wallet) { Alert.alert('', t('order.unlockFirst')); return; }
+    if (!l1Url) { Alert.alert('', t('order.noL1')); return; }
+    const orderId = o.blockHashHex || '';
+    if (!orderId) { Alert.alert('', t('order.cancelFailed')); return; }
+    Alert.alert(t('order.cancel'), t('order.cancelConfirm'), [
+      { text: t('order.cancelNo'), style: 'cancel' },
+      {
+        text: t('order.cancelYes'),
+        style: 'destructive',
+        onPress: async () => {
+          setCancellingId(orderId);
+          try {
+            await cancelOrderOnLayer1({
+              privateKeyHex: wallet.wallet.privateKey,
+              keyType: wallet.wallet.keyType,
+              l1Url: httpService.l1Bases(l1Url)[0] ?? l1Url,
+              initialBlockHashHex: orderId,
+              address: publicInfo.address,
+            });
+            Alert.alert('', t('order.cancelDone'));
+          } catch (e) {
+            console.error('Error cancelling order:', e);
+            Alert.alert('', t('order.cancelFailed'));
+          } finally {
+            setCancellingId(null);
+            await loadMyOrders();
+          }
+        },
+      },
+    ]);
+  };
 
   const openOrder = (side: 'buy' | 'sell', token: MarketPrice) => {
     setOrderSide(side);
@@ -346,6 +383,19 @@ export default function OrderScreen() {
                           <View style={[s.statusBadge, { backgroundColor: statusBadgeColor(o.cancelPending ? 'cancelled' : 'pending', theme) }]}>
                             <Text style={s.statusBadgeText} testID="live-order-status">{o.cancelPending ? 'cancelled' : 'pending'}</Text>
                           </View>
+                          {!o.cancelPending && o.blockHashHex ? (
+                            <TouchableOpacity
+                              style={[s.cancelBtn, cancellingId === o.blockHashHex && { opacity: 0.5 }]}
+                              onPress={() => cancelLiveOrder(o)}
+                              disabled={cancellingId === o.blockHashHex}
+                              accessibilityRole="button"
+                              testID={`live-order-cancel-${i}`}
+                            >
+                              <Text style={s.cancelBtnText}>
+                                {cancellingId === o.blockHashHex ? '...' : t('order.cancel')}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : null}
                         </View>
                       ))
                     )}
@@ -493,6 +543,8 @@ const s = StyleSheet.create((theme) => ({
   liveChainRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 8, marginTop: 4 },
   statusBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 2, alignItems: 'center', marginLeft: 8 },
   statusBadgeText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700', textTransform: 'uppercase' },
+  cancelBtn: { borderWidth: 1, borderColor: theme.colors.accent.red, borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4, marginLeft: 8 },
+  cancelBtnText: { color: theme.colors.accent.red, fontSize: 12, fontWeight: '600' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'flex-end' },
   modal: { backgroundColor: theme.colors.groupped.surface, borderTopLeftRadius: 12, borderTopRightRadius: 12, padding: 20, paddingBottom: 40, maxHeight: '85%' },
