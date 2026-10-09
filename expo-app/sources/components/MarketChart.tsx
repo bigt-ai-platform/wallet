@@ -1,5 +1,5 @@
 import * as React from 'react';
-import Svg, { Rect, Line as SvgLine, Text as SvgText } from 'react-native-svg';
+import Svg, { Rect, Polyline, Line as SvgLine, Text as SvgText } from 'react-native-svg';
 import { recentCandles, type Candle } from '@/lib/candles';
 
 export type { Candle } from '@/lib/candles';
@@ -96,23 +96,27 @@ export interface PriceChartProps {
   chart: ChartData | null;
   width: number;
   height?: number;
+  lineColor?: string;
   dividerColor: string;
   textColor: string;
   posColor: string;
   negColor: string;
+  /** Candle pane or a close-price line (Binance's line chart type). */
+  mode?: 'line' | 'candles';
   /** Candle bucket size in minutes; must match the selected interval. */
   intervalMinutes?: number;
   testID?: string;
 }
 
 /**
- * Binance-style candlestick pane: OHLC candles (green up / red down) with a
- * light price grid and high/low axis labels. Uses react-native-svg so the same
- * renderer works on web and native.
+ * Price pane. In `line` mode it draws a close-price line (Binance's line chart
+ * type); in `candles` mode it draws OHLC candlesticks (green up / red down).
+ * A light price grid with high/low axis labels frames both. Uses
+ * react-native-svg so the same renderer works on web and native.
  */
 export function PriceChart({
-  chart, width, height = 220, dividerColor, textColor, posColor, negColor,
-  intervalMinutes = 60, testID,
+  chart, width, height = 220, lineColor, dividerColor, textColor, posColor, negColor,
+  mode = 'line', intervalMinutes = 60, testID,
 }: PriceChartProps) {
   const candles = recentCandles(chart?.datas, intervalMinutes);
   if (candles.length === 0) {
@@ -120,6 +124,7 @@ export function PriceChart({
   }
   const { x, y, bodyW, maxY, minY } = layout(candles, height, width);
   const gridLines = 4;
+  const linePoints = candles.map((c, i) => `${x(i).toFixed(1)},${y(c.close).toFixed(1)}`).join(' ');
 
   return (
     <Svg width={width} height={height} testID={testID}>
@@ -134,24 +139,27 @@ export function PriceChart({
           </React.Fragment>
         );
       })}
-      {/* candles */}
-      {candles.map((c, i) => {
-        const up = c.close >= c.open;
-        const color = up ? posColor : negColor;
-        const cx = x(i);
-        const yHigh = y(c.high);
-        const yLow = y(c.low);
-        const yOpen = y(c.open);
-        const yClose = y(c.close);
-        const top = Math.min(yOpen, yClose);
-        const bodyH = Math.max(Math.abs(yClose - yOpen), 1);
-        return (
-          <React.Fragment key={`c-${i}`}>
-            <SvgLine x1={cx} y1={yHigh} x2={cx} y2={yLow} stroke={color} strokeWidth={1} />
-            <Rect x={cx - bodyW / 2} y={top} width={bodyW} height={bodyH} fill={color} />
-          </React.Fragment>
-        );
-      })}
+      {mode === 'line' ? (
+        <Polyline points={linePoints} fill="none" stroke={lineColor ?? posColor} strokeWidth={2} />
+      ) : (
+        candles.map((c, i) => {
+          const up = c.close >= c.open;
+          const color = up ? posColor : negColor;
+          const cx = x(i);
+          const yHigh = y(c.high);
+          const yLow = y(c.low);
+          const yOpen = y(c.open);
+          const yClose = y(c.close);
+          const top = Math.min(yOpen, yClose);
+          const bodyH = Math.max(Math.abs(yClose - yOpen), 1);
+          return (
+            <React.Fragment key={`c-${i}`}>
+              <SvgLine x1={cx} y1={yHigh} x2={cx} y2={yLow} stroke={color} strokeWidth={1} />
+              <Rect x={cx - bodyW / 2} y={top} width={bodyW} height={bodyH} fill={color} />
+            </React.Fragment>
+          );
+        })
+      )}
     </Svg>
   );
 }
