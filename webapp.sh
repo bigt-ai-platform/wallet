@@ -56,16 +56,14 @@ done
 # Release version identity for the OTA updater: baked into the APK (gradle
 # versionName/versionCode via patch-android.mjs) and written into the manifest
 # by deploy.apk.sh. versionCode is a monotonic integer derived from semver so
-# the on-device updater can compare regardless of tag formatting.
+# the on-device updater can compare regardless of tag formatting. Resolved from
+# the highest semver tag (version.mjs), never `git describe`, which follows
+# ancestry and silently goes backwards after a rebase/cherry-pick re-tags.
+VERSION_MJS="$WEBAPP_DIR/scripts/version.mjs"
 if [ -z "${APP_VERSION_NAME:-}" ]; then
-  APP_VERSION_NAME="${APP_VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)}"
-  [ -n "$APP_VERSION_NAME" ] || APP_VERSION_NAME="$(node -e "console.log(require('./expo-app/package.json').version)")"
+  APP_VERSION_NAME="${APP_VERSION:-$(node "$VERSION_MJS" name)}"
 fi
-BASE_VERSION="$(printf '%s' "$APP_VERSION_NAME" | sed -E 's/[-+].*$//')"
-MAJOR="$(printf '%s' "$BASE_VERSION" | cut -d. -f1 | sed 's/[^0-9]//g')"
-MINOR="$(printf '%s' "$BASE_VERSION" | cut -d. -f2 | sed 's/[^0-9]//g')"
-PATCH="$(printf '%s' "$BASE_VERSION" | cut -d. -f3 | sed 's/[^0-9]//g')"
-APP_VERSION_CODE="${APP_VERSION_CODE:-$(( (MAJOR * 1000000) + (MINOR * 1000) + PATCH ))}"
+APP_VERSION_CODE="${APP_VERSION_CODE:-$(node "$VERSION_MJS" code "$APP_VERSION_NAME")}"
 [ "${APP_VERSION_CODE:-0}" -gt 0 ] || APP_VERSION_CODE="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 export APP_VERSION_NAME APP_VERSION_CODE
 # Release channel the OTA updater checks; inlined into the web bundle.

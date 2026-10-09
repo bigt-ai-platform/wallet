@@ -68,19 +68,16 @@ if ! docker image inspect "$MC_IMAGE" >/dev/null 2>&1; then
   fi
 fi
 
-# Release version: the git tag (vX.Y.Z) when on one, else the app package
+# Release version: the highest semver tag (vX.Y.Z), else the app package
 # version. versionCode is a monotonic integer (semver → major*1e6+minor*1e3+
 # patch) so the on-device updater can compare against the manifest regardless
-# of semver string formatting.
-VERSION="${APP_VERSION:-$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)}"
-if [ -z "$VERSION" ]; then
-  VERSION="$(node -e "console.log(require('./expo-app/package.json').version)")"
-fi
-BASE_VERSION="$(printf '%s' "$VERSION" | sed -E 's/[-+].*$//')"
-MAJOR="$(printf '%s' "$BASE_VERSION" | cut -d. -f1 | sed 's/[^0-9]//g')"
-MINOR="$(printf '%s' "$BASE_VERSION" | cut -d. -f2 | sed 's/[^0-9]//g')"
-PATCH="$(printf '%s' "$BASE_VERSION" | cut -d. -f3 | sed 's/[^0-9]//g')"
-VERSION_CODE="$(( (MAJOR * 1000000) + (MINOR * 1000) + PATCH ))"
+# of semver string formatting. Resolved via version.mjs (highest tag), NOT
+# `git describe` — describe follows ancestry and goes backwards when a release
+# tag lands on a rebased/cherry-picked commit, which makes every later build
+# unpublishable and un-installable over the live release.
+VERSION_MJS="$ROOT/webapp/scripts/version.mjs"
+VERSION="${APP_VERSION:-$(node "$VERSION_MJS" name)}"
+VERSION_CODE="${APP_VERSION_CODE:-$(node "$VERSION_MJS" code "$VERSION")}"
 [ "${VERSION_CODE:-0}" -gt 0 ] || VERSION_CODE="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 export APP_VERSION_NAME="$VERSION" APP_VERSION_CODE="$VERSION_CODE"
 # Bake the release channel this APK updates from.
