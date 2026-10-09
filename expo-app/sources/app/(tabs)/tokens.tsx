@@ -110,7 +110,7 @@ export default function TokensScreen() {
               </View>
             ) : (
               filtered.map((token, i) => (
-                <View key={token.tokenid || i} style={s.tokenCard} testID={`token-card-${i}`}>
+                <View key={`${token.tokenid ?? ''}-${i}`} style={s.tokenCard} testID={`token-card-${i}`}>
                   <View style={s.tokenDot} />
                   <View style={s.tokenInfo}>
                     <Text style={s.tokenName}>{token.tokenname || t('tokens.unknown')}</Text>

@@ -9,6 +9,8 @@ import { useWallet } from '@/state/wallet';
 import { MONO_FONT } from '@/constants/fonts';
 import WalletUnlock from '@/components/WalletUnlock';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
+import { httpService } from '@/services/http';
+import type { TokenItem } from '@/types/api';
 import {
   confirmPayment, createOrder, fetchInstructions, getMyProfiles, listOpenOrders, matchOrder,
   mySwaps, openDispute, p2pConfigured, saveProfile, sendPayment, submitProof, transition,
@@ -60,6 +62,8 @@ export default function P2pScreen() {
   const [instructions, setInstructions] = React.useState<Record<string, P2pPaymentInstructions>>({});
 
   const [giveToken, setGiveToken] = React.useState('');
+  const [tokenResults, setTokenResults] = React.useState<TokenItem[]>([]);
+  const [tokenSearching, setTokenSearching] = React.useState(false);
   const [giveAmount, setGiveAmount] = React.useState('');
   const [giveChain, setGiveChain] = React.useState('L0');
   const [wantCurrency, setWantCurrency] = React.useState('USD');
@@ -135,6 +139,26 @@ export default function P2pScreen() {
     if (!isUnlocked || !publicInfo?.address) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return null; }
     if (!identity) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return null; }
     return identity;
+  };
+
+  const searchTokens = async (keyword: string) => {
+    setGiveToken(keyword);
+    if (!keyword.trim()) { setTokenResults([]); return; }
+    setTokenSearching(true);
+    try {
+      const res = await httpService.searchExchangeTokens(keyword.trim());
+      setTokenResults(res.success && res.data ? res.data : []);
+    } catch (e) {
+      console.error('Error searching tokens:', e);
+      setTokenResults([]);
+    } finally {
+      setTokenSearching(false);
+    }
+  };
+
+  const pickToken = (tk: TokenItem) => {
+    setGiveToken(tk.tokenname || tk.tokenid.slice(0, 8));
+    setTokenResults([]);
   };
 
   const submitOrder = async () => {
@@ -336,7 +360,31 @@ export default function P2pScreen() {
         <>
           <View style={s.card}>
             <Text style={s.cardTitle}>{t('p2p.createTitle')}</Text>
-            <Field label={t('p2p.giveToken')} value={giveToken} onChange={setGiveToken} placeholder="USDT" testID="p2p-give-token" />
+            <View style={s.field}>
+              <Text style={s.fieldLabel}>{t('p2p.giveToken')}</Text>
+              <TextInput
+                style={s.input}
+                value={giveToken}
+                onChangeText={searchTokens}
+                placeholder="USDT"
+                placeholderTextColor={theme.colors.text.secondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="p2p-give-token"
+              />
+              {tokenSearching ? (
+                <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginTop: 8 }} />
+              ) : tokenResults.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }} testID="p2p-token-results">
+                  {tokenResults.map((tk, i) => (
+                    <TouchableOpacity key={i} style={s.chip} onPress={() => pickToken(tk)} testID={`p2p-token-${i}`} accessibilityRole="button">
+                      <Text style={s.chipText}>{tk.tokenname}</Text>
+                      <Text style={s.chipSub}>{tk.tokenid.slice(0, 10)}...</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              ) : null}
+            </View>
             <Field label={t('p2p.giveAmount')} value={giveAmount} onChange={setGiveAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-give-amount" />
             <Field label={t('p2p.wantAmount')} value={wantAmount} onChange={setWantAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
             <Field label={t('p2p.wantCurrency')} value={wantCurrency} onChange={setWantCurrency} placeholder="USD" testID="p2p-want-currency" />
@@ -649,6 +697,7 @@ const s = StyleSheet.create((theme) => ({
   chips: { flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap' },
   chip: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
   chipText: { fontSize: 13, fontWeight: '600' },
+  chipSub: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 },
   notice: { borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 12, backgroundColor: theme.colors.groupped.surface },
   noticeText: { fontSize: 13, fontWeight: '600' },
   instructions: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, marginTop: 12, backgroundColor: theme.colors.groupped.background },
