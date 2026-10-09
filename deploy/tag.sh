@@ -55,7 +55,10 @@ echo -e "${GREEN}--- expo web export (host) ---${NC}"
 rm -rf web-build
 (
   cd expo-app
-  npx expo export --platform web --output-dir ../web-build
+  # --clear: EXPO_PUBLIC_APP_VERSION is inlined by the babel transform, but
+  # Metro's cache key ignores env values, so without it the bundle keeps the
+  # APP_VERSION baked the first time (Settings/About showed 1.0.37 forever).
+  npx expo export --platform web --output-dir ../web-build --clear
 )
 [ -f web-build/index.html ] || { echo -e "${RED}web-build/index.html missing — export failed${NC}"; exit 1; }
 

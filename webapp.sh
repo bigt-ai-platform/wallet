@@ -152,7 +152,10 @@ resolve_android_sdk() {
 
 build_web_export() {
   info "Exporting the wallet web build (expo export)…"
-  ( cd "$WEB_DIR" && CI=1 EXPO_NO_TELEMETRY=1 npx expo export --platform web --output-dir dist ) \
+  # --clear: EXPO_PUBLIC_APP_VERSION is inlined by the babel transform, but
+  # Metro's cache key ignores env values, so without it the bundle keeps the
+  # APP_VERSION baked the first time (Settings/About showed a stale version).
+  ( cd "$WEB_DIR" && CI=1 EXPO_NO_TELEMETRY=1 npx expo export --platform web --output-dir dist --clear ) \
     || die "expo export failed"
   [ -f "$WEB_DIR/dist/index.html" ] || die "export produced no expo-app/dist/index.html"
   pass "web export → expo-app/dist"
