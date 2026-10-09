@@ -277,15 +277,17 @@ export default function SettingsScreen() {
         </View>
       </View>
 
-      <View style={s.card}>
-        <Text style={s.cardLabel}>{t('settings.serverUrl')}</Text>
-        <TextInput style={s.input} value={serverUrl} onChangeText={setServerUrl}
-          placeholder="https://..." placeholderTextColor={s.placeholder.color}
-          autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="server-url-input" />
-        <TouchableOpacity style={s.saveBtn} onPress={saveServer}>
-          <Text style={s.saveBtnText}>{t('settings.save')}</Text>
-        </TouchableOpacity>
-      </View>
+      {!autoDiscover && (
+        <View style={s.card}>
+          <Text style={s.cardLabel}>{t('settings.serverUrl')}</Text>
+          <TextInput style={s.input} value={serverUrl} onChangeText={setServerUrl}
+            placeholder="https://..." placeholderTextColor={s.placeholder.color}
+            autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="server-url-input" />
+          <TouchableOpacity style={s.saveBtn} onPress={saveServer}>
+            <Text style={s.saveBtnText}>{t('settings.save')}</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <View style={s.card}>
         <Text style={s.cardLabel}>{t('settings.l1Chains')}</Text>
@@ -304,10 +306,12 @@ export default function SettingsScreen() {
                 onChangeText={(v) => updateChainId(i, v)}
                 placeholder={t('settings.chainIdPh')} placeholderTextColor={s.placeholder.color}
                 autoCapitalize="none" autoCorrect={false} />
-              <TextInput style={s.chainInput} value={chain.url}
-                onChangeText={(v) => updateChainUrl(i, v)}
-                placeholder="https://..." placeholderTextColor={s.placeholder.color}
-                autoCapitalize="none" autoCorrect={false} keyboardType="url" />
+              {!autoDiscover && (
+                <TextInput style={s.chainInput} value={chain.url}
+                  onChangeText={(v) => updateChainUrl(i, v)}
+                  placeholder="https://..." placeholderTextColor={s.placeholder.color}
+                  autoCapitalize="none" autoCorrect={false} keyboardType="url" />
+              )}
             </View>
             <ChainBadge layer={1} name={t('settings.active')} />
             <TouchableOpacity style={s.removeBtn} onPress={() => removeL1Chain(i)}>
@@ -323,9 +327,11 @@ export default function SettingsScreen() {
           <TextInput style={s.chainInputSmall} value={newChainName}
             onChangeText={setNewChainName} placeholder={t('settings.namePh')} placeholderTextColor={s.placeholder.color}
             autoCapitalize="none" />
-          <TextInput style={s.chainInputSmall} value={newChainUrl}
-            onChangeText={setNewChainUrl} placeholder="https://..." placeholderTextColor={s.placeholder.color}
-            autoCapitalize="none" autoCorrect={false} keyboardType="url" />
+          {!autoDiscover && (
+            <TextInput style={s.chainInputSmall} value={newChainUrl}
+              onChangeText={setNewChainUrl} placeholder="https://..." placeholderTextColor={s.placeholder.color}
+              autoCapitalize="none" autoCorrect={false} keyboardType="url" />
+          )}
           <TouchableOpacity style={s.addBtn} onPress={addL1Chain}>
             <Text style={s.addBtnText}>+</Text>
           </TouchableOpacity>
@@ -371,7 +377,7 @@ export default function SettingsScreen() {
                       onPress={() => httpService.setActiveL1ChainId(chain.chainId)} testID={`l1-chain-chip-${i}`}>
                       <ChainBadge layer={1} />
                       <Text style={[s.tokenChipName, activeChainId === chain.chainId && s.tokenChipNameActive]}>{chain.name}</Text>
-                      <Text style={[s.tokenChipBal, activeChainId === chain.chainId && s.tokenChipBalActive]}>{chain.chainId} · {chain.url}</Text>
+                      <Text style={[s.tokenChipBal, activeChainId === chain.chainId && s.tokenChipBalActive]}>{autoDiscover ? chain.chainId : `${chain.chainId} · ${chain.url}`}</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>

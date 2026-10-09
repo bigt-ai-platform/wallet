@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { waitForApp, getElement, clickTab } from '../helpers';
+import { waitForApp, getElement, clickTab, disableAutoDiscover } from '../helpers';
 
 test.describe('Settings Screen', () => {
   test('settings screen is in the DOM after navigating to tab', async ({ page }) => {
@@ -19,6 +19,7 @@ test.describe('Settings Screen', () => {
   test('shows server URL input', async ({ page }) => {
     await waitForApp(page);
     await clickTab(page, 'Settings');
+    await disableAutoDiscover(page);
     const input = await getElement(page, 'server-url-input');
     await expect(input).toBeAttached({ timeout: 10000 });
   });
@@ -55,6 +56,7 @@ test.describe('Settings Screen', () => {
     page.on('dialog', (d) => d.accept().catch(() => {}));
     await waitForApp(page);
     await clickTab(page, 'Settings');
+    await disableAutoDiscover(page);
 
     const input = page.locator('[data-testid="server-url-input"]');
     await input.fill('');

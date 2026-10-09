@@ -36,6 +36,18 @@ export async function goToKeys(page: Page) {
   await clickTab(page, 'Keys');
 }
 
+/** The manual Server URL / L1 chain URL fields are shown only when server
+ *  auto-selection is OFF (discovery is the default). */
+export async function disableAutoDiscover(page: Page) {
+  const on = await page.evaluate(
+    () => localStorage.getItem('settings.autoDiscover') !== 'false',
+  );
+  if (on) {
+    await page.locator('[data-testid="autodiscover-toggle"]').click();
+    await page.waitForTimeout(500);
+  }
+}
+
 export async function configureServerUrl(page: Page, serverUrl: string, l1Url?: string) {
   await clickTab(page, 'Settings');
   // The local e2e infra is testnet (m…/n… addresses), but the exported web
@@ -50,6 +62,8 @@ export async function configureServerUrl(page: Page, serverUrl: string, l1Url?: 
     await page.locator('[data-testid="testnet-toggle"]').click();
     await page.waitForTimeout(800);
   }
+  // Manual URL fields only render when auto-selection is off.
+  await disableAutoDiscover(page);
   const input = page.locator('[data-testid="server-url-input"]');
   await input.fill('');
   await input.fill(serverUrl);
