@@ -14,6 +14,7 @@ import { recordOrder } from '@/services/tracking';
 import { BC_DECIMALS, decimalsFor, orderPriceShift } from '@/lib/tokenformat';
 import { utcOffsetLabel } from '@/lib/timeformat';
 import { CopyIcon, ExpandIcon, CloseIcon } from '@/components/Icons';
+import TradingChart from '@/components/TradingChart';
 import WalletUnlock from '@/components/WalletUnlock';
 import {
   PriceChart, VolumeChart, INTERVALS,
@@ -94,6 +95,9 @@ export default function TradeScreen() {
   // OHLC candles; and a full-screen mode that expands the pane.
   const [chartMode, setChartMode] = React.useState<'line' | 'candles'>('line');
   const [chartFull, setChartFull] = React.useState(false);
+  // Prefer the TradingView (lightweight-charts) pane; fall back to the built-in
+  // SVG chart if the library cannot initialise.
+  const [chartLib, setChartLib] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
 
@@ -651,6 +655,15 @@ export default function TradeScreen() {
     </View>
   ) : null;
 
+  const chartColors = {
+    up: theme.colors.positive,
+    down: theme.colors.negative,
+    line: theme.colors.accent.blue,
+    text: theme.colors.text.secondary,
+    grid: theme.colors.divider,
+    background: 'transparent',
+  };
+
   const chartCard = (
     <View style={s.card} onLayout={(e) => setChartW(Math.max(e.nativeEvent.layout.width - 28, 160))}>
       <View style={s.chartHeader}>
@@ -726,6 +739,16 @@ export default function TradeScreen() {
         <View style={s.emptyCard}><Text style={s.emptyText}>{t('trade.selectFirst')}</Text></View>
       ) : chart && chart.datas.length === 0 ? (
         <View style={s.emptyCard}><Text style={s.emptyText}>{t('chart.noData')}</Text></View>
+      ) : chartLib ? (
+        <TradingChart
+          chart={chart}
+          mode={chartMode}
+          intervalMinutes={interval}
+          height={isWide ? 300 : 340}
+          colors={chartColors}
+          testID="trade-chart-pro"
+          onError={() => setChartLib(false)}
+        />
       ) : (
         <>
           <PriceChart
@@ -952,34 +975,48 @@ export default function TradeScreen() {
           </View>
           {chart && chart.datas.length > 0 ? (
             <View style={s.fullBody}>
-              <PriceChart
-                chart={chart}
-                width={width}
-                height={Math.round(height * 0.5)}
-                intervalMinutes={interval}
-                mode={chartMode}
-                lineColor={theme.colors.accent.blue}
-                dividerColor={theme.colors.divider}
-                textColor={theme.colors.text.secondary}
-                posColor={theme.colors.positive}
-                negColor={theme.colors.negative}
-                testID="trade-chart-fullscreen-price"
-              />
-              <View style={s.dateRow}>
-                <Text style={s.dateLabel}>{firstTime ? new Date(firstTime).toLocaleDateString() : ''}</Text>
-                <Text style={s.dateLabel}>{intervalLabel}</Text>
-                <Text style={s.dateLabel}>{lastTime ? new Date(lastTime).toLocaleDateString() : ''}</Text>
-              </View>
-              <VolumeChart
-                chart={chart}
-                width={width}
-                height={Math.round(height * 0.2)}
-                intervalMinutes={interval}
-                textColor={theme.colors.text.secondary}
-                posColor={theme.colors.positive}
-                negColor={theme.colors.negative}
-                testID="trade-chart-fullscreen-volume"
-              />
+              {chartLib ? (
+                <TradingChart
+                  chart={chart}
+                  mode={chartMode}
+                  intervalMinutes={interval}
+                  height={Math.round(height * 0.72)}
+                  colors={chartColors}
+                  testID="trade-chart-fullscreen-pro"
+                  onError={() => setChartLib(false)}
+                />
+              ) : (
+                <>
+                  <PriceChart
+                    chart={chart}
+                    width={width}
+                    height={Math.round(height * 0.5)}
+                    intervalMinutes={interval}
+                    mode={chartMode}
+                    lineColor={theme.colors.accent.blue}
+                    dividerColor={theme.colors.divider}
+                    textColor={theme.colors.text.secondary}
+                    posColor={theme.colors.positive}
+                    negColor={theme.colors.negative}
+                    testID="trade-chart-fullscreen-price"
+                  />
+                  <View style={s.dateRow}>
+                    <Text style={s.dateLabel}>{firstTime ? new Date(firstTime).toLocaleDateString() : ''}</Text>
+                    <Text style={s.dateLabel}>{intervalLabel}</Text>
+                    <Text style={s.dateLabel}>{lastTime ? new Date(lastTime).toLocaleDateString() : ''}</Text>
+                  </View>
+                  <VolumeChart
+                    chart={chart}
+                    width={width}
+                    height={Math.round(height * 0.2)}
+                    intervalMinutes={interval}
+                    textColor={theme.colors.text.secondary}
+                    posColor={theme.colors.positive}
+                    negColor={theme.colors.negative}
+                    testID="trade-chart-fullscreen-volume"
+                  />
+                </>
+              )}
             </View>
           ) : (
             <View style={s.emptyCard}><Text style={s.emptyText}>{t('chart.noData')}</Text></View>
