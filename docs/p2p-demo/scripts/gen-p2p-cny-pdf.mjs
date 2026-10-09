@@ -4,7 +4,7 @@
  *
  * Self-contained (no `marked`, no workspace deps): a minimal markdown → HTML
  * pass, the local screenshots embedded as data URIs, and a headless Chromium
- * print-to-pdf — the same pipeline the dai help guides use (scripts/docs-pdf.mts).
+ * print-to-pdf — the same pipeline the help guides use (scripts/docs-pdf.mts).
  *
  * Usage:
  *   node docs/p2p-demo/scripts/gen-p2p-cny-pdf.mjs
