@@ -14,7 +14,7 @@ import { recordOrder } from '@/services/tracking';
 import { BC_DECIMALS, decimalsFor, orderPriceShift } from '@/lib/tokenformat';
 import { utcOffsetLabel } from '@/lib/timeformat';
 import { CopyIcon, ExpandIcon, CloseIcon } from '@/components/Icons';
-import TradingChart from '@/components/TradingChart';
+import TradingChart, { DEFAULT_INDICATORS, type ChartIndicators } from '@/components/TradingChart';
 import WalletUnlock from '@/components/WalletUnlock';
 import {
   PriceChart, VolumeChart, INTERVALS,
@@ -32,6 +32,16 @@ const PERCENTS = [25, 50, 75, 100] as const;
  * the traded token on the left and the quote on the right, e.g. BTC/CNY.
  */
 const QUOTE_SYMBOLS = ['CNY'] as const;
+
+/** Indicator toggles shown in the chart's indicators dialog. */
+const INDICATOR_OPTS: { key: keyof ChartIndicators; label: string }[] = [
+  { key: 'ma', label: 'trade.indMA' },
+  { key: 'boll', label: 'trade.indBOLL' },
+  { key: 'vol', label: 'trade.indVOL' },
+  { key: 'macd', label: 'trade.indMACD' },
+  { key: 'rsi', label: 'trade.indRSI' },
+  { key: 'kdj', label: 'trade.indKDJ' },
+];
 
 interface SelectedToken {
   tokenid: string;
@@ -98,6 +108,8 @@ export default function TradeScreen() {
   // Prefer the TradingView (lightweight-charts) pane; fall back to the built-in
   // SVG chart if the library cannot initialise.
   const [chartLib, setChartLib] = React.useState(true);
+  const [indicators, setIndicators] = React.useState<ChartIndicators>(DEFAULT_INDICATORS);
+  const [indOpen, setIndOpen] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
 
@@ -690,6 +702,17 @@ export default function TradeScreen() {
               <Text style={[s.modeBtnText, chartMode === 'candles' && s.modeBtnTextActive]}>{t('trade.candles')}</Text>
             </TouchableOpacity>
           </View>
+          {chartLib && (
+            <TouchableOpacity
+              onPress={() => setIndOpen(true)}
+              style={s.indicatorBtn}
+              testID="trade-chart-indicators"
+              accessibilityRole="button"
+              accessibilityLabel={t('trade.indicators')}
+            >
+              <Text style={s.indicatorBtnText}>{t('trade.indicators')}</Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             onPress={() => setChartFull(true)}
             style={s.expandBtn}
@@ -746,6 +769,7 @@ export default function TradeScreen() {
           intervalMinutes={interval}
           height={isWide ? 300 : 340}
           colors={chartColors}
+          indicators={indicators}
           testID="trade-chart-pro"
           onError={() => setChartLib(false)}
         />
@@ -936,6 +960,29 @@ export default function TradeScreen() {
       </ScrollView>
 
       {/* Full-screen chart: the same pane expanded to the whole viewport. */}
+      <Modal visible={indOpen} transparent animationType="fade" onRequestClose={() => setIndOpen(false)}>
+        <TouchableOpacity style={s.modalOverlay} activeOpacity={1} onPress={() => setIndOpen(false)}>
+          <View style={s.indicatorDialog} testID="trade-indicators-dialog">
+            <Text style={s.indicatorTitle}>{t('trade.indicators')}</Text>
+            {INDICATOR_OPTS.map(({ key, label }) => (
+              <TouchableOpacity
+                key={key}
+                style={s.indicatorRow}
+                onPress={() => setIndicators((prev) => ({ ...prev, [key]: !prev[key] }))}
+                testID={`trade-ind-${key}`}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: indicators[key] }}
+              >
+                <Text style={s.indicatorLabel}>{t(label)}</Text>
+                <Text style={[s.indicatorCheck, indicators[key] && { color: theme.colors.primary }]}>
+                  {indicators[key] ? '✓' : ''}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <Modal visible={chartFull} animationType="fade" onRequestClose={() => setChartFull(false)}>
         <View style={[s.fullScreen, { backgroundColor: theme.colors.groupped.background }]} testID="trade-chart-fullscreen">
           <View style={s.fullHeader}>
@@ -982,6 +1029,7 @@ export default function TradeScreen() {
                   intervalMinutes={interval}
                   height={Math.round(height * 0.72)}
                   colors={chartColors}
+                  indicators={indicators}
                   testID="trade-chart-fullscreen-pro"
                   onError={() => setChartLib(false)}
                 />
@@ -1068,6 +1116,13 @@ const s = StyleSheet.create((theme) => ({
   modeBtnText: { fontSize: 11, fontWeight: '600', color: theme.colors.text.secondary },
   modeBtnTextActive: { color: '#FFFFFF' },
   expandBtn: { padding: 4, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.groupped.background },
+  indicatorBtn: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.border, backgroundColor: theme.colors.groupped.background },
+  indicatorBtnText: { fontSize: 11, fontWeight: '600', color: theme.colors.text.secondary },
+  indicatorDialog: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, padding: 16, minWidth: 220, alignSelf: 'center', marginTop: '30%' },
+  indicatorTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 8 },
+  indicatorRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 10 },
+  indicatorLabel: { fontSize: 14, color: theme.colors.text.primary },
+  indicatorCheck: { fontSize: 14, fontWeight: '700', color: 'transparent', width: 16, textAlign: 'center' },
   fullScreen: { flex: 1 },
   fullHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 8 },
   fullTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary, flexShrink: 1 },
