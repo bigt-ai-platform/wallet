@@ -119,3 +119,13 @@ export { Side } from './net/bigtangle/core/Side';
 export { FreeStandingTransactionOutput } from './net/bigtangle/wallet/FreeStandingTransactionOutput';
 export { TokenType } from './net/bigtangle/core/TokenType';
 
+
+// Prediction market (docs/prediction-market.md, l1-prediction-server)
+export { KeyValue } from './net/bigtangle/core/KeyValue';
+export { TokenKeyValues } from './net/bigtangle/core/TokenKeyValues';
+export { ContractEventInfo } from './net/bigtangle/core/ContractEventInfo';
+export { ContractEventCancelInfo } from './net/bigtangle/core/ContractEventCancelInfo';
+export { PredictionAction, PredictionMarketConfig } from './net/bigtangle/apps/prediction/PredictionMarket';
+export type { PredictionConfigInput } from './net/bigtangle/apps/prediction/PredictionMarket';
+export { PredictionMarketOrders } from './net/bigtangle/apps/prediction/PredictionMarketOrders';
+export type { BookLevel, MarketOrderPlan } from './net/bigtangle/apps/prediction/PredictionMarketOrders';

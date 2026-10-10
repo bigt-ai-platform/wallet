@@ -7,6 +7,7 @@ WEB_BUILD="$ROOT/e2e/web-build"
 WEB_PORT="${WEB_PORT:-18081}"
 SERVER_PORT="${SERVER_PORT:-18088}"
 L1_PORT="${L1_PORT:-18086}"
+L1P_PORT="${L1P_PORT:-24088}"
 P2P_PORT="${P2P_PORT:-18089}"
 P2P_ENGINE_URL="http://localhost:${P2P_PORT}"
 P2P_PID=""
@@ -14,11 +15,11 @@ HTTP_PID=""
 RAISE_PID=""
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | token | blocks | p2p | p2p-ui | p2p-demo | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | predict | token | blocks | p2p | p2p-ui | p2p-demo | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, blocks, p2p, p2p-ui, p2p-demo, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" predict "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, token, blocks, p2p, p2p-ui, p2p-demo, remaining, tests, demo";;
 esac
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -341,6 +342,19 @@ E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list order.spec.ts 2>&1
 log "Order e2e tests passed."
+fi
+
+# 4b2b. Run the prediction-market tests (Predict tab; the market list needs the
+#       L1-prediction chain, up via e2e/infra.sh -> remote.sh).
+if [[ "$CMD" == "predict" ]]; then
+info "Running predict e2e tests..."
+cd "$E2E_DIR"
+APP_URL="http://localhost:${WEB_PORT}/" \
+E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
+E2E_L1_URL="http://localhost:${L1_PORT}/" \
+E2E_L1P_URL="http://localhost:${L1P_PORT}/" \
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list predict.spec.ts 2>&1
+log "Predict e2e tests passed."
 fi
 
 # 4b3. Run the token tests (browse / search / SDK token creation).

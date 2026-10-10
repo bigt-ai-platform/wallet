@@ -25,6 +25,7 @@ export POS_VALIDATOR_KEY VALIDATOR_PUBKEY
 export L0_PORT="${L0_PORT:-18088}"
 export L1_PORT="${L1_PORT:-18086}"
 export MCMC_PORT="${MCMC_PORT:-18091}"
+export L1P_PORT="${L1P_PORT:-24088}"
 # Postgres port: auto-detect from whichever container is running. This dev
 # machine's test-bigtangle-postgres listens on 21532 (host AND container);
 # helper/docker-compose-base.yml / l0-pg-0 publish 5432.
@@ -38,6 +39,7 @@ export SERVER_PORT="$L0_PORT"
 export TEST_CONTEXT_ROOT="http://localhost:${L0_PORT}/"
 export TEST_L1_URL="http://localhost:${L1_PORT}/"
 export L1_ORDER_URL="http://localhost:${L1_PORT}/"
+export TEST_L1P_URL="http://localhost:${L1P_PORT}/"
 export TEST_WALLET_SERVER_URL="$TEST_CONTEXT_ROOT"
 export INCLUDE_INTEGRATION_TESTS=1
 

@@ -368,11 +368,59 @@ remote test first (origin of truth), then port to
 4. **Oracle v2 — staked optimistic** (the decentralization milestone):
    propose-with-bond → challenge period → token-holder vote on dispute,
    slash the liar; replaces the resolver committee (§3.3 ladder).
+   *Implemented:* the engine selects it with the contract key `oracle=staked`
+   (no `committee`); anyone may propose after `resolutionTime` by bonding
+   `proposalBond` collateral, a conflicting bonded `dispute` (>= `proposalBond`)
+   freezes the proposal and opens a `voteWindowSec` stake-weighted vote
+   (`vote` action bonds collateral for one side); the greater-weighted outcome
+   wins, winners are refunded their stake plus a proportional share of the
+   loser's bond, and a tie or an unbonded proposal voids (`invalid`)
+   (`PredictionContractExecutor` + `PredictionState`; tested by
+   `PredictionEngineTest`).
 5. **Post-MVP**: multi-outcome (N winner-take-all tokens), market orders,
    USD collateral on mainnet, data-feed adapters, geo-fencing/KYC.
+   *Implemented:* multi-outcome complete sets — the contract carries an ordered
+   `outcomeTokenids` list (N >= 2, superseding `yesTokenid`/`noTokenid`); a
+   `split` of C collateral mints C of every outcome from the vault, `merge`
+   burns C of every outcome back to C collateral, a directional resolution pays
+   the named winning token 1:1, and `invalid` redeems complete sets
+   (`PredictionConfig`/`PredictionState`/`PredictionContractExecutor`; the
+   conservation invariant is checked per outcome). SDK `PredictionMarketConfig`
+   accepts `outcomeTokenids`; the app service/UI iterate the outcome list.
+   Market orders, USD collateral and data-feed/geo/KYC remain open (§8).
+   Also implemented: the engine's §2.5 hard invariant — `validateVaultTokens`
+   rejects any market whose outcome tokens are not `tokenstop` or whose minted
+   amount != S, and whitelists collateral to native BIG or `tokenstop` tokens
+   (§4.2 #5); and client-side market-order sugar
+   (`PredictionMarketOrders.planBuy/planSell` in the SDK, `marketOrderOutcome`
+   in the app) that turns an order-book snapshot into the crossing limit price
+   and submits it through the normal L1 flow.
 
 ## 8. Out of scope
 
 Regulatory/compliance work for real-money launch (the CFTC-vs-states
 litigation context in the press): licensing, geo-blocking, KYC, and player
 protections are legal/product work outside this technical plan.
+
+### 8.1 Enforcement boundary (why KYC/geo is not a protocol feature)
+
+Being chain-based changes *who* can enforce compliance, not whether the offering
+entity has obligations. The three layers differ sharply:
+
+- **Protocol (l1-prediction-server, validators, vault, oracle): cannot enforce
+  KYC/geo.** Any key can submit a `ContractEventInfo`; filtering transactions
+  means validator censorship, which contradicts the permissionless staked-oracle
+  design (§3.3 phase 4). Do not build KYC/geo into the engine.
+- **Service edges (where it is actually enforceable):** the app distribution /
+  account gate / device-IP-locale checks (bypassable — direct RPC or self-host
+  defeats them), the **bridge / collateral on-ramp** (the strongest chokepoint:
+  fiat or a regulated USD-pegged stablecoin is where AML/KYC and licensing
+  attach), and the operator/issuer/resolver entity that takes fees.
+- **Consequence for design:** a native-BIG-only, no-fiat, no-USD-stablecoin
+  deployment (the current dev posture, `collateralTokenid = BC`) has a very
+  small regulatory surface, so geo/KYC is optional product policy rather than a
+  hard requirement. Exposing a USD stablecoin and a fiat on-ramp inherits
+  derivatives/event-contract and AML rules (US: CFTC) — still enforced at the
+  front-end/bridge, never on-chain. The lever under our control is how much
+  fiat/collateral surface we expose.
+

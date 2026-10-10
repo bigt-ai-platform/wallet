@@ -20,6 +20,7 @@ case "$CMD" in
     info "Starting blockchain infra via remote.sh (infra mode)..."
     info "  L0   : http://localhost:${L0_PORT:-24089}/"
     info "  L1   : http://localhost:${L1_PORT:-24086}/"
+    info "  L1P  : http://localhost:${L1P_PORT:-24088}/"
     info "  DB   : postgres:${PG_PORT:-21532}"
 
     # remote.sh infra builds the modules, starts L0/L1, registers the

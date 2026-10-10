@@ -1130,7 +1130,8 @@ export class Wallet extends WalletBase {
     payAmount: bigint,
     validToTime: number | null,
     validFromTime: number | null,
-    contractTokenid: string
+    contractTokenid: string,
+    offerSystem: string = ""
   ): Promise<Transaction> {
     const amount = new Coin(payAmount, new Uint8Array(Utils.HEX.decode(tokenId))).negate();
     const tx = new Transaction(this.params);
@@ -1162,13 +1163,80 @@ export class Wallet extends WalletBase {
       beneficiary.toAddress().toHex(),
       validToTime,
       validFromTime,
-      ""
+      offerSystem
     );
     tx.setData(info.toByteArray());
     tx.setDataClassName("ContractEventInfo");
     await this.signTransaction(tx, aesKey, "THROW");
     await this.submitTransaction(tx);
     if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING !== tokenId) {
+      await this.submitTransaction(await this.feeTransaction(aesKey, coinList));
+    }
+    return tx;
+  }
+
+  /**
+   * Contract event that burns a fixed amount of EACH listed token (the
+   * prediction market's create/merge burn two share tokens in one block).
+   * burnAmounts: tokenid -> amount; every amount is consumed as inputs with
+   * change returned per token. offerValue/offerTokenid carry a representative
+   * single amount for the ContractEventRecord (engine state is recomputed
+   * from the actual burns).
+   */
+  async payContractMulti(
+    aesKey: any,
+    burnAmounts: Map<string, bigint>,
+    offerTokenid: string,
+    offerValue: bigint,
+    validToTime: number | null,
+    validFromTime: number | null,
+    contractTokenid: string,
+    offerSystem: string = ""
+  ): Promise<Transaction> {
+    const tx = new Transaction(this.params);
+    const coinList = await this.calculateAllSpendCandidates(aesKey, false);
+    let beneficiary: PQKey | null = null;
+    const remaining = new Map<string, bigint>(burnAmounts);
+    for (const spendableOutput of coinList) {
+      const utxo = spendableOutput.getUTXO();
+      if (!utxo) continue;
+      const tok = Utils.HEX.encode(utxo.getTokenidBuf());
+      const need = remaining.get(tok);
+      if (need === undefined || need <= 0n) continue;
+      if (beneficiary == null) {
+        beneficiary = (await this.getECKey(aesKey, utxo.getAddress())) as PQKey;
+      }
+      const take = utxo.getValue().getValue() < need ? utxo.getValue().getValue() : need;
+      if (take <= 0n) continue;
+      tx.addInput2(utxo.getBlockHash(), spendableOutput);
+      const change = utxo.getValue().subtract(new Coin(take, utxo.getTokenidBuf()));
+      if (change.getValue() > 0n) {
+        tx.addOutputEckey(change, beneficiary!);
+      }
+      remaining.set(tok, need - take);
+    }
+    for (const [tok, amt] of remaining.entries()) {
+      if (amt > 0n) {
+        throw new InsufficientMoneyException("payContractMulti token=" + tok + " missing=" + amt);
+      }
+    }
+    if (beneficiary == null) {
+      throw new InsufficientMoneyException("payContractMulti: nothing to spend");
+    }
+    const info = new ContractEventInfo(
+      contractTokenid,
+      offerValue,
+      offerTokenid,
+      beneficiary.toAddress().toHex(),
+      validToTime,
+      validFromTime,
+      offerSystem
+    );
+    tx.setData(info.toByteArray());
+    tx.setDataClassName("ContractEventInfo");
+    await this.signTransaction(tx, aesKey, "THROW");
+    await this.submitTransaction(tx);
+    if (this.getFee()) {
       await this.submitTransaction(await this.feeTransaction(aesKey, coinList));
     }
     return tx;
