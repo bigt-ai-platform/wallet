@@ -40,24 +40,26 @@ import {
   SEEDS_CHAIN_L1,
   SEEDS_URLS,
 } from '@/constants/app';
-import { parseDohSeeds, type DohResponse } from '@/lib/dnsseeds';
 import {
   cacheStale,
   demote,
+  fetchRegistryNodes,
+  isOnionUrl,
   orderEndpoints,
   orderOnionLast,
   parseChainProbe,
+  parseDohSeeds,
   selectAndRank,
   withSlash,
   type ChainProbe,
   type ChainSample,
+  type DohResponse,
   type ProbeResult,
   type RankedEndpoint,
-} from '@/lib/endpoints';
-import { fetchRegistryNodes } from '@/lib/registry';
+} from 'chain-discovery';
 import { nodeNameForUrl } from '@/lib/chainstatus';
 
-export { isOnionUrl } from '@/lib/endpoints';
+export { isOnionUrl };
 
 export type Role = 'l0' | 'l1';
 

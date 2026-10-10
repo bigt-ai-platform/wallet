@@ -82,6 +82,8 @@ export interface P2pSwap {
   receiptSha256?: string;
   paidAt?: number;
   txid?: string;
+  /** Seller pre-signed both escrow spend skeletons (the auto-settle hook is armed). */
+  presigned?: boolean;
   at: number;
 }
 
@@ -136,6 +138,45 @@ export interface P2pPaymentProfile {
 /** Whether a P2P engine endpoint is configured for this build. */
 export function p2pConfigured(): boolean {
   return !!P2P_ENGINE_URL;
+}
+
+/** What a deployed engine actually serves (GET /capabilities — public). */
+export interface P2pCapabilities {
+  /** Enabled rails in the engine's preference order (paypal first when wired). */
+  rails: string[];
+  /** PayPal client configured — false means /invoice and /payout-sync 503. */
+  paypal: boolean;
+  /** Engine escrow pubkey configured (the 2-of-3 participant). */
+  escrow: boolean;
+  /** Public engine escrow key: rebuilds the 2-of-3 vault to sign escrow spends. */
+  escrowPubkey: string | null;
+  /** Chain clients wired: l0 = escrow proof/broadcast, l1 = social anchor. */
+  chain: { l0: boolean; l1: boolean };
+}
+
+/**
+ * The engine's capability report. Returns null (never throws) when the engine
+ * is unconfigured, unreachable, or too old to expose /capabilities — callers
+ * then keep their built-in defaults, so a CNY-only deploy hides the paypal
+ * rail while an older engine behaves exactly as before.
+ */
+export async function getCapabilities(): Promise<P2pCapabilities | null> {
+  if (!p2pConfigured()) return null;
+  try {
+    const res = await fetch(`${baseUrl()}/capabilities`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as Partial<P2pCapabilities>;
+    if (!Array.isArray(data.rails)) return null;
+    return {
+      rails: data.rails.filter((r): r is string => typeof r === 'string'),
+      paypal: !!data.paypal,
+      escrow: !!data.escrow,
+      escrowPubkey: typeof data.escrowPubkey === 'string' && data.escrowPubkey ? data.escrowPubkey : null,
+      chain: { l0: !!data.chain?.l0, l1: !!data.chain?.l1 },
+    };
+  } catch {
+    return null;
+  }
 }
 
 function baseUrl(): string {
@@ -276,9 +317,60 @@ export async function openDispute(
   id: P2pIdentity,
   swapId: string,
   reason?: string,
-): Promise<{ swapId: string; status: string; dispute: string }> {
+): Promise<{ swapId: string; dispute: string }> {
   const body = signedBody(id.key, id.did, reason ? { reason } : {});
   return request(`/swaps/${swapId}/dispute`, body);
+}
+
+/**
+ * Escrow signing context (party-scoped): the lock outpoint, the release
+ * destination (`receiveAddress` — redacted from the general swap view because
+ * it is only needed to rebuild the spend skeletons), and the presign state.
+ */
+export interface P2pEscrowContext {
+  swapId: string;
+  escrowAddress: string;
+  escrowTxHash: string;
+  receiveAddress: string;
+  sellerDid: string;
+  buyerDid: string;
+  presigned: boolean;
+}
+
+export async function escrowContext(id: P2pIdentity, swapId: string): Promise<P2pEscrowContext> {
+  const body = signedBody(id.key, id.did, { swapId });
+  return request(`/swaps/${swapId}/escrow/context`, body);
+}
+
+/**
+ * Seller: pre-sign both spend skeletons at lock (release pays the buyer's
+ * receive address, refund pays the seller-chosen address) so the engine's
+ * hook can finish the swap with its own key while nobody watches.
+ */
+export async function presignEscrow(
+  id: P2pIdentity,
+  swapId: string,
+  input: { releaseSig: string; refundSig: string; refundAddress: string },
+): Promise<{ swapId: string; presigned: boolean; refundAddress: string }> {
+  const body = signedBody(id.key, id.did, { swapId, ...input });
+  return request(`/swaps/${swapId}/escrow/presign`, body);
+}
+
+/**
+ * Party co-sign (Path A): submit this wallet's signature over the rebuilt
+ * skeleton; the engine adds its key, broadcasts, and settles only after
+ * CONFIRMED. `kind=refund` is seller-only (the refund pays the seller's
+ * address). 202 = broadcast pending.
+ */
+export async function cosignEscrow(
+  id: P2pIdentity,
+  swapId: string,
+  input: { kind: 'release' | 'refund'; sig: string; refundAddress?: string },
+): Promise<{ swapId: string; status: string; txHash: string | null; pending: boolean }> {
+  const fields: Record<string, unknown> = { swapId, kind: input.kind, sig: input.sig };
+  if (input.refundAddress) fields.refundAddress = input.refundAddress;
+  const body = signedBody(id.key, id.did, fields);
+  return request(`/swaps/${swapId}/escrow/cosign`, body);
 }
 
 /** Seller: upsert a CNY collection profile. */

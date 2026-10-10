@@ -32,7 +32,7 @@ import {
 } from '@/types/api';
 import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
 import { decimalsFor, formatTokenAmount } from '@/lib/tokenformat';
-import { withSlash } from '@/lib/endpoints';
+import { withSlash } from 'chain-discovery';
 import { orderedBases, markDown, rememberPeer } from '@/services/discovery';
 import {
   DEFAULT_L1_CHAINS_MAINNET,

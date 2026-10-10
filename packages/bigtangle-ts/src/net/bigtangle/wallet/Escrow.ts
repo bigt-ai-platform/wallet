@@ -168,3 +168,24 @@ export class Escrow {
         return this.roles;
     }
 }
+
+/**
+ * The amount an escrow spend may pay out — the shared skeleton rule both the
+ * wallet and the settlement engine must use so their signatures cover the
+ * same transaction bytes.
+ *
+ * The mempool accepts a transaction with BIG inputs only when
+ * `input >= output + FEE_DEFAULT` (MempoolService), while a non-BIG escrow
+ * (e.g. a stablecoin) pays no fee at all. So a BIG escrow loses exactly the
+ * default fee, and anything else pays out in full.
+ *
+ * @throws when a BIG escrow holds less than the fee itself.
+ */
+export function escrowSpendAmount(value: Coin): Coin {
+    if (!value.isBIG()) return value;
+    const out = value.subtract(Coin.FEE_DEFAULT);
+    if (!out.isPositive()) {
+        throw new Error(`escrow value ${value.toString()} is below the default fee ${Coin.FEE_DEFAULT.toString()}`);
+    }
+    return out;
+}

@@ -88,7 +88,7 @@ CORS_ORIGIN=http://localhost:18081       # wallet web app origin
 
 ```bash
 # 1. workspace packages the engine imports
-for pkg in did p2p-protocol record-sig; do ( cd packages/$pkg && npm run build ); done
+for pkg in chain-discovery did p2p-protocol record-sig; do ( cd packages/$pkg && npm run build ); done
 
 # 2. engine bundle (esbuild → dist/server.bundle.mjs)
 ( cd services/p2p-engine && npm run build && npm run bundle )

@@ -1,0 +1,23 @@
+{
+  "name": "chain-discovery",
+  "version": "0.1.0",
+  "description": "Bigtangle chain endpoint discovery: DNS/registry seeds, health probes, ranking (shared by the wallet app and the P2P engine)",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

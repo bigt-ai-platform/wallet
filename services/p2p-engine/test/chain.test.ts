@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ECKey } from "bigtangle-ts";
-import { verifyChainLock, verifyChainPayment, type ChainClient } from "../src/chain.js";
+import { HttpChainClient, verifyChainLock, verifyChainPayment, type ChainClient } from "../src/chain.js";
 import { escrowAddress } from "../src/escrow.js";
 
 const escrow = escrowAddress([ECKey.createNewKey(), ECKey.createNewKey(), ECKey.createNewKey()], 2);
@@ -54,5 +54,28 @@ describe("chain evidence", () => {
   it("verifies a release to the receive address", async () => {
     expect((await verifyChainPayment(client("CONFIRMED", "1Receive"), { txHash: "tx", toAddress: "1Receive" })).ok).toBe(true);
     expect((await verifyChainPayment(client("CONFIRMED", "1Other"), { txHash: "tx", toAddress: "1Receive" })).ok).toBe(false);
+  });
+});
+
+describe("HttpChainClient.outputsHistory", () => {
+  // Java-first: getOutputsHistory ANDs fromaddress (the transaction's SENDER)
+  // and toaddress (the receiver); the escrow lock output is escrow-as-receiver,
+  // so the address must be sent in the to slot — the from slot queries the
+  // seller's address and never matches the lock output.
+  it("queries the toaddress slot, not fromaddress", async () => {
+    const bodies: string[] = [];
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      bodies.push(String(init?.body ?? ""));
+      return { ok: true, status: 200, json: async () => ({ outputs: [] }) } as Response;
+    };
+    const http = new HttpChainClient("http://l0", fetchImpl);
+    await http.outputsHistory(escrow);
+    expect(bodies).toHaveLength(1);
+    expect(JSON.parse(bodies[0])).toEqual({
+      fromaddress: "",
+      toaddress: escrow,
+      starttime: null,
+      endtime: null,
+    });
   });
 });

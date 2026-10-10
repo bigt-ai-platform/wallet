@@ -49,6 +49,7 @@
     "asn1js": "^3.0.7",
     "axios": "^1.20.0",
     "bigtangle-ts": "^1.0.8",
+    "chain-discovery": "*",
     "capacitor-secure-storage-plugin": "^0.13.0",
     "color": "^5.0.0",
     "expo": "~57.0.20",

@@ -8,7 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
 import { networkCandidates, endpointInfo, selectedNodeName } from '@/services/discovery';
 import { buildChainTargets, hostOf, shortHash, nodeNameForUrl, type ChainTarget, type ChainRole } from '@/lib/chainstatus';
-import type { ChainProbe } from '@/lib/endpoints';
+import type { ChainProbe } from 'chain-discovery';
 import { IS_DEV, IS_WEB_BROWSER, PROD_WEB_L0_NODES, PROD_WEB_L1_NODES } from '@/constants/app';
 
 /**

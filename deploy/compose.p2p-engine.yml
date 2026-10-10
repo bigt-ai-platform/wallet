@@ -47,9 +47,25 @@ services:
       POSTGRES_URL: postgres://p2p:${POSTGRES_PASSWORD}@db:5432/p2p
       PORT: "8108"
       HOST: "0.0.0.0"
-      # chains (external)
+      # chains (external). Comma lists; the singular vars stay supported.
+      # Discovery gates every endpoint on a healthy getChainNumber probe —
+      # no probe pass, no use (fail closed). DNS/registry are opt-in.
       SETTLEMENT_L0_URL: ${SETTLEMENT_L0_URL:-}
+      SETTLEMENT_L0_URLS: ${SETTLEMENT_L0_URLS:-}
       SETTLEMENT_L1_URL: ${SETTLEMENT_L1_URL:-}
+      SETTLEMENT_L1_SOCIAL_URL: ${SETTLEMENT_L1_SOCIAL_URL:-}
+      SETTLEMENT_L1_SOCIAL_URLS: ${SETTLEMENT_L1_SOCIAL_URLS:-}
+      SETTLEMENT_DISCOVERY_MS: ${SETTLEMENT_DISCOVERY_MS:-300000}
+      SETTLEMENT_DISCOVERY_DNS: ${SETTLEMENT_DISCOVERY_DNS:-}
+      SETTLEMENT_DISCOVERY_TIMEOUT_MS: ${SETTLEMENT_DISCOVERY_TIMEOUT_MS:-5000}
+      SETTLEMENT_SEEDS_URLS: ${SETTLEMENT_SEEDS_URLS:-}
+      SETTLEMENT_DOH_URL: ${SETTLEMENT_DOH_URL:-}
+      SETTLEMENT_DNS_SEEDS_DOMAIN: ${SETTLEMENT_DNS_SEEDS_DOMAIN:-}
+      # chain network params for escrow derivation (empty/mainnet = prod).
+      # SETTLEMENT_NETWORK=testnet (or SETTLEMENT_TESTNET=1) makes the engine
+      # derive the same P2SH address the testnet node reports (e2e infra).
+      SETTLEMENT_NETWORK: ${SETTLEMENT_NETWORK:-}
+      SETTLEMENT_TESTNET: ${SETTLEMENT_TESTNET:-}
       # engine identity: ML-DSA-87 seed hex (signs records + funds the anchor tx)
       SETTLEMENT_ENGINE_KEY: ${SETTLEMENT_ENGINE_KEY:-}
       SETTLEMENT_ENGINE_DID: ${SETTLEMENT_ENGINE_DID:-}
@@ -63,6 +79,12 @@ services:
       # admin-gated reads/retries; CORS for the wallet SPA origin
       SETTLEMENT_ADMIN_TOKEN: ${SETTLEMENT_ADMIN_TOKEN:-}
       CORS_ORIGIN: ${CORS_ORIGIN:-}
+      # CNY collection rails offered (empty → all three: wechat, alipay, bank)
+      SETTLEMENT_CNY_RAILS: ${SETTLEMENT_CNY_RAILS:-}
+      # escrow settlement closure (docs/p2p.md): pre-signed swaps settle on
+      # their own — release at PAYMENT_VERIFIED, refund at EXPIRED. 0 = off.
+      SETTLEMENT_ESCROW_HOOK_MS: ${SETTLEMENT_ESCROW_HOOK_MS:-30000}
+      SETTLEMENT_ESCROW_POLL_MS: ${SETTLEMENT_ESCROW_POLL_MS:-25000}
     ports:
       - "127.0.0.1:${P2P_PORT:-8108}:8108"
 

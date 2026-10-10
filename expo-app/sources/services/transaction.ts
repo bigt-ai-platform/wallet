@@ -18,7 +18,7 @@ import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/Transa
 import { WalletUtil } from 'bigtangle-ts/dist/net/bigtangle/utils/WalletUtil';
 import { httpService } from './http';
 import { IS_DEV } from '@/constants/app';
-import { withSlash } from '@/lib/endpoints';
+import { withSlash } from 'chain-discovery';
 import { rememberPeer } from '@/services/discovery';
 import { ReqCmd } from '@/types/api';
 import type { UTXO, ApiResponse } from '@/types/api';

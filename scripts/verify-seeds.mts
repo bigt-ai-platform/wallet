@@ -1,6 +1,6 @@
 /**
  * verify-seeds — check that a seeds registry serves usable chain nodes, using
- * the same code path the app uses (`lib/registry` + `lib/endpoints`).
+ * the same code path the app and engine use (`chain-discovery`).
  *
  *   npx tsx scripts/verify-seeds.mts [registries] [chain]
  *   npx tsx scripts/verify-seeds.mts https://eu.wallet.bigt.ai/seeds ordermatch
@@ -8,8 +8,8 @@
  *
  * Exit code is non-zero if no healthy node is discovered (CI/ops gate).
  */
-import { fetchRegistryNodes } from '../expo-app/sources/lib/registry.ts';
-import { parseChainProbe, rankProbes, type ProbeResult } from '../expo-app/sources/lib/endpoints.ts';
+import { fetchRegistryNodes } from '../packages/chain-discovery/src/index.ts';
+import { parseChainProbe, rankProbes, type ProbeResult } from '../packages/chain-discovery/src/index.ts';
 
 const registries = (process.argv[2] ?? process.env.SEEDS_URLS ?? 'http://92.5.34.128:8089')
   .split(',')

@@ -30,6 +30,8 @@ export interface L1Anchor {
   l1Url: string;
   pqKey: PQKey;
   did: string;
+  /** Discovery: resolve the current healthy L1-SOCIAL base (null = none). */
+  resolveUrl?: () => string | null;
 }
 
 const BIG = NetworkParameters.getBIGTANGLE_TOKENID();
@@ -41,8 +43,11 @@ const BIG = NetworkParameters.getBIGTANGLE_TOKENID();
  * match the derived did:key.
  */
 export function anchorFromEnv(env: NodeJS.ProcessEnv): L1Anchor | null {
-  const l1Url = (env.SETTLEMENT_L1_URL?.trim() || env.SETTLEMENT_L1_SOCIAL_URL?.trim() || env.L1_SOCIAL_URL?.trim() || "")
-    .replace(/\/+$/, "");
+  const l1Url = (env.SETTLEMENT_L1_SOCIAL_URLS?.split(",")[0]?.trim()
+    || env.SETTLEMENT_L1_URL?.trim()
+    || env.SETTLEMENT_L1_SOCIAL_URL?.trim()
+    || env.L1_SOCIAL_URL?.trim()
+    || "").replace(/\/+$/, "");
   const keyHex = env.SETTLEMENT_ENGINE_KEY?.trim() || "";
   if (!l1Url || !keyHex) return null;
   let pqKey: PQKey;
@@ -142,8 +147,14 @@ export type SubmitRecord = (l1Url: string, pqKey: PQKey, record: unknown) => Pro
 /** Build the `deps.anchor` hook: sign the record and submit it to L1-SOCIAL. */
 export function l1Anchor(cfg: L1Anchor, submit: SubmitRecord = submitSocialRecord): (event: P2pSwapEvent) => Promise<{ txid?: string }> {
   return async (event: P2pSwapEvent) => {
+    // Discovery pool when present: the configured `l1Url` is only the boot
+    // candidate, and a pool that has gone dark fails closed (transition
+    // errors, caller retries — never an anchor to an unverified node).
+    const resolved = (cfg.resolveUrl ? cfg.resolveUrl() : cfg.l1Url) ?? "";
+    const l1Url = resolved.replace(/\/+$/, "");
+    if (!l1Url) throw new Error("no healthy L1-SOCIAL endpoint (discovery)");
     const record = signSwapRecord(swapEventRecord(event, cfg.did), cfg.pqKey);
-    const txid = await submit(cfg.l1Url, cfg.pqKey, record);
+    const txid = await submit(l1Url, cfg.pqKey, record);
     return { txid };
   };
 }

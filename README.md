@@ -135,14 +135,15 @@ yarn install
 
 This installs the workspaces (`expo-app` + `packages/bigtangle-ts`).
 
-### 2. Build the TS blockchain client
+### 2. Build the TS workspace packages
 
-`expo-app` depends on the workspace `bigtangle-ts`, whose runtime entry is its
-compiled `dist/`. Keep it in sync after any change:
+`expo-app` (and the P2P engine) depend on the workspace `bigtangle-ts` and
+`chain-discovery`, whose runtime entries are their compiled `dist/`. Keep them
+in sync after any change:
 
 ```bash
-cd packages/bigtangle-ts
-yarn build
+( cd packages/bigtangle-ts && yarn build )
+( cd packages/chain-discovery && yarn build )
 ```
 
 ### 3a. Full local stack: `dev.sh` (recommended)

@@ -16,7 +16,7 @@ import {
   type ChainSample,
   type ProbeResult,
   type RankedEndpoint,
-} from '../endpoints';
+} from '../src/endpoints.js';
 
 const p = (url: string, chainLength: number, latencyMs: number, extra: Partial<ProbeResult> = {}): ProbeResult => ({
   url,

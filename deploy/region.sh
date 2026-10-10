@@ -40,12 +40,14 @@ Regions: ${REGIONS[*]}
 Actions:
   deploy   Full provision: image (registry pull or docker-load tar) ->
            repo sync -> compose up -> Caddy vhost. Idempotent.
+  p2p      P2P settlement engine: image -> secrets -> compose up ->
+           /healthz -> Caddy /p2p/* route. Idempotent.
   caddy    (Re)write the Caddy vhost for the region only.
   status   Container (compose ps) + listening ports.
   health   Container health + public https.
   logs     Recent container logs.
   env      Show the resolved config for the region.
-  destroy  Stop the container, remove the Caddy vhost (nothing to wipe — no data).
+  destroy  Stop the containers, remove the Caddy vhost (nothing to wipe — no data).
 EOF
   exit 1
 }
@@ -161,6 +163,64 @@ exit 1
 EOF
 }
 
+# ─── P2P settlement engine (services/p2p-engine) ───
+# Provisioned separately from the static web stack: the engine holds DB + engine
+# identity secrets that a client app must never see. Secrets live on the RELEASE
+# HOST in the gitignored deploy/env/.env.p2p.<region> (region.sh rsyncs exclude
+# deploy/env, so each run scps them again) and are passed to compose as an
+# --env-file (interpolation only — compose whitelist-maps the container env).
+p2p_up() {
+  local r="$1"; require_region "$r"
+  local env_file="${SCRIPT_DIR}/env/.env.p2p.${r}"
+  local tar="${SCRIPT_DIR}/.image/wallet-p2p-engine.latest.tar"
+  [ -f "$env_file" ] || { echo -e "${RED}secrets missing: $env_file — create it first (scripts/p2p-engine-key.mjs + docs/p2p.md)${NC}"; exit 1; }
+  preflight "$r" || { echo -e "${RED}preflight failed${NC}"; exit 1; }
+  sync_repo "$r" || { echo -e "${RED}sync failed — p2p aborted${NC}"; exit 1; }
+
+  echo -e "${GREEN}--- P2P secrets → $(vm_ip "$r"):$REMOTE_REPO/deploy/env ---${NC}"
+  ssh_run "$r" "mkdir -p $REMOTE_REPO/deploy/env"
+  scp ${SSH_OPTS} -i "$(vm_key "$r")" "$env_file" \
+    "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/deploy/env/.env.p2p.${r}"
+  # image tar (no-registry path): transfer when tag.sh saved one
+  if [ -f "$tar" ]; then
+    ssh_run "$r" "mkdir -p $REMOTE_REPO/.image"
+    scp ${SSH_OPTS} -i "$(vm_key "$r")" "$tar" \
+      "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/.image/wallet-p2p-engine.latest.tar"
+  fi
+
+  echo -e "${GREEN}--- P2P engine up on $(vm_ip "$r") (:$P2P_PORT) ---${NC}"
+  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_PORT=$P2P_PORT P2P_IMAGE=$P2P_IMAGE bash -s" <<'EOF'
+set -e
+cd "$REMOTE_REPO"
+COMPOSE="docker compose --env-file deploy/env/.env.p2p.$REGION -f deploy/compose.p2p-engine.yml"
+# image: registry pull, else the docker-save tar tag.sh built — never build on the VM
+if [ -n "$P2P_IMAGE" ] && docker pull "$P2P_IMAGE" >/dev/null 2>&1; then
+  echo "image: $P2P_IMAGE (registry pull)"
+elif [ -f .image/wallet-p2p-engine.latest.tar ]; then
+  docker load -i .image/wallet-p2p-engine.latest.tar >/dev/null
+  [ -n "$P2P_IMAGE" ] && docker tag wallet-p2p-engine:latest "$P2P_IMAGE"
+  echo "image: wallet-p2p-engine:latest (tar)"
+else
+  echo "p2p engine image unavailable: pull of '$P2P_IMAGE' failed and no .image/wallet-p2p-engine.latest.tar" >&2
+  exit 1
+fi
+$COMPOSE up -d --no-build
+for i in $(seq 1 30); do
+  if curl -sf -o /dev/null "http://127.0.0.1:$P2P_PORT/healthz" 2>/dev/null; then
+    echo "p2p engine ok"
+    exit 0
+  fi
+  sleep 2
+done
+echo "p2p engine NOT responding on :$P2P_PORT" >&2
+$COMPOSE logs --tail=40 --no-color 2>/dev/null | tail -40
+exit 1
+EOF
+  # route /p2p/* to the engine (idempotent vhost rewrite + reload)
+  config_caddy "$r" || { echo -e "${RED}config_caddy failed${NC}"; exit 1; }
+  echo -e "${GREEN}=== p2p engine ready: https://$(domain "$r")/p2p/healthz ===${NC}"
+}
+
 config_caddy() {
   local r="$1" dom; dom="$(domain "$r")"
   local sudo; sudo="$(sudo_cmd "$r")"
@@ -213,6 +273,13 @@ ${dom}, www.${dom} {
     }
     handle_path /l1/* {
         reverse_proxy ${L1_API}
+    }
+    # P2P settlement engine (services/p2p-engine) on this VM — same-origin,
+    # the bundle bakes EXPO_PUBLIC_P2P_ENGINE_URL=/p2p (deploy/tag.sh). The
+    # bare /p2p SPA route falls through to the web container; only /p2p/<api>
+    # is stripped here. Keep in sync with nginx.conf location /p2p/.
+    handle_path /p2p/* {
+        reverse_proxy 127.0.0.1:${P2P_PORT}
     }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}
@@ -279,6 +346,13 @@ ${apex}, www.${apex} {
     handle_path /l1/* {
         reverse_proxy ${L1_API}
     }
+    # P2P settlement engine (services/p2p-engine) on this VM — same-origin,
+    # the bundle bakes EXPO_PUBLIC_P2P_ENGINE_URL=/p2p (deploy/tag.sh). The
+    # bare /p2p SPA route falls through to the web container; only /p2p/<api>
+    # is stripped here. Keep in sync with nginx.conf location /p2p/.
+    handle_path /p2p/* {
+        reverse_proxy 127.0.0.1:${P2P_PORT}
+    }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}
     }
@@ -331,8 +405,11 @@ echo "--- wallet container ---"
 docker ps --filter "name=wallet-$REGION-web" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 echo "--- web image ---"
 docker images --format "{{.Repository}}:{{.Tag}}" | grep -E 'wallet-web|^REPOSITORY' | head -5 || true
+echo "--- p2p engine ---"
+docker ps --filter "name=wallet-p2p-$REGION" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
 EOF
   echo "  container port :$WEB_PORT → $(ssh_run "$r" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:$WEB_PORT/ 2>/dev/null || echo 000")"
+  echo "  p2p engine     :$P2P_PORT → $(ssh_run "$r" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:$P2P_PORT/healthz 2>/dev/null || echo 000")"
 }
 
 health_region() {
@@ -344,6 +421,7 @@ code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "http://127.0.0.1:$PO
 echo "  http://127.0.0.1:$PORT/ → ${code:-000}"
 EOF
   echo "  https://$dom/ → $(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$dom/" 2>/dev/null || echo 000)"
+  echo "  https://$dom/p2p/healthz → $(curl -s --max-time 10 "https://$dom/p2p/healthz" 2>/dev/null || echo 000)"
 }
 
 logs_region() {
@@ -352,6 +430,10 @@ logs_region() {
   ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r bash -s" <<'EOF'
 cd "$REMOTE_REPO"
 docker compose -f deploy/compose.prod.yml logs --tail=80 --no-color 2>/dev/null | tail -120 || true
+if [ -f "deploy/env/.env.p2p.$REGION" ]; then
+  echo "--- p2p engine ---"
+  docker compose --env-file "deploy/env/.env.p2p.$REGION" -f deploy/compose.p2p-engine.yml logs --tail=40 --no-color 2>/dev/null | tail -60 || true
+fi
 EOF
 }
 
@@ -362,6 +444,9 @@ env_region() {
   echo "  vm          : $(vm_user "$r")@$(vm_ip "$r") (key: $(vm_key "$r"))"
   echo "  remote repo : $REMOTE_REPO"
   echo "  web port    : $WEB_PORT"
+  echo "  p2p port    : $P2P_PORT (engine image: ${P2P_IMAGE:-docker-save tar})"
+  [ -f "${SCRIPT_DIR}/env/.env.p2p.${r}" ] && echo "  p2p secrets : deploy/env/.env.p2p.${r} (present)" \
+      || echo "  p2p secrets : deploy/env/.env.p2p.${r} (MISSING — run ./deploy/region.sh p2p $r after creating it)"
   if [ "$r" = "${APEX_REGION:-}" ]; then
     echo "  apex        : ${APEX_DOMAIN:-wallet.bigt.ai} (served from $r)"
   fi
@@ -376,6 +461,10 @@ destroy_region() {
   ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r bash -s" <<'EOF'
 cd "$REMOTE_REPO" 2>/dev/null || exit 0
 docker compose -f deploy/compose.prod.yml down 2>/dev/null || true
+if [ -f "deploy/env/.env.p2p.$REGION" ]; then
+  docker compose --env-file "deploy/env/.env.p2p.$REGION" -f deploy/compose.p2p-engine.yml down 2>/dev/null || true
+fi
+docker rm -f "wallet-p2p-$REGION-engine" "wallet-p2p-$REGION-db" >/dev/null 2>&1 || true
 docker rm -f "bapp-$REGION-web" >/dev/null 2>&1 || true
 EOF
   ssh_run "$r" "${sudo} rm -f /etc/caddy/Caddyfile.d/wallet-${r}.caddy /etc/caddy/Caddyfile.d/bapp-${r}.caddy"
@@ -389,6 +478,7 @@ main() {
   [ -n "$REGION" ] && valid_region "$REGION" && [ -z "$REMOTE_REPO" ] && REMOTE_REPO="$(default_repo "$REGION")"
   case "${ACTION}" in
     deploy)  [ -n "$REGION" ] && deploy_region "$REGION" || usage ;;
+    p2p)     [ -n "$REGION" ] && p2p_up "$REGION" || usage ;;
     caddy)   [ -n "$REGION" ] && { require_region "$REGION"; config_caddy "$REGION"; } || usage ;;
     status)  [ -n "$REGION" ] && status_region "$REGION" || usage ;;
     health)  [ -n "$REGION" ] && health_region "$REGION" || usage ;;

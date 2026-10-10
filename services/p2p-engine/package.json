@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "bigtangle-ts": "*",
+    "chain-discovery": "*",
     "did": "*",
     "p2p-protocol": "*",
     "record-sig": "*",

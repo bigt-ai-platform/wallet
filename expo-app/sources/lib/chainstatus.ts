@@ -7,7 +7,9 @@
  * normalize URLs for dedupe.
  */
 
-export type ChainRole = 'l0' | 'l1';
+import type { ChainRole } from 'chain-discovery';
+
+export type { ChainRole };
 
 export interface ChainTarget {
   /** Stable identity: `${role}:${normalizeUrl(url)}`. */
@@ -45,11 +47,11 @@ export function shortHash(hash: string | null | undefined, size = 8): string {
   return `${h.slice(0, size)}…${h.slice(-size)}`;
 }
 
-/** Node names (eu1…eu5 / ordereu1…ordereu5) per role. */
+/** Node names (eu1…eu5 / ordereu1…ordereu5) per role; social has no UI rows. */
 export function nodeNames(role: ChainRole): string[] {
-  return role === 'l0'
-    ? ['eu1', 'eu2', 'eu3', 'eu4', 'eu5']
-    : ['ordereu1', 'ordereu2', 'ordereu3', 'ordereu4', 'ordereu5'];
+  if (role === 'l0') return ['eu1', 'eu2', 'eu3', 'eu4', 'eu5'];
+  if (role === 'l1') return ['ordereu1', 'ordereu2', 'ordereu3', 'ordereu4', 'ordereu5'];
+  return [];
 }
 
 /**

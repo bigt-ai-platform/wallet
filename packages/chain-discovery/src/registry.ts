@@ -7,7 +7,7 @@
  * /serverinfolist`) and are queried over TLS or a same-origin proxy; an
  * unreachable registry is skipped.
  */
-import { activeUrlsForChain, type RegistryEntry } from './endpoints';
+import { activeUrlsForChain, type RegistryEntry } from './endpoints.js';
 
 /** Per-registry query timeout — a hung registry must never stall discovery. */
 export const REGISTRY_TIMEOUT_MS = 5000;

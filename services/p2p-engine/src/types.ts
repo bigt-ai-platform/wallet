@@ -93,6 +93,8 @@ export interface P2pSwapEvent {
   escrowAddress?: string;
   escrowTxHash?: string;
   releaseTxHash?: string;
+  /** On-chain refund spend that returned the escrow to the seller. */
+  refundTxHash?: string;
   paymentRail?: string;
   paymentRef?: string;
   payoutRef?: string;
@@ -128,7 +130,10 @@ export interface P2pSwapEvent {
 }
 
 /** Public-safe projection (PayPal account / receive address / buyer PII redacted). */
-export type P2pSwapView = Omit<P2pSwapEvent, "paypalAccount" | "receiveAddress" | "buyerEmail">;
+export type P2pSwapView = Omit<P2pSwapEvent, "paypalAccount" | "receiveAddress" | "buyerEmail"> & {
+  /** Seller pre-signed both spend skeletons (the escrow hook is armed). Party-scoped reads only. */
+  presigned?: boolean;
+};
 
 /** Seller's CNY collection profile — PII: engine store + instruction reveals only, never anchored. */
 export interface PaymentProfile {
@@ -154,4 +159,32 @@ export interface PaymentProof {
   receipt?: string;
   paidAt?: number;
   createdAt: number;
+}
+
+/**
+ * Escrow spend signatures (docs/p2p.md — the settlement closure). The seller's
+ * pre-signatures over the two deterministic skeletons (release pays
+ * `receiveAddress`, refund pays `refundAddress`; both spend the same escrow
+ * UTXO for the same amount), so the engine can finish a swap without either
+ * party online. Store-only: nothing here is anchored, and the row doubles as
+ * the engine's submitted-tx record for restart recovery.
+ */
+export interface EscrowSigning {
+  swapId: string;
+  /** Where a refund pays — chosen by the seller at presign time. */
+  refundAddress: string;
+  /** Hex SignatureBundle over the release skeleton, '' until signed. */
+  releaseSig: string;
+  /** Hex SignatureBundle over the refund skeleton, '' until signed. */
+  refundSig: string;
+  /** Whose signature each blob is (seller presign or a party cosign). */
+  releaseSignerDid: string;
+  refundSignerDid: string;
+  sellerDid: string;
+  /** Submitted release tx (persisted before confirmation, for recovery). */
+  releaseTxHash?: string | null;
+  /** Submitted refund tx (persisted before confirmation, for recovery). */
+  refundTxHash?: string | null;
+  createdAt: number;
+  updatedAt: number;
 }

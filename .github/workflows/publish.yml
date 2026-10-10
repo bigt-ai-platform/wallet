@@ -60,6 +60,10 @@ jobs:
         working-directory: ./packages/bigtangle-ts
         run: yarn build
 
+      - name: Build chain-discovery
+        working-directory: ./packages/chain-discovery
+        run: yarn build
+
       - name: Type check
         working-directory: ./expo-app
         run: yarn typecheck
@@ -124,6 +128,10 @@ jobs:
         working-directory: ./packages/bigtangle-ts
         run: yarn build
 
+      - name: Build chain-discovery
+        working-directory: ./packages/chain-discovery
+        run: yarn build
+
       - name: Type check
         working-directory: ./expo-app
         run: yarn typecheck
@@ -184,6 +192,10 @@ jobs:
 
       - name: Build bigtangle-ts
         working-directory: ./packages/bigtangle-ts
+        run: yarn build
+
+      - name: Build chain-discovery
+        working-directory: ./packages/chain-discovery
         run: yarn build
 
       - name: Type check

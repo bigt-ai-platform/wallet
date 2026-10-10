@@ -5,7 +5,7 @@
  * seed), so Postgres here is a projection, per AGENTS.md invariant #1 — the
  * append-only shape means a replay never mutates history.
  */
-import type { PaymentProfile, PaymentProof, P2pOrder, P2pSwapEvent } from "./types.js";
+import type { EscrowSigning, PaymentProfile, PaymentProof, P2pOrder, P2pSwapEvent } from "./types.js";
 
 export interface SettlementStore {
   createOrder(o: P2pOrder): Promise<void>;
@@ -29,6 +29,9 @@ export interface SettlementStore {
   /** Append a buyer payment proof (multiple kept: overwrites before confirm). */
   addProof(p: PaymentProof): Promise<void>;
   proofs(swapId: string): Promise<PaymentProof[]>;
+  /** Upsert the escrow spend signatures / submitted tx for one swap. */
+  putEscrowSigning(s: EscrowSigning): Promise<void>;
+  getEscrowSigning(swapId: string): Promise<EscrowSigning | null>;
 }
 
 export class MemSettlementStore implements SettlementStore {
@@ -36,6 +39,7 @@ export class MemSettlementStore implements SettlementStore {
   readonly swapEvents = new Map<string, P2pSwapEvent[]>();
   readonly paymentProfiles = new Map<string, PaymentProfile>();
   readonly paymentProofs = new Map<string, PaymentProof[]>();
+  readonly escrowSignings = new Map<string, EscrowSigning>();
 
   async createOrder(o: P2pOrder): Promise<void> {
     if (!this.orders.has(o.orderId)) this.orders.set(o.orderId, o);
@@ -116,6 +120,14 @@ export class MemSettlementStore implements SettlementStore {
 
   async proofs(swapId: string): Promise<PaymentProof[]> {
     return [...(this.paymentProofs.get(swapId) ?? [])];
+  }
+
+  async putEscrowSigning(s: EscrowSigning): Promise<void> {
+    this.escrowSignings.set(s.swapId, { ...s });
+  }
+
+  async getEscrowSigning(swapId: string): Promise<EscrowSigning | null> {
+    return this.escrowSignings.get(swapId) ?? null;
   }
 }
 
@@ -296,6 +308,59 @@ export class PgSettlementStore implements SettlementStore {
       createdAt: new Date(r.created_at).getTime(),
     }));
   }
+
+  async putEscrowSigning(s: EscrowSigning): Promise<void> {
+    await this.db.query(
+      `INSERT INTO p2p_escrow_signings
+         (swap_id, refund_address, release_sig, refund_sig, release_signer_did, refund_signer_did,
+          seller_did, release_txhash, refund_txhash, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (swap_id) DO UPDATE SET
+         refund_address     = EXCLUDED.refund_address,
+         release_sig        = EXCLUDED.release_sig,
+         refund_sig         = EXCLUDED.refund_sig,
+         release_signer_did = EXCLUDED.release_signer_did,
+         refund_signer_did  = EXCLUDED.refund_signer_did,
+         seller_did         = EXCLUDED.seller_did,
+         release_txhash     = EXCLUDED.release_txhash,
+         refund_txhash      = EXCLUDED.refund_txhash,
+         updated_at         = EXCLUDED.updated_at`,
+      [
+        s.swapId,
+        s.refundAddress,
+        s.releaseSig,
+        s.refundSig,
+        s.releaseSignerDid,
+        s.refundSignerDid,
+        s.sellerDid,
+        s.releaseTxHash ?? null,
+        s.refundTxHash ?? null,
+        new Date(s.createdAt),
+        new Date(s.updatedAt),
+      ],
+    );
+  }
+
+  async getEscrowSigning(swapId: string): Promise<EscrowSigning | null> {
+    const res = await this.db.query(`SELECT * FROM p2p_escrow_signings WHERE swap_id = $1`, [swapId]);
+    return res.rows[0] ? escrowSigningFromRow(res.rows[0]) : null;
+  }
+}
+
+function escrowSigningFromRow(row: any): EscrowSigning {
+  return {
+    swapId: row.swap_id,
+    refundAddress: row.refund_address ?? "",
+    releaseSig: row.release_sig ?? "",
+    refundSig: row.refund_sig ?? "",
+    releaseSignerDid: row.release_signer_did ?? "",
+    refundSignerDid: row.refund_signer_did ?? "",
+    sellerDid: row.seller_did ?? "",
+    releaseTxHash: row.release_txhash ?? null,
+    refundTxHash: row.refund_txhash ?? null,
+    createdAt: new Date(row.created_at).getTime(),
+    updatedAt: new Date(row.updated_at).getTime(),
+  };
 }
 
 function profileFromRow(row: any): PaymentProfile {

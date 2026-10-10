@@ -62,3 +62,23 @@ CREATE TABLE IF NOT EXISTS p2p_payment_proofs (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS p2p_payment_proofs_swap_idx ON p2p_payment_proofs (swap_id, seq);
+
+-- Escrow spend signatures (docs/p2p.md §escrow closure): the seller's
+-- pre-signatures over the deterministic release/refund skeletons, plus the
+-- transaction hashes the engine submitted for them. Store-only — the
+-- signatures are over transactions anyone can rebuild, and the row is what
+-- lets the escrow hook finish a swap whose parties went offline.
+CREATE TABLE IF NOT EXISTS p2p_escrow_signings (
+  swap_id            TEXT PRIMARY KEY,
+  refund_address     TEXT NOT NULL DEFAULT '',
+  release_sig        TEXT NOT NULL DEFAULT '',
+  refund_sig         TEXT NOT NULL DEFAULT '',
+  -- Whose signature each blob is (the hook re-verifies against this did).
+  release_signer_did TEXT NOT NULL DEFAULT '',
+  refund_signer_did  TEXT NOT NULL DEFAULT '',
+  seller_did         TEXT NOT NULL,
+  release_txhash     TEXT,
+  refund_txhash      TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);

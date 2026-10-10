@@ -71,6 +71,12 @@ IMAGE="${IMAGE:-${APP_IMAGE:-ghcr.io/bigt-ai-platform/wallet-web}}"
 if [[ "${IMAGE##*/}" == *:* ]]; then IMAGE="${IMAGE%:*}"; fi
 [ "$DEPLOY_ONLY" = 1 ] && TAGGED="$IMAGE:latest" || TAGGED="$IMAGE:v$VERSION"
 
+# Same model for the P2P settlement engine image (region.conf P2P_IMAGE — the
+# /p2p/* upstream each region VM runs; deploy/tag.sh builds+publishes it).
+P2P_IMAGE_BASE="${P2P_IMAGE:-ghcr.io/bigt-ai-platform/wallet-p2p-engine}"
+if [[ "${P2P_IMAGE_BASE##*/}" == *:* ]]; then P2P_IMAGE_BASE="${P2P_IMAGE_BASE%:*}"; fi
+[ "$DEPLOY_ONLY" = 1 ] && P2P_TAGGED="$P2P_IMAGE_BASE:latest" || P2P_TAGGED="$P2P_IMAGE_BASE:v$VERSION"
+
 if [ -z "${DEPLOY_REGIONS:-}" ]; then
   DEPLOY_REGIONS_ARR=("${ALL_REGIONS[@]}")
 else
@@ -115,14 +121,17 @@ if [ "$DEPLOY_ONLY" != 1 ]; then
   echo -e "\n${GREEN}--- git tag v$VERSION ---${NC}"
   git tag -a "v$VERSION" -m "wallet-web $VERSION"
 
-  echo -e "\n${GREEN}--- deploy/tag.sh $VERSION ($TAGGED) ---${NC}"
-  APP_IMAGE="$TAGGED" ./deploy/tag.sh "$VERSION"
+  echo -e "\n${GREEN}--- deploy/tag.sh $VERSION ($TAGGED / $P2P_TAGGED) ---${NC}"
+  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ./deploy/tag.sh "$VERSION"
 
   # tag.sh pushes $TAGGED (:v); also refresh :latest so fresh checkouts and the
   # region.conf default stay on the newest release (analog dai tag.sh).
   echo -e "\n${GREEN}--- push $IMAGE:latest ---${NC}"
   docker tag "$TAGGED" "$IMAGE:latest"
   docker push "$IMAGE:latest"
+  echo -e "\n${GREEN}--- push $P2P_IMAGE_BASE:latest ---${NC}"
+  docker tag "$P2P_TAGGED" "$P2P_IMAGE_BASE:latest"
+  docker push "$P2P_IMAGE_BASE:latest"
 
   echo -e "\n${GREEN}--- git push tag v$VERSION ---${NC}"
   git push origin "v$VERSION"
@@ -139,6 +148,14 @@ for x in "${APEX_REGION:-}" "${DEPLOY_REGIONS_ARR[@]}"; do
 done
 for r in "${ordered[@]}"; do
   echo -e "\n${GREEN}=== deploy → $r ($TAGGED) ===${NC}"
+  # P2P engine first: the release bakes EXPO_PUBLIC_P2P_ENGINE_URL=/p2p, so the
+  # upstream must be live before (or with) the bundle that calls it. Skipped
+  # with a warning while the region's secrets file does not exist yet.
+  if [ -f "$SCRIPT_DIR/env/.env.p2p.$r" ]; then
+    P2P_IMAGE="$P2P_TAGGED" ./deploy/region.sh p2p "$r"
+  else
+    echo -e "${YELLOW}skip p2p engine for $r: $SCRIPT_DIR/env/.env.p2p.$r missing (create it, then ./deploy/region.sh p2p $r)${NC}"
+  fi
   # region.sh resolves the per-user working dir (/srv/wallet for root,
   # /home/<user>/wallet for ubuntu) from REMOTE_REPO being empty.
   APP_IMAGE="$TAGGED" ./deploy/region.sh deploy "$r"

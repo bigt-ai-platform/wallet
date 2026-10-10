@@ -10,19 +10,23 @@ import { MONO_FONT } from '@/constants/fonts';
 import WalletUnlock from '@/components/WalletUnlock';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
+import { buildEscrowSighash, escrowVault, signEscrow, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
 import type { TokenItem } from '@/types/api';
 import {
-  confirmPayment, createOrder, fetchInstructions, getMyProfiles, listOpenOrders, matchOrder,
-  mySwaps, openDispute, p2pConfigured, saveProfile, sendPayment, submitProof, transition,
-  type P2pCnyRail, type P2pIdentity, type P2pOrder, type P2pPaymentInstructions,
-  type P2pPaymentProfile, type P2pSwap, type P2pSwapAction,
+  confirmPayment, cosignEscrow, createOrder, escrowContext, fetchInstructions, getCapabilities, getMyProfiles,
+  getSwap, listOpenOrders, matchOrder, mySwaps, openDispute, p2pConfigured, presignEscrow, saveProfile,
+  sendPayment, submitProof, transition,
+  type P2pCapabilities, type P2pCnyRail, type P2pIdentity, type P2pOrder,
+  type P2pPaymentInstructions, type P2pPaymentProfile, type P2pSwap, type P2pSwapAction,
 } from '@/services/p2p';
 
 type Tab = 'open' | 'mine';
 
 /** CNY rails (docs/p2pcny.md): settle peer-to-peer with manual confirmation. */
 const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank'];
+/** Built-in rail list — used until the engine's /capabilities report arrives. */
+const DEFAULT_RAILS: readonly string[] = ['paypal', ...CNY_RAILS];
 function isCnyRail(rail?: string): boolean {
   return !!rail && CNY_RAILS.includes(rail);
 }
@@ -71,6 +75,11 @@ export default function P2pScreen() {
   const [wantAmount, setWantAmount] = React.useState('');
   const [validHours, setValidHours] = React.useState('24');
   const [wantRail, setWantRail] = React.useState('paypal');
+  // What this engine actually serves (GET /capabilities): a CNY-only deploy
+  // has no PayPal credentials, so its paypal chip/fields are hidden instead of
+  // failing at /invoice. null → keep DEFAULT_RAILS (older engine, see p2p.ts).
+  const [caps, setCaps] = React.useState<P2pCapabilities | null>(null);
+  const enabledRails: readonly string[] = caps ? caps.rails : DEFAULT_RAILS;
 
   // seller's CNY collection profile (mine tab)
   const [profiles, setProfiles] = React.useState<P2pPaymentProfile[]>([]);
@@ -114,6 +123,32 @@ export default function P2pScreen() {
   }, [tab, loadOrders, loadSwaps]);
 
   React.useEffect(() => { refresh(); }, [refresh]);
+
+  // Capability report (public, unsigned) once at mount. getCapabilities()
+  // resolves null rather than throwing, so an older engine without
+  // /capabilities keeps the screen exactly as before.
+  React.useEffect(() => {
+    let alive = true;
+    getCapabilities().then((c) => {
+      if (alive) setCaps(c);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Collection methods are per-rail: an engine with SETTLEMENT_CNY_RAILS set
+  // must not offer a method it would reject (profile chips + default pick).
+  const enabledProfileMethods = React.useMemo<P2pCnyRail[]>(
+    () => (CNY_RAILS as readonly P2pCnyRail[]).filter((m) => enabledRails.includes(m)),
+    [enabledRails],
+  );
+  React.useEffect(() => {
+    if (caps && caps.rails.length > 0 && !caps.rails.includes(wantRail)) setWantRail(caps.rails[0]);
+    if (caps && enabledProfileMethods.length > 0 && !enabledProfileMethods.includes(profileMethod)) {
+      setProfileMethod(enabledProfileMethods[0]);
+    }
+  }, [caps, wantRail, profileMethod, enabledProfileMethods]);
 
   const loadProfiles = React.useCallback(async () => {
     if (!identity) { setProfiles([]); return; }
@@ -305,6 +340,124 @@ export default function P2pScreen() {
     }
   };
 
+  // ── Escrow settlement closure (docs/p2p.md) ───────────────────────────────
+  // The wallet rebuilds the exact spend skeleton the engine will rebuild
+  // (same vault, same confirmed lock output, same fee rule) and signs its
+  // sighash: the seller pre-signs both paths at lock (arming the auto-settle
+  // hook), then either party co-signs a live release/refund.
+
+  const escrowSighashFor = async (swap: P2pSwap, toBase58: string) => {
+    const pubkey = caps?.escrowPubkey ?? null;
+    if (!pubkey) throw new Error('engine escrow key missing (capabilities.escrowPubkey)');
+    if (!swap.escrowAddress || !swap.escrowTxHash) throw new Error('swap has no locked escrow');
+    const vault = escrowVault(swap.sellerDid, swap.buyerDid, pubkey);
+    if (!vault) throw new Error('escrow vault unavailable (non-PQ party key)');
+    const res = await httpService.getOutputsHistory({ toAddress: swap.escrowAddress });
+    if (!res.success || !res.data) throw new Error(res.error || 'could not read the escrow output');
+    const skel = buildEscrowSighash({
+      vault,
+      outputs: res.data as unknown as EscrowHistoryOutput[],
+      escrowAddress: swap.escrowAddress,
+      escrowTxHash: swap.escrowTxHash,
+      toBase58,
+    });
+    if (!skel) throw new Error('escrow output not found (lock unconfirmed or already spent)');
+    return skel;
+  };
+
+  /** Seller: sign the release + refund skeletons over the fresh lock outpoint. */
+  const presignSwap = async (id: P2pIdentity, swap: P2pSwap): Promise<void> => {
+    const refundAddress = publicInfo?.address;
+    if (!refundAddress) throw new Error(t('p2p.unlockFirst'));
+    const ctx = await escrowContext(id, swap.swapId);
+    const release = await escrowSighashFor(swap, ctx.receiveAddress);
+    const refund = await escrowSighashFor(swap, refundAddress);
+    await presignEscrow(id, swap.swapId, {
+      releaseSig: signEscrow(id.key, release.sighash),
+      refundSig: signEscrow(id.key, refund.sighash),
+      refundAddress,
+    });
+  };
+
+  const reload = async () => {
+    try { await loadSwaps(); } catch { /* keep the last list on a refresh failure */ }
+  };
+
+  /** escrow_lock, then arm the hook when this engine has a chain client. */
+  const lockAndPresign = async (swap: P2pSwap) => {
+    const id = requireIdentity();
+    if (!id) return;
+    setBusy(true);
+    try {
+      await transition(id, swap.swapId, 'escrow_lock', { txHash: (txHashes[swap.swapId] ?? '').trim() });
+      if (caps?.chain?.l0) {
+        const fresh = await getSwap(id, swap.swapId);
+        await presignSwap(id, fresh);
+        setNotice({ ok: true, text: t('p2p.presignOk') });
+      }
+    } catch (e) {
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
+    } finally {
+      await reload();
+      setBusy(false);
+    }
+  };
+
+  const presignNow = async (swap: P2pSwap) => {
+    const id = requireIdentity();
+    if (!id) return;
+    setBusy(true);
+    try {
+      await presignSwap(id, swap);
+      setNotice({ ok: true, text: t('p2p.presignOk') });
+    } catch (e) {
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
+    } finally {
+      await reload();
+      setBusy(false);
+    }
+  };
+
+  /** Path A: the wallet's live signature over the release skeleton (engine adds its key). */
+  const releaseEscrow = async (swap: P2pSwap) => {
+    const id = requireIdentity();
+    if (!id) return;
+    setBusy(true);
+    try {
+      const ctx = await escrowContext(id, swap.swapId);
+      if (!ctx.receiveAddress) throw new Error('swap has no receive address');
+      const skel = await escrowSighashFor(swap, ctx.receiveAddress);
+      const res = await cosignEscrow(id, swap.swapId, { kind: 'release', sig: signEscrow(id.key, skel.sighash) });
+      setNotice({ ok: true, text: res.txHash ? `${t('p2p.releaseOk')} (${res.txHash.slice(0, 12)}…)` : t('p2p.releaseOk') });
+    } catch (e) {
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
+    } finally {
+      await reload();
+      setBusy(false);
+    }
+  };
+
+  /** Path A refund: the seller's signature over the refund skeleton (pays this wallet). */
+  const refundEscrow = async (swap: P2pSwap) => {
+    const id = requireIdentity();
+    if (!id) return;
+    const refundAddress = publicInfo?.address;
+    if (!refundAddress) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return; }
+    setBusy(true);
+    try {
+      const skel = await escrowSighashFor(swap, refundAddress);
+      const res = await cosignEscrow(id, swap.swapId, {
+        kind: 'refund', sig: signEscrow(id.key, skel.sighash), refundAddress,
+      });
+      setNotice({ ok: true, text: res.txHash ? `${t('p2p.refundOk')} (${res.txHash.slice(0, 12)}…)` : t('p2p.refundOk') });
+    } catch (e) {
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
+    } finally {
+      await reload();
+      setBusy(false);
+    }
+  };
+
   const saveProfileForm = async () => {
     const id = requireIdentity();
     if (!id) return;
@@ -406,7 +559,7 @@ export default function P2pScreen() {
             <View style={s.field}>
               <Text style={s.fieldLabel}>{t('p2p.rail')}</Text>
               <View style={s.chips}>
-                {['paypal', ...CNY_RAILS].map((rail) => (
+                {enabledRails.map((rail) => (
                   <TouchableOpacity
                     key={rail}
                     style={[s.chip, wantRail === rail && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
@@ -466,7 +619,7 @@ export default function P2pScreen() {
           <View style={s.card} testID="p2p-profile-card">
             <Text style={s.cardTitle}>{t('p2p.profileTitle')}</Text>
             <View style={s.chips}>
-              {(['wechat', 'alipay', 'bank'] as const).map((m) => (
+              {enabledProfileMethods.map((m) => (
                 <TouchableOpacity
                   key={m}
                   style={[s.chip, profileMethod === m && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
@@ -503,10 +656,12 @@ export default function P2pScreen() {
                 onTxHash={(v) => setTxHashes((m) => ({ ...m, [sw.swapId]: v }))}
                 txId={txIds[sw.swapId] ?? ''}
                 onTxId={(v) => setTxIds((m) => ({ ...m, [sw.swapId]: v }))}
-                onLock={() => runTransition(sw, 'escrow_lock', { txHash: (txHashes[sw.swapId] ?? '').trim() })}
+                onLock={() => lockAndPresign(sw)}
                 onPay={() => pay(sw)}
                 onExpire={() => runTransition(sw, 'expire')}
-                onRefund={() => runTransition(sw, 'refund')}
+                onRefund={() => refundEscrow(sw)}
+                onRelease={() => releaseEscrow(sw)}
+                onPresign={() => presignNow(sw)}
                 onCancel={() => runTransition(sw, 'cancel')}
                 onInstructions={() => showInstructions(sw)}
                 onPaid={() => submitPaid(sw)}
@@ -560,10 +715,11 @@ function Field({ label, value, onChange, placeholder, keyboardType, mono, testID
   );
 }
 
-function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onPay, onExpire, onRefund, onCancel, onInstructions, onPaid, onConfirm, onDispute, instruction, index }: {
+function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onPay, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, instruction, index }: {
   swap: P2pSwap; myDid?: string; busy: boolean; txHash: string; onTxHash: (v: string) => void;
   txId: string; onTxId: (v: string) => void;
-  onLock: () => void; onPay: () => void; onExpire: () => void; onRefund: () => void; onCancel: () => void;
+  onLock: () => void; onPay: () => void; onExpire: () => void; onRefund: () => void;
+  onRelease: () => void; onPresign: () => void; onCancel: () => void;
   onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void;
   instruction?: P2pPaymentInstructions; index: number;
 }) {
@@ -593,6 +749,9 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
         <Text style={s.subMono} testID={`p2p-swap-${index}-paymentref`}>{t('p2p.txId')}: {swap.paymentRef}</Text>
       ) : null}
       {swap.dispute ? <Text style={s.sub}>{t('p2p.aDispute')}: {swap.dispute}{swap.disputeOutcome ? ` (${swap.disputeOutcome})` : ''}</Text> : null}
+      {isSeller && swap.presigned ? (
+        <Text style={s.sub} testID={`p2p-swap-${index}-presigned`}>{t('p2p.presigned')}</Text>
+      ) : null}
 
       {/* CNY payment instructions the buyer must transfer to (party-scoped, engine-signed). */}
       {isBuyer && instruction && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
@@ -617,6 +776,9 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
               <Field label="txHash" value={txHash} onChange={onTxHash} testID={`p2p-swap-${index}-txhash`} />
               <Action label={t('p2p.aLock')} color={theme.colors.primary} onPress={onLock} disabled={busy} testID={`p2p-swap-${index}-lock`} />
             </>
+          ) : null}
+          {st !== 'MATCHED' && !swap.presigned ? (
+            <Action label={t('p2p.aPresign')} color={theme.colors.primary} onPress={onPresign} disabled={busy} testID={`p2p-swap-${index}-presign`} />
           ) : null}
           {st !== 'MATCHED' ? (
             <Action label={t('p2p.aExpire')} color={theme.colors.accent.red} onPress={onExpire} disabled={busy} testID={`p2p-swap-${index}-expire`} />
@@ -645,6 +807,13 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
             <Action label={t('p2p.aPay')} color={theme.colors.accent.emerald} onPress={onPay} disabled={busy} testID={`p2p-swap-${index}-pay`} />
           )}
           <Action label={t('p2p.aCancel')} color={theme.colors.text.secondary} onPress={onCancel} disabled={busy} testID={`p2p-swap-${index}-cancel`} />
+        </View>
+      ) : null}
+
+      {/* Settlement closure: either party co-signs the release once fiat is verified. */}
+      {isParty && st === 'PAYMENT_VERIFIED' ? (
+        <View style={s.actions}>
+          <Action label={t('p2p.aRelease')} color={theme.colors.accent.emerald} onPress={onRelease} disabled={busy} testID={`p2p-swap-${index}-release`} />
         </View>
       ) : null}
 

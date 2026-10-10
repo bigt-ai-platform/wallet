@@ -5,7 +5,7 @@ import {
   parseSrvSeeds,
   parseTxtSeeds,
   type DohResponse,
-} from '../dnsseeds';
+} from '../src/dnsseeds.js';
 
 const txt = (data: string): DohResponse => ({
   Status: 0,

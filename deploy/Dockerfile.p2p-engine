@@ -3,8 +3,9 @@
 # Build from the repo root so the workspace packages are in scope:
 #   docker build -f deploy/Dockerfile.p2p-engine -t wallet-p2p-engine:latest .
 #
-# The engine depends on the workspace packages `bigtangle-ts`, `did`,
-# `record-sig` and `p2p-protocol` (built in dependency order below).
+# The engine depends on the workspace packages `bigtangle-ts`, `chain-discovery`,
+# `did`, `record-sig` and `p2p-protocol` (built in dependency order below —
+# `chain-discovery` has no workspace deps and must precede the engine).
 FROM node:20-slim AS build
 WORKDIR /app
 ENV NODE_ENV=development
@@ -18,7 +19,8 @@ COPY services/p2p-engine ./services/p2p-engine
 RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines \
     --production=false 2>/dev/null || yarn install --ignore-scripts --ignore-engines
 
-RUN yarn workspace bigtangle-ts build \
+RUN yarn workspace chain-discovery build \
+ && yarn workspace bigtangle-ts build \
  && yarn workspace p2p-protocol build \
  && yarn workspace did build \
  && yarn workspace record-sig build \

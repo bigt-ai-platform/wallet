@@ -32,6 +32,12 @@ source "$SCRIPT_DIR/network.sh"
 VERSION="${1:-}"
 # Bake the release version into the web bundle (shown in Settings/About).
 export EXPO_PUBLIC_APP_VERSION="${VERSION:-$(node -p "require('./expo-app/package.json').version" 2>/dev/null || echo 0.0.0)}"
+# The P2P engine is same-origin behind this vhost's /p2p/* proxy (region.sh), so
+# the bundle bakes the RELATIVE path — same model as /l0, /l1. p2pConfigured()
+# only checks non-empty (services/p2p.ts); the SPA route /p2p is served by
+# nginx while /p2p/<api> goes to the engine. e2e overrides this with its local
+# engine URL (e2e/e2etest.sh), so the export there is unaffected.
+export EXPO_PUBLIC_P2P_ENGINE_URL="${P2P_ENGINE_URL:-/p2p}"
 IMAGE_BASE="${IMAGE_BASE:-wallet-web}"
 APP_IMAGE="${APP_IMAGE:-}"
 TAR_DIR="${SCRIPT_DIR}/.image"
@@ -51,6 +57,12 @@ fi
 echo -e "${GREEN}--- network guard: pin mainnet defaults ---${NC}"
 assert_mainnet_default
 
+# The app imports the `chain-discovery` workspace package, whose runtime entry
+# is its compiled dist/ (gitignored, like bigtangle-ts). Build it here so the
+# Metro export below resolves it.
+echo -e "${GREEN}--- build chain-discovery ---${NC}"
+( cd packages/chain-discovery && yarn build )
+
 echo -e "${GREEN}--- expo web export (host) ---${NC}"
 rm -rf web-build
 (
@@ -67,6 +79,21 @@ TAGS=(-t "${IMAGE_BASE}:latest")
 [ -n "$VERSION" ] && TAGS+=(-t "${IMAGE_BASE}:v${VERSION}")
 echo -e "${GREEN}--- docker build ${IMAGE_BASE}:latest ---${NC}"
 docker build -f deploy/Dockerfile.app "${TAGS[@]}" .
+
+# 2b. P2P settlement engine image (the /p2p/* upstream). Host-built like the
+#     web image; published the same way — registry push when P2P_IMAGE is set,
+#     docker-save tar otherwise (deploy/region.sh p2p loads it onto the VM).
+echo -e "${GREEN}--- docker build wallet-p2p-engine:latest ---${NC}"
+docker build -f deploy/Dockerfile.p2p-engine -t wallet-p2p-engine:latest .
+if [ -n "${P2P_IMAGE:-}" ]; then
+  docker tag wallet-p2p-engine:latest "$P2P_IMAGE"
+  docker push "$P2P_IMAGE"
+  [ -n "$VERSION" ] && { docker tag wallet-p2p-engine:latest "${P2P_IMAGE%:*}:v${VERSION}"; docker push "${P2P_IMAGE%:*}:v${VERSION}"; } || true
+else
+  mkdir -p "$TAR_DIR"
+  echo -e "${GREEN}--- docker save wallet-p2p-engine → $TAR_DIR (no registry) ---${NC}"
+  docker save wallet-p2p-engine:latest -o "$TAR_DIR/wallet-p2p-engine.latest.tar"
+fi
 
 # 3. Publish: registry push or docker-save tar
 if [ -n "$APP_IMAGE" ]; then

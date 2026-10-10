@@ -1,9 +1,11 @@
 /**
- * Endpoint health + ranking for L0 (main chain) / L1 (order-match) discovery.
+ * Endpoint health + ranking for chain discovery (L0 main chain / L1
+ * order-match / L1-SOCIAL). Shared by the wallet app (`services/discovery.ts`)
+ * and the P2P engine (`services/p2p-engine/src/discovery.ts`).
  *
  * Pure helpers only (no fetch/Capacitor imports) so they are unit testable. The
- * network probe + cache live in `services/discovery.ts`; these functions turn
- * probe results into an ordered candidate list and manage cache staleness and
+ * network probe + cache live in the consumers; these functions turn probe
+ * results into an ordered candidate list and manage cache staleness and
  * session demotion.
  *
  * The health definition mirrors the operator-side `bigtai/check/checkchain.sh`:

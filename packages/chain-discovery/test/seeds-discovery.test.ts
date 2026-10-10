@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { orderEndpoints, parseChainProbe, rankProbes, type ProbeResult } from '../endpoints';
-import { fetchRegistryNodes } from '../registry';
+import { orderEndpoints, parseChainProbe, rankProbes, type ProbeResult } from '../src/endpoints.js';
+import { fetchRegistryNodes } from '../src/registry.js';
 
 /**
  * End-to-end verification that a *newly published* seed is usable by the

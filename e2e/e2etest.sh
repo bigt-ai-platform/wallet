@@ -14,11 +14,11 @@ HTTP_PID=""
 RAISE_PID=""
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | token | blocks | p2p | p2p-ui | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | token | blocks | p2p | p2p-ui | p2p-demo | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" token "|" blocks "|" p2p "|" p2p-ui "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, blocks, p2p, p2p-ui, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, token, blocks, p2p, p2p-ui, p2p-demo, remaining, tests, demo";;
 esac
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
@@ -105,6 +105,44 @@ verify_p2p_legs() {
   done
 }
 
+# Independently verify the P2P demo handoff (escrow lock + release) on-chain.
+# The real-L0 spec writes escrow/release txHash+address to
+# test-results/p2p-demo.json; each leg must be CONFIRMED and pay the address it
+# claims — the same evidence the engine's chain gate produced during the test.
+verify_p2p_escrow() {
+  local handoff="$E2E_DIR/test-results/p2p-demo.json"
+  if [[ ! -f "$handoff" ]]; then
+    fail "P2P demo handoff missing: $handoff (spec did not confirm both escrow legs)"
+  fi
+  local leg txhash address
+  for leg in escrow release; do
+    txhash=$(node -e "const v=require('$handoff'); process.stdout.write((v['$leg']||{}).txHash||'')" 2>/dev/null)
+    address=$(node -e "const v=require('$handoff'); process.stdout.write((v['$leg']||{}).address||'')" 2>/dev/null)
+    if [[ -z "$txhash" || -z "$address" ]]; then
+      fail "P2P demo $leg leg invalid in handoff: $(cat "$handoff")"
+    fi
+    local body api_status api_address
+    for i in $(seq 1 30); do
+      body=$(curl -sf -X POST "http://localhost:${SERVER_PORT}/getTransactionStatus" \
+        -H 'Content-Type: application/json' \
+        -d "{\"txHash\":\"$txhash\"}" 2>/dev/null || true)
+      api_status=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).status||'')" "$body" 2>/dev/null)
+      if [[ "$api_status" == "CONFIRMED" ]]; then
+        api_address=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).address||'')" "$body" 2>/dev/null)
+        if [[ -n "$api_address" && "$api_address" != "$address" ]]; then
+          fail "P2P demo $leg leg pays $api_address, expected $address (txHash=$txhash)"
+        fi
+        log "P2P demo $leg leg verified on-chain: txHash=$txhash address=$address"
+        break
+      fi
+      if [[ "$i" == "30" ]]; then
+        fail "P2P demo $leg leg L0 getTransactionStatus=$api_status (expected CONFIRMED) for txHash=$txhash"
+      fi
+      sleep 3
+    done
+  done
+}
+
 cleanup() {
   info "Cleaning up..."
   [[ -n "$P2P_PID" ]] && kill "$P2P_PID" 2>/dev/null || true
@@ -148,14 +186,19 @@ start_window_raiser
 # Build and start the P2P settlement engine (mem store, insecure PayPal, no
 # chain check) so the wallet P2P UI can be driven end-to-end. Self-contained —
 # the flow needs no L0/L1.
-start_p2p_engine() {
+# Build the workspace packages the engine imports + the engine bundle (esbuild:
+# bigtangle-ts ships extensionless ESM that plain `node dist/server.js` cannot
+# load under Node's ESM resolver).
+build_p2p_engine() {
   info "Building p2p engine..."
-  for pkg in did p2p-protocol record-sig; do
+  for pkg in chain-discovery did p2p-protocol record-sig; do
     ( cd "$ROOT/packages/$pkg" && npm run build >/dev/null 2>&1 ) || fail "build $pkg failed"
   done
-  # The engine runs from an esbuild bundle: bigtangle-ts ships extensionless
-  # ESM + CJS-interop deps that plain `node dist/server.js` cannot load.
   ( cd "$ROOT/services/p2p-engine" && npm run build >/dev/null 2>&1 && npm run bundle >/dev/null 2>&1 ) || fail "build/bundle p2p-engine failed"
+}
+
+start_p2p_engine() {
+  build_p2p_engine
 
   info "Starting p2p engine on $P2P_ENGINE_URL ..."
   PORT="$P2P_PORT" HOST=127.0.0.1 \
@@ -171,6 +214,48 @@ start_p2p_engine() {
   done
   curl -sf "http://localhost:${P2P_PORT}/healthz" >/dev/null 2>&1 || fail "p2p engine not ready (see /tmp/p2p-engine.log)"
   log "P2P engine ready."
+}
+
+# Real-L0 engine for the p2p-demo part: SETTLEMENT_L0_URL makes escrow_lock
+# prove the funding tx on-chain (CONFIRMED + escrow address + amount), and a
+# real engine escrow key lets the hook broadcast the release spend. Testnet
+# params match the e2e infra's n…/m… addresses (SETTLEMENT_NETWORK=testnet).
+start_p2p_engine_real() {
+  build_p2p_engine
+  info "Generating engine escrow key..."
+  local keys
+  keys="$(node "$ROOT/scripts/p2p-engine-key.mjs" 2>/dev/null)" || fail "engine key generation failed"
+  ENGINE_KEY="$(printf '%s\n' "$keys" | sed -n 's/^SETTLEMENT_ENGINE_KEY=//p')"
+  ENGINE_DID="$(printf '%s\n' "$keys" | sed -n 's/^SETTLEMENT_ENGINE_DID=//p')"
+  ENGINE_PUB="$(printf '%s\n' "$keys" | sed -n 's/^SETTLEMENT_ENGINE_PUBKEY=//p')"
+  [[ -n "$ENGINE_KEY" && -n "$ENGINE_DID" && -n "$ENGINE_PUB" ]] || fail "engine key generation produced empty values"
+
+  info "Starting p2p engine (real L0: http://localhost:${SERVER_PORT}/) on $P2P_ENGINE_URL ..."
+  PORT="$P2P_PORT" HOST=127.0.0.1 \
+    SETTLEMENT_STORE=mem \
+    SETTLEMENT_PAYPAL_INSECURE=1 \
+    SETTLEMENT_ADMIN_TOKEN=adm \
+    SETTLEMENT_NETWORK=testnet \
+    SETTLEMENT_L0_URL="http://localhost:${SERVER_PORT}/" \
+    SETTLEMENT_ENGINE_KEY="$ENGINE_KEY" \
+    SETTLEMENT_ENGINE_DID="$ENGINE_DID" \
+    SETTLEMENT_ENGINE_PUBKEY="$ENGINE_PUB" \
+    SETTLEMENT_ESCROW_HOOK_MS=5000 \
+    SETTLEMENT_ESCROW_POLL_MS=8000 \
+    CORS_ORIGIN="http://localhost:${WEB_PORT},http://127.0.0.1:${WEB_PORT}" \
+    node "$ROOT/services/p2p-engine/dist/server.bundle.mjs" >/tmp/p2p-engine.log 2>&1 &
+  P2P_PID=$!
+  for i in $(seq 1 60); do
+    curl -sf "http://localhost:${P2P_PORT}/healthz" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  curl -sf "http://localhost:${P2P_PORT}/healthz" >/dev/null 2>&1 || fail "p2p engine not ready (see /tmp/p2p-engine.log)"
+  # Fail fast if the engine did not wire the L0 client (a typo would otherwise
+  # look like "lock never accepted" much later).
+  local caps
+  caps="$(curl -sf "http://localhost:${P2P_PORT}/capabilities" 2>/dev/null || true)"
+  echo "$caps" | grep -q '"l0":true' || fail "engine has no L0 client (capabilities: $caps)"
+  log "P2P engine (real L0, testnet) ready."
 }
 
 # The P2P UI flow (p2p-ui) is self-contained: it never touches L0/L1, so the
@@ -214,6 +299,10 @@ log "Web server on http://localhost:$WEB_PORT"
 # Start the P2P engine for the parts that drive the wallet P2P UI.
 if [[ "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "remaining" || "$CMD" == "p2p-ui" ]]; then
   start_p2p_engine
+fi
+# p2p-demo runs against a real-L0 engine (escrow proved on-chain).
+if [[ "$CMD" == "p2p-demo" ]]; then
+  start_p2p_engine_real
 fi
 
 # 4. Run Playwright payment test
@@ -301,6 +390,24 @@ APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep "P2P Page|P2P Flow" 2>&1
 log "P2P UI flow passed."
+fi
+
+# 4b7. Run the real-L0 P2P demo (escrow lock + release proved on-chain) and
+#      capture the committed guide screenshots. Requires the infra (L0/L1).
+if [[ "$CMD" == "p2p-demo" ]]; then
+info "Running P2P demo (real L0 escrow)..."
+cd "$E2E_DIR"
+APP_URL="http://localhost:${WEB_PORT}/" \
+E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
+E2E_L1_URL="http://localhost:${L1_PORT}/" \
+E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
+SETTLEMENT_ENGINE_KEY="$ENGINE_KEY" \
+SETTLEMENT_ENGINE_DID="$ENGINE_DID" \
+SETTLEMENT_ENGINE_PUBKEY="$ENGINE_PUB" \
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep "P2P Demo" 2>&1
+log "P2P demo passed."
+# Re-check both escrow legs via the L0 getTransactionStatus API.
+verify_p2p_escrow
 fi
 
 # 4c. Run remaining specs (tokens, settings, order, wallet-flow, L1 Test Tab,

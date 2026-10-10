@@ -16,6 +16,9 @@
  *   POST /swaps/:swapId/confirm               seller: confirm receipt → PAYMENT_VERIFIED
  *   POST /swaps/:swapId/dispute               party: freeze the swap
  *   POST /swaps/:swapId/dispute/resolve       admin: arbitration (release | refund)
+ *   POST /swaps/:swapId/escrow/context        party: escrow signing context (receiveAddress, presigned)
+ *   POST /swaps/:swapId/escrow/presign        seller: pre-sign both spend skeletons (settlement closure)
+ *   POST /swaps/:swapId/escrow/cosign         party: co-sign a spend → engine broadcasts + settles
  *   POST /profiles                            seller: upsert a CNY collection profile
  *   POST /profiles/mine                       seller: list own profiles
  *   GET  /swaps/:swapId                       admin: swap view (PII redacted)
@@ -38,17 +41,31 @@ import { pathToFileURL } from "node:url";
 import { createHash, randomBytes } from "node:crypto";
 import { hexToBytes } from "did";
 import { pqPubFromDid } from "did/pq";
-import { PQKey } from "bigtangle-ts";
+import { PQKey, Utils } from "bigtangle-ts";
+import type { Escrow } from "bigtangle-ts";
 import { ACTION_STATUS, DEDICATED_ACTIONS, canTransition, statusForAction } from "./state.js";
 import { ReplayGuard, validateSignedRequest } from "./sign.js";
-import { escrowAddress } from "./escrow.js";
-import { verifyChainLock, verifyChainPayment, HttpChainClient, type ChainClient } from "./chain.js";
+import { escrowAddress, settlementParams } from "./escrow.js";
+import {
+  assembleSpend,
+  awaitConfirmed,
+  broadcastSpend,
+  buildSkeleton,
+  destAddress,
+  engineSigner,
+  keyFromDid,
+  verifyParticipantSig,
+  vaultFor,
+  type EscrowKind,
+} from "./escrowSpend.js";
+import { verifyChainLock, verifyChainPayment, type ChainClient } from "./chain.js";
 import { paypalConfig, verifyWebhookSignature, type WebhookHeaders } from "./paypal.js";
 import { HttpPaypalClient, MockPaypalClient, type PaypalClient } from "./paypalClient.js";
 import {
   CNY_RAILS,
   isCnyRail,
   type CnyRail,
+  type EscrowSigning,
   type PaymentProfile,
   type P2pOrder,
   type P2pSwapEvent,
@@ -148,12 +165,13 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   const adminToken = () => env.SETTLEMENT_ADMIN_TOKEN?.trim() || "";
 
   /**
-   * Enabled CNY collection methods (docs/p2pcny.md §5). Unset → all three;
-   * `SETTLEMENT_CNY_RAILS=wechat,bank` restricts; explicitly empty → rail off.
+   * Enabled CNY collection methods (docs/p2pcny.md §5). Unset or empty → all
+   * three (an env file that forgets the line must not silently kill the
+   * rails); `SETTLEMENT_CNY_RAILS=wechat,bank` restricts.
    */
   function cnyRails(): string[] {
     const raw = env.SETTLEMENT_CNY_RAILS;
-    if (raw === undefined) return [...CNY_RAILS];
+    if (raw === undefined || !raw.trim()) return [...CNY_RAILS];
     return raw
       .split(",")
       .map((s) => s.trim())
@@ -201,6 +219,313 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return stored;
   }
 
+  //────────── escrow settlement closure (docs/p2p.md) ────────────────────────
+  // The wallet pre-signs the two deterministic spend skeletons at lock; the
+  // engine holds the second signature (its key is the 2-of-3's engine
+  // participant), broadcasts the assembled transaction, and moves the state
+  // machine only after CONFIRMED. Everything fails closed before a broadcast.
+
+  const enginePubkeyHex = () => env.SETTLEMENT_ENGINE_PUBKEY?.trim() || "";
+
+  /** Confirmation wait for one spend (SETTLEMENT_ESCROW_POLL_MS, default 25s). */
+  function escrowPollOpts(): { pollMs: number; intervalMs: number } {
+    const raw = Number(env.SETTLEMENT_ESCROW_POLL_MS ?? "");
+    const pollMs = Number.isFinite(raw) && raw >= 0 ? raw : 25_000;
+    return { pollMs, intervalMs: 2_000 };
+  }
+
+  type EscrowContext = { vault: Escrow; engineKey: PQKey };
+  type SettleResult =
+    | { ok: true; status: string; txHash: string | null; pending: boolean }
+    | { ok: false; code: number; reason: string };
+
+  /**
+   * Rebuild this swap's vault and check it against the lock: the engine's own
+   * key must be a participant and the derived address must be the one the
+   * seller funded — anything else is a key/config mismatch, never a spend.
+   */
+  function escrowContext(swap: P2pSwapEvent): EscrowContext | { code: number; reason: string } {
+    const pubHex = enginePubkeyHex();
+    if (!pubHex || !env.SETTLEMENT_ENGINE_KEY?.trim()) {
+      return { code: 503, reason: "engine escrow key not configured" };
+    }
+    const vault = vaultFor(swap.sellerDid, swap.buyerDid, pubHex);
+    if (!vault) return { code: 409, reason: "swap has no escrow vault (non-PQ party key)" };
+    let engineKey: PQKey;
+    try {
+      engineKey = engineSigner(env);
+    } catch (e) {
+      return { code: 503, reason: (e as Error).message };
+    }
+    if (vault.indexOf(engineKey) < 0) {
+      return { code: 503, reason: "engine key is not an escrow participant" };
+    }
+    if (!swap.escrowAddress || vault.address(settlementParams(env)).toBase58() !== swap.escrowAddress) {
+      return { code: 409, reason: "escrow address does not match the vault keys" };
+    }
+    return { vault, engineKey };
+  }
+
+  /** Persist the spend's tx hash (and the signature that made it) before waiting —
+   *  the restart path: a crash after broadcast must still find the transaction. */
+  async function rememberSpend(swap: P2pSwapEvent, fields: Partial<EscrowSigning>): Promise<void> {
+    const existing = await deps.store.getEscrowSigning(swap.swapId);
+    await deps.store.putEscrowSigning({
+      swapId: swap.swapId,
+      refundAddress: fields.refundAddress || existing?.refundAddress || "",
+      releaseSig: fields.releaseSig || existing?.releaseSig || "",
+      refundSig: fields.refundSig || existing?.refundSig || "",
+      releaseSignerDid: fields.releaseSignerDid || existing?.releaseSignerDid || "",
+      refundSignerDid: fields.refundSignerDid || existing?.refundSignerDid || "",
+      sellerDid: existing?.sellerDid || swap.sellerDid || "",
+      releaseTxHash: fields.releaseTxHash !== undefined ? fields.releaseTxHash : (existing?.releaseTxHash ?? null),
+      refundTxHash: fields.refundTxHash !== undefined ? fields.refundTxHash : (existing?.refundTxHash ?? null),
+      createdAt: existing?.createdAt ?? now(),
+      updatedAt: now(),
+    });
+  }
+
+  /** CONFIRMED → move the state machine (release then completes CNY swaps). */
+  async function finishSettle(
+    swap: P2pSwapEvent,
+    kind: EscrowKind,
+    txHash: string,
+    actorDid: string,
+  ): Promise<SettleResult> {
+    const target = kind === "release" ? "ESCROW_RELEASED" : "ESCROW_REFUNDED";
+    const latest = (await deps.store.getSwap(swap.swapId)) ?? swap;
+    if (latest.status !== target && !canTransition(latest.status, target)) {
+      if (latest.status === "ESCROW_REFUNDED" || latest.status === "COMPLETED") {
+        // Already settled by a previous attempt — idempotent success.
+        return { ok: true, status: latest.status, txHash, pending: false };
+      }
+      return { ok: false, code: 409, reason: `cannot ${latest.status} → ${target}` };
+    }
+    if (latest.status === target) return { ok: true, status: latest.status, txHash, pending: false };
+    const evidence: Partial<P2pSwapEvent> =
+      kind === "release" ? { releaseTxHash: txHash } : { refundTxHash: txHash };
+    let stored = await persist({
+      ...latest,
+      ...evidence,
+      seq: latest.seq + 1,
+      status: target,
+      eventType: kind === "release" ? "release" : "refund",
+      actorDid,
+      at: now(),
+    });
+    // CNY rails have no fiat payout step — the seller already got the CNY,
+    // so `complete` closes the loop while the engine is the acting signer.
+    if (kind === "release" && isCnyRail(stored.wantRail) && canTransition(stored.status, "COMPLETED")) {
+      stored = await persist({
+        ...stored,
+        seq: stored.seq + 1,
+        status: "COMPLETED",
+        eventType: "complete",
+        actorDid,
+        at: now(),
+      });
+    }
+    return { ok: true, status: stored.status, txHash, pending: false };
+  }
+
+  /**
+   * The settlement closure: rebuild the agreed spend, verify the caller's (or
+   * the stored presigned) signature over the exact bytes, add the engine's,
+   * broadcast, and only move the state machine once CONFIRMED. With no chain
+   * client wired (mem/test mode) it falls back to the plain unproved
+   * transition — the same behavior `escrow_lock` has there.
+   */
+  async function settleEscrow(opts: {
+    swap: P2pSwapEvent;
+    kind: EscrowKind;
+    /** Caller's signature over the skeleton; null → the stored presign. */
+    sigHex: string | null;
+    /** Whose signature `sigHex` is (recorded so the hook can re-verify later). */
+    signerDid: string;
+    signerKey: PQKey | null;
+    refundAddress?: string;
+    actorDid: string;
+  }): Promise<SettleResult> {
+    const { swap, kind } = opts;
+    const target = kind === "release" ? "ESCROW_RELEASED" : "ESCROW_REFUNDED";
+    const row = await deps.store.getEscrowSigning(swap.swapId);
+    const priorTx = kind === "release" ? row?.releaseTxHash ?? null : row?.refundTxHash ?? null;
+    if (!canTransition(swap.status, target)) {
+      // A retry after a finished spend (client lost the response, hook raced a
+      // cosign): report the stored outcome instead of a spurious conflict.
+      const settled =
+        (kind === "release" &&
+          (swap.status === "ESCROW_RELEASED" || swap.status === "COMPLETED")) ||
+        (kind === "refund" && swap.status === "ESCROW_REFUNDED");
+      if (settled) return { ok: true, status: swap.status, txHash: priorTx, pending: false };
+      return { ok: false, code: 409, reason: `cannot ${swap.status} → ${target}` };
+    }
+    if (kind === "release") {
+      const reason = frozen(swap);
+      if (reason) return { ok: false, code: 422, reason: `swap frozen: ${reason}` };
+    }
+    if (!deps.chain) {
+      const stored = await persist({
+        ...swap,
+        seq: swap.seq + 1,
+        status: target,
+        eventType: kind === "release" ? "release" : "refund",
+        actorDid: opts.actorDid,
+        at: now(),
+      });
+      return { ok: true, status: stored.status, txHash: null, pending: false };
+    }
+
+    const ctx = escrowContext(swap);
+    if ("code" in ctx) return { ok: false, code: ctx.code, reason: ctx.reason };
+    if (!swap.escrowTxHash || !swap.escrowAddress) {
+      return { ok: false, code: 409, reason: "swap has no locked escrow" };
+    }
+    const toBase58 = kind === "release" ? swap.receiveAddress ?? "" : opts.refundAddress ?? "";
+    const to = toBase58 ? destAddress(toBase58) : null;
+    if (!to) {
+      return {
+        ok: false,
+        code: kind === "release" ? 409 : 400,
+        reason: kind === "release" ? "swap has no receive address" : "refundAddress required",
+      };
+    }
+
+    const submitted = kind === "release" ? row?.releaseTxHash : row?.refundTxHash;
+    const sigHex = opts.sigHex ?? (kind === "release" ? row?.releaseSig || null : row?.refundSig || null);
+
+    // A transaction we already broadcast: wait on it instead of rebuilding —
+    // the same skeleton would produce the same bytes anyway (idempotent).
+    if (submitted) {
+      const out = await awaitConfirmed(deps.chain, submitted, to, escrowPollOpts());
+      if (out.confirmed) return finishSettle(swap, kind, out.txHash, opts.actorDid);
+      if (out.status !== "DROPPED") {
+        return { ok: true, status: swap.status, txHash: out.txHash, pending: true };
+      }
+      // Dropped (reorg/conflict): rebuild below and resubmit the same bytes.
+    }
+
+    if (!sigHex) return { ok: false, code: 409, reason: `no stored ${kind} signature` };
+    let signerKey = opts.signerKey;
+    for (const did of [opts.signerDid, swap.sellerDid ?? ""]) {
+      if (signerKey || !did) break;
+      try {
+        signerKey = keyFromDid(did);
+      } catch {
+        // classic/Ed25519 did — cannot hold an escrow key; keep looking
+      }
+    }
+    if (!signerKey) return { ok: false, code: 409, reason: "no escrow signer" };
+    const signerIdx = ctx.vault.indexOf(signerKey);
+    const engineIdx = ctx.vault.indexOf(ctx.engineKey);
+    if (signerIdx < 0 || signerIdx === engineIdx) {
+      return { ok: false, code: 409, reason: "signer is not an escrow participant" };
+    }
+
+    const skeleton = await buildSkeleton({
+      chain: deps.chain,
+      vault: ctx.vault,
+      escrowAddress: swap.escrowAddress,
+      escrowTxHash: swap.escrowTxHash,
+      to,
+    });
+    if (!skeleton) {
+      return { ok: false, code: 409, reason: "escrow output not found (lock unconfirmed or already spent)" };
+    }
+    if (!verifyParticipantSig(skeleton.sighash, sigHex, signerKey)) {
+      return { ok: false, code: 422, reason: `${kind} signature does not verify` };
+    }
+    const engineSig = Utils.HEX.encode(ctx.engineKey.sign(skeleton.sighash).serialize());
+    assembleSpend(ctx.vault, skeleton.tx, new Map([[signerIdx, sigHex], [engineIdx, engineSig]]));
+    const txHash = skeleton.tx.getHash().toString();
+    try {
+      await broadcastSpend(deps.chain, skeleton.tx);
+    } catch (e) {
+      return { ok: false, code: 502, reason: `broadcast failed: ${String(e).slice(0, 160)}` };
+    }
+    await rememberSpend(
+      swap,
+      kind === "release"
+        ? { releaseSig: sigHex, releaseSignerDid: opts.signerDid, releaseTxHash: txHash }
+        : { refundSig: sigHex, refundSignerDid: opts.signerDid, refundAddress: toBase58, refundTxHash: txHash },
+    );
+    const out = await awaitConfirmed(deps.chain, txHash, to, escrowPollOpts());
+    if (out.confirmed) return finishSettle(swap, kind, txHash, opts.actorDid);
+    return { ok: true, status: swap.status, txHash, pending: true };
+  }
+
+  // ── escrow settlement hook ────────────────────────────────────────────────
+  // Finishes pre-signed swaps while nobody is watching: release at
+  // PAYMENT_VERIFIED, refund at EXPIRED. A swap only qualifies when the
+  // seller presigned at lock (no stored row → the parties drive it), so
+  // e2e/manual flows behave exactly as before. SETTLEMENT_ESCROW_HOOK_MS=0
+  // (the default) disables the timer — the tick stays exported for tests.
+  const inFlight = new Set<string>();
+  const escrowHookTick = async () => {
+    if (inFlight.size || !deps.chain) return;
+    let swaps: P2pSwapEvent[] = [];
+    try {
+      swaps = await deps.store.listSwaps(500);
+    } catch {
+      return;
+    }
+    for (const swap of swaps) {
+      if (swap.status !== "PAYMENT_VERIFIED" && swap.status !== "EXPIRED") continue;
+      if (inFlight.has(swap.swapId)) continue;
+      const row = await deps.store.getEscrowSigning(swap.swapId);
+      if (!row) continue;
+      const kind: EscrowKind = swap.status === "PAYMENT_VERIFIED" ? "release" : "refund";
+      const hasSig = kind === "release" ? !!row.releaseSig : !!row.refundSig;
+      const hasTx = kind === "release" ? !!row.releaseTxHash : !!row.refundTxHash;
+      if (!hasSig && !hasTx) continue;
+      if (kind === "release" && !swap.receiveAddress) continue;
+      if (kind === "refund" && !row.refundAddress) continue;
+      inFlight.add(swap.swapId);
+      try {
+        const signerDid = kind === "release" ? row.releaseSignerDid : row.refundSignerDid;
+        let signerKey: PQKey | null = null;
+        if (signerDid) {
+          try {
+            signerKey = keyFromDid(signerDid);
+          } catch {
+            signerKey = null;
+          }
+        }
+        const res = await settleEscrow({
+          swap,
+          kind,
+          sigHex: null,
+          signerDid: signerDid || swap.sellerDid || "",
+          signerKey,
+          refundAddress: row.refundAddress,
+          actorDid: kind === "release" ? engineDid() || swap.sellerDid || "" : swap.sellerDid || "",
+        });
+        if (!res.ok) {
+          app.log.warn({ swapId: swap.swapId, kind, reason: res.reason }, "escrow hook: settlement deferred");
+        }
+      } catch (e) {
+        app.log.warn({ swapId: swap.swapId, kind, err: String(e) }, "escrow hook: settlement failed");
+      } finally {
+        inFlight.delete(swap.swapId);
+      }
+    }
+  };
+  app.decorate("escrowHookTick", escrowHookTick);
+
+  const hookRaw = Number(env.SETTLEMENT_ESCROW_HOOK_MS ?? "");
+  const hookMs = Number.isFinite(hookRaw) && hookRaw > 0 ? hookRaw : 0;
+  if (hookMs > 0) {
+    const timer = setInterval(() => void escrowHookTick(), hookMs);
+    timer.unref?.();
+    const boot = setTimeout(() => void escrowHookTick(), Math.min(hookMs, 5_000));
+    boot.unref?.();
+    app.addHook("onClose", async () => {
+      clearInterval(timer);
+      clearTimeout(boot);
+    });
+  }
+
+
   /** Step 4: create + send the exact-amount invoice (invoice_number = swapId). */
   async function issueInvoice(
     paypal: PaypalClient,
@@ -234,6 +559,24 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   }
 
   app.get("/healthz", async () => ({ ok: true }));
+
+  /**
+   * Public capability report (no auth): which rails this engine actually
+   * serves. A CNY-only deploy has no PayPal credentials, and the PayPal
+   * endpoints answer 503 when `paypalConfig(env)` is null — so the wallet
+   * reads this at boot and hides rails that would only ever fail (docs/p2pcny.md).
+   * `escrow`/`chain` are diagnostics: `chain.l0` false means lock proofs are
+   * accepted WITHOUT verification (server.ts escrow_lock), never a prod state.
+   */
+  app.get("/capabilities", async () => ({
+    ok: true,
+    rails: [...(deps.paypal ? ["paypal"] : []), ...cnyRails()],
+    paypal: !!deps.paypal,
+    escrow: !!env.SETTLEMENT_ENGINE_PUBKEY?.trim(),
+    /** Public escrow key: the wallet rebuilds the 2-of-3 vault with it. */
+    escrowPubkey: env.SETTLEMENT_ENGINE_PUBKEY?.trim() || null,
+    chain: { l0: !!deps.chain, l1: !!deps.anchor },
+  }));
 
   app.post("/orders", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
@@ -507,6 +850,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 
   // Party-scoped swap reads for wallet clients: signed with the caller's did,
   // PII redacted, and only swaps the caller is a party to are returned.
+  /**
+   * Wallet-facing swap projection: the redacted view plus whether the seller
+   * has pre-signed both spend skeletons (the escrow hook arm state — the UI
+   * offers the presign retry only while this is false).
+   */
+  async function walletView(swap: P2pSwapEvent): Promise<P2pSwapView> {
+    return { ...redact(swap), presigned: !!(await deps.store.getEscrowSigning(swap.swapId)) };
+  }
+
   app.post("/swaps/mine", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
@@ -514,7 +866,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const signed = validateSignedRequest(body, did, guard);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const swaps = await deps.store.listSwapsForDid(did);
-    return { swaps: swaps.map(redact) };
+    return { swaps: await Promise.all(swaps.map(walletView)) };
   });
 
   app.post("/swaps/get", async (request, reply) => {
@@ -528,7 +880,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const swap = await deps.store.getSwap(swapId);
     if (!swap) return reply.code(404).send({ error: "unknown swap" });
     if (swap.sellerDid !== did && swap.buyerDid !== did) return reply.code(403).send({ error: "not a swap party" });
-    return { swap: redact(swap) };
+    return { swap: await walletView(swap) };
   });
 
   /** Admin: latest state per swap, newest first (dai's p2p_status listing). */
@@ -846,6 +1198,164 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return { swapId, status: stored.status, dispute: stored.dispute, disputeOutcome: stored.disputeOutcome };
   });
 
+  /**
+   * Seller: pre-sign both escrow spend skeletons once the lock is CONFIRMED
+   * (docs/p2p.md — the settlement closure). The engine rebuilds its own copy
+   * of each skeleton and verifies both signatures before storing them, so a
+   * bad presign can never strand a swap at settlement time. Store-only:
+   * nothing here is anchored or broadcast — the escrow hook later spends with
+   * its own key as the second signature.
+   */
+  /**
+   * Escrow signing context (party-scoped): what the wallet needs to rebuild
+   * the two spend skeletons. The general swap view redacts `receiveAddress`
+   * (the release destination) because it is only needed here — both parties
+   * pull it over this signed, escrow-only endpoint instead of widening the
+   * view. `presigned` mirrors the wallet-view flag for the retry flow.
+   */
+  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/escrow/context", async (request, reply) => {
+    const { swapId } = request.params;
+    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const swap = await deps.store.getSwap(swapId);
+    if (!swap) return reply.code(404).send({ error: "unknown swap" });
+    const did = typeof body.did === "string" ? body.did : "";
+    if (!did) return reply.code(400).send({ error: "did required" });
+    if (did !== swap.sellerDid && did !== swap.buyerDid) return reply.code(403).send({ error: "not a swap party" });
+    const signed = validateSignedRequest(body, did, guard);
+    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    if (!swap.escrowAddress || !swap.escrowTxHash) return reply.code(409).send({ error: "swap has no locked escrow" });
+    const row = await deps.store.getEscrowSigning(swapId);
+    return {
+      swapId,
+      escrowAddress: swap.escrowAddress,
+      escrowTxHash: swap.escrowTxHash,
+      receiveAddress: swap.receiveAddress ?? "",
+      sellerDid: swap.sellerDid ?? "",
+      buyerDid: swap.buyerDid ?? "",
+      presigned: !!row,
+    };
+  });
+
+  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/escrow/presign", async (request, reply) => {
+    const { swapId } = request.params;
+    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const swap = await deps.store.getSwap(swapId);
+    if (!swap) return reply.code(404).send({ error: "unknown swap" });
+    const did = typeof body.did === "string" ? body.did : "";
+    if (!did) return reply.code(400).send({ error: "did required" });
+    if (did !== swap.sellerDid) return reply.code(403).send({ error: "seller signer required" });
+    const signed = validateSignedRequest(body, did, guard);
+    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    if (!deps.chain) return reply.code(503).send({ error: "chain not configured" });
+    if (!swap.escrowTxHash || !swap.escrowAddress) return reply.code(409).send({ error: "swap has no locked escrow" });
+    const releaseSig = typeof body.releaseSig === "string" ? body.releaseSig.trim() : "";
+    const refundSig = typeof body.refundSig === "string" ? body.refundSig.trim() : "";
+    const refundAddress = typeof body.refundAddress === "string" ? body.refundAddress.trim() : "";
+    if (!releaseSig || !refundSig) return reply.code(400).send({ error: "releaseSig and refundSig required" });
+    if (!destAddress(refundAddress)) return reply.code(400).send({ error: "refundAddress must be a base58 address" });
+    const receive = swap.receiveAddress ? destAddress(swap.receiveAddress) : null;
+    if (!receive) return reply.code(409).send({ error: "swap has no receive address" });
+
+    const ctx = escrowContext(swap);
+    if ("code" in ctx) return reply.code(ctx.code).send({ error: ctx.reason });
+    let sellerKey: PQKey;
+    try {
+      sellerKey = keyFromDid(did);
+    } catch {
+      return reply.code(409).send({ error: "did has no PQ escrow key" });
+    }
+    if (ctx.vault.indexOf(sellerKey) < 0) {
+      return reply.code(409).send({ error: "seller key is not an escrow participant" });
+    }
+    const releaseSkel = await buildSkeleton({
+      chain: deps.chain,
+      vault: ctx.vault,
+      escrowAddress: swap.escrowAddress,
+      escrowTxHash: swap.escrowTxHash,
+      to: receive,
+    });
+    const refundSkel = await buildSkeleton({
+      chain: deps.chain,
+      vault: ctx.vault,
+      escrowAddress: swap.escrowAddress,
+      escrowTxHash: swap.escrowTxHash,
+      to: destAddress(refundAddress)!,
+    });
+    if (!releaseSkel || !refundSkel) {
+      return reply.code(409).send({ error: "escrow output not found (lock unconfirmed or already spent)" });
+    }
+    if (!verifyParticipantSig(releaseSkel.sighash, releaseSig, sellerKey)) {
+      return reply.code(422).send({ error: "releaseSig does not verify against the release skeleton" });
+    }
+    if (!verifyParticipantSig(refundSkel.sighash, refundSig, sellerKey)) {
+      return reply.code(422).send({ error: "refundSig does not verify against the refund skeleton" });
+    }
+    await rememberSpend(swap, {
+      refundAddress,
+      releaseSig,
+      refundSig,
+      releaseSignerDid: did,
+      refundSignerDid: did,
+    });
+    return { swapId, presigned: true, refundAddress };
+  });
+
+  /**
+   * Party co-sign (Path A): the wallet signs the exact skeleton, the engine
+   * adds its own key, broadcasts, and settles the state machine only after
+   * CONFIRMED — the manual counterpart of the escrow hook, which does the same
+   * for a presigned swap with nobody watching. `kind=refund` is seller-only:
+   * a refund pays the seller's `refundAddress`, which only the seller chooses.
+   */
+  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/escrow/cosign", async (request, reply) => {
+    const { swapId } = request.params;
+    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const swap = await deps.store.getSwap(swapId);
+    if (!swap) return reply.code(404).send({ error: "unknown swap" });
+    const did = typeof body.did === "string" ? body.did : "";
+    if (!did) return reply.code(400).send({ error: "did required" });
+    if (did !== swap.sellerDid && did !== swap.buyerDid) return reply.code(403).send({ error: "not a swap party" });
+    const kind = body.kind === "release" || body.kind === "refund" ? (body.kind as EscrowKind) : null;
+    if (!kind) return reply.code(400).send({ error: "kind must be release | refund" });
+    if (kind === "refund" && did !== swap.sellerDid) return reply.code(403).send({ error: "seller signer required for a refund" });
+    const signed = validateSignedRequest(body, did, guard);
+    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    const sigHex = typeof body.sig === "string" ? body.sig.trim() : "";
+    if (!sigHex) return reply.code(400).send({ error: "sig required" });
+    let refundAddress = "";
+    if (kind === "refund") {
+      const fromBody = typeof body.refundAddress === "string" ? body.refundAddress.trim() : "";
+      const row = fromBody ? null : await deps.store.getEscrowSigning(swapId);
+      refundAddress = fromBody || row?.refundAddress || "";
+      if (!destAddress(refundAddress)) return reply.code(400).send({ error: "refundAddress required (body or presign)" });
+    }
+    let signerKey: PQKey;
+    try {
+      signerKey = keyFromDid(did);
+    } catch {
+      return reply.code(409).send({ error: "did has no PQ escrow key" });
+    }
+    const res = await settleEscrow({
+      swap,
+      kind,
+      sigHex,
+      signerDid: did,
+      signerKey,
+      refundAddress,
+      actorDid: kind === "release" ? engineDid() || did : did,
+    });
+    if (!res.ok) return reply.code(res.code).send({ error: res.reason });
+    return reply.code(res.pending ? 202 : 200).send({
+      swapId,
+      status: res.status,
+      txHash: res.txHash,
+      pending: res.pending,
+    });
+  });
+
   /** Seller: upsert a CNY collection profile. PII: store + instruction reveals only. */
   app.post("/profiles", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
@@ -1017,6 +1527,7 @@ async function main() {
   const { Pool } = await import("pg");
   const { PgSettlementStore, MemSettlementStore } = await import("./store.js");
   const { anchorFromEnv, l1Anchor } = await import("./anchor.js");
+  const { PooledChainClient, poolFromEnv } = await import("./discovery.js");
   const env = process.env;
   const store =
     env.SETTLEMENT_STORE === "mem" || !env.POSTGRES_URL
@@ -1024,11 +1535,20 @@ async function main() {
       : new PgSettlementStore(new Pool({ connectionString: env.POSTGRES_URL }));
   const cfg = paypalConfig(env);
   const anchorCfg = anchorFromEnv(env);
-  if ((env.SETTLEMENT_L1_URL || env.SETTLEMENT_L1_SOCIAL_URL) && !anchorCfg) {
+  if ((env.SETTLEMENT_L1_URL || env.SETTLEMENT_L1_SOCIAL_URL || env.SETTLEMENT_L1_SOCIAL_URLS) && !anchorCfg) {
     console.warn(
       "p2p-engine: L1-SOCIAL configured but SETTLEMENT_ENGINE_KEY is missing/invalid or SETTLEMENT_ENGINE_DID is mismatched — swap events will NOT be anchored",
     );
   }
+  // Discovery (docs/p2p.md): pinned URLs first, optional DNS/registry, and a
+  // health-gated pool per role. Boot probes run before listen so the first
+  // request already has a verified endpoint (or fails closed, as with no env).
+  const l0Pool = poolFromEnv(env, "l0");
+  const socialPool = poolFromEnv(env, "social");
+  await Promise.all([l0Pool?.start(), socialPool?.start()]);
+  const anchor = anchorCfg
+    ? l1Anchor(socialPool ? { ...anchorCfg, resolveUrl: () => socialPool.best() } : anchorCfg)
+    : undefined;
   const app = await buildApp({
     store,
     paypal: cfg
@@ -1036,8 +1556,12 @@ async function main() {
       : env.SETTLEMENT_PAYPAL_INSECURE === "1"
         ? new MockPaypalClient()
         : null,
-    chain: env.SETTLEMENT_L0_URL ? new HttpChainClient(env.SETTLEMENT_L0_URL) : null,
-    ...(anchorCfg ? { anchor: l1Anchor(anchorCfg) } : {}),
+    chain: l0Pool ? new PooledChainClient(l0Pool) : null,
+    ...(anchor ? { anchor } : {}),
+  });
+  app.addHook("onClose", async () => {
+    l0Pool?.stop();
+    socialPool?.stop();
   });
   await app.listen({ port: Number(env.PORT ?? 8108), host: env.HOST ?? "127.0.0.1" });
 }
