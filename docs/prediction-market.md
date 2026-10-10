@@ -104,7 +104,15 @@ compliance liability if real money is ever at stake (§8).
    milestone.
 4. **Collateral is per-event configurable**: BIG in dev; a USD-pegged
    currency token for mainnet (chain already has `currency` token type;
-   tests use CNY-quoted pairs).
+   tests use CNY-quoted pairs). Collateral must be a native or
+   `tokenstop` token — never a re-issuable one (§4.2 #5).
+5. **HARD REQUIREMENT — fixed-supply outcome tokens.**
+   YES/NO are created with `tokenstop=true`; the engine **asserts
+   `supply == S`** and rejects any token block referencing the event tokens
+   after `create`. Rationale: `ServiceBaseCheck.java:2430-2435` permits
+   *further issuance* unless stopped, and reissue rights sit with the
+   token's multi-sign addresses — without this, the issuer can mint extra
+   winning shares and drain the vault (§4.2 #1).
 
 ## 3. Protocol design (Java, phase 1)
 
@@ -125,7 +133,7 @@ compliance liability if real money is ever at stake (§8).
 | `resolvers` | M-of-N resolver pubkeys (v1: **2-of-3**) — see §3.3 |
 | issuer | event creator pubkey (funds/creates the event; not a trust role once resolvers are set) |
 
-Issuer flow: create YES/NO tokens (supply S each, existing
+Issuer flow: create YES/NO tokens (supply S each, **`tokenstop=true`**, existing
 `BLOCKTYPE_TOKEN_CREATION`) → submit `create`, funding the event vault with
 the S YES + S NO supply. **No collateral is escrowed at `create`** — the
 vault's backing comes entirely from `split` deposits (CTF model, §3.2/§3.4).
@@ -177,6 +185,12 @@ Design notes:
     `autoInvalidSeconds`, the engine **auto-finalizes the event as
     `invalid`** — all shares redeem collateral 1:1. A dead resolver set can
     lose its fee, never the traders' vault.
+- A dispute must have a **defined adjudicator**, or it is just a freeze
+  primitive (§4.2 #2). v1 rule: **at most one dispute per market**, with an
+  escalating bond; a disputed market escalates to a larger resolution set
+  and, if not re-resolved within the extended window, **auto-finalizes
+  `invalid`**. The committee that posted the original outcome cannot be its
+  own appeal.
 - The dispute window is the minimum viable oracle: even "issuer resolves"
   is a (single, trusted) oracle — the only choice is how much
   dispute machinery surrounds it. v1 narrows trust from 1-of-1 to 2-of-3
@@ -190,6 +204,7 @@ vault only via `split` and is what redemption pays from. At all times:
 ```
 collateral_in_vault == YES_circulating == NO_circulating
 collateral_in_vault + YES_in_vault == S   (likewise for NO)
+YES_supply == NO_supply == S              (no re-issuance; §2.5)
 ```
 
 No collateral is escrowed at `create` (§3.1), so these hold from the event's
@@ -198,6 +213,11 @@ the vault, preserving the equality. Trades only move shares between users;
 the engine touches the vault only on split/merge/redeem, and at resolution
 winning shares outstanding == collateral remaining in the vault. Test like
 `OrderPayoutConservationTest`.
+
+**No value creation:** the vault must never pay out more than it took in —
+integer rounding in split/merge/redeem is always resolved *toward the vault*,
+and any remainder is burned, never credited (§4.2 #7). Property-test with
+adversarial odd amounts, not just round numbers.
 
 ### 3.5 Engine implementation
 
@@ -234,8 +254,12 @@ winning shares outstanding == collateral remaining in the vault. Test like
 - Order matching is limit-only with an 8h timeout — fine for MVP shares, but
   "buy at 55¢" UX and day-long events may want market-order sugar
   client-side and longer windows.
+- Full adversarial review (mint re-issuance, dispute adjudication, engine
+  DoS, bridge collusion, rounding leaks) is in §4.2.
 
-## 4. Decentralization & trust model
+## 4. Trust & threat model
+
+### 4.1 Decentralization scorecard
 
 Scorecard for the whole design (honest by component — the plan is
 trust-minimized on custody and matching, deliberately weaker on resolution
@@ -256,6 +280,31 @@ in v1, and deliberately keeps a compliance kill switch):
 single-entity) resolution trust. The remaining decentralization gap is
 almost entirely the oracle ladder (§3.3), closed by phase 4's staked
 optimistic oracle.
+
+### 4.2 Threat model
+
+Adversarial review of the design. Severity is impact × reachability for an
+attacker who is not a chain majority.
+
+| # | Vector | Sev | Attack | Mitigation |
+|---|---|---|---|---|
+| 1 | **Token re-issuance** | **Crit** | The chain allows *further issuance* of an existing token unless stopped (`ServiceBaseCheck.java:2430-2435`); reissue rights belong to the token's multi-sign addresses (`:2438`). Mint extra winning shares after `create` → redeem against a vault backed only for S → **drain all collateral** | Create YES/NO with `tokenstop=true` (fixed supply); engine **asserts `supply == S`** and rejects any token block referencing the event tokens post-`create` (hard invariant, §2.5) |
+| 2 | **Undefined dispute adjudicator** | **Crit** | v1 says a bonded dispute freezes/re-opens a market but never says who finally decides; the committee that just resolved can't be its own appeal. Any bonded party can freeze settlement indefinitely (DoS), or the committee rubber-stamps | Define v1 adjudication explicitly: dispute escalates to a larger resolution set, or auto-`invalid` if unresolved within the window; **one dispute max** per market with an **escalating bond** |
+| 3 | **Unbounded engine work** | High | State "recomputed from the accepted-event chain" is O(events); auto-`invalid` scans all open markets each BEACON (O(markets)). Cheap event/market spam makes confirmation arbitrarily expensive | Rolling per-market accumulator checkpointed in `contractresult` (as the lottery chains `prevContractresult`); queued resolution pass instead of full scans; per-block event caps; fees |
+| 4 | **Validator + resolver / bridge collusion** | High | New L1 bootstraps operator-controlled; resolvers overlapping validators can censor disputes and force outcomes. Cross-chain, the L0→prediction **bridge** (M-of-N vault, SPV anchors) is the dominant trust boundary — compromised keys mint fake collateral | Independent validator and resolver sets; resolver set not chosen solely by the issuer (§4.2 #6); bridge key hygiene + the existing outpoint-keyed replay protection; treat bridge as the systemic risk in ops |
+| 5 | **Collateral issuer risk** | High | A "USD-pegged currency token" for mainnet is itself re-issuable (`tokenstop` gap) → collateral inflation makes redemptions worthless | Whitelist collateral to native BIG and/or `tokenstop` tokens only |
+| 6 | **Vault stock not irreversibly escrowed** | High | Pre-minted S YES + S NO must not be withdrawable by the issuer, or splitters can't get shares (DoS) / stock is double-spent | `create` escrows the stock under engine control (not a spendable address); release only via `split` |
+| 7 | **Rounding / dust value leak** | Med | `Coin` is integer-valued and order escrow already permits truncation dust; split=floor vs merge/redeem=ceil lets a loop extract value | Exact conservation: the vault never pays out more than it took in; remainder is burned, never credited. Adversarial-amount property tests |
+| 8 | **MEV / insider trading** | Med | Resolve/dispute txs are visible pre-inclusion; a resolver can trade the book before resolving; disputors front-run; wash trading fakes volume/price | Commit-reveal for resolution; bar resolvers from trading their own event; ordering rules; volume-integrity monitoring |
+| 9 | **Liquidity / exit trap** | Med | A one-sided buyer cannot exit without a counterparty (or acquiring the other side to merge); a dominant MM can squeeze | MM incentives / fallback liquidity, or disclose for MVP |
+| 10 | **Price band not enforced** | Med | Nothing constrains order prices to (0,1); trades at >1/<0 (self-harm) enable wash/odd payouts | Enforce the band in the contract or order validation |
+| 11 | **Position transparency** | Low | Public book + addresses exposes every position (copy-trading, coercion) — opposite of Kalshi's opacity | Product/compliance consideration; optional privacy layer later |
+| 12 | **Resolution timing gap** | Low | Between game-end and resolution, informed trading/dumping is possible | Resolve promptly or freeze the book at `resolutionTime` |
+
+**Sharpest takeaways:** #1 is design-breaking with a verified, concrete fix
+(`tokenstop` + engine supply assertion) and is promoted to a hard
+requirement in §2.5. #2 must be specified before any real money; #3 and #4
+are the availability/systemic risks.
 
 ## 5. Client SDK (TS, phase 2)
 
@@ -308,7 +357,8 @@ remote test first (origin of truth), then port to
       (`helper/fulltest/remote.sh` `KAFKA_CHAINS="L0 ordermatch prediction"`),
       bridge registration (`regSubtangle` for `prediction`);
    c. `PredictionContractExecutor` + registrar, event state machine
-      (incl. 2-of-3 resolvers, bonded disputes, liveness rules — §3.3),
+      (incl. 2-of-3 resolvers, single-dispute adjudication, bonded disputes,
+      liveness rules — §3.3), fixed-supply assertion (§2.5), no-value-creation
       conservation unit tests.
 2. **SDK** (TS, `packages/bigtangle-ts`): helpers + unit tests; Java remote
    IT first, then TS port; run `e2eremote.sh` (infra now starts three
