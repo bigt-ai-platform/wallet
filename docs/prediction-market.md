@@ -120,23 +120,30 @@ compliance liability if real money is ever at stake (§8).
 | `outcomeTokenids` | `["<YES tokenid>","<NO tokenid>"]` |
 | `resolutionTime` | unix seconds |
 | `disputeWindowSeconds` | challenge window after `resolve` |
+| `graceSeconds` | after `resolutionTime`, before anyone may post optimistically (§3.3) |
+| `autoInvalidSeconds` | after grace, before auto-`invalid` finalization (§3.3) |
 | `resolvers` | M-of-N resolver pubkeys (v1: **2-of-3**) — see §3.3 |
-| issuer | event creator pubkey (beneficiary of `create`, funding only — not a trust role once resolvers are set) |
+| issuer | event creator pubkey (funds/creates the event; not a trust role once resolvers are set) |
 
 Issuer flow: create YES/NO tokens (supply S each, existing
-`BLOCKTYPE_TOKEN_CREATION`) → submit `create` contract event escrowing S
-collateral and pushing S YES + S NO into the event vault.
+`BLOCKTYPE_TOKEN_CREATION`) → submit `create`, funding the event vault with
+the S YES + S NO supply. **No collateral is escrowed at `create`** — the
+vault's backing comes entirely from `split` deposits (CTF model, §3.2/§3.4).
+The issuer seeds trading by splitting pairs (the same primitive anyone uses)
+or selling shares it kept.
 
 ### 3.2 Operations
 
-All operations are `CONTRACT_EVENT` blocks carrying an `action` field in the
-event data. Event state is **recomputed from the ordered chain of accepted
-events** (like the lottery recomputes from records) — no mutable token
-metadata required.
+All six operations are `CONTRACT_EVENT` blocks carrying an `action` field in
+the event data; the existing `BLOCKTYPE_CONTRACTEVENT_CANCEL` type is **not**
+the dispute path — it stays reserved for aborting an unresolved market
+before `resolutionTime` (void → `invalid`, refund). Event state is
+**recomputed from the ordered chain of accepted events** (like the lottery
+recomputes from records) — no mutable token metadata required.
 
 | Action | Effect |
 |---|---|
-| `create` | escrow S collateral; vault = {S YES, S NO} |
+| `create` | fund the vault with pre-minted S YES + S NO (no collateral escrowed) |
 | `split` | burn C collateral from user → pay C YES + C NO from vault |
 | `merge` | burn C YES + C NO → pay C collateral |
 | `resolve` | an M-of-N resolver (v1: 2-of-3) posts outcome (`yes`/`no`/`invalid`) after `resolutionTime`; starts dispute window |
@@ -177,23 +184,28 @@ Design notes:
 
 ### 3.4 Conservation invariant
 
-At all times:
+The vault holds the un-split share stock on each side; collateral enters the
+vault only via `split` and is what redemption pays from. At all times:
 
 ```
-collateral_escrowed == YES_in_vault == NO_in_vault
-YES_circulating    == NO_circulating
+collateral_in_vault == YES_circulating == NO_circulating
+collateral_in_vault + YES_in_vault == S   (likewise for NO)
 ```
 
-Trades only move shares between users; the engine touches the vault only on
-split/merge/redeem. At resolution, winning shares outstanding == collateral
-remaining in the vault. Test like `OrderPayoutConservationTest`.
+No collateral is escrowed at `create` (§3.1), so these hold from the event's
+genesis: the first `split` adds C collateral and moves C YES + C NO out of
+the vault, preserving the equality. Trades only move shares between users;
+the engine touches the vault only on split/merge/redeem, and at resolution
+winning shares outstanding == collateral remaining in the vault. Test like
+`OrderPayoutConservationTest`.
 
 ### 3.5 Engine implementation
 
 - New `PredictionContractExecutor implements ContractExecutor` +
   `PredictionContractRegistrar` (startup registration via the same
   `@PostConstruct`/`@Bean` pattern as `ContractEngineRegistrar`).
-- Collect `CONTRACT_EVENT`/`CONTRACTEVENT_CANCEL` blocks during confirmation
+- Collect `CONTRACT_EVENT` (all actions) and `CONTRACTEVENT_CANCEL`
+  (pre-resolution abort) blocks during confirmation
   (mirror `ContractEngine.collectWithCancel`), apply the state machine
   (guarded transitions: `resolve` only after `resolutionTime`; signer must
   be in the M-of-N `resolvers` set — anyone with a bond after the grace
@@ -208,6 +220,13 @@ remaining in the vault. Test like `OrderPayoutConservationTest`.
 - Exact escrow semantics of `CONTRACT_EVENT` inputs (offer vs target) —
   confirm against `connectTypeSpecificUTXOs` before designing block payloads
   (the lottery stakes via `targetValue`).
+- Unverified assumptions to confirm before building: (a) outcome/contract
+  tokens are acceptable as order-book tokens — no token-type restriction was
+  found in `ServiceBaseOrder`/`ServiceBaseCheck`, but it is not positively
+  confirmed; (b) `merge`/`redeem` can burn shares via the same
+  spend-with-no-output path order escrow uses; (c) `BLOCKTYPE_TOKEN_CREATION`
+  can mint a fixed supply into an engine-escrowed vault (the vault is not a
+  normal address).
 - Oracle trust in v1 (2-of-3 resolver committee can still collude or
   mis-resolve) — mitigated by permissionless bonded disputes and the
   liveness rules (§3.3); replaced by the staked optimistic oracle in
