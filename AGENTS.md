@@ -72,15 +72,29 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   (The old GHCR-image path with "Unresolved compilation problems" jars only
   applied to the removed docker-compose flow.)
 
-## Notes as of 2026-10-08
+## Notes as of 2026-10-11
 
-- **Pre-existing failures, unrelated to most diffs**: the repo-wide `vitest`
-  collection of `expo-app/e2e/tests/*` dies with `truncated ML-DSA private key`
-  (wallet unit tests are the `test/unit/` suites — 108 passing); and
-  `e2e/playwright/tests/trade.spec.ts` "renders a CNY-quoted market" has never
-  been observed green — every attempt was blocked by the L1 chain finality
-  livelock (missing predecessor around cl=772). Apply the Java-first rule above
-  before suspecting the TS code or the test.
+- **L1 order/prediction chain wedge fixed (Java)**. The L1 chains have their own
+  fresh genesis (`751b2006…`) but list L0 as `server.requester`; `syncChain`
+  reward-synced L0's chain (genesis `b005e4de…`) anyway, importing 589 of L1's
+  647 blocks as foreign, unconnectable history. L1's proposal reference-sweep
+  then referenced those L0 blocks (`MissingPredecessor`), so its own beacons
+  could never solidify and the chain wedged at cl 42 — every bc transfer
+  (`order.spec.ts`, `trade.spec.ts` funding) timed out, and a bogus
+  `FINALITY RECONCILE` loop treated the unrelated chains as a sibling fork.
+  Fixed in `../blockchain` `SyncBlockService.remoteOnOurChain()`: a sync peer
+  that does not serve our genesis block is provably on a different chain and is
+  skipped for reward sync (non-chain transfers still arrive via
+  `syncNonChained`; the bridge reads L0 over HTTP). Same-chain meshes are
+  unaffected (they serve the genesis). `trade.spec.ts` also asserted the old SVG
+  `trade-chart-price` while the web build renders the canvas `trade-chart-pro`
+  (`lightweight-charts`); the chart assertion now accepts either. Full run:
+  43 passed / 3 skipped / 0 failed (`trade.spec.ts` "renders a CNY-quoted
+  market" now green). Rebuild `../blockchain` (`mvn install -pl
+  bigtangle-servercore`) before re-running so the running L1 picks up the jar.
+- **Still pre-existing**: the repo-wide `vitest` collection of
+  `expo-app/e2e/tests/*` dies with `truncated ML-DSA private key` (wallet unit
+  tests are the `test/unit/` suites — 108 passing).
 - **No standalone Chart screen**: it was removed (commit `9f85c11`) — the chart
   lives inside Spot/trade only, `chart.spec.ts` is gone, `e2etest.sh` runs only
   `order.spec.ts` in its order part, and `capture-order.mjs` captures the chart

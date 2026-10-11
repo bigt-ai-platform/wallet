@@ -7,6 +7,19 @@ const HAS_SERVER = !!E2E_SERVER_URL;
 const L1_READY = HAS_SERVER && !!E2E_L1_URL;
 
 /**
+ * The rendered price chart. The web build uses the canvas-based
+ * `lightweight-charts` pane (`trade-chart-pro`); the SVG `PriceChart`
+ * (`trade-chart-price polyline` / `trade-chart-volume rect`) is the native /
+ * fallback path used when the chart library is unavailable. Accept either so the
+ * assertion tracks "a chart rendered" rather than one implementation.
+ */
+function priceChart(page: Page) {
+  return page
+    .locator('[data-testid="trade-chart-price"] polyline')
+    .or(page.locator('[data-testid="trade-chart-pro"] canvas'));
+}
+
+/**
  * Point the app at the local L0/L1 servers by writing the settings storage
  * directly (same approach as order.spec — the Settings UI helper
  * is unreliable because the server-URL and L1-chain inputs share a placeholder).
@@ -214,9 +227,8 @@ test.describe('Trade Screen', () => {
     await chip.click();
     await expect(page.getByTestId('trade-selected-token')).toBeAttached({ timeout: 10000 });
 
-    // Chart (price line + volume bars) from the getOrdersTicker series.
-    await expect(page.locator('[data-testid="trade-chart-price"] polyline')).toBeAttached({ timeout: 20000 });
-    await expect(page.locator('[data-testid="trade-chart-volume"] rect').first()).toBeAttached({ timeout: 10000 });
+    // Chart (price line + volume pane) from the getOrdersTicker series.
+    await expect(priceChart(page).first()).toBeAttached({ timeout: 20000 });
 
     // Order book: the open ask at price 1000 / remaining amount 60.
     const asks = page.getByTestId('trade-asks');
@@ -260,7 +272,7 @@ test.describe('Trade Screen', () => {
 
     // The book/chart/trades are now fetched with basetoken = the CNY id and
     // the shift-6 price scale (raw 1e9 renders as 1000).
-    await expect(page.locator('[data-testid="trade-chart-price"] polyline')).toBeAttached({ timeout: 20000 });
+    await expect(priceChart(page).first()).toBeAttached({ timeout: 20000 });
     const asks = page.getByTestId('trade-asks');
     await expect(asks.getByText(/1[,.]?000/)).toBeAttached({ timeout: 20000 });
     const trades = page.getByTestId('trade-recent-trades');
