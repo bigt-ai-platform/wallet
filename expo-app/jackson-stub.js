@@ -32,7 +32,18 @@ class ObjectMapper {
     return JSON.stringify(value);
   }
   parse(value, context) {
-    return JSON.parse(value);
+    const parsed = JSON.parse(value);
+    // The real jackson-js instantiates `mainCreator` so the class getters
+    // (getTokenindex() etc.) exist. The SDK Wallet relies on those, so mimic
+    // it: construct the creator and copy the parsed fields onto the instance.
+    const creator = context && typeof context.mainCreator === 'function' ? context.mainCreator() : null;
+    const ctor = Array.isArray(creator) ? creator[0] : creator;
+    if (typeof ctor !== 'function' || parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return parsed;
+    }
+    const instance = new ctor();
+    for (const key of Object.keys(parsed)) instance[key] = parsed[key];
+    return instance;
   }
 }
 

@@ -356,7 +356,9 @@ fi
 # 4b2b. Run the prediction-market tests (Predict tab; the market list needs the
 #       L1-prediction chain, up via e2e/infra.sh -> remote.sh). The full
 #       create/split/merge lifecycle additionally needs a funded operator key:
-#       export E2E_PREDICTION_KEY=<hex> (the L1-prediction domain/operator key).
+#       export E2E_PREDICTION_KEY=<hex> — either the chain's 32-byte seed as 64
+#       hex chars (e.g. the prediction genesis seed 0x01) or the full ML-DSA
+#       private key; the spec expands a bare seed via PQKey.fromMLDSA.
 if [[ "$CMD" == "predict" ]]; then
 info "Running predict e2e tests..."
 cd "$E2E_DIR"

@@ -130,6 +130,28 @@ export class Wallet extends WalletBase {
     return true;
   }
 
+  // Outpoints this wallet already spent in unconfirmed submissions
+  // ("txHash:index"). Token/contract blocks are submitted via signToken (not
+  // submitTransaction), so the server's mempool pending set does not cover their
+  // embedded fee spends; a back-to-back operation (e.g. prediction create ->
+  // split) would otherwise re-select the same UTXO and be rejected as a
+  // double-spend. Mirrors the Java Wallet.pendingSpentKeys fix.
+  private pendingSpentKeys = new Set<string>();
+
+  private markSpentInputs(tx: Transaction): void {
+    const inputs = tx && typeof tx.getInputs === "function" ? tx.getInputs() : null;
+    if (!inputs) return;
+    for (const input of inputs) {
+      const outpoint = typeof input.getOutpoint === "function" ? input.getOutpoint() : null;
+      if (!outpoint) continue;
+      this.pendingSpentKeys.add(`${outpoint.getTxHash().toString()}:${outpoint.getIndex()}`);
+    }
+  }
+
+  private isPendingSpent(utxo: UTXO): boolean {
+    return this.pendingSpentKeys.has(`${utxo.getTxHash().toString()}:${utxo.getIndex()}`);
+  }
+
   async calculateAllSpendCandidatesUTXO(
     aesKey: any,
     multisigns: boolean
@@ -161,7 +183,7 @@ export class Wallet extends WalletBase {
       return [];
     }
     utxos = utxos.filter(
-      (utxo) => utxo && this.checkSpendpending(utxo)
+      (utxo) => utxo && this.checkSpendpending(utxo) && !this.isPendingSpent(utxo)
     );
     if (!multisigns) {
       utxos = utxos.filter((utxo) => utxo && !utxo.isMultiSig());
@@ -817,6 +839,12 @@ export class Wallet extends WalletBase {
     );
     for (const spendableOutput of coinListTokenid) {
       const utxo = spendableOutput.getUTXO();
+      if (utxo && this.isPendingSpent(utxo)) {
+        // Already spent by this wallet's just-submitted tx (e.g. the
+        // payContractMulti burn/fee passed the same coinList snapshot);
+        // re-spending it is rejected by the mempool as a double-spend.
+        continue;
+      }
       if (utxo) {
         beneficiary = (await this.getECKey(aesKey, utxo.getAddress())) as PQKey;
         amount = spendableOutput.getValue().add(amount);
@@ -1247,6 +1275,7 @@ export class Wallet extends WalletBase {
    * ================================================================= */
 
   async submitTransaction(tx: Transaction): Promise<void> {
+    this.markSpentInputs(tx);
     try {
       await OkHttp3Util.post(
         this.getServerURL() + ReqCmd.submitTransaction,
@@ -1727,6 +1756,13 @@ export class Wallet extends WalletBase {
   async adjustSolveAndSign(block: Block): Promise<Block> {
     // Note: do NOT set a random nonce here — the block hash must remain
     // stable so the server can match it to pending multisign records.
+    // Record the block's fee/burn spends so a subsequent operation does not
+    // re-select the same UTXO (the server's tx-mempool does not track
+    // signToken-submitted blocks).
+    const blockTxs = typeof block.getTransactions === "function" ? block.getTransactions() : null;
+    if (blockTxs) {
+      for (const tx of blockTxs) this.markSpentInputs(tx);
+    }
     await OkHttp3Util.post(
       this.getServerURL() + ReqCmd.signToken,
       new Uint8Array(block.bitcoinSerialize())

@@ -29,6 +29,21 @@ const HAS_L1P = !!E2E_L1P_URL;
 const HAS_LIFECYCLE = !!E2E_SERVER_URL && HAS_L1P && !!E2E_PREDICTION_KEY;
 const PASSWORD = 'PredictE2ePass123!';
 
+/**
+ * The UI imports a *full* ML-DSA private key, but the harness is usually given
+ * the chain's 32-byte seed (e.g. the prediction genesis seed 0x01 as 64 hex
+ * chars). Accept either: expand a bare 64-hex seed via `PQKey.fromMLDSA`, else
+ * use the value as-is.
+ */
+async function resolvePredictionKey(raw: string): Promise<string> {
+  const hex = raw.startsWith('0x') ? raw.slice(2) : raw;
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) return raw;
+  const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+  const seed = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) seed[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return sdk.PQKey.fromMLDSA(seed).getPrivateKeyHex();
+}
+
 const el = (page: Page, id: string) => page.locator(`[data-testid="${id}"]`);
 
 /** Wait for the Predict screen to settle into either a card or the empty state. */
@@ -145,7 +160,7 @@ test.describe('Predict Lifecycle (real L1-prediction)', () => {
     await waitForApp(page);
     await configureServerUrl(page, E2E_SERVER_URL, E2E_L1_URL);
     await setL1ChainUrl(page, 'prediction', E2E_L1P_URL);
-    await importAndUnlock(page, E2E_PREDICTION_KEY, PASSWORD);
+    await importAndUnlock(page, await resolvePredictionKey(E2E_PREDICTION_KEY), PASSWORD);
     await clickTab(page, 'Predict');
 
     // 1. create — a fresh market per run so re-runs never inherit vault state.
@@ -159,8 +174,19 @@ test.describe('Predict Lifecycle (real L1-prediction)', () => {
     const card = page.locator('[data-testid^="predict-event-"]').filter({ hasText: question });
     await expect(card).toBeVisible({ timeout: 240000 });
 
-    // 2. split 100000 collateral -> 100000 YES + 100000 NO held by the wallet.
+    // Expanding a real market exposes the full contract-action surface (the
+    // standalone actions test skips on a fresh chain, so assert it here).
     await card.click();
+    await expect(page.getByTestId('predict-trade')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('predict-split')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('predict-merge')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('predict-resolve-0')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('predict-resolve-invalid')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('predict-dispute-0')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('predict-buy-0')).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId('predict-sell-0')).toBeVisible({ timeout: 5000 });
+
+    // 2. split 100000 collateral -> 100000 YES + 100000 NO held by the wallet.
     await page.getByTestId('predict-amount').fill('100000');
     await page.getByTestId('predict-split').click();
     await expect(card.getByTestId('predict-position')).toContainText('100000', { timeout: 240000 });

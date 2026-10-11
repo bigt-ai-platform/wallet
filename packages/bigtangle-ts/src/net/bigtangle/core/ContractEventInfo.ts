@@ -42,9 +42,11 @@ export class ContractEventInfo extends DataClass {
             baos.writeNBytesString(this.offerTokenid);
             baos.writeNBytesString(this.contractTokenid);
             baos.writeNBytesString(this.offerSystem);
-            const b = Utils.bigIntToBytes(this.offerValue! )
-            const buffer = new Uint8Array(b);
-            baos.writeBytes(buffer, 0, buffer.length); // Assuming 32 bytes for BigInteger
+            // Java ContractEventInfo writes offerValue with Utils.writeNBytes
+            // (present flag + int length + BigInteger two's-complement bytes),
+            // NOT a fixed 32-byte buffer — a fixed buffer desyncs the server
+            // parse (MalformedTransactionDataException).
+            baos.writeNBytes(Utils.bigIntToBytes(this.offerValue ?? 0n));
             baos.close();
         } catch (e: any) {
             throw new Error(e);
@@ -58,7 +60,13 @@ export class ContractEventInfo extends DataClass {
         this.offerTokenid = dis.readNBytesString();
         this.contractTokenid = dis.readNBytesString();
         this.offerSystem = dis.readNBytesString();
-        this.offerValue = Utils.bytesToBigInt(dis.readBytes(32));
+        // Mirrors Java Utils.readNBytes: present flag + int length + bytes.
+        if (dis.readBoolean()) {
+            const length = dis.readInt();
+            this.offerValue = Utils.bytesToBigInt(dis.readBytes(length));
+        } else {
+            this.offerValue = null;
+        }
         return this;
     }
 

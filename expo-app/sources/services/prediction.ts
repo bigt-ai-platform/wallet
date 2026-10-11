@@ -199,6 +199,49 @@ export async function getPositions(privateKeyHex: string, keyType?: 'PQ' | 'EC')
 
 // --- contract-event transactions -------------------------------------------
 
+/**
+ * Submit the domain (root-signer) multi-signature for a freshly created token
+ * block. On the prediction chain a token block is not solid until the chain's
+ * domain key signs it (`ServiceBaseCheck.checkFullTokenSolidity` throws
+ * `MissingSignatureException` otherwise), so unlike a plain L0 token creation
+ * this step is mandatory. Retries because the block's pending signature may not
+ * be queryable immediately after `createToken`.
+ */
+async function multiSignCreatedToken(
+  wallet: Wallet,
+  tokenid: string,
+  domainKey: PQKey,
+  attempts = 10,
+): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    const signed = await wallet.multiSign(tokenid, domainKey, null);
+    if (signed) return;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error(`prediction: token ${tokenid.slice(0, 12)}… never accepted the domain multisign`);
+}
+
+/** Poll until the wallet holds at least `amount` confirmed of every tokenid. */
+async function waitForOutcomeSupply(
+  wallet: Wallet,
+  tokenids: string[],
+  amount: bigint,
+  attempts = 90,
+): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    const candidates = await wallet.calculateAllSpendCandidates(null, false);
+    const ready = tokenids.every((tokenid) =>
+      candidates.some((candidate: any) => {
+        const utxo = candidate?.getUTXO?.();
+        return utxo && utxo.getTokenId() === tokenid && utxo.getValue().getValue() >= amount;
+      }),
+    );
+    if (ready) return;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error('prediction: minted outcome supply never confirmed');
+}
+
 export async function splitShares(params: {
   privateKeyHex: string;
   keyType?: 'PQ' | 'EC';
@@ -455,9 +498,13 @@ export async function createEvent(params: {
     token.setAmount(supply);
     token.setTokenstop(true);
     token.setTokentype(TokenType.token);
-    await wallet.createToken(issuer, '', false, token,
+    // The token's own key signs the create; the domain (issuer) key then
+    // multi-signs it — signing with `issuer` while declaring `key` as the
+    // token's multi-sign address desyncs the signature check.
+    await wallet.createToken(key, '', false, token,
       [new MultiSignAddress(tokenid, '', Utils.HEX.encode(key.getPrefixedPublicKeyBytes()))],
       key.getPubKey(), new MemoInfo('coinbase'));
+    await multiSignCreatedToken(wallet, tokenid, issuer);
   };
   for (let i = 0; i < outcomes.length; i++) await mintShare(outcomeKeys[i], outcomes[i], names[i]);
 
@@ -484,17 +531,22 @@ export async function createEvent(params: {
   contractToken.setTokenstop(true);
   contractToken.setTokentype(TokenType.contract);
   contractToken.setTokenKeyValues(keyValues);
-  await wallet.createToken(issuer, '', false, contractToken,
+  await wallet.createToken(contractKey, '', false, contractToken,
     [new MultiSignAddress(contractTokenid, '', Utils.HEX.encode(contractKey.getPrefixedPublicKeyBytes()))],
     contractKey.getPubKey(), new MemoInfo('coinbase'));
+  await multiSignCreatedToken(wallet, contractTokenid, issuer);
 
   // Escrow the full share supply of every outcome (create). The wallet key that
   // holds the shares is the beneficiary recorded on the event.
   const createBurns = new Map<string, bigint>();
   for (const outcome of outcomes) createBurns.set(outcome, supply);
-  const w = await Wallet.fromKeysURL(getNetParams(), [...outcomeKeys, contractKey], predictionUrl());
+  const w = await Wallet.fromKeysURL(getNetParams(), [...outcomeKeys, contractKey, issuer], predictionUrl());
   for (const key of outcomeKeys) w.importKey(key);
   w.importKey(contractKey);
+  w.importKey(issuer);
+  // The minted outcome blocks must confirm before the create can spend them,
+  // else payContractMulti throws InsufficientMoneyException.
+  await waitForOutcomeSupply(w, outcomes, supply);
   await w.payContractMulti(null, createBurns, outcomes[0], supply, null, null,
     contractTokenid, PredictionAction.create());
 
