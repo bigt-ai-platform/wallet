@@ -23,9 +23,9 @@ case "$CMD" in
     info "  L1P  : http://localhost:${L1P_PORT:-24088}/"
     info "  DB   : postgres:${PG_PORT:-21532}"
 
-    # remote.sh infra builds the modules, starts L0/L1, registers the
-    # PoS validator, and keeps everything running until Ctrl+C. Env overrides
-    # (L0_PORT, L1_PORT, PG_PORT, ...) are forwarded through.
+    # remote.sh infra builds the modules, starts L0/L1/L1-prediction, registers
+    # the PoS validator, and keeps everything running until Ctrl+C. Env
+    # overrides (L0_PORT, L1_PORT, L1P_PORT, PG_PORT, ...) are forwarded through.
     exec bash "$REMOTE_SH" infra
     ;;
   down|stop)

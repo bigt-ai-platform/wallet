@@ -30,7 +30,7 @@
     "playwright:install": "npx playwright install --with-deps chromium",
     "playwright:test": "npx playwright test --config ../e2e/playwright.config.ts",
     "playwright:report": "npx playwright show-report ../e2e/playwright-report",
-    "web:build": "npx expo export --platform web --output-dir ../e2e/web-build",
+    "web:build": "npx expo export --platform web --output-dir ../e2e/web-build --clear",
     "web:serve": "npx http-server ../e2e/web-build -p 8081 --proxy http://localhost:8081?"
   },
   "jest": {

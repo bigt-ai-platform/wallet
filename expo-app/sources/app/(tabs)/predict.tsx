@@ -364,9 +364,9 @@ export default function PredictScreen() {
         </View>
 
         {loading ? (
-          <ActivityIndicator size="large" color={theme.colors.primary} style={{ padding: 24 }} />
+          <ActivityIndicator size="large" color={theme.colors.primary} style={{ padding: 24 }} testID="predict-loading" />
         ) : events.length === 0 ? (
-          <View style={s.emptyCard}>
+          <View style={s.emptyCard} testID="predict-empty">
             <Text style={s.emptyTitle}>{t('predict.empty')}</Text>
             <Text style={s.emptySub}>{t('predict.emptySub')}</Text>
           </View>
@@ -384,23 +384,23 @@ export default function PredictScreen() {
               testID="predict-question" />
             <View style={s.fieldRow}>
               <Text style={s.fieldLabel}>{t('predict.fieldSupply')}</Text>
-              <TextInput style={s.fieldInput} value={supply} onChangeText={setSupply} keyboardType="numeric" />
+              <TextInput style={s.fieldInput} value={supply} onChangeText={setSupply} keyboardType="numeric" testID="predict-supply" />
             </View>
             <View style={s.fieldRow}>
               <Text style={s.fieldLabel}>{t('predict.fieldResolutionDays')}</Text>
-              <TextInput style={s.fieldInput} value={resolutionDays} onChangeText={setResolutionDays} keyboardType="numeric" />
+              <TextInput style={s.fieldInput} value={resolutionDays} onChangeText={setResolutionDays} keyboardType="numeric" testID="predict-resolution-days" />
             </View>
             <View style={s.fieldRow}>
               <Text style={s.fieldLabel}>{t('predict.fieldDisputeWindow')}</Text>
-              <TextInput style={s.fieldInput} value={disputeWindow} onChangeText={setDisputeWindow} keyboardType="numeric" />
+              <TextInput style={s.fieldInput} value={disputeWindow} onChangeText={setDisputeWindow} keyboardType="numeric" testID="predict-dispute-window" />
             </View>
             <View style={s.fieldRow}>
               <Text style={s.fieldLabel}>{t('predict.fieldAutoInvalid')}</Text>
-              <TextInput style={s.fieldInput} value={autoInvalid} onChangeText={setAutoInvalid} keyboardType="numeric" />
+              <TextInput style={s.fieldInput} value={autoInvalid} onChangeText={setAutoInvalid} keyboardType="numeric" testID="predict-auto-invalid" />
             </View>
             {creating && <Text style={s.creatingHint}>{t('predict.creatingHint')}</Text>}
             <View style={s.modalActions}>
-              <TouchableOpacity style={s.modalCancel} onPress={() => setShowCreate(false)} disabled={creating}>
+              <TouchableOpacity style={s.modalCancel} onPress={() => setShowCreate(false)} disabled={creating} testID="predict-create-cancel">
                 <Text style={s.modalCancelText}>{t('common.cancel')}</Text>
               </TouchableOpacity>
               <TouchableOpacity style={s.modalOk} onPress={onCreate} disabled={creating} testID="predict-create-submit">

@@ -14,6 +14,11 @@ P2P_PID=""
 HTTP_PID=""
 RAISE_PID=""
 
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+log()   { echo -e "${GREEN}[OK]${NC} $1"; }
+fail()  { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
+info()  { echo -e "${YELLOW}[INFO]${NC} $1"; }
+
 # Optional first arg selects which part(s) to run:
 #   payment | tracking | order | predict | token | blocks | p2p | p2p-ui | p2p-demo | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
@@ -21,11 +26,6 @@ case " $CMD " in
   " all "|" payment "|" tracking "|" order "|" predict "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" remaining "|" tests "|" demo ") ;;
   *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, token, blocks, p2p, p2p-ui, p2p-demo, remaining, tests, demo";;
 esac
-
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
-log()   { echo -e "${GREEN}[OK]${NC} $1"; }
-fail()  { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
-info()  { echo -e "${YELLOW}[INFO]${NC} $1"; }
 
 # Independently verify the payment e2e test's result on-chain. The payment spec
 # writes the confirmed txHash/status to test-results/payment-verification.json
@@ -264,11 +264,20 @@ start_p2p_engine_real() {
 if [[ "$CMD" != "p2p-ui" ]]; then
   info "Checking infrastructure..."
   curl -sf "http://localhost:${SERVER_PORT}/" >/dev/null 2>&1 || fail "Infra not ready — run ./e2e/infra.sh first"
+  # L1-prediction (l1-prediction-server) is a separate chain/port; fail fast
+  # with a clear message when it is missing instead of letting the predict
+  # specs time out. Started by remote.sh infra (step 7d/7e).
+  if [[ "$CMD" == "predict" || "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "remaining" ]]; then
+    curl -sf "http://localhost:${L1P_PORT}/" >/dev/null 2>&1 || fail "L1-prediction not ready on :${L1P_PORT} — run ./e2e/infra.sh first"
+  fi
   log "Infrastructure ready."
 fi
 
 # 1. Build web app. The P2P engine URL is inlined by `expo export`, so rebuild
 #    whenever it changes (a stale build would point the app at the wrong port).
+#    web:build passes --clear: Metro's cache key ignores env values, so without
+#    it the bundle keeps the engine URL baked the first time and the P2P screen
+#    renders "engine not configured".
 export EXPO_PUBLIC_P2P_ENGINE_URL="$P2P_ENGINE_URL"
 NEED_BUILD=0
 [[ -d "$WEB_BUILD" ]] || NEED_BUILD=1
@@ -345,7 +354,9 @@ log "Order e2e tests passed."
 fi
 
 # 4b2b. Run the prediction-market tests (Predict tab; the market list needs the
-#       L1-prediction chain, up via e2e/infra.sh -> remote.sh).
+#       L1-prediction chain, up via e2e/infra.sh -> remote.sh). The full
+#       create/split/merge lifecycle additionally needs a funded operator key:
+#       export E2E_PREDICTION_KEY=<hex> (the L1-prediction domain/operator key).
 if [[ "$CMD" == "predict" ]]; then
 info "Running predict e2e tests..."
 cd "$E2E_DIR"
@@ -432,6 +443,7 @@ cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
+E2E_L1P_URL="http://localhost:${L1P_PORT}/" \
 E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep-invert "Payment|Tracking" 2>&1
 log "Remaining e2e specs passed."

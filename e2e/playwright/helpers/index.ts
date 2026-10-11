@@ -1,4 +1,4 @@
-import { Page } from '@playwright/test';
+import { Page, expect } from '@playwright/test';
 
 export async function waitForApp(page: Page, timeout = 20000) {
   await page.goto('/', { waitUntil: 'load', timeout });
@@ -136,4 +136,87 @@ export async function waitForConfirmedBc(key: any, serverUrl: string, tokenid = 
     await new Promise(r => setTimeout(r, 2000));
   }
   throw new Error(`Timeout waiting for confirmed ${tokenid} balance on ${serverUrl}`);
+}
+
+/**
+ * Create a fresh client-side wallet and leave it unlocked. No infra needed —
+ * keys are generated and stored locally; this is enough to exercise screens
+ * that only require an unlocked wallet (e.g. form validation).
+ */
+export async function createWallet(page: Page, password: string) {
+  await page.addInitScript(() => {
+    try {
+      delete (globalThis as { showSaveFilePicker?: unknown }).showSaveFilePicker;
+    } catch {
+      /* ignore */
+    }
+  });
+  page.on('dialog', (d) => { d.accept().catch(() => {}); });
+  await page.goto('/', { waitUntil: 'load' });
+  await page.waitForTimeout(3000);
+  await goToKeys(page);
+  await page.getByText('Create New Wallet').click();
+  await expect(page.getByText('New Wallet Created!')).toBeAttached({ timeout: 10000 });
+  await page.getByText('Save with Password').click();
+  await expect(page.getByText('Set Wallet Password')).toBeAttached({ timeout: 5000 });
+  await page.getByPlaceholder('Enter password (min 6 characters)').fill(password);
+  await page.getByPlaceholder('Confirm password').fill(password);
+  const dl = page.waitForEvent('download', { timeout: 15000 }).catch(() => null);
+  await page.getByText('Save Wallet').click();
+  const d = await dl;
+  if (d) await d.saveAs(`/tmp/e2e-wallet-${Date.now()}.json`);
+  await page.waitForTimeout(1500);
+  const done = page.getByText('Done').first();
+  if (await done.isVisible().catch(() => false)) await done.click();
+  await page.waitForTimeout(500);
+}
+
+/**
+ * Import a known private key into the wallet store and unlock it. Used by the
+ * specs that need a specific (funded/authorized) key rather than a fresh one.
+ */
+export async function importAndUnlock(page: Page, privKeyHex: string, password: string) {
+  page.on('dialog', (d) => { d.accept().catch(() => {}); });
+  await goToKeys(page);
+  await page.getByText('Import Private Key').click();
+  await page.waitForTimeout(500);
+  await page.getByPlaceholder('Enter private key (hex or WIF)').fill(privKeyHex);
+  await page.getByText('Import Key').click();
+  await page.waitForTimeout(1000);
+  await page.getByPlaceholder('Enter password (min 6 characters)').fill(password);
+  await page.getByPlaceholder('Confirm password').fill(password);
+  const dl = page.waitForEvent('download', { timeout: 15000 }).catch(() => null);
+  await page.getByText('Save Wallet').click();
+  const d = await dl;
+  if (d) await d.saveAs(`/tmp/e2e-wallet-${Date.now()}.json`);
+  await page.waitForTimeout(1500);
+  const done = page.getByText('Done').first();
+  if (await done.isVisible().catch(() => false)) await done.click();
+  await page.waitForTimeout(500);
+}
+
+/**
+ * Point a configured L1 chain (by its chainId, e.g. `prediction`) at `url`
+ * through the Settings screen. The chain rows only render once auto-discovery
+ * is off (like the manual L0 URL field); the web build bakes prod defaults, so
+ * an e2e must retarget the prediction chain at the local L1P before its list
+ * can load. Returns false when no such chain row exists.
+ */
+export async function setL1ChainUrl(page: Page, chainId: string, url: string): Promise<boolean> {
+  await clickTab(page, 'Settings');
+  await disableAutoDiscover(page);
+  const rows = page.locator('[data-testid^="l1-chain-row-"]');
+  const n = await rows.count();
+  for (let i = 0; i < n; i++) {
+    const row = rows.nth(i);
+    // field order per row: name | chainId | url
+    const id = (await row.locator('input').nth(1).inputValue().catch(() => '')).trim();
+    if (id !== chainId) continue;
+    const urlInput = row.locator('input[placeholder="https://..."]');
+    await urlInput.fill('');
+    await urlInput.fill(url);
+    await page.waitForTimeout(600); // onChangeUrl auto-saves
+    return true;
+  }
+  return false;
 }

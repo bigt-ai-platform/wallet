@@ -7,9 +7,13 @@ EXPO_DIR="$ROOT/expo-app"
 
 L0_PORT="${L0_PORT:-24089}"
 L1_PORT="${L1_PORT:-24086}"
+L1P_PORT="${L1P_PORT:-24088}"
 L1_SOCIAL_PORT="${L1_SOCIAL_PORT:-24091}"
 L0_URL="http://127.0.0.1:${L0_PORT}/"
 L1_URL="http://127.0.0.1:${L1_PORT}/"
+# L1-prediction (l1-prediction-server): started by remote.sh infra on its own
+# port; the app's dev build points its `prediction` L1 chain here.
+L1P_URL="http://127.0.0.1:${L1P_PORT}/"
 L1_SOCIAL_URL="http://127.0.0.1:${L1_SOCIAL_PORT}/"
 SOCIAL_SH="$ROOT/e2e/l1social.sh"
 # Override the dev command, e.g. DEV_CMD="yarn web" ./dev.sh
@@ -63,8 +67,8 @@ esac
 
 trap cleanup EXIT INT TERM
 
-# 1. Start blockchain infra (L0/L1/MCMC + DB) in the background
-info "Starting blockchain infra (L0: $L0_URL, L1: $L1_URL)..."
+# 1. Start blockchain infra (L0/L1/L1P/MCMC + DB) in the background
+info "Starting blockchain infra (L0: $L0_URL, L1: $L1_URL, L1P: $L1P_URL)..."
 "$INFRA_SH" up &
 INFRA_PID=$!
 
@@ -83,6 +87,21 @@ for i in $(seq 1 120); do
 done
 [ "$READY" = "1" ] || fail "Timed out waiting for infrastructure."
 log "Infrastructure ready."
+
+# 2a. Wait (best-effort) for the L1-prediction chain. Its bootstrap — vault
+#     peg-in + validator activation + first beacon — can lag L0/L1 by minutes,
+#     so a slow start only warns; the Predict tab and the predict e2e need it.
+info "Waiting for L1-prediction ($L1P_URL) — best effort..."
+L1P_READY=0
+for i in $(seq 1 150); do
+  if curl -sf "$L1P_URL" >/dev/null 2>&1; then L1P_READY=1; break; fi
+  sleep 2
+done
+if [ "$L1P_READY" = "1" ]; then
+  log "L1-prediction ready."
+else
+  info "L1-prediction not up yet ($L1P_URL); other screens still work — check it before using Predict."
+fi
 
 # 2b. Start the L1-SOCIAL chain (CHAIN_ID=SOCIAL). Its bootstrap (genesis
 #     funding, validator stake + activation, first beacon) runs inside the

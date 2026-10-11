@@ -79,7 +79,7 @@ wallet/
 ├── e2e/                      # Playwright web e2e suite + infra helpers
 ├── deploy/                   # web-only regional deploy kit (nginx + Caddy)
 ├── docker/                   # dockerized blockchain + app build/test scripts
-├── dev.sh                    # one-shot: Java infra (L0/L1) + Expo web dev server
+├── dev.sh                    # one-shot: Java infra (L0/L1/L1P) + Expo web dev server
 ├── e2eremote.sh              # run TS remote integration tests vs Java infra
 ├── scripts/                  # helper scripts (test wallet generation, …)
 ├── AGENTS.md                 # agent/dev conventions (read me first)
@@ -148,11 +148,11 @@ in sync after any change:
 
 ### 3a. Full local stack: `dev.sh` (recommended)
 
-Starts the Java L0/L1/MCMC infra (via `e2e/infra.sh` → `../blockchain`
-`remote.sh infra`) and then the Expo dev server:
+Starts the Java L0/L1/L1-prediction/MCMC infra (via `e2e/infra.sh` →
+`../blockchain` `remote.sh infra`) and then the Expo dev server:
 
 ```bash
-./dev.sh              # infra on L0 :24089 / L1 :24086, web on http://localhost:8081
+./dev.sh              # infra on L0 :24089 / L1 :24086 / L1P :24088, web on http://localhost:8081
 DEV_CMD="yarn ios" ./dev.sh     # boot the iOS simulator instead of web
 ./dev.sh down         # stop infra
 ```
@@ -219,9 +219,18 @@ These suites are ports of the Java remote test classes in
 
 ### Playwright web e2e
 
-Drive a real browser against the web app (Dev infra from `dev.sh`, then):
+Drive a real browser against the web app. The harness
+(`e2e/e2etest.sh <part>`) builds the web export, waits for the infra, runs the
+specs and tears the app back down; `dev.sh`'s infra (L0 / L1 / L1P) is expected
+to be up first:
 
 ```bash
+./e2e/e2etest.sh payment       # parts: payment tracking order predict token
+                               #       blocks p2p p2p-ui p2p-demo remaining tests all
+./e2e/e2etest.sh predict       # Predict tab; chain tests need L1P on :24088,
+                               # the full create/split/merge lifecycle also needs
+                               # export E2E_PREDICTION_KEY=<funded operator key hex>
+
 cd e2e
 npx playwright test --config playwright.config.ts   # mobile + desktop projects
 ```
