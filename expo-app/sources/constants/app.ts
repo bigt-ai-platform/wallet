@@ -42,25 +42,28 @@ export const DEV_L1_URL = 'http://127.0.0.1:24086/';
  * The legacy m.bigtangle.org host serves the JSF webapp, not the JSON-RPC
  * order API.
  */
-export const PROD_L0_URL = 'https://eu1.bigtangle.org';
-export const PROD_L1_URL = 'https://ordereu1.bigtangle.org';
+/**
+ * Private group API relay (../apiserver; s1002.bigt.ai = 92.5.34.128).
+ * Censorship-resistance default: native builds pin this IP (no DNS needed),
+ * the relay's ALLOW_IPS gates who may use it, and the auto-discovery
+ * candidate lists default to it (MAINNET_*_URLS below), so discovery keeps
+ * the wallet on the relay. The web build keeps the same-origin /l0/ + /l1/
+ * proxies below. Per-device override: Settings → Server URL / L1 URL.
+ */
+export const PRIVATE_API_BASE = 'https://92.5.34.128';
+export const PRIVATE_L0_URL = `${PRIVATE_API_BASE}/l0/`;
+export const PRIVATE_L1_URL = `${PRIVATE_API_BASE}/l1/`;
+
+export const PROD_L0_URL = PRIVATE_L0_URL;
+export const PROD_L1_URL = PRIVATE_L1_URL;
 
 /**
- * Mainnet TLS entry points probed for the freshest/lowest-latency node (see
- * services/discovery.ts). eu1 is the historical primary; eu2/eu3 are the other
- * validator failure domains. Native builds probe these directly; the web build
- * cannot (CORS/mixed content) and uses the same-origin proxy instead.
+ * Candidate set probed by auto-discovery (default ON, see
+ * services/discovery.ts): the private relay only, so a censored client is
+ * never steered onto the blocked public seeds.
  */
-export const MAINNET_L0_URLS = [
-  'https://eu1.bigtangle.org',
-  'https://eu2.bigtangle.org',
-  'https://eu3.bigtangle.org',
-];
-export const MAINNET_L1_URLS = [
-  'https://ordereu1.bigtangle.org',
-  'https://ordereu2.bigtangle.org',
-  'https://ordereu3.bigtangle.org',
-];
+export const MAINNET_L0_URLS = [PRIVATE_L0_URL];
+export const MAINNET_L1_URLS = [PRIVATE_L1_URL];
 
 /**
  * DNS is only the bootstrap for the *seed* set. Ops publishes

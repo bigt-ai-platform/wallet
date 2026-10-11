@@ -2,10 +2,11 @@
 #
 # The production export defaults to mainnet only by convention: `expo export`
 # bakes __DEV__=false, and expo-app/sources/constants/app.ts +
-# expo-app/sources/services/http.ts point that branch at the production TLS
-# entry points (PROD_L0_URL / PROD_L1_URL = eu1 / ordereu1.bigtangle.org) and
-# the same-origin /l0/ + /l1/ web proxies. Nothing else selects the network, so
-# a testnet URL/TestParams sneaking into those two files would be silently
+# expo-app/sources/services/http.ts point that branch at the pinned private
+# API relay (PROD_L0_URL / PROD_L1_URL = https://92.5.34.128/l0|l1/ — the
+# ../apiserver deployment on s1002.bigt.ai; auto-discovery OFF by default) and
+# the same-origin /l0/ + /l1/ web proxies. Nothing else selects the network,
+# so a testnet URL/TestParams sneaking into those two files would be silently
 # shipped to production.
 #
 # assert_mainnet_default() fails the release when the checked-in source no
@@ -34,20 +35,25 @@ assert_mainnet_default() {
     bad=1
   fi
 
-  # app.ts must pin the production TLS entry points and the same-origin web
-  # bases. The legacy JSF host https://m.bigtangle.org serves HTML, not the
-  # JSON-RPC order API, and must not come back anywhere in the app defaults.
+  # app.ts must pin the private relay entry points (../apiserver on
+  # s1002.bigt.ai) and the same-origin web bases. The legacy JSF host
+  # https://m.bigtangle.org serves HTML, not the JSON-RPC order API, and must
+  # not come back anywhere in the app defaults.
   local l0_line l1_line l0_web l1_web
   l0_line="$(grep -m1 'export const PROD_L0_URL' "$app_ts" || true)"
   l1_line="$(grep -m1 'export const PROD_L1_URL' "$app_ts" || true)"
   l0_web="$(grep -m1 'export const PROD_WEB_L0_BASE' "$app_ts" || true)"
   l1_web="$(grep -m1 'export const PROD_WEB_L1_BASE' "$app_ts" || true)"
-  if ! echo "$l0_line" | grep -q 'eu1\.bigtangle\.org'; then
-    echo -e "${red}network guard: PROD_L0_URL no longer points at https://eu1.bigtangle.org ($app_ts)${nc}"
+  if ! echo "$l0_line" | grep -q 'PRIVATE_L0_URL'; then
+    echo -e "${red}network guard: PROD_L0_URL no longer resolves PRIVATE_L0_URL (https://92.5.34.128/l0/) ($app_ts)${nc}"
     bad=1
   fi
-  if ! echo "$l1_line" | grep -q 'ordereu1\.bigtangle\.org'; then
-    echo -e "${red}network guard: PROD_L1_URL no longer points at https://ordereu1.bigtangle.org ($app_ts)${nc}"
+  if ! echo "$l1_line" | grep -q 'PRIVATE_L1_URL'; then
+    echo -e "${red}network guard: PROD_L1_URL no longer resolves PRIVATE_L1_URL (https://92.5.34.128/l1/) ($app_ts)${nc}"
+    bad=1
+  fi
+  if ! grep -q "PRIVATE_API_BASE = 'https://92\.5\.34\.128'" "$app_ts"; then
+    echo -e "${red}network guard: PRIVATE_API_BASE no longer pins https://92.5.34.128 (s1002 relay) ($app_ts)${nc}"
     bad=1
   fi
   if ! echo "$l0_web" | grep -q "'/l0/'"; then

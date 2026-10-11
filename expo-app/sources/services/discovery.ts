@@ -17,10 +17,12 @@
  *
  * The whole loop is switchable: the `settings.autoDiscover` flag (default ON)
  * controls seed discovery, cache-driven ordering, and a background scheduler
- * (`startAutoSelection`) that re-probes every `AUTO_SELECT_INTERVAL_MS`. With
- * the flag off the wallet is manual: the preferred URL first, then the
- * candidate list in its fixed order — no probing, no seed refresh, no
- * cache-driven reordering.
+ * (`startAutoSelection`) that re-probes every `AUTO_SELECT_INTERVAL_MS`. The
+ * candidate list defaults to the pinned private relay (constants/app.ts
+ * PRIVATE_*_URL — s1002.bigt.ai = 92.5.34.128), so auto-discovery keeps the
+ * wallet on that relay. With the flag off the wallet is manual: the preferred
+ * URL first, then the candidate list in its fixed order — no probing, no
+ * seed refresh, no cache-driven reordering.
  */
 import { device } from '@/storage';
 import {
@@ -72,8 +74,10 @@ export const AUTO_SELECT_INTERVAL_MS = 5 * 60 * 1000;
 
 /**
  * Whether the wallet discovers and ranks servers by itself (default ON).
- * OFF = manual mode: the preferred URL first and the candidate list in its
- * fixed order, no seed refresh, no background probing.
+ * The candidate list defaults to the private relay (PRIVATE_*_URL), so the
+ * discovery loop keeps the wallet on s1002 unless a user overrides the
+ * endpoints. OFF = manual mode: the preferred URL first and the candidate
+ * list in its fixed order, no seed refresh, no background probing.
  */
 export function autoDiscoverEnabled(): boolean {
   return device.get(['settings', 'autoDiscover']) !== 'false';
