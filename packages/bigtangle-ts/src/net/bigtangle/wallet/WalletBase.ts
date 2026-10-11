@@ -269,8 +269,15 @@ export abstract class WalletBase implements KeyBag {
         try {
             const inputs = tx.getInputs();
             const outputs = tx.getOutputs();
-            if (inputs.length === 0 || outputs.length === 0) {
-                throw new Error("Transaction must have inputs and outputs");
+            if (inputs.length === 0) {
+                throw new Error("Transaction must have inputs");
+            }
+            // A zero-output tx is valid when it carries data: a prediction-market
+            // `create`/`merge` escrows the FULL share supply with no change, and
+            // order-cancel / reward txs are output-less by design. The network
+            // accepts these; only a data-less tx with no outputs is malformed.
+            if (outputs.length === 0 && tx.getData() == null) {
+                throw new Error("Transaction must have outputs unless it carries data");
             }
 
             const maybeDecryptingKeyBag = new DecryptingKeyBag(this, aesKey);
