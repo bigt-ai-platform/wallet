@@ -189,10 +189,10 @@ p2p_up() {
   fi
 
   echo -e "${GREEN}--- P2P engine up on $(vm_ip "$r") (:$P2P_PORT) ---${NC}"
-  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_PORT=$P2P_PORT P2P_IMAGE=$P2P_IMAGE bash -s" <<'EOF'
+  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_PORT=$P2P_PORT P2P_IMAGE=$P2P_IMAGE P2P_COMPOSE=${P2P_COMPOSE:-deploy/compose.p2p-engine.yml} bash -s" <<'EOF'
 set -e
 cd "$REMOTE_REPO"
-COMPOSE="docker compose --env-file deploy/env/.env.p2p.$REGION -f deploy/compose.p2p-engine.yml"
+COMPOSE="docker compose --env-file deploy/env/.env.p2p.$REGION -f ${P2P_COMPOSE:-deploy/compose.p2p-engine.yml}"
 # image: registry pull, else the docker-save tar tag.sh built — never build on the VM
 if [ -n "$P2P_IMAGE" ] && docker pull "$P2P_IMAGE" >/dev/null 2>&1; then
   echo "image: $P2P_IMAGE (registry pull)"

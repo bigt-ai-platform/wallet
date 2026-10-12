@@ -36,6 +36,9 @@ Cloudflare (DNS-only A → region VM)
 | File | Purpose |
 |---|---|
 | `compose.prod.yml` | Single `web` container (nginx static), published on `127.0.0.1:8084` |
+| `compose.p2p-engine.yml` | P2P engine stack: `engine` + `db` (Postgres projection), published on `127.0.0.1:8108` |
+| `compose.p2p-engine.blob.yml` | P2P engine with **no database** (`SETTLEMENT_STORE=blob`): chain-derived projection in memory + store-only data in an encrypted blob store |
+| `Dockerfile.p2p-engine` | P2P engine runtime image (node 20, esbuild bundle; no compile host needed) |
 | `Dockerfile.app` | Runtime image: packages the host-built `web-build/` export under nginx; **no compile in-image** |
 | `nginx.conf` | SPA fallback (`index.html`) + hard caching of hashed Metro assets |
 | `tag.sh` | HOST build: `expo export` → docker image → registry push **or** docker-save tar (no registry needed) |
@@ -162,3 +165,47 @@ public nodes directly, where neither restriction applies. Nothing needs to
 change on the chain nodes for this deployment model.
 
 No API keys or secrets are involved — this is a public read/write wallet UI.
+
+## P2P settlement engine
+
+The P2P feature is a **separate service** (`services/p2p-engine`), not part of
+the static web stack: it holds the engine ML-DSA key (signs `social.p2p-swap`
+records, funds the anchor tx, is the third key of the 2-of-3 escrow) and the
+store-only PII/secrets a client app must never see. It runs on the same VM,
+behind the shared Caddy, which routes `https://<domain>/p2p/*` → `127.0.0.1:8108`
+(the web bundle bakes `EXPO_PUBLIC_P2P_ENGINE_URL=/p2p`).
+
+`deploy/region.sh p2p <region>` deploys it from the gitignored
+`deploy/env/.env.p2p.<region>` (image pull or docker-save tar, then `compose up`).
+Pick the stack with `P2P_COMPOSE` (default `deploy/compose.p2p-engine.yml`).
+
+Two stacks:
+
+| Stack | Store | When |
+|---|---|---|
+| `compose.p2p-engine.yml` | `SETTLEMENT_STORE=pg` — Postgres `db` service + `p2p-db` volume | Default. Fast, queryable; best for a busy chain or heavy reads. |
+| `compose.p2p-engine.blob.yml` | `SETTLEMENT_STORE=blob` — **no database**: orders/swap events rebuilt from L1-SOCIAL into memory at boot; profiles/proofs/escrow-signings/receipts in an encrypted blob store | When you'd rather run one MinIO bucket (or a mounted volume) than a database. |
+
+The store split is by rebuildability (`docs/p2p.md` §14): orders + swap events
+are a projection of the chain (rebuildable); payment profiles, payment proofs,
+escrow signings and receipt bytes are store-only and must never reach the chain.
+In blob mode the store-only half is AES-256-GCM at rest (`SETTLEMENT_BLOB_KEY`)
+in an S3/MinIO bucket (`SETTLEMENT_BLOB_URL/_BUCKET/_ACCESS_KEY/_SECRET_KEY`) or
+a directory (`SETTLEMENT_BLOB_DIR`, a mounted volume).
+
+No-DB deploy:
+
+```sh
+# secrets (never commit) live in deploy/env/.env.p2p.<region>; add:
+#   SETTLEMENT_BLOB_URL=https://minio.example:9000
+#   SETTLEMENT_BLOB_BUCKET=p2p
+#   SETTLEMENT_BLOB_ACCESS_KEY=…
+#   SETTLEMENT_BLOB_SECRET_KEY=…
+#   SETTLEMENT_BLOB_KEY=<openssl rand -hex 32>
+P2P_COMPOSE=deploy/compose.p2p-engine.blob.yml ./deploy/region.sh p2p europa
+```
+
+Trade-off: blob mode scans L1-SOCIAL into memory at boot (the projector is
+forced on) and assumes L1-SOCIAL is reachable at start — fine for a small/medium
+chain; keep the pg stack otherwise. Either way the engine still needs *some*
+durable confidential store — never the chain (it is public and append-only).

@@ -1,0 +1,94 @@
+# P2P settlement engine — **no database** stack (docs/p2p.md §14).
+#
+# Same engine image as compose.p2p-engine.yml, but `SETTLEMENT_STORE=blob`:
+# the chain-derived half (orders + swap events) is rebuilt from L1-SOCIAL into
+# memory at boot, and the store-only half (payment profiles, payment proofs,
+# escrow signings, receipt bytes) persists to an encrypted blob store. No
+# Postgres sidecar, no `p2p-db` volume.
+#
+#   REGION=europa P2P_PORT=8108 \
+#     SETTLEMENT_BLOB_URL=https://minio.example:9000 \
+#     SETTLEMENT_BLOB_BUCKET=p2p SETTLEMENT_BLOB_ACCESS_KEY=… \
+#     SETTLEMENT_BLOB_SECRET_KEY=… SETTLEMENT_BLOB_KEY=$(openssl rand -hex 32) \
+#     docker compose --env-file deploy/env/.env.p2p.europa \
+#       -f deploy/compose.p2p-engine.blob.yml up -d
+#
+# Or point SETTLEMENT_BLOB_DIR at a mounted volume instead of S3 — then add a
+# bind mount for that path to the engine service.
+#
+# Choose this over compose.p2p-engine.yml when you would rather run one MinIO
+# bucket (or a volume) than a database. Trade-off: the engine scans L1-SOCIAL
+# into memory at boot, so it fits small/medium chains and assumes L1-SOCIAL is
+# reachable at start (the projector is forced on). Keep the pg stack for a busy
+# chain or heavy read traffic.
+#
+# Secrets (never commit): SETTLEMENT_ENGINE_KEY (ML-DSA seed hex),
+# SETTLEMENT_ADMIN_TOKEN, SETTLEMENT_BLOB_KEY.
+
+name: wallet-p2p-${REGION:-wallet}
+
+services:
+  engine:
+    image: ${P2P_IMAGE:-wallet-p2p-engine:latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.p2p-engine
+    container_name: wallet-p2p-${REGION:-wallet}-engine
+    restart: unless-stopped
+    environment:
+      # No Postgres: every store-only object goes to the encrypted blob store.
+      SETTLEMENT_STORE: "blob"
+      SETTLEMENT_BLOB_URL: ${SETTLEMENT_BLOB_URL:-}
+      SETTLEMENT_BLOB_BUCKET: ${SETTLEMENT_BLOB_BUCKET:-}
+      SETTLEMENT_BLOB_REGION: ${SETTLEMENT_BLOB_REGION:-}
+      SETTLEMENT_BLOB_ACCESS_KEY: ${SETTLEMENT_BLOB_ACCESS_KEY:-}
+      SETTLEMENT_BLOB_SECRET_KEY: ${SETTLEMENT_BLOB_SECRET_KEY:-}
+      SETTLEMENT_BLOB_PREFIX: ${SETTLEMENT_BLOB_PREFIX:-p2p/}
+      SETTLEMENT_BLOB_DIR: ${SETTLEMENT_BLOB_DIR:-/data/blobs}
+      SETTLEMENT_BLOB_KEY: ${SETTLEMENT_BLOB_KEY:-}
+      PORT: "8108"
+      HOST: "0.0.0.0"
+      # chains (external). Comma lists; the singular vars stay supported.
+      SETTLEMENT_L0_URL: ${SETTLEMENT_L0_URL:-}
+      SETTLEMENT_L0_URLS: ${SETTLEMENT_L0_URLS:-}
+      SETTLEMENT_L1_URL: ${SETTLEMENT_L1_URL:-}
+      SETTLEMENT_L1_SOCIAL_URL: ${SETTLEMENT_L1_SOCIAL_URL:-}
+      SETTLEMENT_L1_SOCIAL_URLS: ${SETTLEMENT_L1_SOCIAL_URLS:-}
+      # order intake + the chain-scan projector (blob mode forces it on).
+      SETTLEMENT_ORDER_TX_VERIFY: ${SETTLEMENT_ORDER_TX_VERIFY:-}
+      SETTLEMENT_ORDER_TX_TRIES: ${SETTLEMENT_ORDER_TX_TRIES:-}
+      SETTLEMENT_WATCH: ${SETTLEMENT_WATCH:-1}
+      SETTLEMENT_WATCH_INTERVAL_MS: ${SETTLEMENT_WATCH_INTERVAL_MS:-}
+      SETTLEMENT_WATCH_MAX_WALK: ${SETTLEMENT_WATCH_MAX_WALK:-}
+      SETTLEMENT_DISCOVERY_MS: ${SETTLEMENT_DISCOVERY_MS:-300000}
+      SETTLEMENT_DISCOVERY_DNS: ${SETTLEMENT_DISCOVERY_DNS:-}
+      SETTLEMENT_DISCOVERY_TIMEOUT_MS: ${SETTLEMENT_DISCOVERY_TIMEOUT_MS:-5000}
+      SETTLEMENT_SEEDS_URLS: ${SETTLEMENT_SEEDS_URLS:-}
+      SETTLEMENT_DOH_URL: ${SETTLEMENT_DOH_URL:-}
+      SETTLEMENT_DNS_SEEDS_DOMAIN: ${SETTLEMENT_DNS_SEEDS_DOMAIN:-}
+      # chain network params for escrow derivation (empty/mainnet = prod).
+      SETTLEMENT_NETWORK: ${SETTLEMENT_NETWORK:-}
+      SETTLEMENT_TESTNET: ${SETTLEMENT_TESTNET:-}
+      # engine identity: ML-DSA-87 seed hex (signs records + funds the anchor tx)
+      SETTLEMENT_ENGINE_KEY: ${SETTLEMENT_ENGINE_KEY:-}
+      SETTLEMENT_ENGINE_DID: ${SETTLEMENT_ENGINE_DID:-}
+      # escrow key: 2-of-3 P2SH participant (0x05-prefixed PQ pubkey hex)
+      SETTLEMENT_ENGINE_PUBKEY: ${SETTLEMENT_ENGINE_PUBKEY:-}
+      # admin-gated reads/retries; CORS for the wallet SPA origin
+      SETTLEMENT_ADMIN_TOKEN: ${SETTLEMENT_ADMIN_TOKEN:-}
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
+      # CNY collection rails offered (empty → all three: wechat, alipay, bank)
+      SETTLEMENT_CNY_RAILS: ${SETTLEMENT_CNY_RAILS:-}
+      # escrow settlement closure (docs/p2p.md): pre-signed swaps settle on
+      # their own — release at PAYMENT_VERIFIED, refund at EXPIRED. 0 = off.
+      SETTLEMENT_ESCROW_HOOK_MS: ${SETTLEMENT_ESCROW_HOOK_MS:-30000}
+      SETTLEMENT_ESCROW_POLL_MS: ${SETTLEMENT_ESCROW_POLL_MS:-25000}
+    # A directory blob target (SETTLEMENT_BLOB_DIR, default /data/blobs) — mount
+    # a volume for durability. Drop this when using an S3/MinIO target.
+    volumes:
+      - p2p-blobs:/data/blobs
+    ports:
+      - "127.0.0.1:${P2P_PORT:-8108}:8108"
+
+volumes:
+  p2p-blobs:
