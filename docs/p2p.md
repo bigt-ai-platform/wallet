@@ -527,6 +527,10 @@ Env config:
 
 ```
 SETTLEMENT_NETWORK=mainnet|testnet
+SETTLEMENT_STORE=pg|blob|mem            # pg default (POSTGRES_URL); blob = no Postgres; mem = dev
+SETTLEMENT_BLOB_URL / _BUCKET / _ACCESS_KEY / _SECRET_KEY   # blob mode: S3/MinIO
+SETTLEMENT_BLOB_DIR                     # blob mode: a directory (mounted volume) instead of S3
+SETTLEMENT_BLOB_KEY                     # blob mode: AES-256-GCM key for the objects at rest
 SETTLEMENT_ADMIN_TOKEN=…            # arbitration / admin routes
 SETTLEMENT_ENGINE_KEY / _PUBKEY     # engine key (scripts/p2p-engine-key.mjs)
 SETTLEMENT_CNY_RAILS=wechat,alipay,bank   # enabled methods (empty = rail off)
@@ -642,6 +646,16 @@ Residual risks, stated rather than hidden:
 ---
 
 ## 14. Data, evidence & PII
+
+**Store backends** (`SETTLEMENT_STORE`). Postgres is the default and holds the
+whole store. `blob` runs the engine with **no Postgres**: the rebuildable half
+(`p2p_orders` + `p2p_swap_events`) becomes an in-memory projection rebuilt from
+L1-SOCIAL at boot (the projector is forced on — see `services/p2p-engine/src/storeBlob.ts`),
+while the store-only half (payment profiles, payment proofs, escrow signings)
+persists to the encrypted `BlobStore` (`src/blob.ts`): an S3/MinIO bucket or a
+directory, AES-256-GCM under `SETTLEMENT_BLOB_KEY`. `mem` keeps everything in
+memory (dev/e2e). Only `pg` and `blob` are durable; neither puts the store-only
+fields on chain.
 
 - Swap state is an **append-only event log** (`p2p_swap_events`) that can be
   replayed, not rows mutated in place. Postgres is a rebuildable projection.

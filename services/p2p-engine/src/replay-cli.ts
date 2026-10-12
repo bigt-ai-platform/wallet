@@ -21,13 +21,25 @@ async function main(): Promise<number> {
   const env = process.env;
   const { Pool } = await import("pg");
   const { PgSettlementStore, MemSettlementStore } = await import("./store.js");
+  const { BlobSettlementStore } = await import("./storeBlob.js");
+  const { blobStoreFromEnv } = await import("./blob.js");
   const { syncOnce, replayVerify, HttpSocialSource, pgCursorStore, MemCursorStore, ensureWatchSchema } = await import(
     "./replay.js"
   );
 
-  const pool = env.SETTLEMENT_STORE === "mem" || !env.POSTGRES_URL ? null : new Pool({ connectionString: env.POSTGRES_URL });
+  const storeMode = env.SETTLEMENT_STORE === "mem" || env.SETTLEMENT_STORE === "blob"
+    ? env.SETTLEMENT_STORE
+    : env.POSTGRES_URL
+      ? "pg"
+      : "mem";
+  const pool = storeMode === "pg" ? new Pool({ connectionString: env.POSTGRES_URL! }) : null;
   if (pool) await ensureWatchSchema(pool);
-  const store = pool ? new PgSettlementStore(pool) : new MemSettlementStore();
+  const store =
+    storeMode === "pg"
+      ? new PgSettlementStore(pool!)
+      : storeMode === "blob"
+        ? new BlobSettlementStore(blobStoreFromEnv(env))
+        : new MemSettlementStore();
 
   const l1Urls = (env.SETTLEMENT_L1_SOCIAL_URLS ?? env.SETTLEMENT_L1_SOCIAL_URL ?? "").split(",").map((s) => s.trim());
   const l1Url = l1Urls.find(Boolean);

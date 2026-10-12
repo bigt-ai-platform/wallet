@@ -1384,13 +1384,29 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 async function main() {
   const { Pool } = await import("pg");
   const { PgSettlementStore, MemSettlementStore } = await import("./store.js");
+  const { BlobSettlementStore } = await import("./storeBlob.js");
+  const { blobStoreFromEnv } = await import("./blob.js");
   const { anchorFromEnv, l1Anchor } = await import("./anchor.js");
   const { PooledChainClient, poolFromEnv } = await import("./discovery.js");
   const { syncOnce, HttpSocialSource, fetchRecordByTxid, pgCursorStore, MemCursorStore, ensureWatchSchema } = await import("./replay.js");
   const env = process.env;
-  const pool = env.SETTLEMENT_STORE === "mem" || !env.POSTGRES_URL ? null : new Pool({ connectionString: env.POSTGRES_URL });
-  const store = pool ? new PgSettlementStore(pool) : new MemSettlementStore();
+  // Store selection: pg (default when POSTGRES_URL is set), blob (no Postgres —
+  // chain-derived projection in memory + confidential data in the encrypted
+  // blob store), or mem (dev/e2e). A blob deploy without a blob target throws.
+  const storeMode = env.SETTLEMENT_STORE === "mem" || env.SETTLEMENT_STORE === "blob"
+    ? env.SETTLEMENT_STORE
+    : env.POSTGRES_URL
+      ? "pg"
+      : "mem";
+  const pool = storeMode === "pg" ? new Pool({ connectionString: env.POSTGRES_URL! }) : null;
+  const store =
+    storeMode === "pg"
+      ? new PgSettlementStore(pool!)
+      : storeMode === "blob"
+        ? new BlobSettlementStore(blobStoreFromEnv(env))
+        : new MemSettlementStore();
   if (pool) await ensureWatchSchema(pool);
+  console.log(`p2p-engine: store=${storeMode}`);
   const anchorCfg = anchorFromEnv(env);
   if ((env.SETTLEMENT_L1_URL || env.SETTLEMENT_L1_SOCIAL_URL || env.SETTLEMENT_L1_SOCIAL_URLS) && !anchorCfg) {
     console.warn(
@@ -1464,12 +1480,18 @@ async function main() {
         }
       : undefined;
   const watchState = { height: null as number | null, hash: null as string | null, lastRunAt: null as number | null, lastError: null as string | null };
+  // Blob mode keeps its chain-derived projection in memory, so it must replay
+  // from the chain at boot (the projector is not optional there).
+  const watchOn = (env.SETTLEMENT_WATCH === "1" || storeMode === "blob") && socialConfigured;
+  if (storeMode === "blob" && !socialConfigured) {
+    console.warn("p2p-engine: store=blob without an L1-SOCIAL endpoint — the order/swap projection cannot be rebuilt");
+  }
   const app = await buildApp({
     store,
     chain: l0Pool ? new PooledChainClient(l0Pool) : null,
     ...(anchor ? { anchor } : {}),
     ...(verifyOrderTx ? { verifyOrderTx, orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4) } : {}),
-    ...(env.SETTLEMENT_WATCH === "1" && socialConfigured ? { watchState } : {}),
+    ...(watchOn ? { watchState } : {}),
   });
   app.addHook("onClose", async () => {
     l0Pool?.stop();
@@ -1480,7 +1502,7 @@ async function main() {
   // back from the head to the cursor and apply new records. Mem store replays
   // from genesis each boot (idempotent); PG resumes from p2p_watch_cursor.
   let watchTimer: NodeJS.Timeout | undefined;
-  if (env.SETTLEMENT_WATCH === "1" && socialConfigured) {
+  if (watchOn) {
     const cursors = pool ? pgCursorStore(pool) : new MemCursorStore();
     const maxWalk = Number(env.SETTLEMENT_WATCH_MAX_WALK ?? 2000);
     const tick = async () => {

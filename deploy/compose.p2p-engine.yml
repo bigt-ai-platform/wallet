@@ -44,6 +44,20 @@ services:
         condition: service_healthy
     environment:
       POSTGRES_URL: postgres://p2p:${POSTGRES_PASSWORD}@db:5432/p2p
+      # store backend: pg (default) | blob (no Postgres — see SETTLEMENT_BLOB_*)
+      # | mem (dev only)
+      SETTLEMENT_STORE: ${SETTLEMENT_STORE:-pg}
+      # blob mode only: the confidential half (profiles, proofs, escrow
+      # signings) in an S3/MinIO bucket (or a directory), AES-256-GCM with
+      # SETTLEMENT_BLOB_KEY. SETTLEMENT_STORE=blob needs one target.
+      SETTLEMENT_BLOB_URL: ${SETTLEMENT_BLOB_URL:-}
+      SETTLEMENT_BLOB_BUCKET: ${SETTLEMENT_BLOB_BUCKET:-}
+      SETTLEMENT_BLOB_REGION: ${SETTLEMENT_BLOB_REGION:-}
+      SETTLEMENT_BLOB_ACCESS_KEY: ${SETTLEMENT_BLOB_ACCESS_KEY:-}
+      SETTLEMENT_BLOB_SECRET_KEY: ${SETTLEMENT_BLOB_SECRET_KEY:-}
+      SETTLEMENT_BLOB_PREFIX: ${SETTLEMENT_BLOB_PREFIX:-p2p/}
+      SETTLEMENT_BLOB_DIR: ${SETTLEMENT_BLOB_DIR:-}
+      SETTLEMENT_BLOB_KEY: ${SETTLEMENT_BLOB_KEY:-}
       PORT: "8108"
       HOST: "0.0.0.0"
       # chains (external). Comma lists; the singular vars stay supported.
