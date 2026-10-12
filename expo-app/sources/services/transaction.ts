@@ -550,7 +550,7 @@ export async function anchorSocialRecord(params: {
   record: unknown;
 }): Promise<string> {
   const { key, l1Url, record } = params;
-  const netParams = TestParams.get();
+  const netParams = getNetParams();
   const url = l1Url.endsWith('/') ? l1Url : l1Url + '/';
   const wallet = await Wallet.fromKeysURL(netParams, [key], url);
   wallet.setFee(false);
