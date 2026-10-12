@@ -26,12 +26,15 @@ export L0_PORT="${L0_PORT:-18088}"
 export L1_PORT="${L1_PORT:-18086}"
 export MCMC_PORT="${MCMC_PORT:-18091}"
 export L1P_PORT="${L1P_PORT:-24088}"
-# Postgres port: auto-detect from whichever container is running. This dev
-# machine's test-bigtangle-postgres listens on 21532 (host AND container);
-# helper/docker-compose-base.yml / l0-pg-0 publish 5432.
+# Postgres port: auto-detect from whichever container is running. The manual
+# test-bigtangle-postgres on this dev machine listens on 21532 (host AND
+# container); the host-networked helper/docker-compose-base.yml instance
+# declares its listener in the container's PGPORT env (default 5432).
 if [ -z "${PG_PORT:-}" ] && command -v docker >/dev/null 2>&1 \
    && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^test-bigtangle-postgres$'; then
-  export PG_PORT=21532
+  _pgport=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' test-bigtangle-postgres 2>/dev/null | sed -n 's/^PGPORT=//p' || true)
+  export PG_PORT="${_pgport:-21532}"
+  unset _pgport
 fi
 export PG_PORT="${PG_PORT:-5432}"
 
