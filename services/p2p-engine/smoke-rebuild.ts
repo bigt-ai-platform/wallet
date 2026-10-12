@@ -64,8 +64,24 @@ async function main() {
   const record0 = signSwapRecord(p2pSwapRecord({ ...base, status: "ESCROW_LOCKED", swapSeq: 0, ts: Date.now() }), pqKey);
   const record1 = signSwapRecord(p2pSwapRecord({ ...base, status: "ESCROW_RELEASED", swapSeq: 1, ts: Date.now() }), pqKey);
 
+  // The node marks an output spendable only after its block is confirmed, and
+  // the dev bootstrap (stakeDeposit) can leave spend-pending claims for up to
+  // 5 minutes (SPEND_PENDING_TIMEOUT_MS) — retry until the anchor key's
+  // outputs are spendable again.
+  const submitWithRetry = async (record: unknown): Promise<string> => {
+    for (let i = 0; i < 40; i++) {
+      try {
+        return await submitSocialRecord(L1, pqKey, record);
+      } catch (e) {
+        if (!String(e).includes("insufficient") || i === 39) throw e;
+        await new Promise((r) => setTimeout(r, 10_000));
+      }
+    }
+    throw new Error("unreachable");
+  };
+
   console.log(`smoke: anchoring record 0 via ${L1} ...`);
-  const txid0 = await submitSocialRecord(L1, pqKey, record0);
+  const txid0 = await submitWithRetry(record0);
   console.log(`smoke: anchored txid=${txid0}`);
 
   // The record must appear in a produced block before the projector can see it
@@ -80,22 +96,22 @@ async function main() {
     if (last.error) fail(`sync failed: ${last.error}`);
     if ((await store.events(SWAP_ID)).length >= 1) break;
   }
-  if ((await store.events(SWAP_ID)).length < 1) fail("record 0 never appeared on chain");
+  if ((await store.events(SWAP_ID)).length < 1) {
+    const st = await fetch(`${L1}getTransactionStatus`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ txHash: txid0 }),
+    }).then((r) => r.text());
+    fail(
+      `record 0 never appeared on the canonical chain (txid=${txid0}); ` +
+        `sync=${JSON.stringify(last)}; status=${st.replace(/\s+/g, " ").slice(0, 200)} ` +
+        `(a non-CONFIRMED status here means the dev beacon proposer orphaned the micro-batch block — ` +
+        "the projector rightly only reads canonical blocks)",
+    );
+  }
 
   console.log(`smoke: anchoring record 1 via ${L1} ...`);
-  // The node marks an output spendable only after its block is confirmed, which
-  // lags the sync-visible block the projector reads — retry until the change
-  // output of tx 0 is spendable.
-  let txid1 = "";
-  for (let i = 0; i < 20; i++) {
-    try {
-      txid1 = await submitSocialRecord(L1, pqKey, record1);
-      break;
-    } catch (e) {
-      if (!String(e).includes("insufficient") || i === 19) throw e;
-      await new Promise((r) => setTimeout(r, 10_000));
-    }
-  }
+  const txid1 = await submitWithRetry(record1);
   console.log(`smoke: anchored txid=${txid1}`);
 
   for (let i = 0; i < 30; i++) {
