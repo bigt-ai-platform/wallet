@@ -245,6 +245,48 @@ describe("match claim + reopen on anchor failure", () => {
   });
 });
 
+describe("anchored-record cross-check (verifyOrderTx)", () => {
+  function gateApp(verifyOrderTx: NonNullable<Parameters<typeof buildApp>[0]["verifyOrderTx"]>) {
+    return buildApp({
+      store,
+      env: {
+        SETTLEMENT_ENGINE_DID: engineDid,
+        SETTLEMENT_ADMIN_TOKEN: "adm",
+        SETTLEMENT_PAYPAL_INSECURE: "1",
+      } as NodeJS.ProcessEnv,
+      guard: new ReplayGuard(() => clock),
+      paypal: null,
+      chain: null,
+      now: () => clock,
+      orderTxTries: 1,
+      verifyOrderTx,
+    });
+  }
+
+  it("proves the confirmed block carries the posted terms before indexing", async () => {
+    const a = await gateApp(async (check) =>
+      check.status === "OPEN" && check.terms?.giveAmount === "100"
+        ? { ok: false, error: "anchored record giveAmount mismatch" }
+        : { ok: true },
+    );
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    const r = await a.inject({ method: "POST", url: "/orders", payload: orderPayload({ orderId, txid: TXID }) });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/giveAmount mismatch/);
+    expect(await store.getOrder(orderId)).toBeNull();
+    const caps = (await a.inject({ method: "GET", url: "/capabilities" })).json();
+    expect(caps.chain.orderTxVerify).toBe(true);
+  });
+
+  it("accepts when the anchored record matches", async () => {
+    const a = await gateApp(async () => ({ ok: true }));
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    const r = await a.inject({ method: "POST", url: "/orders", payload: orderPayload({ orderId, txid: TXID }) });
+    expect(r.statusCode).toBe(201);
+    expect((await store.getOrder(orderId))?.txid).toBe(TXID);
+  });
+});
+
 describe("capabilities", () => {
   it("reports orderTxVerify and the watch state", async () => {
     const a = await app();

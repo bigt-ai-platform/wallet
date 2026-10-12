@@ -188,7 +188,19 @@ export async function getCapabilities(): Promise<P2pCapabilities | null> {
       paypal: !!data.paypal,
       escrow: !!data.escrow,
       escrowPubkey: typeof data.escrowPubkey === 'string' && data.escrowPubkey ? data.escrowPubkey : null,
-      chain: { l0: !!data.chain?.l0, l1: !!data.chain?.l1 },
+      chain: {
+        l0: !!data.chain?.l0,
+        l1: !!data.chain?.l1,
+        orderTxVerify: !!data.chain?.orderTxVerify,
+      },
+      watch: data.watch
+        ? {
+            height: typeof data.watch.height === 'number' ? data.watch.height : null,
+            hash: typeof data.watch.hash === 'string' ? data.watch.hash : null,
+            lastRunAt: typeof data.watch.lastRunAt === 'number' ? data.watch.lastRunAt : null,
+            lastError: typeof data.watch.lastError === 'string' ? data.watch.lastError : null,
+          }
+        : null,
     };
   } catch {
     return null;

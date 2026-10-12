@@ -55,6 +55,15 @@ services:
       SETTLEMENT_L1_URL: ${SETTLEMENT_L1_URL:-}
       SETTLEMENT_L1_SOCIAL_URL: ${SETTLEMENT_L1_SOCIAL_URL:-}
       SETTLEMENT_L1_SOCIAL_URLS: ${SETTLEMENT_L1_SOCIAL_URLS:-}
+      # seller-anchored order intake (docs/p2p.md §11) + the chain-scan
+      # projector (§14). SETTLEMENT_WATCH=1 runs the rebuild loop in-process
+      # (otherwise: `yarn workspace p2p-engine replay` only). ON by default in
+      # prod — the projector is what makes the PG store a chain projection.
+      SETTLEMENT_ORDER_TX_VERIFY: ${SETTLEMENT_ORDER_TX_VERIFY:-}
+      SETTLEMENT_ORDER_TX_TRIES: ${SETTLEMENT_ORDER_TX_TRIES:-}
+      SETTLEMENT_WATCH: ${SETTLEMENT_WATCH:-}
+      SETTLEMENT_WATCH_INTERVAL_MS: ${SETTLEMENT_WATCH_INTERVAL_MS:-}
+      SETTLEMENT_WATCH_MAX_WALK: ${SETTLEMENT_WATCH_MAX_WALK:-}
       SETTLEMENT_DISCOVERY_MS: ${SETTLEMENT_DISCOVERY_MS:-300000}
       SETTLEMENT_DISCOVERY_DNS: ${SETTLEMENT_DISCOVERY_DNS:-}
       SETTLEMENT_DISCOVERY_TIMEOUT_MS: ${SETTLEMENT_DISCOVERY_TIMEOUT_MS:-5000}

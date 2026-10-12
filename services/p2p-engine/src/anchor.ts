@@ -82,6 +82,7 @@ export function swapEventRecord(event: P2pSwapEvent, from: string): P2pSwapRecor
     escrowAddress: event.escrowAddress,
     escrowTxHash: event.escrowTxHash,
     releaseTxHash: event.releaseTxHash,
+    refundTxHash: event.refundTxHash,
     paymentRail: event.paymentRail,
     paymentRef: event.paymentRef,
     payoutRef: event.payoutRef,
@@ -106,13 +107,17 @@ function arraysEqual(a: Uint8Array | string, b: Uint8Array | string): boolean {
 /**
  * Submit a signed record as a typed data-class transaction to L1-SOCIAL —
  * mirrors how OrderOpen/StakeDeposit are built: inputs from spendable
- * candidates, zero-value self change, signed, submitted.
+ * candidates, zero-value self change, signed, submitted. `params` selects the
+ * network with the same rule as the escrow half (`settlementParams()`: mainnet
+ * by default, `SETTLEMENT_NETWORK=testnet` for the test infra); callers outside
+ * the engine (the e2e fixture) pass the chain's params explicitly.
  */
-export async function submitSocialRecord(l1Url: string, pqKey: PQKey, record: unknown): Promise<string> {
-  // Same network selection as the escrow half (`settlementParams`): mainnet by
-  // default, `SETTLEMENT_NETWORK=testnet` for the test infra — the anchor tx
-  // must be built with the params of the chain it is submitted to.
-  const params = settlementParams();
+export async function submitSocialRecord(
+  l1Url: string,
+  pqKey: PQKey,
+  record: unknown,
+  params: NetworkParameters = settlementParams(),
+): Promise<string> {
   const url = l1Url.endsWith("/") ? l1Url : l1Url + "/";
   const wallet = Wallet.fromKeysURL(params, [pqKey], url);
 

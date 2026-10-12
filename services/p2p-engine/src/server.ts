@@ -50,7 +50,8 @@ import { hexToBytes } from "did";
 import { pqPubFromDid } from "did/pq";
 import { PQKey, Utils } from "bigtangle-ts";
 import type { Escrow } from "bigtangle-ts";
-import { P2P_ORDER_ID_RE } from "p2p-protocol";
+import { P2P_ORDER_ID_RE, validateP2pOrderRecord, type P2pOrderRecord } from "p2p-protocol";
+import { verifyRecordSig } from "record-sig";
 import { ACTION_STATUS, DEDICATED_ACTIONS, canTransition, statusForAction } from "./state.js";
 import {
   reputationDetail,
@@ -88,6 +89,23 @@ import {
 } from "./types.js";
 import type { SettlementStore } from "./store.js";
 
+export interface OrderTxCheck {
+  txid: string;
+  sellerDid: string;
+  orderId: string;
+  status: "OPEN" | "CANCELLED";
+  /** OPEN only: the terms the seller anchored must equal the request's. */
+  terms?: {
+    giveToken: string;
+    giveAmount: string;
+    giveChain: string;
+    wantCurrency: string;
+    wantAmount: string;
+    wantRail: string;
+    validUntil: number;
+  };
+}
+
 export interface SettlementDeps {
   store: SettlementStore;
   env?: NodeJS.ProcessEnv;
@@ -106,6 +124,12 @@ export interface SettlementDeps {
    * index advances (docs/p2p.md §11). Default: no check (mock mode).
    */
   verifyTx?: (txid: string) => Promise<boolean>;
+  /**
+   * Stronger intake gate: confirm the txid AND prove the confirmed block
+   * carries the exact `social.p2p-order` record the request claims (author =
+   * seller, orderId, status, terms). Preferred over `verifyTx` when present.
+   */
+  verifyOrderTx?: (check: OrderTxCheck) => Promise<{ ok: boolean; error?: string }>;
   /** Bounded polls for verifyTx before 409 (default 4; tests set 1). */
   orderTxTries?: number;
   /** Mutable watch-loop state surfaced by /capabilities (replay.ts sync). */
@@ -600,23 +624,32 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     escrow: !!env.SETTLEMENT_ENGINE_PUBKEY?.trim(),
     /** Public escrow key: the wallet rebuilds the 2-of-3 vault with it. */
     escrowPubkey: env.SETTLEMENT_ENGINE_PUBKEY?.trim() || null,
-    chain: { l0: !!deps.chain, l1: !!deps.anchor, orderTxVerify: !!deps.verifyTx },
+    chain: { l0: !!deps.chain, l1: !!deps.anchor, orderTxVerify: !!(deps.verifyTx || deps.verifyOrderTx) },
     /** Chain-scan projector position (null until the watcher has run). */
     watch: deps.watchState ? { ...deps.watchState } : null,
   }));
 
   /**
-   * Confirm a seller-anchored order txid: bounded polls of verifyTx (the tx
-   * was just submitted, so one 0-wait check would race confirmation).
+   * Confirm a seller-anchored order txid: bounded polls of the intake gate (the
+   * tx was just submitted, so one 0-wait check would race confirmation).
+   * `verifyOrderTx` (full record match) wins over `verifyTx` (confirmation
+   * only); with neither there is no chain check (mock/dev).
    */
-  async function orderTxConfirmed(txid: string): Promise<boolean> {
-    if (!deps.verifyTx) return true;
+  async function orderTxVerified(check: OrderTxCheck): Promise<{ ok: boolean; error?: string }> {
+    if (!deps.verifyOrderTx && !deps.verifyTx) return { ok: true };
     const tries = Math.max(1, deps.orderTxTries ?? 4);
+    let error = "txid not confirmed on L1-SOCIAL";
     for (let i = 0; i < tries; i++) {
-      if (await deps.verifyTx(txid)) return true;
+      const r = deps.verifyOrderTx
+        ? await deps.verifyOrderTx(check)
+        : (await deps.verifyTx!(check.txid))
+          ? { ok: true }
+          : { ok: false, error: "txid not confirmed on L1-SOCIAL" };
+      if (r.ok) return { ok: true };
+      error = r.error ?? error;
       if (i < tries - 1) await new Promise((r) => setTimeout(r, 500));
     }
-    return false;
+    return { ok: false, error };
   }
 
   app.post("/orders", async (request, reply) => {
@@ -646,8 +679,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (txid !== undefined && !TXID_RE.test(txid)) return reply.code(400).send({ error: "invalid txid" });
     const signed = validateSignedRequest(body, sellerDid, guard);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    if (txid !== undefined && !(await orderTxConfirmed(txid))) {
-      return reply.code(409).send({ error: "txid not confirmed on L1-SOCIAL" });
+    if (txid !== undefined) {
+      const gate = await orderTxVerified({
+        txid,
+        sellerDid,
+        orderId,
+        status: "OPEN",
+        terms: { giveToken, giveAmount, giveChain, wantCurrency, wantAmount, wantRail, validUntil },
+      });
+      if (!gate.ok) return reply.code(409).send({ error: gate.error ?? "txid not confirmed on L1-SOCIAL" });
     }
     const existing = await deps.store.getOrder(orderId);
     if (existing) {
@@ -692,8 +732,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (order.status === "CANCELLED") return reply.code(200).send({ orderId, status: "CANCELLED" });
     if (order.status !== "ACTIVE") return reply.code(409).send({ error: `order is ${order.status}` });
-    if (txid !== undefined && !(await orderTxConfirmed(txid))) {
-      return reply.code(409).send({ error: "txid not confirmed on L1-SOCIAL" });
+    if (txid !== undefined) {
+      const gate = await orderTxVerified({ txid, sellerDid, orderId, status: "CANCELLED" });
+      if (!gate.ok) return reply.code(409).send({ error: gate.error ?? "txid not confirmed on L1-SOCIAL" });
     }
     if (!(await deps.store.markOrderCancelled(orderId))) {
       return reply.code(409).send({ error: "order is no longer active" });
@@ -1676,7 +1717,7 @@ async function main() {
   const { PgSettlementStore, MemSettlementStore } = await import("./store.js");
   const { anchorFromEnv, l1Anchor } = await import("./anchor.js");
   const { PooledChainClient, poolFromEnv } = await import("./discovery.js");
-  const { syncOnce, HttpSocialSource, pgCursorStore, MemCursorStore, ensureWatchSchema } = await import("./replay.js");
+  const { syncOnce, HttpSocialSource, fetchRecordByTxid, pgCursorStore, MemCursorStore, ensureWatchSchema } = await import("./replay.js");
   const env = process.env;
   const pool = env.SETTLEMENT_STORE === "mem" || !env.POSTGRES_URL ? null : new Pool({ connectionString: env.POSTGRES_URL });
   const store = pool ? new PgSettlementStore(pool) : new MemSettlementStore();
@@ -1697,21 +1738,61 @@ async function main() {
   const anchor = anchorCfg
     ? l1Anchor(socialPool ? { ...anchorCfg, resolveUrl: () => socialPool.best() } : anchorCfg)
     : undefined;
-  // Seller-anchored orders land on L1-SOCIAL before the index sees them: confirm
-  // the txid before create/cancel (docs/p2p.md §11). No social endpoint → no
-  // check (mock/dev), same fail-open rule the anchor path already uses.
+  // Seller-anchored orders land on L1-SOCIAL before the index sees them: prove
+  // the confirmed block carries the exact `social.p2p-order` record the request
+  // claims (docs/p2p.md §11). No social endpoint configured → no check
+  // (mock/dev). Fail-closed once configured: a node that is down returns
+  // `{ok:false}` (409), never a silent accept.
   const socialUrl = () => socialPool?.best() ?? (env.SETTLEMENT_L1_SOCIAL_URL?.trim() || null);
-  const verifyTx =
-    socialUrl() && env.SETTLEMENT_ORDER_TX_VERIFY !== "0"
-      ? async (txid: string): Promise<boolean> => {
+  const socialConfigured = !!(
+    socialPool ||
+    env.SETTLEMENT_L1_SOCIAL_URL?.trim() ||
+    env.SETTLEMENT_L1_SOCIAL_URLS?.trim() ||
+    env.SETTLEMENT_L1_URL?.trim() ||
+    env.L1_SOCIAL_URL?.trim()
+  );
+  const verifyOrderTx =
+    socialConfigured && env.SETTLEMENT_ORDER_TX_VERIFY !== "0"
+      ? async (check: OrderTxCheck): Promise<{ ok: boolean; error?: string }> => {
           const url = socialUrl();
-          if (!url) return false;
+          if (!url) return { ok: false, error: "no healthy L1-SOCIAL endpoint" };
+          let st;
           try {
-            const st = await new HttpChainClient(url).transactionStatus(txid);
-            return st.status === "CONFIRMED";
+            st = await new HttpChainClient(url).transactionStatus(check.txid);
           } catch {
-            return false;
+            return { ok: false, error: "L1-SOCIAL unreachable" };
           }
+          if (st.status !== "CONFIRMED") return { ok: false, error: "txid not confirmed on L1-SOCIAL" };
+          if (!st.blockHash) return { ok: false, error: "confirmed tx has no block hash" };
+          let rec: Record<string, unknown> | null;
+          try {
+            rec = await fetchRecordByTxid(
+              new HttpSocialSource(url, fetch, 10_000, settlementParams(env)),
+              st.blockHash,
+              check.txid,
+            );
+          } catch {
+            return { ok: false, error: "L1-SOCIAL block read failed" };
+          }
+          if (!rec) return { ok: false, error: "anchored order record not found in the confirmed block" };
+          const valid = validateP2pOrderRecord(rec as never);
+          if (!valid.ok) return { ok: false, error: `anchored order record invalid: ${valid.error}` };
+          if (!verifyRecordSig(rec as never)) return { ok: false, error: "anchored order record signature invalid" };
+          const r = rec as unknown as P2pOrderRecord;
+          if (r.from !== check.sellerDid) return { ok: false, error: "anchored record author is not the seller" };
+          if (r.to !== check.orderId) return { ok: false, error: "anchored record orderId mismatch" };
+          if (r.status !== check.status) return { ok: false, error: "anchored record status mismatch" };
+          if (check.status === "OPEN" && check.terms) {
+            for (const field of ["giveToken", "giveAmount", "giveChain", "wantCurrency", "wantAmount", "wantRail"] as const) {
+              if (String(r[field] ?? "") !== String(check.terms[field])) {
+                return { ok: false, error: `anchored record ${field} mismatch` };
+              }
+            }
+            if (Number(r.validUntil) !== check.terms.validUntil) {
+              return { ok: false, error: "anchored record validUntil mismatch" };
+            }
+          }
+          return { ok: true };
         }
       : undefined;
   const watchState = { height: null as number | null, hash: null as string | null, lastRunAt: null as number | null, lastError: null as string | null };
@@ -1724,8 +1805,8 @@ async function main() {
         : null,
     chain: l0Pool ? new PooledChainClient(l0Pool) : null,
     ...(anchor ? { anchor } : {}),
-    ...(verifyTx ? { verifyTx, orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4) } : {}),
-    ...(env.SETTLEMENT_WATCH === "1" && socialUrl() ? { watchState } : {}),
+    ...(verifyOrderTx ? { verifyOrderTx, orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4) } : {}),
+    ...(env.SETTLEMENT_WATCH === "1" && socialConfigured ? { watchState } : {}),
   });
   app.addHook("onClose", async () => {
     l0Pool?.stop();
@@ -1736,7 +1817,7 @@ async function main() {
   // back from the head to the cursor and apply new records. Mem store replays
   // from genesis each boot (idempotent); PG resumes from p2p_watch_cursor.
   let watchTimer: NodeJS.Timeout | undefined;
-  if (env.SETTLEMENT_WATCH === "1" && socialUrl()) {
+  if (env.SETTLEMENT_WATCH === "1" && socialConfigured) {
     const cursors = pool ? pgCursorStore(pool) : new MemCursorStore();
     const maxWalk = Number(env.SETTLEMENT_WATCH_MAX_WALK ?? 2000);
     const tick = async () => {

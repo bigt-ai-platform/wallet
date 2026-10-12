@@ -17,7 +17,7 @@
  * (receiveAddress, paypalAccount, buyerEmail, profiles, receipts) is store-only
  * and deliberately not recoverable from the chain (docs/p2p.md §14).
  */
-import { TestParams } from "bigtangle-ts";
+import { type NetworkParameters } from "bigtangle-ts";
 import { verifyRecordSig, type AnchoredRecord } from "record-sig";
 import {
   P2P_ORDER_TYPE,
@@ -27,6 +27,7 @@ import {
   type P2pOrderRecord,
   type P2pSwapRecord,
 } from "p2p-protocol";
+import { settlementParams } from "./escrow.js";
 import { MemSettlementStore, type Queryable } from "./store.js";
 import type { P2pOrder, P2pSwapEvent } from "./types.js";
 
@@ -104,6 +105,7 @@ export class HttpSocialSource implements SocialSource {
     private readonly baseUrl: string,
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly timeoutMs = 10_000,
+    private readonly params: NetworkParameters = settlementParams(),
   ) {}
 
   private get base(): string {
@@ -135,7 +137,7 @@ export class HttpSocialSource implements SocialSource {
   async blockByHash(hash: string): Promise<ChainBlockView | null> {
     const res = await this.post<{ dataHex?: string }>("getBlockByHash", { hashHex: hash });
     if (!res.dataHex) return null;
-    const block = TestParams.get().getDefaultSerializer().makeBlock(Uint8Array.from(Buffer.from(res.dataHex, "hex")));
+    const block = this.params.getDefaultSerializer().makeBlock(Uint8Array.from(Buffer.from(res.dataHex, "hex")));
     const records: ChainRecord[] = [];
     for (const tx of block.getTransactions() ?? []) {
       if (tx.getDataClassName() !== "SocialRecord") continue;
@@ -155,6 +157,20 @@ export class HttpSocialSource implements SocialSource {
       records,
     };
   }
+}
+
+/**
+ * The record a specific tx landed in a confirmed block, or null. Used by the
+ * intake gate to prove the chain actually carries the record the seller is
+ * asking the engine to index (docs/p2p.md §11).
+ */
+export async function fetchRecordByTxid(
+  src: SocialSource,
+  blockHash: string,
+  txid: string,
+): Promise<Record<string, unknown> | null> {
+  const block = await src.blockByHash(blockHash);
+  return block?.records.find((r) => r.txid === txid)?.record ?? null;
 }
 
 export interface SyncResult {
@@ -204,6 +220,7 @@ function eventFromSwapRecord(rec: P2pSwapRecord, txid: string): P2pSwapEvent {
     ...(rec.escrowAddress !== undefined ? { escrowAddress: rec.escrowAddress } : {}),
     ...(rec.escrowTxHash !== undefined ? { escrowTxHash: rec.escrowTxHash } : {}),
     ...(rec.releaseTxHash !== undefined ? { releaseTxHash: rec.releaseTxHash } : {}),
+    ...(rec.refundTxHash !== undefined ? { refundTxHash: rec.refundTxHash } : {}),
     ...(rec.paymentRail !== undefined ? { paymentRail: rec.paymentRail } : {}),
     ...(rec.paymentRef !== undefined ? { paymentRef: rec.paymentRef } : {}),
     ...(rec.payoutRef !== undefined ? { payoutRef: rec.payoutRef } : {}),

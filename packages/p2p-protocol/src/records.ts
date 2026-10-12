@@ -53,6 +53,7 @@ export interface P2pSwapRecord {
   escrowAddress?: string;
   escrowTxHash?: string;
   releaseTxHash?: string;
+  refundTxHash?: string;
   paymentRail?: string;
   paymentRef?: string;
   payoutRef?: string;
@@ -86,6 +87,7 @@ export function p2pSwapRecord(a: P2pSwapRecordInput): P2pSwapRecord {
   if (a.escrowAddress !== undefined) record.escrowAddress = a.escrowAddress;
   if (a.escrowTxHash !== undefined) record.escrowTxHash = a.escrowTxHash;
   if (a.releaseTxHash !== undefined) record.releaseTxHash = a.releaseTxHash;
+  if (a.refundTxHash !== undefined) record.refundTxHash = a.refundTxHash;
   if (a.paymentRail !== undefined) record.paymentRail = a.paymentRail;
   if (a.paymentRef !== undefined) record.paymentRef = a.paymentRef;
   if (a.payoutRef !== undefined) record.payoutRef = a.payoutRef;
@@ -116,6 +118,7 @@ export function validateP2pSwapRecord(r: Partial<P2pSwapRecord>): { ok: true } |
     "escrowAddress",
     "escrowTxHash",
     "releaseTxHash",
+    "refundTxHash",
     "paymentRail",
     "paymentRef",
     "payoutRef",

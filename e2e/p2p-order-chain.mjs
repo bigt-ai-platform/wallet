@@ -108,7 +108,15 @@ async function fund() {
     addresses.push(addr);
     giveMoney.set(addr, units);
   }
-  const coinList = await wallet.calculateAllSpendCandidates(null, false);
+  // The genesis output is recycled by the validator's stakeDeposit and briefly
+  // reads `spendPending` while the chain confirms it — poll instead of failing
+  // on the first empty candidate set (up to ~4 min, like waitConfirmed).
+  let coinList = [];
+  for (let i = 0; i < 120; i++) {
+    coinList = await wallet.calculateAllSpendCandidates(null, false).catch(() => []);
+    if (coinList.length) break;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
   if (!coinList.length) throw new Error(`social genesis wallet has no spend candidates on ${SOCIAL_URL}`);
   const tx = await wallet.payMoneyToECKeyList(
     null,
@@ -140,7 +148,7 @@ async function anchorOrder() {
     ts: Date.now(),
   });
   const signed = { ...record, sigScheme: 'mldsa', sig: signChallengePQ(pqKey, recordDigest(record)) };
-  const txid = await submitSocialRecord(SOCIAL_URL, pqKey, signed);
+  const txid = await submitSocialRecord(SOCIAL_URL, pqKey, signed, TestParams.get());
   await waitConfirmed(txid);
   // The semantic fields POST /orders expects — record terms and intake body
   // are produced from one source so A (intake) and B (replay) cannot drift.
