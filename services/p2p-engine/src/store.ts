@@ -19,6 +19,8 @@ export interface SettlementStore {
   reopenOrder(orderId: string, swapId: string): Promise<void>;
   appendEvent(e: P2pSwapEvent): Promise<void>;
   events(swapId: string): Promise<P2pSwapEvent[]>;
+  /** The whole append-only log — input for derived projections (reputation). */
+  allEvents(): Promise<P2pSwapEvent[]>;
   getSwap(swapId: string): Promise<P2pSwapEvent | null>;
   /** Latest event per swap, newest first (the swap's current state). */
   listSwaps(limit?: number): Promise<P2pSwapEvent[]>;
@@ -91,6 +93,10 @@ export class MemSettlementStore implements SettlementStore {
 
   async events(swapId: string): Promise<P2pSwapEvent[]> {
     return [...(this.swapEvents.get(swapId) ?? [])];
+  }
+
+  async allEvents(): Promise<P2pSwapEvent[]> {
+    return [...this.swapEvents.values()].flat();
   }
 
   async getSwap(swapId: string): Promise<P2pSwapEvent | null> {
@@ -256,6 +262,11 @@ export class PgSettlementStore implements SettlementStore {
       [swapId],
     );
     return res.rows.map((r) => r.payload as P2pSwapEvent);
+  }
+
+  async allEvents(): Promise<P2pSwapEvent[]> {
+    const res = await this.db.query(`SELECT payload FROM p2p_swap_events ORDER BY swap_id, event_seq`);
+    return res.rows.map(rowEvent);
   }
 
   async getSwap(swapId: string): Promise<P2pSwapEvent | null> {

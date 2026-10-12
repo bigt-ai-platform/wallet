@@ -36,6 +36,11 @@ function isCnyRail(rail?: string): boolean {
  * swaps (sell/list, lock, pay, expire/refund/cancel). All mutations are signed
  * with the wallet's PQ key; reads of own swaps are party-scoped by the engine.
  */
+/** Reputation tier → language-neutral stars (docs/p2p.md §25). */
+function tierStars(tier: 'new' | 'established' | 'trusted'): number {
+  return tier === 'trusted' ? 3 : tier === 'established' ? 2 : 1;
+}
+
 export default function P2pScreen() {
   const { t, i18n } = useTranslation();
   const { theme } = useUnistyles();
@@ -607,6 +612,16 @@ export default function P2pScreen() {
                 </View>
                 <Text style={s.sub}>{t('p2p.giveChain')}: {o.giveChain} · {o.wantRail}</Text>
                 <Text style={s.subMono}>{o.sellerDid}</Text>
+                {o.sellerReputation ? (
+                  <Text style={s.sub} testID={`p2p-order-${i}-rep`}>
+                    {'★'.repeat(tierStars(o.sellerReputation.tier))}
+                    {'☆'.repeat(3 - tierStars(o.sellerReputation.tier))}{' '}
+                    {t('p2p.rep', {
+                      trades: o.sellerReputation.trades,
+                      pct: Math.round(o.sellerReputation.completionRate * 100),
+                    })}
+                  </Text>
+                ) : null}
                 {identity && o.sellerDid === identity.did && o.status === 'ACTIVE' ? (
                   <View style={s.actions}>
                     <Action label={t('p2p.cancelOrder')} color={theme.colors.accent.red} onPress={() => submitCancel(o)} disabled={busy} testID={`p2p-cancel-order-${i}`} />

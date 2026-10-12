@@ -54,6 +54,15 @@ export interface P2pOrder {
   /** L1-SOCIAL txid of the seller-anchored social.p2p-order record. */
   txid?: string;
   createdAt: number;
+  /** Derived seller reputation (docs/p2p.md §25) — computed from the anchored
+   *  swap log; PII-free counts, rates and tier. */
+  sellerReputation?: {
+    tier: 'new' | 'established' | 'trusted';
+    trades: number;
+    completionRate: number;
+    disputes: number;
+    lostDisputes: number;
+  };
 }
 
 export interface P2pSwap {

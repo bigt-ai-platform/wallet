@@ -52,6 +52,12 @@ import { PQKey, Utils } from "bigtangle-ts";
 import type { Escrow } from "bigtangle-ts";
 import { P2P_ORDER_ID_RE } from "p2p-protocol";
 import { ACTION_STATUS, DEDICATED_ACTIONS, canTransition, statusForAction } from "./state.js";
+import {
+  reputationDetail,
+  reputationForDid,
+  reputationFromEvents,
+  type ReputationReport,
+} from "./reputation.js";
 import { ReplayGuard, validateSignedRequest } from "./sign.js";
 import { escrowAddress, settlementParams } from "./escrow.js";
 import {
@@ -703,11 +709,63 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 
   // Public order book for wallet clients: open sell orders carry no PII, so
   // they are readable without the admin token. Defaults to ACTIVE only.
+  /**
+   * Derived reputation (docs/p2p.md §25) — a pure projection of the swap event
+   * log, memoized briefly so the public order book does not rescan the log on
+   * every request. PII-free by construction (counts, rates, latencies, public
+   * DIDs).
+   */
+  let repCache: { at: number; map: Map<string, ReputationReport> } | null = null;
+  async function reputationMap(): Promise<Map<string, ReputationReport>> {
+    const ttlMs = 30_000;
+    if (repCache && Date.now() - repCache.at < ttlMs) return repCache.map;
+    const map = reputationFromEvents(await deps.store.allEvents());
+    repCache = { at: Date.now(), map };
+    return map;
+  }
+
+  /** Compact seller stats for the public order book (badge). */
+  function compactReputation(r: ReputationReport) {
+    return {
+      tier: r.seller.tier,
+      trades: r.seller.trades,
+      completionRate: r.seller.completionRate,
+      disputes: r.seller.disputes,
+      lostDisputes: r.seller.lostDisputes,
+    };
+  }
+
   app.get("/public/orders", async (request, reply) => {
     const q = (request.query as { status?: string }) ?? {};
     const status = q.status === undefined ? "ACTIVE" : q.status;
     const orders = await deps.store.listOrders(status);
-    return { orders: orders.map(({ signature: _s, ...o }) => o) };
+    const map = await reputationMap();
+    return {
+      orders: orders.map(({ signature: _s, ...o }) => ({
+        ...o,
+        sellerReputation: compactReputation(reputationForDid(o.sellerDid, map)),
+      })),
+    };
+  });
+
+  /**
+   * Public reputation summary (docs/p2p.md §25): derived from the anchored
+   * swap log, role-aware (separate seller/buyer profiles), wash-resistant
+   * (pair-capped). Unknown DIDs get zeroed roles so badges render without a
+   * 404.
+   */
+  app.get<{ Params: { did: string } }>("/public/reputation/:did", async (request, reply) => {
+    const { did } = request.params;
+    if (!did || did.length > 512) return reply.code(400).send({ error: "invalid did" });
+    return reputationForDid(did, await reputationMap());
+  });
+
+  /** Admin: the per-swap attribution behind the public summary. */
+  app.get<{ Params: { did: string } }>("/admin/reputation/:did", async (request, reply) => {
+    if (!requireAdmin(request, reply)) return;
+    const { did } = request.params;
+    if (!did || did.length > 512) return reply.code(400).send({ error: "invalid did" });
+    return reputationDetail(await deps.store.allEvents(), did);
   });
 
   app.post<{ Params: { orderId: string } }>("/orders/:orderId/match", async (request, reply) => {

@@ -848,8 +848,10 @@ they share a feature. The escrow script is a wallet capability, so it lives in
    match / pay / confirm / dispute screens in the wallet app, for all rails,
    plus the guide and PDFs in all 12 languages.
 4. **AI-assisted arbitration** — the remaining build: evidence-pack viewer,
-   AI review + human confirm loop, seller-ratings, push on
+   AI review + human confirm loop, push on
    claim/confirm/dispute, timers (`SETTLEMENT_CNY_CONFIRM_TIMEOUT`), auto-`expire`.
+   Counterparty reputation is *delivered* as derived stats (§25); user-submitted
+   star ratings stay out of scope.
 5. **Risk controls** — KYC tiers, caps, velocity checks, name-match on tiers,
    冻卡 runbook, unusual-pattern alerts.
 6. **Full automation** — PayPal invoice + webhook auto-verify on the seller's
@@ -938,6 +940,12 @@ geofencing — is an operator decision to make before shipping to users.
   swap event, bad-signature/unknown-type records skipped (fail closed),
   unservable-head and truncated-walk safety, replay after an unserved cursor,
   and `replayVerify` drift detection (`missing` / `extra`).
+- **Reputation** (`services/p2p-engine/test/reputation.test.ts`): outcome
+  attribution (completed / expired / cancelled / refund, dispute losers,
+  reversals), latency averages, pair-cap wash resistance with raw totals, tier
+  thresholds, PII never in the summary, and the routes (public summary,
+  seller badge embed in `/public/orders`, zero-fill for unknown DIDs,
+  admin-only per-swap attribution).
 - Java-first rule from `AGENTS.md` applies to anything touching the chain —
   but this plan changes no chain code, so no Java surface is expected.
 
@@ -962,3 +970,51 @@ The following were deleted from `../dai` as part of this move:
 Because the type never shipped live, this is a safe narrowing; any database that
 applied the p2p migration gets a small forward migration dropping `p2p_swaps`
 and re-adding the `edges` CHECK without p2p.
+
+---
+
+## 25. Reputation — derived, public, wash-resistant
+
+Reputation for sellers and buyers is **derived from the anchored swap log**,
+never stored or anchored as its own fact: every input (status transitions,
+dispute outcomes, timings) is something both parties already signed, and the
+`social.p2p-swap` anchor makes it verifiable. It is computed on read
+(`services/p2p-engine/src/reputation.ts`, pure — no writes, no new durable
+state), so it cannot drift from the event log.
+
+**Role-aware.** A DID has separate seller and buyer profiles — a reliable
+seller can still be a slow payer.
+
+**What counts.** Terminal swaps only (`COMPLETED` / `EXPIRED` /
+`ESCROW_REFUNDED` / `CANCELLED`):
+
+| Signal | Effect |
+|---|---|
+| `COMPLETED` | `completed` + volume (want + give units) for both roles |
+| `EXPIRED` | `expired` — the buyer no-show counter |
+| `ESCROW_REFUNDED` | `refunded`; with `disputeOutcome: "refund"` also the buyer's `lostDisputes` |
+| `disputeOutcome: "release"` | the seller's `lostDisputes` |
+| `paymentReversed` | `reversals` on both roles of the affected swap |
+| event timings | buyer `avgPayMs` (match → claim); seller `avgConfirmMs`, `avgReleaseMs` |
+
+`completionRate = completed / (completed + expired + refunded)` — cancellations
+are neutral (either party may cancel before payment) and reported separately.
+
+**Wash-resistant.** At most **3 swaps per counterparty pair** count toward the
+aggregates (`pairCap`), oldest first — two colluding DIDs cannot inflate each
+other with unlimited trades (§12), while raw totals stay visible (`rawTrades`).
+Velocity limits (§16) still apply on top.
+
+**Tiers** — transparent thresholds, not a magic score:
+`trusted` ≥ 10 counted trades, ≥ 95% completion, zero lost disputes;
+`established` ≥ 3 counted trades, ≥ 80% completion; otherwise `new`.
+
+**Visibility.** Public summary for anyone — `GET /public/reputation/:did`
+(PII-free counts, rates, latencies, tier; zero-filled for unknown DIDs) and
+per-seller `sellerReputation` embedded in `GET /public/orders`. The per-swap
+attribution behind the summary is admin-only (`GET /admin/reputation/:did`).
+The wallet badges order cards with tier stars plus
+`{{trades}} trades · {{pct}}% completed` (i18n key `p2p.rep`, 12 languages).
+
+Reputation is **advisory**: it informs a counterparty's choice and never gates
+a transition — no state-machine rule and no escrow path depends on it.
