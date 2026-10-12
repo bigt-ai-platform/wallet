@@ -142,11 +142,12 @@ The feature uses the two chains that already exist, each as-is:
   group membership state machine (`SocialGroupStore`) at ingestion, and the gate
   is an *ingestion* gate only — it runs on the `submitTransaction` HTTP path;
   the `submitTransactions` batch endpoint and blocks arriving via sync bypass it
-  entirely, so it is **not** consensus validation. Because dai no longer knows
-  either type, the engine's own rebuild watcher
+  entirely, so it is **not** consensus validation. Because dai knows neither
+  type — dai has no P2P surface at all (§24) — the engine's own rebuild watcher
   (`services/p2p-engine/src/replay.ts`) owns validation and projection of the
-  records; the wallet's independent watcher does the same for `social.p2p-swap`
-  in the dai deployment.
+  records; an independent wallet-side watcher for `social.p2p-swap` (client
+  verification that never trusts the engine's projection) is optional later
+  work (§18).
 
 The only *chain-level* work is a later phase, not required here:
 
