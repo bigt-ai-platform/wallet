@@ -90,8 +90,8 @@ async function refresh(page: Page) {
 }
 
 /** A CONFIRMED tx paying `address`, found via the node's address index. */
-async function waitConfirmedByAddress(request: any, address: string) {
-  for (let i = 0; i < 90; i++) {
+async function waitConfirmedByAddress(request: any, address: string, tries = 90) {
+  for (let i = 0; i < tries; i++) {
     const res = await request.post(`${E2E_SERVER_URL}getTransactionsStatusByAddress`, { data: { address } });
     const data = await res.json().catch(() => ({}));
     const tx = (data.transactions || []).find((t: any) => t.status === 'CONFIRMED');
@@ -139,15 +139,23 @@ test.describe('P2P Demo (real L0)', () => {
     const genesisKey = sdk.PQKey.fromMLDSA(new Uint8Array(32).fill(0x01));
     const genesisWallet = sdk.Wallet.fromKeysURL(params, [genesisKey], E2E_SERVER_URL);
     genesisWallet.setServerURL(E2E_SERVER_URL);
-    const fundTx = await genesisWallet.payToScript(
-      null,
-      sdk.Coin.valueOf(GIVE_UNITS),
-      null,
-      vault.redeemScript,
-    );
-    const escrowTxHash = fundTx.getHash().toString();
-    console.log('escrow funded:', escrowTxHash, '→', escrowAddress);
-    const escrowTx = await waitConfirmedByAddress(request, escrowAddress);
+    // The single-validator L0 reorgs, so the genesis change output flips
+    // spendPending between runs. Wait for a CONFIRMED spendable BIG candidate,
+    // then retry the whole funding if the tx never confirms — otherwise the
+    // first build races a pending output and the node drops it (UNKNOWN).
+    let escrowTx: any = null;
+    let escrowTxHash = '';
+    for (let attempt = 0; attempt < 3 && !escrowTx; attempt++) {
+      for (let i = 0; i < 60; i++) {
+        const cands: any[] = await genesisWallet.calculateAllSpendCandidates(null, false).catch(() => []);
+        if (cands.some((c) => c.getUTXO()?.getTokenId() === 'bc' && c.getUTXO()?.isConfirmed())) break;
+        await sleep(2000);
+      }
+      const fundTx = await genesisWallet.payToScript(null, sdk.Coin.valueOf(GIVE_UNITS), null, vault.outputScript);
+      escrowTxHash = fundTx.getHash().toString();
+      console.log(`escrow funded (attempt ${attempt + 1}):`, escrowTxHash, '→', escrowAddress);
+      escrowTx = await waitConfirmedByAddress(request, escrowAddress, 45);
+    }
     expect(escrowTx, 'escrow funding did not confirm').not.toBeNull();
     await assertEvidence(request, escrowTx.txHash, escrowAddress);
     // The order's giveToken must equal what the engine normalizes from the UTXO.
