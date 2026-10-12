@@ -56,6 +56,7 @@ export interface P2pOrder {
   sellerReputation?: {
     tier: 'new' | 'established' | 'trusted';
     trades: number;
+    trades30d: number;
     completionRate: number;
     disputes: number;
     lostDisputes: number;

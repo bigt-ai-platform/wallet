@@ -140,6 +140,18 @@ describe("reputationFromEvents — wash resistance and tiers", () => {
     expect(seller.counterparties).toBe(1);
   });
 
+  it("counts only the last 30 days of outcomes in trades30d", () => {
+    const now = 1_700_000_000_000 + 60 * 24 * 60 * 60 * 1000; // 60 days after the fixture base
+    const old = completedLog("swap-0000000000000001", 1_700_000_000_000);
+    const recent = completedLog("swap-0000000000000002", now - 5 * 24 * 60 * 60 * 1000).map((e) => ({
+      ...e,
+      buyerDid: B2,
+    }));
+    const seller = reputationFromEvents([...old, ...recent], { now }).get(S)!.seller;
+    expect(seller.trades).toBe(2);
+    expect(seller.trades30d).toBe(1);
+  });
+
   it("counts unlimited swaps across distinct counterparties", () => {
     const log = [
       ...completedLog("swap-0000000000000001", 1_700_000_000_000),

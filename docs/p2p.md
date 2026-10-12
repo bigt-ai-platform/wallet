@@ -981,11 +981,13 @@ Velocity limits (§16) still apply on top.
 `established` ≥ 3 counted trades, ≥ 80% completion; otherwise `new`.
 
 **Visibility.** Public summary for anyone — `GET /public/reputation/:did`
-(PII-free counts, rates, latencies, tier; zero-filled for unknown DIDs) and
-per-seller `sellerReputation` embedded in `GET /public/orders`. The per-swap
-attribution behind the summary is admin-only (`GET /admin/reputation/:did`).
+(PII-free counts, rates, latencies, tier — including `trades30d`, counted
+outcomes in the last 30 days; zero-filled for unknown DIDs) and per-seller
+`sellerReputation` embedded in `GET /public/orders`. The per-swap attribution
+behind the summary is admin-only (`GET /admin/reputation/:did`).
 The wallet badges order cards with tier stars plus
-`{{trades}} trades · {{pct}}% completed` (i18n key `p2p.rep`, 12 languages).
+`{{trades30d}}/30d · {{trades}} trades · {{pct}}% completed` (i18n key
+`p2p.rep`, 12 languages).
 
 Reputation is **advisory**: it informs a counterparty's choice and never gates
 a transition — no state-machine rule and no escrow path depends on it.

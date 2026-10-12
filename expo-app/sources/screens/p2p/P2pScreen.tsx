@@ -593,6 +593,7 @@ export default function P2pScreen() {
                     {'★'.repeat(tierStars(o.sellerReputation.tier))}
                     {'☆'.repeat(3 - tierStars(o.sellerReputation.tier))}{' '}
                     {t('p2p.rep', {
+                      trades30d: o.sellerReputation.trades30d,
                       trades: o.sellerReputation.trades,
                       pct: Math.round(o.sellerReputation.completionRate * 100),
                     })}

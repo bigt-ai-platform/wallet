@@ -45,6 +45,8 @@ export interface RoleReputation {
   lostDisputes: number;
   /** Completed volume (pair-capped), want + give units. */
   volume: VolumeAmount[];
+  /** Counted terminal swaps whose outcome landed in the last 30 days. */
+  trades30d: number;
   /** Mean match → payment claim, ms (buyer-side). */
   avgPayMs: number | null;
   /** Mean payment claim → seller confirm, ms (seller-side). */
@@ -97,6 +99,9 @@ const ESTABLISHED_COMPLETION = 0.8;
 
 const TERMINAL = new Set(["COMPLETED", "EXPIRED", "ESCROW_REFUNDED", "CANCELLED"]);
 
+/** Rolling window for `trades30d`. */
+const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
 function emptyRole(): RoleReputation {
   return {
     trades: 0,
@@ -109,6 +114,7 @@ function emptyRole(): RoleReputation {
     disputes: 0,
     lostDisputes: 0,
     volume: [],
+    trades30d: 0,
     avgPayMs: null,
     avgConfirmMs: null,
     avgReleaseMs: null,
@@ -216,9 +222,10 @@ function attribution(row: SwapRow): SwapAttribution[] {
  */
 export function reputationFromEvents(
   events: readonly P2pSwapEvent[],
-  opts: { pairCap?: number } = {},
+  opts: { pairCap?: number; now?: number } = {},
 ): Map<string, ReputationReport> {
   const rows = rowsFromEvents(events, Math.max(1, opts.pairCap ?? 3));
+  const windowStart = (opts.now ?? Date.now()) - THIRTY_DAYS_MS;
   const out = new Map<string, ReputationReport>();
   const report = (did: string): ReputationReport => {
     let r = out.get(did);
@@ -251,6 +258,7 @@ export function reputationFromEvents(
       else r.openSwaps += 1;
       if (!attr.counted) continue;
       r.trades += 1;
+      if (attr.at >= windowStart) r.trades30d += 1;
       if (attr.completed) r.completed += 1;
       if (attr.expired) r.expired += 1;
       if (attr.cancelled) r.cancelled += 1;
@@ -316,7 +324,7 @@ export function reputationForDid(did: string, map: ReadonlyMap<string, Reputatio
 export function reputationDetail(
   events: readonly P2pSwapEvent[],
   did: string,
-  opts: { pairCap?: number } = {},
+  opts: { pairCap?: number; now?: number } = {},
 ): ReputationDetail {
   const rows = rowsFromEvents(events, Math.max(1, opts.pairCap ?? 3));
   const swaps = rows

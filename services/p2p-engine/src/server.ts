@@ -743,6 +743,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return {
       tier: r.seller.tier,
       trades: r.seller.trades,
+      trades30d: r.seller.trades30d,
       completionRate: r.seller.completionRate,
       disputes: r.seller.disputes,
       lostDisputes: r.seller.lostDisputes,
