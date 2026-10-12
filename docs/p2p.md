@@ -1,10 +1,5 @@
 # P2P settlement — 2-of-3 PQ escrow, seller-confirmed release (CNY rails)
 
-> **PayPal rail removed.** The engine is CNY-only (WeChat Pay / Alipay / bank):
-> the buyer pays the seller directly and the seller confirms on their own
-> statement. The PayPal invoice/payout/webhook automation described in later
-> sections was deleted; those references are historical.
-
 **Status: the wallet UI and guide are built and shipped; the engine is in-repo
 but not yet live.** The happy path is **seller-confirmed, seller-released** and
 is the *same shape on every fiat rail*: the buyer pays the seller directly, the
@@ -75,9 +70,8 @@ drives the wallet UI, and the harness re-checks both legs with
 | Agent surface | **none** — removed from dai |
 
 The split is by layer: the on-chain half and the client that holds keys live in
-the wallet; the service half (a database, dispute workflow, optional PayPal
-secrets for the automation phase) lives in a service that must not run in a
-client; dai is not involved.
+the wallet; the service half (a database, the dispute workflow) lives in a
+service that must not run in a client; dai is not involved.
 
 ---
 
@@ -91,8 +85,8 @@ client; dai is not involved.
 | Assemble + broadcast the spend | release / refund | ✅ `updateScriptWithSignature` (`core/script/ScriptBuilder.java:380-429`) → `POST /submitTransaction` (`srv/server/BaseDispatcherController.java:245-251`) |
 | Prove a claimed tx | lock / release evidence | ✅ `POST /getTransactionStatus` (`srv/server/BaseDispatcherController.java:375-394`) — **status and address only, no amounts** |
 | Enforced refund-after-timeout | trustless refund | ❌ CLTV builders exist (`core/script/ScriptBuilder.java:484-495`) but consensus never checks that a tx's `locktime` has elapsed — no `isFinal` rule in `MempoolService.verifyTransaction` or `ServiceBaseCheck`. Not usable. |
-| Fiat receipt a human can see | payment confirmation | ✅ the seller's own bank / PayPal / WeChat / Alipay app — the ledger the seller already trusts |
-| Machine fiat verification (automation phase only) | auto-release | ⚠️ PayPal Invoices v2 + webhooks — works for PayPal, **no counterpart exists for personal CNY transfers, ever** |
+| Fiat receipt a human can see | payment confirmation | ✅ the seller's own bank / WeChat / Alipay app — the ledger the seller already trusts |
+| Machine fiat verification | auto-release | ❌ **no counterpart exists for personal CNY transfers** (no collection API for personal accounts) |
 
 The seller confirming their *own* balance is the strongest signal that exists
 on every rail: the seller is looking at the money. No API can beat that, and
@@ -103,9 +97,9 @@ buyer-pays-seller + seller-confirm + platform arbitration).
 
 Three alternatives were rejected:
 
-- **Engine-verified fiat as the only path** — works on PayPal, impossible on
-  personal CNY rails, and made the engine the sole judge of a fact the seller
-  can see directly. Kept as the *automation* phase (§20), not the design.
+- **Engine-verified fiat as the only path** — impossible on personal CNY rails
+  (there is no machine payment event), and it would make the engine the sole
+  judge of a fact the seller can see directly.
 - **L1 order-book escrow** — real on-chain deadline and automatic refund
   (`timeoutOrdersToCancelled` → `payoutCancelledOrders`,
   `srv/server/service/base/ServiceBaseOrder.java:567-577,524-533`, capped by
@@ -166,22 +160,21 @@ The only *chain-level* work is a later phase, not required here:
 
 ## 4. The rails — the only difference is conflict evidence
 
-Both rails share the entire happy path (§8). The *only* thing that differs is
-what evidence exists when a conflict goes to arbitration (§12):
+The WeChat / Alipay / bank rails share the entire happy path (§8). The *only*
+thing that differs is what evidence exists when a conflict goes to arbitration
+(§12):
 
-| | PayPal | CNY rails (WeChat / Alipay / bank) |
+| | WeChat / Alipay | Bank transfer |
 |---|---|---|
-| Where the seller sees the money | own PayPal activity | own bank / WeChat / Alipay app 流水 |
-| Machine-verifiable payment event | none on a direct transfer; in the automation phase the engine's own invoice fires `INVOICING.INVOICE.PAID` | **none — and none is possible** (no collection API for personal accounts) |
-| Arbitration evidence pack | PayPal transaction id + email receipt; seller's activity export; (automation phase: RSA webhook + Transaction Search) | 流水号 (transaction id) + receipt sha256 + seller's own ledger + per-swap remark code |
-| Clawback by the sender | PayPal goods-&-services dispute window exists — sellers should receive as a personal transfer or price the risk | none — personal transfers are final |
-| Freeze (冻卡) risk | low | medium–high for crypto-pattern transfers — runbook in §16 |
-| Collection API for personal accounts | none (transfers only) | none — corporate 银企直联 only, automation phase C4-style |
+| Where the seller sees the money | own WeChat / Alipay app 流水 | own bank statement 附言/备注 |
+| Machine-verifiable payment event | **none — and none is possible** (no collection API for personal accounts) | **none** |
+| Arbitration evidence pack | 流水号 (transaction id) + receipt sha256 + seller's own ledger + per-swap remark code | 转账流水号 + receipt sha256 + seller's ledger + per-swap remark code |
+| Clawback by the sender | none — personal transfers are final | none — personal transfers are final |
+| Freeze (冻卡) risk | medium–high for crypto-pattern transfers — runbook in §16 | medium–high; prefer bank for large amounts |
 
-Everything else — order, match, escrow lock, proof, confirm, release, refund,
-dispute, anchor — is one protocol with one state machine (§9), one API (§11),
-one UI, one engine. A swap picks its rail at match time (`wantRail`) and never
-touches both.
+Order, match, escrow lock, proof, confirm, release, refund, dispute and anchor
+are one protocol with one state machine (§9), one API (§11), one UI, one engine.
+A swap picks its rail at match time (`wantRail`).
 
 ### CNY rail properties
 
@@ -212,8 +205,8 @@ constants in the app.
     │                    2. fund 2-of-3 P2SH escrow on L0 ◀──────│
     │        3. getTransactionStatus → CONFIRMED + address + amount
     │                            │                                │
-    │ 4. signed payment-instructions (rail, 户名 / PayPal email,   │
-    │    account/QR, exact amount, remark code) ◀─────────────────│ (profile)
+    │ 4. signed payment-instructions (rail, 户名, account/QR,      │
+    │    exact amount, remark code) ◀─────────────────────────────│ (profile)
     │                            │                                │
     │ 5. buyer pays seller DIRECTLY on the rail, remark=code       │
     │───────────────────────────────────────────────────────────▶│
@@ -245,7 +238,6 @@ Two outbound dependencies, no Ethereum, **no fiat API on the happy path**:
 |---|---|---|
 | Bigtangle L0 node | JSON over HTTP | `submitTransaction`, `getTransactionStatus`, `getOutputs`, `getBalances`, `launchPayMultiSign`, `payMultiSign`, `getPayMultiSignAddressList` |
 | Bigtangle L1-SOCIAL | JSON over HTTP | `submitTransaction` with `dataclassname="SocialRecord"` (order/cancel/audit anchor); `getTips`, `getBlockByHash`, `getTransactionStatus` (replay watcher + txid confirmation) |
-| PayPal (automation phase only, §20) | REST + webhooks | `https://api-m.paypal.com` (live) / `https://api-m.sandbox.paypal.com` (sandbox) |
 
 Node auth is off on a stock node (`server.permissioned=false`,
 `server.ipcheck=false` — `srv/server/config/ServerConfiguration.java:155,271`).
@@ -375,9 +367,8 @@ Binance P2P asks for, minus the custody.
 There is no invoice, no webhook and no payout on the happy path, and for a
 personal CNY transfer there never will be: WeChat Pay and Alipay expose no
 collection API for personal accounts, and a natural-person bank account cannot
-receive callbacks. The PayPal rail settles the same way — the buyer sends a
-direct transfer to the seller's PayPal; the engine's invoice/webhook route is
-the automation phase (§20), not a dependency.
+receive callbacks. The buyer sends a direct transfer to the seller; the engine
+never touches fiat, and only enforces the protocol.
 
 The fiat signal is therefore: **the seller attests that money is in their
 account.** That is strong evidence on the seller's side (they are looking at
@@ -393,18 +384,18 @@ whole-body signed, party-scoped reads as `POST /swaps/mine` / `/swaps/get`
 
 ---
 
-## 8. Flow (identical on both rails)
+## 8. Flow
 
 ```
   buyer                     p2p-engine                         seller
     │                            │                                │
-    │ 1. match (DID-signed, wantCurrency, wantRail∈{paypal,wechat,alipay,bank})
+    │ 1. match (DID-signed, wantCurrency, wantRail∈{wechat,alipay,bank})
     │───────────────────────────▶│                                │
     │                    2. fund 2-of-3 P2SH escrow on L0 ◀──────│
     │            3. getTransactionStatus → CONFIRMED + address + amount
     │                            │                                │
-    │ 4. signed GET payment-instructions (rail, 户名 / PayPal email,   │
-    │    exact amount, remark code) ◀─────────────────────────────│ (profile)
+    │ 4. signed GET payment-instructions (rail, 户名, exact amount, │
+    │    remark code) ◀───────────────────────────────────────────│ (profile)
     │                            │                                │
     │ 5. buyer transfers fiat directly to seller, remark=code,      │
     │    uploads receipt → POST /swaps/:id/proof                   │
@@ -440,8 +431,8 @@ tap **after** the seller's own checks (§12), not a receipt-sighting.
 ### Rate lock
 
 A real implementation needs an oracle and a deviation threshold before
-`escrow_lock`; the invoice/instruction amount is fixed at match time either
-way, so the on-chain and fiat legs are always denominated consistently.
+`escrow_lock`; the instruction amount is fixed at match time either way, so the
+on-chain and fiat legs are always denominated consistently.
 
 ---
 
@@ -461,7 +452,7 @@ any pre-release state ──either party──▶ CANCELLED
   releases anything on its own.
 - **`PAYMENT_CLAIMED → PAYMENT_VERIFIED`** requires the **seller's** DID-signed
   `confirm`. `PAYMENT_PENDING → PAYMENT_VERIFIED` is also allowed (the seller
-  confirmed without the buyer uploading proof — e.g. a PayPal transfer visible
+  confirmed without the buyer uploading proof — e.g. a transfer visible
   instantly in the seller's app).
 - A dispute freezes the swap via the existing `dispute` field (no new status);
   resolution is an explicit arbitration outcome (§12).
@@ -583,8 +574,7 @@ asks for, minus the custody.
    the payment instructions as delivered (engine-signed, so a mid-swap account
    change provably fails), the proof upload (流水号 + receipt sha256 + remark +
    paidAt), the escrow lock proof, and — per rail — whatever the table in §4
-   offers (PayPal transaction id / activity export; CNY 流水号 + seller's
-   in-app ledger view).
+   offers (CNY 流水号 + the seller's in-app ledger view).
 3. **AI arbitration** reviews the pack against the rules below and proposes
    `release` or `refund` with a written rationale. The human operator confirms
    (or overrides, on the record) and the admin route executes: the engine
@@ -621,7 +611,6 @@ asks for, minus the custody.
 | Seller changes payment details mid-swap | instructions are engine-signed per swap; a mismatch is the seller's fault → the buyer's signed copy + proof wins |
 | Receipt from an older swap replayed | remark code is per-swap and TTL-bound; amount+time+remark must all match |
 | Both parties collude to fake a trade (wash) | out of scope for a swap; limit as abuse control (§16) |
-| PayPal goods-&-services chargeback after release | the window between `PAYMENT_VERIFIED` and `ESCROW_RELEASED` must be sub-minute; after release a chargeback is a dispute, not an automatic refund — sellers should receive as a personal transfer or price the risk |
 
 No step auto-releases on silence. Silence always resolves through the dispute
 path.
@@ -646,7 +635,7 @@ Residual risks, stated rather than hidden:
 - **Arbitration error** — an AI-assisted human can still get a case wrong; the
   mitigation is the evidence pack being both parties' signed material plus the
   rail's own final ledger, and the operator's override being on the record.
-- **Chargeback after release (PayPal)** — keep the verified→released window
+- **Chargeback after release** — keep the verified→released window
   sub-minute; after release treat reversals as disputes.
 - **冻卡 (frozen account, CNY)** — see runbook in §16.
 
@@ -690,7 +679,7 @@ Residual risks, stated rather than hidden:
 - **The model never supplies trusted evidence** — signatures are produced by the
   service, and claimed transactions are re-checked against the node (status,
   destination address **and amount**).
-- **Payment profile** (method, 户名, account/QR, bank + card, PayPal email):
+- **Payment profile** (method, 户名, account/QR, bank + card):
   encrypted engine store, party-scoped reads, **never anchored**.
 - **Receipts**: durable object storage (MinIO / user Drive — the durability
   rule below), the event carries only the file ref + sha256 + 流水号. The image
@@ -698,7 +687,7 @@ Residual risks, stated rather than hidden:
   arbiter.
 - **Anchor**: `social.p2p-swap` records carry status transitions and refs only;
   the public view stays PII-redacted (`P2pSwapView` pattern, plus proof refs).
-- **PII is store-only by design**: `receiveAddress`, `paypalAccount`,
+- **PII is store-only by design**: `receiveAddress`,
   payment profiles and receipt bytes exist only in the engine store — they are
   not in any record, so a full rebuild restores the book and the event log but
   never the private fields (they are keyed to the parties, not to the chain).
@@ -739,51 +728,23 @@ small per-trade cap; tier 2 (id + name-matched accounts) — full limits.
 **The engine must never touch fiat.** No merchant account on the happy path, no
 collection code of ours, no aggregate balance: buyer → seller, directly. That
 keeps the platform out of the money-transmission business and is why there is
-no payout step on either rail.
+no payout step.
 
 ---
 
-## 17. Full automation — REMOVED (was a later phase)
+## 17. Full automation — not built
 
-> The PayPal invoice/payout/webhook automation this section describes has been
-> **deleted** — the engine is CNY-only, and a personal CNY transfer has no
-> machine fiat signal. The text below is retained for history; nothing in the
-> running engine implements it.
+The manual flow (§8) needs no automation to close: the seller's Path B presign
+(§6) already lets the engine finish the release once the state reaches
+`PAYMENT_VERIFIED`. The remaining ideas:
 
-The goal of the phase was to remove the human from step 6/7 where the rail
-allows it:
-
-- **Presign-based auto-release** — the seller's Path B presign (§6) already
-  lets the engine finish release once state reaches `PAYMENT_VERIFIED`. Add the
-  timers (`SETTLEMENT_CNY_CONFIRM_TIMEOUT`, auto-`expire`) and the confirm
-  becomes the only human tap left; a later step can drop even that where a
-  machine signal exists.
-- **PayPal machine verification** — when the buyer pays an engine-issued
-  invoice instead of a direct transfer, `INVOICING.INVOICE.PAID` (RSA-verified,
-  deduplicated on `event.id`) is a machine signal the engine can treat as the
-  confirm, auto-releasing from the seller's presign. This is the one rail where
-  full automation is possible; it is an *upgrade path for PayPal sellers*, not
-  a requirement for the product.
-- **Optional engine payout leg (PayPal)** — `POST /v1/payments/payouts` with
-  `PayPal-Request-Id: swapId` remains available for sellers who prefer engine
-  payout over a direct buyer transfer. Not on by default; contradicts §16 when
-  enabled.
+- **Presign-based auto-release** — with the timers
+  (`SETTLEMENT_CNY_CONFIRM_TIMEOUT`, auto-`expire`) the confirm becomes the only
+  human tap left. There is no machine fiat signal to drop even that for a
+  personal CNY transfer.
 - **Corporate-seller collection (C4-style)** — 银企直联 / licensed 聚合支付
   商户码 with real callbacks, **only** for seller entities that are merchants,
   never for personal accounts, and only with a licensed provider.
-
-Reference material for that phase (kept because the code ships):
-
-- **Inbound — Invoices v2:** `POST /v2/invoicing/invoices` with
-  `invoice_number = swapId`, hosted URL via `.../send`, poll via `GET`.
-- **Webhook verification** is **not HMAC-SHA256** — PayPal signs with
-  `SHA256withRSA` over `${TRANSMISSION-ID}|${TRANSMISSION-TIME}|${webhookId}|${crc32Decimal(rawBody)}`;
-  `webhookId` from the subscription record, never the request; never re-serialize
-  the body before the CRC32.
-- **Transaction Search v1** (`GET /v1/reporting/transactions`) as poll fallback;
-  `transaction_id` is **not unique**.
-- **Payouts v1** with OAuth2 client-credentials; sandbox and live are separate
-  apps.
 
 ---
 
@@ -793,11 +754,7 @@ Reference material for that phase (kept because the code ships):
    restart and is wrong with more than one instance.
 2. **Arbitration console** — the admin dispute route exists; the evidence-pack
    viewer and AI-assisted review loop (§12) are the remaining work.
-3. *(Automation phase only)* **PayPal business account with Payouts activated**,
-   `PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET` / `PAYPAL_WEBHOOK_ID`, and the
-   webhook route (`POST /webhooks/paypal`, implemented — RSA-signed, raw-body,
-   `timingSafeEqual`, idempotent on `event.id`).
-4. **Escrow signer** — *delivered:* engine key management
+3. **Escrow signer** — *delivered:* engine key management
    (`scripts/p2p-engine-key.mjs`) plus the scriptSig assembly /
    `submitTransaction` broadcast wiring (`services/p2p-engine/src/escrowSpend.ts`:
    rebuild skeleton → verify party sig → add engine key → broadcast → await
@@ -818,18 +775,16 @@ Reference material for that phase (kept because the code ships):
 |---|---|
 | **`../blockchain`** | Java protocol oracle — P2SH multisig, PQ verify, `PayMultiSign`, `getTransactionStatus`, `submitTransaction`, L1-SOCIAL ingestion. Anything the TS port does must be proven against it. |
 | **`../wallet` → `packages/bigtangle-ts`** | the TS protocol port and the client that holds keys — it owns the on-chain half of escrow. Ships `Escrow`, `ScriptBuilder.createRedeemScript` / `createP2SHOutputScript*` / `updateScriptWithSignature`, `RedeemData`, `Wallet.payToScript`, `core/PayMultiSign*`. |
-| **`../wallet` → `services/p2p-engine`** | the settlement engine: orders, swaps, whole-body signed API, seller-confirm MVP, arbitration execution, append-only events, chain anchor; parked PayPal automation. |
+| **`../wallet` → `services/p2p-engine`** | the settlement engine: orders, swaps, whole-body signed API, seller-confirm MVP, arbitration execution, append-only events, chain anchor. |
 | **`../wallet` → `packages/p2p-protocol`** | the `social.p2p-swap` record contract (build + validate). |
 | **`../wallet` → `expo-app`** | the P2P UI (Binance-P2P style) + co-sign release/refund screens. |
 | **`../wallet` → docs** | this document + the user guide/PDFs. |
 | **dai** | **nothing** — the agent surface was removed. |
-| **PayPal** (automation phase) | Invoices v2, Payouts v1, Webhooks v1, Transaction Search v1. |
 
-Why not one repo: the engine needs a database, dispute workflow and (for the
-automation phase) PayPal merchant secrets — a client app must not hold any of
-those, so the on-chain code and the engine cannot share a home just because
-they share a feature. The escrow script is a wallet capability, so it lives in
-`bigtangle-ts`.
+Why not one repo: the engine needs a database, the dispute workflow and an
+operator key — a client app must not hold any of those, so the on-chain code and
+the engine cannot share a home just because they share a feature. The escrow
+script is a wallet capability, so it lives in `bigtangle-ts`.
 
 ---
 
@@ -859,14 +814,11 @@ they share a feature. The escrow script is a wallet capability, so it lives in
    star ratings stay out of scope.
 5. **Risk controls** — KYC tiers, caps, velocity checks, name-match on tiers,
    冻卡 runbook, unusual-pattern alerts.
-6. ~~**Full automation** — PayPal invoice + webhook auto-verify on the seller's
-   presign (§17); optional corporate-seller collection with real callbacks.~~
-   **Dropped** with the PayPal rail (the engine is CNY-only).
-7. **Drop the engine key** → 2-of-2 + timelock. **Blocked on protocol work:**
+6. **Drop the engine key** → 2-of-2 + timelock. **Blocked on protocol work:**
    consensus needs an `isFinal` rule (reject txs whose `locktime` is in the
    future) in both `MempoolService.verifyTransaction` and `ServiceBaseCheck`.
    Consensus-breaking; needs a coordinated upgrade.
-8. **Distributed matching** — the L1 order book for the crypto/crypto leg, with
+7. **Distributed matching** — the L1 order book for the crypto/crypto leg, with
    the cross-rail fiat obligation still settling through the service. The
    fiat-cross book already lives on L1-SOCIAL (`social.p2p-order`, §11), so
    this phase adds only the token↔token venue (prediction/ordermatch chain,
