@@ -18,9 +18,9 @@ export const VALID_TRANSITIONS: Record<P2pSwapStatus, readonly P2pSwapStatus[]> 
   PAYMENT_CLAIMED: ["PAYMENT_VERIFIED", "EXPIRED", "CANCELLED"],
   PAYMENT_VERIFIED: ["ESCROW_RELEASED", "CANCELLED"],
   ESCROW_RELEASED: ["COMPLETED"],
-  // COMPLETED → COMPLETED exists only for `payout` (PayPal retry) and
-  // `complete` (CNY: no fiat payout step — the seller already got the CNY).
-  // No other action targets COMPLETED, so nothing can rewind a finished swap.
+  // COMPLETED → COMPLETED exists only for `complete` (CNY: no fiat payout
+  // step — the seller already got the CNY). No other action targets
+  // COMPLETED, so nothing can rewind a finished swap.
   COMPLETED: ["COMPLETED"],
   EXPIRED: ["ESCROW_REFUNDED"],
   ESCROW_REFUNDED: [],
@@ -29,10 +29,7 @@ export const VALID_TRANSITIONS: Record<P2pSwapStatus, readonly P2pSwapStatus[]> 
 
 export const ACTION_STATUS: Record<SwapAction, P2pSwapStatus> = {
   escrow_lock: "ESCROW_LOCKED",
-  payment_send: "PAYMENT_PENDING",
-  verify: "PAYMENT_VERIFIED",
   release: "ESCROW_RELEASED",
-  payout: "COMPLETED",
   expire: "EXPIRED",
   refund: "ESCROW_REFUNDED",
   cancel: "CANCELLED",

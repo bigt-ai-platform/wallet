@@ -26,8 +26,8 @@ describe("p2p settlement state machine", () => {
     expect(ACTION_STATUS.refund).toBe("ESCROW_REFUNDED");
   });
 
-  it("terminal states are final except a payout retry / complete from COMPLETED", () => {
-    expect(allowedActions("COMPLETED")).toEqual(["payout", "complete"]);
+  it("terminal states are final except a complete retry from COMPLETED", () => {
+    expect(allowedActions("COMPLETED")).toEqual(["complete"]);
     expect(canTransition("COMPLETED", "CANCELLED")).toBe(false);
     for (const s of ["ESCROW_REFUNDED", "CANCELLED"] as const) {
       expect(allowedActions(s)).toEqual([]);
@@ -35,7 +35,6 @@ describe("p2p settlement state machine", () => {
   });
 
   it("maps actions to statuses", () => {
-    expect(statusForAction("verify")).toBe("PAYMENT_VERIFIED");
     expect(statusForAction("payment_proof")).toBe("PAYMENT_CLAIMED");
     expect(statusForAction("payment_confirm")).toBe("PAYMENT_VERIFIED");
     expect(statusForAction("complete")).toBe("COMPLETED");

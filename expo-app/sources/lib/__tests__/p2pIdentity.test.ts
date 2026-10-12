@@ -65,7 +65,7 @@ describe('p2pIdentity', () => {
       giveChain: 'L0',
       wantCurrency: 'USD',
       wantAmount: '101',
-      wantRail: 'paypal',
+      wantRail: 'wechat',
       validUntil: Math.floor(Date.now() / 1000) + 3600,
     };
     const signed = { ...record, ...signP2pRecord(key, record) };

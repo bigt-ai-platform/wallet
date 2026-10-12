@@ -54,9 +54,6 @@ export interface P2pSwapRecord {
   escrowTxHash?: string;
   releaseTxHash?: string;
   refundTxHash?: string;
-  paymentRail?: string;
-  paymentRef?: string;
-  payoutRef?: string;
   /** sha256 of the buyer's receipt evidence (docs/p2p.md §14) — a
    *  hash only, so the image itself never reaches the chain. */
   receiptSha256?: string;
@@ -88,9 +85,6 @@ export function p2pSwapRecord(a: P2pSwapRecordInput): P2pSwapRecord {
   if (a.escrowTxHash !== undefined) record.escrowTxHash = a.escrowTxHash;
   if (a.releaseTxHash !== undefined) record.releaseTxHash = a.releaseTxHash;
   if (a.refundTxHash !== undefined) record.refundTxHash = a.refundTxHash;
-  if (a.paymentRail !== undefined) record.paymentRail = a.paymentRail;
-  if (a.paymentRef !== undefined) record.paymentRef = a.paymentRef;
-  if (a.payoutRef !== undefined) record.payoutRef = a.payoutRef;
   if (a.receiptSha256 !== undefined) record.receiptSha256 = a.receiptSha256;
   return record;
 }
@@ -119,9 +113,6 @@ export function validateP2pSwapRecord(r: Partial<P2pSwapRecord>): { ok: true } |
     "escrowTxHash",
     "releaseTxHash",
     "refundTxHash",
-    "paymentRail",
-    "paymentRef",
-    "payoutRef",
   ] as const) {
     const v = r[field];
     if (v !== undefined && (typeof v !== "string" || v.length === 0 || v.length > 256)) {

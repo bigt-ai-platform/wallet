@@ -149,15 +149,8 @@ async function app(chain: MockChain | null, extraEnv: NodeJS.ProcessEnv = {}): P
       ...extraEnv,
     } as NodeJS.ProcessEnv,
     guard: new ReplayGuard(() => clock),
-    paypal: {
-      createInvoice: async () => ({ id: "INV-1", url: "https://paypal.test/i/INV-1" }),
-      sendInvoice: async () => {},
-      createPayout: async () => ({ id: "PO-1", itemId: "PI-1" }),
-      getPayout: async () => ({ status: "SUCCESS", itemId: "PI-1" }),
-    },
     chain,
     now: () => clock,
-    verifyWebhook: async () => true,
     anchor: async (e) => {
       anchored.push(e);
       return { txid: "a".repeat(64) };

@@ -24,14 +24,11 @@ function event(overrides: Partial<P2pSwapEvent> = {}): P2pSwapEvent {
     giveToken: "USDT",
     giveAmount: "100",
     wantAmount: "101",
-    wantRail: "paypal",
+    wantRail: "wechat",
     wantCurrency: "USD",
     escrowAddress: "ESC",
     escrowTxHash: "f".repeat(64),
     releaseTxHash: "b".repeat(64),
-    paymentRail: "paypal",
-    paymentRef: "PAY-1",
-    payoutRef: "PO-1",
     at: 1_700_000_000_000,
     ...overrides,
   };
@@ -58,10 +55,7 @@ describe("L1-SOCIAL chain anchor (docs/p2p.md step 8)", () => {
   });
 
   it("maps an event to a record with no PII or store-only fields", () => {
-    const rec = swapEventRecord(
-      event({ buyerEmail: "buyer@x", receiveAddress: "1Recv", paypalAccount: "s@x.com", invoiceId: "INV-1" }),
-      did,
-    );
+    const rec = swapEventRecord(event({ receiveAddress: "1Recv", dispute: "OPEN" }), did);
     expect(rec).toMatchObject({
       type: "social.p2p-swap",
       from: did,
@@ -70,10 +64,9 @@ describe("L1-SOCIAL chain anchor (docs/p2p.md step 8)", () => {
       swapSeq: 5,
       giveAmount: "100",
       wantAmount: "101",
-      payoutRef: "PO-1",
       ts: 1_700_000_000_000,
     });
-    for (const pii of ["buyerEmail", "receiveAddress", "paypalAccount", "invoiceId", "invoiceUrl", "payoutStatus", "dispute"]) {
+    for (const pii of ["receiveAddress", "dispute"]) {
       expect((rec as Record<string, unknown>)[pii]).toBeUndefined();
     }
   });

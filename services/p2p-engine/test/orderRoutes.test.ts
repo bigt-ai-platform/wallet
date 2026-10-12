@@ -32,10 +32,8 @@ async function app() {
     env: {
       SETTLEMENT_ENGINE_DID: engineDid,
       SETTLEMENT_ADMIN_TOKEN: "adm",
-      SETTLEMENT_PAYPAL_INSECURE: "1",
     } as NodeJS.ProcessEnv,
     guard: new ReplayGuard(() => clock),
-    paypal: null,
     chain: null,
     now: () => clock,
     orderTxTries: 1,
@@ -57,7 +55,7 @@ function orderPayload(overrides: Record<string, unknown> = {}) {
     giveChain: "L0",
     wantCurrency: "USD",
     wantAmount: "101",
-    wantRail: "paypal",
+    wantRail: "wechat",
     validUntil: Math.floor(clock / 1000) + 3600,
     ...overrides,
   });
@@ -117,7 +115,7 @@ describe("seller-anchored order intake (orderId + L1-SOCIAL txid)", () => {
         giveChain: "L0",
         wantCurrency: "USD",
         wantAmount: "101",
-        wantRail: "paypal",
+        wantRail: "wechat",
         validUntil: Math.floor(clock / 1000) + 3600,
         orderId,
       }),
@@ -195,7 +193,7 @@ describe("POST /orders/:orderId/cancel", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive", paypalAccount: "b@x.com" }),
+      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive" }),
     });
     expect(m.statusCode).toBe(201);
     clock += 1;
@@ -224,7 +222,7 @@ describe("match claim + reopen on anchor failure", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive", paypalAccount: "b@x.com" }),
+      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive" }),
     });
     expect(m.statusCode).toBe(409);
   });
@@ -238,7 +236,7 @@ describe("match claim + reopen on anchor failure", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive", paypalAccount: "b@x.com" }),
+      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive" }),
     });
     expect(m.statusCode).toBe(500);
     expect((await store.getOrder(orderId))?.status).toBe("ACTIVE");
@@ -252,10 +250,8 @@ describe("anchored-record cross-check (verifyOrderTx)", () => {
       env: {
         SETTLEMENT_ENGINE_DID: engineDid,
         SETTLEMENT_ADMIN_TOKEN: "adm",
-        SETTLEMENT_PAYPAL_INSECURE: "1",
       } as NodeJS.ProcessEnv,
       guard: new ReplayGuard(() => clock),
-      paypal: null,
       chain: null,
       now: () => clock,
       orderTxTries: 1,

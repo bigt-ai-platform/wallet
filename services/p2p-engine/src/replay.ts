@@ -14,7 +14,7 @@
  * first; the loser is reported as a conflict, never applied over the winner.
  *
  * Rebuilt swap events carry only what the anchored record carries — PII
- * (receiveAddress, paypalAccount, buyerEmail, profiles, receipts) is store-only
+ * (receiveAddress, profiles, receipts) is store-only
  * and deliberately not recoverable from the chain (docs/p2p.md §14).
  */
 import { type NetworkParameters } from "bigtangle-ts";
@@ -192,7 +192,7 @@ function emptyResult(): Omit<SyncResult, "cursor"> {
 const EVENT_TYPE_FOR_STATUS: Record<string, P2pSwapEvent["eventType"]> = {
   MATCHED: "match",
   ESCROW_LOCKED: "escrow_lock",
-  PAYMENT_PENDING: "payment_send",
+  PAYMENT_PENDING: "instructions",
   PAYMENT_CLAIMED: "payment_proof",
   PAYMENT_VERIFIED: "payment_confirm",
   ESCROW_RELEASED: "release",
@@ -221,9 +221,6 @@ function eventFromSwapRecord(rec: P2pSwapRecord, txid: string): P2pSwapEvent {
     ...(rec.escrowTxHash !== undefined ? { escrowTxHash: rec.escrowTxHash } : {}),
     ...(rec.releaseTxHash !== undefined ? { releaseTxHash: rec.releaseTxHash } : {}),
     ...(rec.refundTxHash !== undefined ? { refundTxHash: rec.refundTxHash } : {}),
-    ...(rec.paymentRail !== undefined ? { paymentRail: rec.paymentRail } : {}),
-    ...(rec.paymentRef !== undefined ? { paymentRef: rec.paymentRef } : {}),
-    ...(rec.payoutRef !== undefined ? { payoutRef: rec.payoutRef } : {}),
     ...(rec.receiptSha256 !== undefined ? { receiptSha256: rec.receiptSha256 } : {}),
     at: rec.ts,
     txid,

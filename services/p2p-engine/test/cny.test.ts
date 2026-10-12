@@ -31,15 +31,8 @@ async function app(extraEnv: NodeJS.ProcessEnv = {}) {
       ...extraEnv,
     } as NodeJS.ProcessEnv,
     guard: new ReplayGuard(() => clock),
-    paypal: {
-      createInvoice: async () => ({ id: "INV-1", url: "https://paypal.test/i/INV-1" }),
-      sendInvoice: async () => {},
-      createPayout: async () => ({ id: "PO-1", itemId: "PI-1" }),
-      getPayout: async () => ({ status: "SUCCESS", itemId: "PI-1" }),
-    },
     chain: null,
     now: () => clock,
-    verifyWebhook: async () => true,
     anchor: async (e) => {
       anchored.push(e);
       return { txid: "a".repeat(64) };
@@ -157,7 +150,7 @@ describe("CNY rails (docs/p2p.md)", () => {
       payload: signed(seller, sellerDid, { swapId }),
     });
     expect(view.json().swap.remark).toBe(ins.json().remark);
-    expect(view.json().swap.paypalAccount).toBeUndefined();
+    expect(view.json().swap.receiveAddress).toBeUndefined();
 
     // a receipt that is not base64 is rejected before anything is stored
     bump();
@@ -194,7 +187,6 @@ describe("CNY rails (docs/p2p.md)", () => {
     expect(swapAfter.status).toBe("PAYMENT_CLAIMED");
     expect(swapAfter.receiptSha256).toBe(sha);
     expect((swapAfter as Record<string, unknown>).receipt).toBeUndefined();
-    expect(swapAfter.paymentRef).toBe("4200001234567890");
 
     // seller confirms on their own 流水 → PAYMENT_VERIFIED
     bump();
@@ -206,7 +198,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     expect(confirm.statusCode).toBe(200);
     expect(confirm.json().status).toBe("PAYMENT_VERIFIED");
 
-    // engine releases tokens and completes — no PayPal payout step exists here
+    // engine releases tokens and completes — no separate fiat payout step exists here
     bump();
     const release = await a.inject({
       method: "POST",
@@ -242,28 +234,28 @@ describe("CNY rails (docs/p2p.md)", () => {
     expect(claimAnchor.remark).toBe(ins.json().remark);
   });
 
-  it("matches a CNY order without PayPal PII and blocks the PayPal payment hint", async () => {
+  it("matches a CNY order and rejects the removed PayPal routes", async () => {
     const a = await app();
     const swapId = await toEscrowLocked(a, "alipay");
     const swap = (await store.getSwap(swapId))!;
     expect(swap.wantRail).toBe("alipay");
-    expect(swap.paypalAccount).toBeUndefined();
 
+    // the PayPal payment-hint route is gone
     const hint = await a.inject({
       method: "POST",
       url: "/payments/send",
       payload: signed(buyer, buyerDid, { swapId, paymentRef: "PAY-1" }),
     });
-    expect(hint.statusCode).toBe(409);
-    expect(hint.json().error).toContain("proof");
+    expect(hint.statusCode).toBe(404);
 
+    // and the PayPal payout action is no longer a known transition
     const payout = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
       payload: signed(engine, engineDid, { action: "payout" }),
     });
     expect(payout.statusCode).toBe(400);
-    expect(payout.json().error).toContain("complete");
+    expect(payout.json().error).toContain("unknown action");
   });
 
   it("validates instructions: rail, status, signer, and profile presence", async () => {
@@ -367,37 +359,6 @@ describe("CNY rails (docs/p2p.md)", () => {
       payload: signed(buyer, buyerDid, {}),
     });
     expect(early.statusCode).toBe(409);
-
-    // PayPal swaps reject the route outright (they have their own flow)
-    const r3 = await a.inject({
-      method: "POST",
-      url: "/orders",
-      payload: signed(seller, sellerDid, {
-        type: "limit_sell",
-        sellerDid,
-        giveToken: "USDT",
-        giveAmount: "1",
-        giveChain: "L0",
-        wantCurrency: "USD",
-        wantAmount: "1",
-        wantRail: "paypal",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
-    });
-    bump();
-    const r4 = await a.inject({
-      method: "POST",
-      url: `/orders/${r3.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", paypalAccount: "b@x.com" }),
-    });
-    bump();
-    const notCny = await a.inject({
-      method: "POST",
-      url: `/swaps/${r4.json().swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
-    });
-    expect(notCny.statusCode).toBe(400);
-    expect(notCny.json().error).toContain("not a CNY swap");
   });
 
   it("validates proofs: signer, status, txId, and remark match", async () => {
@@ -496,36 +457,6 @@ describe("CNY rails (docs/p2p.md)", () => {
       payload: signed(buyer, buyerDid, {}),
     });
     expect(byBuyer.statusCode).toBe(403);
-
-    // PayPal swaps are verified by webhook, never by this route
-    const r1 = await a.inject({
-      method: "POST",
-      url: "/orders",
-      payload: signed(seller, sellerDid, {
-        type: "limit_sell",
-        sellerDid,
-        giveToken: "USDT",
-        giveAmount: "1",
-        giveChain: "L0",
-        wantCurrency: "USD",
-        wantAmount: "1",
-        wantRail: "paypal",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
-    });
-    bump();
-    const r2 = await a.inject({
-      method: "POST",
-      url: `/orders/${r1.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", paypalAccount: "b@x.com" }),
-    });
-    bump();
-    const notCny = await a.inject({
-      method: "POST",
-      url: `/swaps/${r2.json().swapId}/confirm`,
-      payload: signed(seller, sellerDid, {}),
-    });
-    expect(notCny.statusCode).toBe(400);
 
     // and the happy path works
     bump();
@@ -765,66 +696,21 @@ describe("CNY rails (docs/p2p.md)", () => {
     expect(list.json().swaps).toEqual([]);
   });
 
-  it("completes a PayPal swap only through payout, never through complete", async () => {
+  it("has no PayPal payout step — complete is the only terminal transition", async () => {
     const a = await app();
-    const r1 = await a.inject({
-      method: "POST",
-      url: "/orders",
-      payload: signed(seller, sellerDid, {
-        type: "limit_sell",
-        sellerDid,
-        giveToken: "USDT",
-        giveAmount: "100",
-        giveChain: "L0",
-        wantCurrency: "USD",
-        wantAmount: "101",
-        wantRail: "paypal",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
-    });
-    bump();
-    const r2 = await a.inject({
-      method: "POST",
-      url: `/orders/${r1.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", paypalAccount: "b@x.com" }),
-    });
-    const swapId = r2.json().swapId as string;
-    bump();
-    await a.inject({
-      method: "POST",
-      url: `/swaps/${swapId}/transitions`,
-      payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64) }),
-    });
-    bump();
-    await a.inject({ method: "POST", url: "/payments/send", payload: signed(buyer, buyerDid, { swapId, paymentRef: "PAY-1" }) });
-    bump();
-    await a.inject({
-      method: "POST",
-      url: `/swaps/${swapId}/transitions`,
-      payload: signed(engine, engineDid, { action: "verify" }),
-    });
-    bump();
-    await a.inject({
-      method: "POST",
-      url: `/swaps/${swapId}/transitions`,
-      payload: signed(engine, engineDid, { action: "release", txHash: "b".repeat(64) }),
-    });
-    bump();
-    const complete = await a.inject({
-      method: "POST",
-      url: `/swaps/${swapId}/transitions`,
-      payload: signed(engine, engineDid, { action: "complete" }),
-    });
-    expect(complete.statusCode).toBe(400);
-    expect(complete.json().error).toContain("CNY swaps");
-
-    bump();
+    const swapId = await toEscrowLocked(a);
+    // `payout` was the PayPal-only terminal action; it is no longer known.
     const payout = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
       payload: signed(engine, engineDid, { action: "payout" }),
     });
-    expect(payout.statusCode).toBe(200);
-    expect(payout.json().status).toBe("COMPLETED");
+    expect(payout.statusCode).toBe(400);
+    expect(payout.json().error).toContain("unknown action");
+    // and no PayPal routes remain mounted
+    for (const url of ["/payments/send", `/swaps/${swapId}/invoice`, `/swaps/${swapId}/payout-sync`, "/webhooks/paypal"]) {
+      const gone = await a.inject({ method: "POST", url, payload: signed(engine, engineDid, {}) });
+      expect(gone.statusCode, url).toBe(404);
+    }
   });
 });

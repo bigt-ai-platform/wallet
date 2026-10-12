@@ -23,10 +23,7 @@ export type P2pSwapStatus =
 
 export type P2pSwapAction =
   | 'escrow_lock'
-  | 'payment_send'
-  | 'verify'
   | 'release'
-  | 'payout'
   | 'expire'
   | 'refund'
   | 'cancel'
@@ -81,15 +78,8 @@ export interface P2pSwap {
   escrowAddress?: string;
   escrowTxHash?: string;
   releaseTxHash?: string;
-  paymentRef?: string;
-  payoutRef?: string;
-  payoutStatus?: string;
-  invoiceId?: string;
-  invoiceUrl?: string;
-  paymentReversed?: boolean;
   dispute?: string;
   disputeOutcome?: 'release' | 'refund';
-  paymentRail?: string;
   /** CNY rails: per-swap remark code the transfer must carry. */
   remark?: string;
   receiptSha256?: string;
@@ -117,9 +107,6 @@ export interface CreateOrderInput {
 
 export interface MatchOrderInput {
   receiveAddress: string;
-  /** PayPal rail only — the buyer's PayPal handle. CNY orders omit it. */
-  paypalAccount?: string;
-  buyerEmail?: string;
 }
 
 /** Seller's payment instructions for one swap (docs/p2p.md §11). */
@@ -155,10 +142,8 @@ export function p2pConfigured(): boolean {
 
 /** What a deployed engine actually serves (GET /capabilities — public). */
 export interface P2pCapabilities {
-  /** Enabled rails in the engine's preference order (paypal first when wired). */
+  /** Enabled rails (CNY collection methods; docs/p2p.md). */
   rails: string[];
-  /** PayPal client configured — false means /invoice and /payout-sync 503. */
-  paypal: boolean;
   /** Engine escrow pubkey configured (the 2-of-3 participant). */
   escrow: boolean;
   /** Public engine escrow key: rebuilds the 2-of-3 vault to sign escrow spends. */
@@ -173,8 +158,7 @@ export interface P2pCapabilities {
 /**
  * The engine's capability report. Returns null (never throws) when the engine
  * is unconfigured, unreachable, or too old to expose /capabilities — callers
- * then keep their built-in defaults, so a CNY-only deploy hides the paypal
- * rail while an older engine behaves exactly as before.
+ * then keep their built-in defaults (see p2p.ts).
  */
 export async function getCapabilities(): Promise<P2pCapabilities | null> {
   if (!p2pConfigured()) return null;
@@ -185,7 +169,6 @@ export async function getCapabilities(): Promise<P2pCapabilities | null> {
     if (!Array.isArray(data.rails)) return null;
     return {
       rails: data.rails.filter((r): r is string => typeof r === 'string'),
-      paypal: !!data.paypal,
       escrow: !!data.escrow,
       escrowPubkey: typeof data.escrowPubkey === 'string' && data.escrowPubkey ? data.escrowPubkey : null,
       chain: {
@@ -297,26 +280,14 @@ export async function matchOrder(
   orderId: string,
   input: MatchOrderInput,
 ): Promise<{ swapId: string; status: string; escrowAddress: string | null }> {
-  const fields: Record<string, unknown> = { ...input, buyerDid: id.did };
-  if (!input.buyerEmail) delete fields.buyerEmail;
-  const body = signedBody(id.key, id.did, fields);
+  const body = signedBody(id.key, id.did, { ...input, buyerDid: id.did });
   return request(`/orders/${orderId}/match`, body);
-}
-
-/** Buyer records a fiat-payment hint (the invoice number / payment ref). */
-export async function sendPayment(
-  id: P2pIdentity,
-  swapId: string,
-  paymentRef: string,
-): Promise<{ swapId: string; status: string }> {
-  const body = signedBody(id.key, id.did, { swapId, paymentRef });
-  return request('/payments/send', body);
 }
 
 /**
  * Signed state transition. Which party may sign depends on the action: the
- * seller drives escrow_lock/expire/refund, the buyer cancel, and verify/
- * release/payout are the engine's (the app never calls those).
+ * seller drives escrow_lock/expire/refund, the buyer cancel, and
+ * release/complete are the engine's (the app never calls those).
  */
 export async function transition(
   id: P2pIdentity,

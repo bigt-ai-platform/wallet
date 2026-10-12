@@ -10,11 +10,8 @@ import type { P2pSwapStatus } from "p2p-protocol";
 
 export type { P2pSwapStatus };
 
-/** Fiat rails. All rails settle peer-to-peer: buyer → seller directly, with
- *  the seller confirming receipt (docs/p2p.md §7); the rails differ only in
- *  conflict evidence (§4). PayPal invoice/webhook automation is a later phase
- *  (§17), not the happy path. */
-export type PaymentRail = "paypal" | "wechat" | "alipay" | "bank";
+/** Peer-to-peer CNY collection methods (WeChat Pay / Alipay / bank transfer). */
+export type PaymentRail = "wechat" | "alipay" | "bank";
 
 /** Peer-to-peer CNY collection methods (WeChat Pay / Alipay / bank transfer). */
 export const CNY_RAILS = ["wechat", "alipay", "bank"] as const;
@@ -51,10 +48,7 @@ export interface P2pOrder extends Omit<P2pOrderInput, "validUntil"> {
 
 export const SWAP_ACTIONS = [
   "escrow_lock",
-  "payment_send",
-  "verify",
   "release",
-  "payout",
   "expire",
   "refund",
   "cancel",
@@ -70,9 +64,6 @@ export type SwapAction = (typeof SWAP_ACTIONS)[number];
 export type SwapEventType =
   | SwapAction
   | "match"
-  | "invoice"
-  | "payout_poll"
-  | "paypal_webhook"
   | "dispute_open"
   | "dispute_resolve";
 
@@ -98,20 +89,6 @@ export interface P2pSwapEvent {
   releaseTxHash?: string;
   /** On-chain refund spend that returned the escrow to the seller. */
   refundTxHash?: string;
-  paymentRail?: string;
-  paymentRef?: string;
-  payoutRef?: string;
-  /** Fiat-leg evidence (engine store only — PII and PayPal internals never
-   *  anchor on chain; each is re-derivable from PayPal by invoice_number /
-   *  payout_batch_id on a rebuild). */
-  buyerEmail?: string;
-  invoiceId?: string;
-  invoiceUrl?: string;
-  payoutItemId?: string;
-  /** PayPal payout item/batch status once observed (PENDING until then). */
-  payoutStatus?: string;
-  /** `INVOICING` capture clawed back — freeze the swap (webhook). */
-  paymentReversed?: boolean;
   /** CUSTOMER.DISPUTE state (OPEN/UPDATED blocks progress; RESOLVED clears). */
   dispute?: string;
   /** CNY-rail dispute reason (buyer/seller supplied; store-only, never anchored). */
@@ -126,14 +103,13 @@ export interface P2pSwapEvent {
   paidAt?: number;
   /** match-only, kept in the engine store but never anchored on chain. */
   receiveAddress?: string;
-  paypalAccount?: string;
   /** on-chain audit anchor txid, when the event was anchored */
   txid?: string;
   at: number;
 }
 
-/** Public-safe projection (PayPal account / receive address / buyer PII redacted). */
-export type P2pSwapView = Omit<P2pSwapEvent, "paypalAccount" | "receiveAddress" | "buyerEmail"> & {
+/** Public-safe projection (receive address redacted). */
+export type P2pSwapView = Omit<P2pSwapEvent, "receiveAddress"> & {
   /** Seller pre-signed both spend skeletons (the escrow hook is armed). Party-scoped reads only. */
   presigned?: boolean;
 };

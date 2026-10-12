@@ -19,9 +19,9 @@ import { waitForApp, configureServerUrl, goToKeys, clickTab } from '../helpers';
  *      engine key), CONFIRMED at the buyer's receive address, which the harness
  *      re-checks on L0 (e2etest.sh verify_p2p_escrow).
  *
- * Fiat verification is the engine's `verify` transition (driven by the engine
- * key here), because a real PayPal webhook cannot be produced in the e2e; the
- * fiat rail itself is out of scope for this chain test.
+ * The fiat leg is the CNY flow (seller profile → buyer instructions → buyer
+ * proof → seller confirm); the chain test's point is the escrow legs, which
+ * are rail-agnostic.
  *
  * Skipped unless the engine env is present (E2E_P2P_ENGINE_URL +
  * SETTLEMENT_ENGINE_PUBKEY + SETTLEMENT_ENGINE_KEY) and an L0 is configured.
@@ -161,8 +161,8 @@ test.describe('P2P Demo (real L0)', () => {
       await el(seller.page, 'p2p-give-token').fill(giveToken);
       await el(seller.page, 'p2p-give-amount').fill(GIVE_UNITS.toString());
       await el(seller.page, 'p2p-want-amount').fill('10');
-      await el(seller.page, 'p2p-want-currency').fill('USD');
-      await el(seller.page, 'p2p-rail-paypal').click();
+      await el(seller.page, 'p2p-want-currency').fill('CNY');
+      await el(seller.page, 'p2p-rail-wechat').click();
       await el(seller.page, 'p2p-create').click();
       await seller.page.waitForTimeout(1500);
       await el(seller.page, 'p2p-tab-open').click();
@@ -173,8 +173,6 @@ test.describe('P2P Demo (real L0)', () => {
       await el(buyer.page, 'p2p-order-0').waitFor({ timeout: 20000 });
       await el(buyer.page, 'p2p-buy-0').click();
       await el(buyer.page, 'p2p-buy-recv').fill(receiveAddress);
-      await el(buyer.page, 'p2p-buy-paypal').fill('buyer@example.com');
-      await el(buyer.page, 'p2p-buy-email').fill('buyer@example.com');
       await el(buyer.page, 'p2p-buy-confirm').click();
       await waitStatus(buyer.page, 'MATCHED');
       await shot(buyer.page, 'p2p-03-match-en.png');
@@ -192,18 +190,27 @@ test.describe('P2P Demo (real L0)', () => {
       await waitStatus(seller.page, 'ESCROW_LOCKED');
       await shot(seller.page, 'p2p-05-escrow-locked-en.png');
 
-      // ── 4. buyer reports the fiat payment ─────────────────────────────────
+      // ── 4. seller saves a CNY profile, buyer pulls instructions + claims ──
+      await el(seller.page, 'p2p-profile-method-wechat').click();
+      await el(seller.page, 'p2p-profile-name').fill('Zhang San');
+      await el(seller.page, 'p2p-profile-account').fill('wxid_demo');
+      await el(seller.page, 'p2p-profile-save').click();
+      await sleep(1500);
       await refresh(buyer.page);
       await waitStatus(buyer.page, 'ESCROW_LOCKED');
       await shot(buyer.page, 'p2p-06-buyer-locked-en.png');
-      await el(buyer.page, 'p2p-swap-0-pay').click();
+      await el(buyer.page, 'p2p-swap-0-instructions').click();
       await waitStatus(buyer.page, 'PAYMENT_PENDING');
       await shot(buyer.page, 'p2p-07-payment-pending-en.png');
+      await el(buyer.page, 'p2p-swap-0-txid').fill('4200001234567890');
+      await el(buyer.page, 'p2p-swap-0-proof').click();
+      await waitStatus(buyer.page, 'PAYMENT_CLAIMED');
 
-      // ── 5. engine verifies (stand-in for the PayPal webhook) ──────────────
-      const swapId = (await el(buyer.page, 'p2p-swap-0').textContent())!.match(/swap-[0-9a-f]{16}/)![0];
-      const verified = await engineTransition(ENGINE_URL, engineKey, engineDid, { swapId, action: 'verify' });
-      expect(verified.status).toBe('PAYMENT_VERIFIED');
+      // ── 5. seller confirms receipt on their own 流水 ──────────────────────
+      await refresh(seller.page);
+      await waitStatus(seller.page, 'PAYMENT_CLAIMED');
+      await el(seller.page, 'p2p-swap-0-confirm').click();
+      await waitStatus(seller.page, 'PAYMENT_VERIFIED');
       await refresh(buyer.page);
       await waitStatus(buyer.page, 'PAYMENT_VERIFIED');
       await shot(buyer.page, 'p2p-08-payment-verified-en.png');
@@ -264,27 +271,4 @@ async function resolveToken(request: any, txHash: string, escrowAddress: string)
     await sleep(2000);
   }
   throw new Error('could not resolve escrow token string');
-}
-
-/** Engine-key-signed state transition (the same canonical shape the app sends). */
-async function engineTransition(
-  engineUrl: string,
-  engineKey: any,
-  engineDid: string,
-  fields: Record<string, unknown>,
-) {
-  const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
-  const { randomBytes } = await import('crypto');
-  const payload = { ...fields, did: engineDid, nonce: randomBytes(8).toString('hex'), timestamp: Date.now() };
-  const canonical = JSON.stringify(payload, Object.keys(payload).sort());
-  const digest = sdk.Sha256Hash.hash(new TextEncoder().encode(canonical));
-  const signature = sdk.Utils.HEX.encode(engineKey.sign(sdk.Sha256Hash.wrap(digest)).serialize());
-  const res = await fetch(`${engineUrl}/swaps/${fields.swapId}/transitions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, signature }),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(`transition ${fields.action} → ${res.status} ${data.error || ''}`);
-  return data as { status: string; swapId: string };
 }

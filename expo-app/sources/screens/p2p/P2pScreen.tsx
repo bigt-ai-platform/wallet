@@ -16,7 +16,7 @@ import type { TokenItem } from '@/types/api';
 import {
   cancelOrder, confirmPayment, cosignEscrow, createOrder, escrowContext, fetchInstructions, getCapabilities,
   getMyProfiles, getSwap, listOpenOrders, matchOrder, mySwaps, openDispute, p2pConfigured, presignEscrow,
-  saveProfile, sendPayment, submitProof, transition,
+  saveProfile, submitProof, transition,
   type P2pCapabilities, type P2pCnyRail, type P2pIdentity, type P2pOrder,
   type P2pPaymentInstructions, type P2pPaymentProfile, type P2pSwap, type P2pSwapAction,
 } from '@/services/p2p';
@@ -26,7 +26,7 @@ type Tab = 'open' | 'mine';
 /** Fiat rails (docs/p2p.md §7): buyer pays seller directly; seller confirms receipt. */
 const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank'];
 /** Built-in rail list — used until the engine's /capabilities report arrives. */
-const DEFAULT_RAILS: readonly string[] = ['paypal', ...CNY_RAILS];
+const DEFAULT_RAILS: readonly string[] = [...CNY_RAILS];
 function isCnyRail(rail?: string): boolean {
   return !!rail && CNY_RAILS.includes(rail);
 }
@@ -53,8 +53,6 @@ export default function P2pScreen() {
   const [busy, setBusy] = React.useState(false);
   const [selected, setSelected] = React.useState<P2pOrder | null>(null);
   const [buyRecv, setBuyRecv] = React.useState('');
-  const [buyPaypal, setBuyPaypal] = React.useState('');
-  const [buyEmail, setBuyEmail] = React.useState('');
   const [txHashes, setTxHashes] = React.useState<Record<string, string>>({});
   const [txIds, setTxIds] = React.useState<Record<string, string>>({});
   // Inline feedback: react-native-web's Alert.alert is a no-op, so every P2P
@@ -82,9 +80,8 @@ export default function P2pScreen() {
   const [wantAmount, setWantAmount] = React.useState('');
   const [validHours, setValidHours] = React.useState('24');
   const [wantRail, setWantRail] = React.useState('wechat');
-  // What this engine actually serves (GET /capabilities): a CNY-only deploy
-  // has no PayPal credentials, so its paypal chip/fields are hidden instead of
-  // failing at /invoice. null → keep DEFAULT_RAILS (older engine, see p2p.ts).
+  // What this engine actually serves (GET /capabilities): the enabled CNY
+  // rails (empty → DEFAULT_RAILS, older engine, see p2p.ts).
   const [caps, setCaps] = React.useState<P2pCapabilities | null>(null);
   const enabledRails: readonly string[] = caps ? caps.rails : DEFAULT_RAILS;
 
@@ -173,9 +170,8 @@ export default function P2pScreen() {
 
   const pickRail = (rail: string) => {
     setWantRail(rail);
-    // sensible currency default per rail (CNY rails quote CNY)
-    if (isCnyRail(rail) && wantCurrency.trim().toUpperCase() === 'USD') setWantCurrency('CNY');
-    if (!isCnyRail(rail) && wantCurrency.trim().toUpperCase() === 'CNY') setWantCurrency('USD');
+    // sensible currency default: the CNY rails quote CNY
+    if (wantCurrency.trim().toUpperCase() === 'USD') setWantCurrency('CNY');
   };
 
   const requireIdentity = (): P2pIdentity | null => {
@@ -238,15 +234,11 @@ export default function P2pScreen() {
     const id = requireIdentity();
     if (!id) return;
     const cny = isCnyRail(order.wantRail);
-    if (!buyRecv.trim() || (!cny && !buyPaypal.trim())) { setNotice({ ok: false, text: t('p2p.buyFailed') }); return; }
+    if (!cny || !buyRecv.trim()) { setNotice({ ok: false, text: t('p2p.buyFailed') }); return; }
     setBusy(true);
     try {
-      const res = await matchOrder(id, order.orderId, {
-        receiveAddress: buyRecv.trim(),
-        ...(cny ? {} : { paypalAccount: buyPaypal.trim() }),
-        buyerEmail: cny ? undefined : buyEmail.trim() || undefined,
-      });
-      setSelected(null); setBuyRecv(''); setBuyPaypal(''); setBuyEmail('');
+      const res = await matchOrder(id, order.orderId, { receiveAddress: buyRecv.trim() });
+      setSelected(null); setBuyRecv('');
       setNotice({ ok: true, text: `${t('p2p.buyTitle')}: ${res.swapId}` });
       setTab('mine');
       await loadSwaps();
@@ -286,22 +278,6 @@ export default function P2pScreen() {
       setBusy(false);
     }
   };
-
-  const pay = async (swap: P2pSwap) => {
-    const id = requireIdentity();
-    if (!id) return;
-    setBusy(true);
-    try {
-      await sendPayment(id, swap.swapId, swap.swapId);
-      await loadSwaps();
-    } catch (e) {
-      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // ── Fiat rails (docs/p2p.md §8): instructions → proof → seller confirm ──
 
   const showInstructions = async (swap: P2pSwap) => {
     const id = requireIdentity();
@@ -630,18 +606,12 @@ export default function P2pScreen() {
                 {selected?.orderId === o.orderId ? (
                   <View style={s.buyPanel}>
                     <Field label={t('p2p.receiveAddress')} value={buyRecv} onChange={setBuyRecv} testID="p2p-buy-recv" />
-                    {!isCnyRail(o.wantRail) ? (
-                      <>
-                        <Field label={t('p2p.paypalAccount')} value={buyPaypal} onChange={setBuyPaypal} testID="p2p-buy-paypal" />
-                        <Field label={t('p2p.paypalEmail')} value={buyEmail} onChange={setBuyEmail} keyboardType="email-address" testID="p2p-buy-email" />
-                      </>
-                    ) : null}
                     <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => submitBuy(o)} disabled={busy} testID="p2p-buy-confirm">
                       <Text style={s.btnText}>{t('p2p.buy')}</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
-                  <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => { setSelected(o); setBuyRecv(''); setBuyPaypal(''); setBuyEmail(''); }} testID={`p2p-buy-${i}`}>
+                  <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => { setSelected(o); setBuyRecv(''); }} testID={`p2p-buy-${i}`}>
                     <Text style={s.btnText}>{t('p2p.buy')}</Text>
                   </TouchableOpacity>
                 )}
@@ -695,7 +665,6 @@ export default function P2pScreen() {
                 txId={txIds[sw.swapId] ?? ''}
                 onTxId={(v) => setTxIds((m) => ({ ...m, [sw.swapId]: v }))}
                 onLock={() => lockAndPresign(sw)}
-                onPay={() => pay(sw)}
                 onExpire={() => runTransition(sw, 'expire')}
                 onRefund={() => refundEscrow(sw)}
                 onRelease={() => releaseEscrow(sw)}
@@ -753,10 +722,10 @@ function Field({ label, value, onChange, placeholder, keyboardType, mono, testID
   );
 }
 
-function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onPay, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, instruction, index }: {
+function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, instruction, index }: {
   swap: P2pSwap; myDid?: string; busy: boolean; txHash: string; onTxHash: (v: string) => void;
   txId: string; onTxId: (v: string) => void;
-  onLock: () => void; onPay: () => void; onExpire: () => void; onRefund: () => void;
+  onLock: () => void; onExpire: () => void; onRefund: () => void;
   onRelease: () => void; onPresign: () => void; onCancel: () => void;
   onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void;
   instruction?: P2pPaymentInstructions; index: number;
@@ -778,13 +747,8 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
       <Text style={s.subMono}>{swap.swapId}</Text>
       <Text style={s.sub}>{t('p2p.giveChain')}: {swap.giveChain ?? '-'} · {swap.wantRail ?? '-'}</Text>
       {swap.escrowAddress ? <Text style={s.sub}>{t('p2p.escrowAddress')}: {swap.escrowAddress.slice(0, 20)}…</Text> : null}
-      {swap.payoutStatus ? <Text style={s.sub}>payout: {swap.payoutStatus}</Text> : null}
-      {swap.paymentReversed ? <Text style={s.sub}>{swap.dispute ? `dispute ${swap.dispute}` : 'reversed'}</Text> : null}
       {swap.remark && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <Text style={s.subMono}>{t('p2p.remark')}: {swap.remark}</Text>
-      ) : null}
-      {swap.paymentRef && (st === 'PAYMENT_CLAIMED' || st === 'PAYMENT_VERIFIED') ? (
-        <Text style={s.subMono} testID={`p2p-swap-${index}-paymentref`}>{t('p2p.txId')}: {swap.paymentRef}</Text>
       ) : null}
       {swap.dispute ? <Text style={s.sub}>{t('p2p.aDispute')}: {swap.dispute}{swap.disputeOutcome ? ` (${swap.disputeOutcome})` : ''}</Text> : null}
       {isSeller && swap.presigned ? (
@@ -839,11 +803,7 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
 
       {isBuyer && st === 'ESCROW_LOCKED' ? (
         <View style={s.actions}>
-          {cny ? (
-            <Action label={t('p2p.aInstructions')} color={theme.colors.accent.emerald} onPress={onInstructions} disabled={busy} testID={`p2p-swap-${index}-instructions`} />
-          ) : (
-            <Action label={t('p2p.aPay')} color={theme.colors.accent.emerald} onPress={onPay} disabled={busy} testID={`p2p-swap-${index}-pay`} />
-          )}
+          <Action label={t('p2p.aInstructions')} color={theme.colors.accent.emerald} onPress={onInstructions} disabled={busy} testID={`p2p-swap-${index}-instructions`} />
           <Action label={t('p2p.aCancel')} color={theme.colors.text.secondary} onPress={onCancel} disabled={busy} testID={`p2p-swap-${index}-cancel`} />
         </View>
       ) : null}

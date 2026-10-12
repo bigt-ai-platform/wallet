@@ -1,9 +1,14 @@
-# P2P settlement — 2-of-3 PQ escrow, seller-confirmed release (PayPal & CNY)
+# P2P settlement — 2-of-3 PQ escrow, seller-confirmed release (CNY rails)
+
+> **PayPal rail removed.** The engine is CNY-only (WeChat Pay / Alipay / bank):
+> the buyer pays the seller directly and the seller confirms on their own
+> statement. The PayPal invoice/payout/webhook automation described in later
+> sections was deleted; those references are historical.
 
 **Status: the wallet UI and guide are built and shipped; the engine is in-repo
 but not yet live.** The happy path is **seller-confirmed, seller-released** and
 is the *same shape on every fiat rail*: the buyer pays the seller directly, the
-seller confirms receipt in their own bank / PayPal / WeChat / Alipay app, and
+seller confirms receipt in their own bank / WeChat / Alipay app, and
 the seller + engine co-sign the release spend. The client is complete in
 `expo-app/sources/screens/p2p/P2pScreen.tsx` — a Binance-P2P-style book (open
 sells / my swaps), order creation with token search and a rail picker, order
@@ -16,14 +21,13 @@ guide ships in 12 languages (`docs/guides/p2p*.md`) with published PDFs
 The reference engine lives in `services/p2p-engine` (moved here from dai's
 `services/settlement`): state machine, whole-body signed API, the CNY/manual
 MVP routes (`instructions → proof → confirm → dispute`), payment profiles,
-reversal/dispute freezes and chain anchoring. **Full automation is a later
-phase, not the happy path** (§20): the engine's PayPal Invoices/Payouts +
-webhook machinery is built and parked — when it runs, it can auto-verify the
-fiat and auto-release from a seller presign without anyone online, but no step
-of the manual flow depends on it.
+reversal/dispute freezes and chain anchoring. There is **no machine fiat
+verification** — for a personal CNY transfer none is possible, so the seller's
+own confirmation is the signal, and a seller presign lets the escrow close
+without anyone online.
 
-This document is the **wallet's** design doc for the whole feature — both the
-PayPal rail and the CNY rails (WeChat Pay / Alipay / bank). It was previously
+This document is the **wallet's** design doc for the whole feature — the CNY
+rails (WeChat Pay / Alipay / bank). It was previously
 `../dai/docs/p2p.md`; the feature has moved entirely into this repo. **dai no
 longer has any P2P surface** — no `p2p_*` tools, no client, no
 `social.p2p-swap` record type, no indexer projection, no projector (see
@@ -40,7 +44,7 @@ arbitration outcome — never on silence, never on the buyer's claim alone.
 `layer0-server/src/main/java/net/bigtangle/`. Everything else is a full path
 from the repo that owns it.
 
-**Demos.** A step-by-step walkthrough of all four fiat rails — PayPal, WeChat
+**Demos.** A step-by-step walkthrough of the CNY rails — WeChat
 Pay, Alipay, bank — with captured screenshots:
 [p2p-demo/p2p-all.md](p2p-demo/p2p-all.md) (PDF: `docs/p2p-demo/assets/p2p-all.pdf`).
 The whole pipeline has one entry point,
@@ -503,7 +507,7 @@ already on file). The party-scoped reads are:
   the spend skeleton needs and nothing else.
 
 The engine's own admin routes (`GET /orders`, `GET /swaps`,
-`GET /swaps/:swapId`, invoice/payout-sync, dispute resolve) stay behind
+`GET /swaps/:swapId`, dispute resolve) stay behind
 `SETTLEMENT_ADMIN_TOKEN` and are never called by the app.
 
 ---
@@ -560,9 +564,6 @@ Replay CLI (docs §14): `yarn workspace p2p-engine replay <sync|verify|rebuild>`
 chain into a scratch store and diffs (exit 1 on drift), `rebuild` wipes the
 chain-derived tables and replays (needs `POSTGRES_URL`).
 
-The PayPal invoice/payout endpoints and `POST /swaps/:id/invoice` stay in the
-codebase for the automation phase (§20); no happy-path step calls them.
-
 ---
 
 ## 12. Conflict resolution — AI-assisted arbitration
@@ -575,7 +576,7 @@ asks for, minus the custody.
 ### Process
 
 1. Either party opens a dispute (`POST /swaps/:id/dispute`) → the swap freezes:
-   forward transitions (`verify`/`release`/`payout`/`complete`) are blocked;
+   forward transitions (`release`/`complete`) are blocked;
    `expire`/`refund`/`cancel` stay available so locked tokens can still come
    home.
 2. The engine assembles the **evidence pack**: both parties' signed statements,
@@ -742,11 +743,15 @@ no payout step on either rail.
 
 ---
 
-## 17. Full automation — later phase (not the happy path)
+## 17. Full automation — REMOVED (was a later phase)
 
-Everything in this section is **built and parked** in `services/p2p-engine`;
-nothing in §8 depends on it. The goal of the phase is to remove the human from
-step 6/7 where the rail allows it:
+> The PayPal invoice/payout/webhook automation this section describes has been
+> **deleted** — the engine is CNY-only, and a personal CNY transfer has no
+> machine fiat signal. The text below is retained for history; nothing in the
+> running engine implements it.
+
+The goal of the phase was to remove the human from step 6/7 where the rail
+allows it:
 
 - **Presign-based auto-release** — the seller's Path B presign (§6) already
   lets the engine finish release once state reaches `PAYMENT_VERIFIED`. Add the
@@ -854,8 +859,9 @@ they share a feature. The escrow script is a wallet capability, so it lives in
    star ratings stay out of scope.
 5. **Risk controls** — KYC tiers, caps, velocity checks, name-match on tiers,
    冻卡 runbook, unusual-pattern alerts.
-6. **Full automation** — PayPal invoice + webhook auto-verify on the seller's
-   presign (§17); optional corporate-seller collection with real callbacks.
+6. ~~**Full automation** — PayPal invoice + webhook auto-verify on the seller's
+   presign (§17); optional corporate-seller collection with real callbacks.~~
+   **Dropped** with the PayPal rail (the engine is CNY-only).
 7. **Drop the engine key** → 2-of-2 + timelock. **Blocked on protocol work:**
    consensus needs an `isFinal` rule (reject txs whose `locktime` is in the
    future) in both `MempoolService.verifyTransaction` and `ServiceBaseCheck`.

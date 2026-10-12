@@ -26,8 +26,6 @@ export interface SettlementStore {
   listSwaps(limit?: number): Promise<P2pSwapEvent[]>;
   /** Latest event per swap where `did` is the seller or buyer (party-scoped reads). */
   listSwapsForDid(did: string, limit?: number): Promise<P2pSwapEvent[]>;
-  /** Resolve a swap by id, payout batch id, or invoice id (webhook correlation). */
-  findSwapByRef(ref: string): Promise<P2pSwapEvent | null>;
   /** The seller's collection profile for one rail (docs/p2p.md §11). */
   getProfile(sellerDid: string, method: string): Promise<PaymentProfile | null>;
   /** All CNY profiles the seller has saved. */
@@ -117,14 +115,6 @@ export class MemSettlementStore implements SettlementStore {
       .filter((s) => s.sellerDid === did || s.buyerDid === did)
       .sort((a, b) => b.at - a.at)
       .slice(0, limit);
-  }
-
-  async findSwapByRef(ref: string): Promise<P2pSwapEvent | null> {
-    for (const list of this.swapEvents.values()) {
-      const latest = list[list.length - 1];
-      if (latest && (latest.swapId === ref || latest.payoutRef === ref || latest.invoiceId === ref)) return latest;
-    }
-    return null;
   }
 
   async getProfile(sellerDid: string, method: string): Promise<PaymentProfile | null> {
@@ -298,18 +288,6 @@ export class PgSettlementStore implements SettlementStore {
       [did, limit],
     );
     return res.rows.map(rowEvent);
-  }
-
-  async findSwapByRef(ref: string): Promise<P2pSwapEvent | null> {
-    const res = await this.db.query(
-      `SELECT payload FROM p2p_swap_events e
-       JOIN (SELECT swap_id, MAX(event_seq) AS seq FROM p2p_swap_events GROUP BY swap_id) t
-         ON t.swap_id = e.swap_id AND t.seq = e.event_seq
-       WHERE e.swap_id = $1 OR e.payload->>'payoutRef' = $1 OR e.payload->>'invoiceId' = $1
-       LIMIT 1`,
-      [ref],
-    );
-    return res.rows[0] ? rowEvent(res.rows[0]) : null;
   }
 
   async getProfile(sellerDid: string, method: string): Promise<PaymentProfile | null> {

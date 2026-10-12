@@ -10,12 +10,9 @@
  *   GET  /orders                              admin: list open orders
  *   GET  /public/orders                       wallet: list open orders (no PII, no sig)
  *   POST /orders/:orderId/match               buyer matches (derives escrow)
- *   POST /payments/send                       buyer records a fiat-payment hint
  *   POST /swaps/:swapId/transitions           signed state transition
  *   POST /swaps/mine                          wallet: party-scoped swap list
  *   POST /swaps/get                           wallet: one party-scoped swap
- *   POST /swaps/:swapId/invoice               admin: issue/retry the fiat invoice (automation phase, §17)
- *   POST /swaps/:swapId/payout-sync           admin: poll payout outcome (automation phase, §17)
  *   POST /swaps/:swapId/payment-instructions  buyer: reveal the seller's payment profile (docs/p2p.md §11)
  *   POST /swaps/:swapId/proof                 buyer: claim payment → PAYMENT_CLAIMED
  *   POST /swaps/:swapId/confirm               seller: confirm receipt → PAYMENT_VERIFIED
@@ -28,7 +25,6 @@
  *   POST /profiles/mine                       seller: list own profiles
  *   GET  /swaps/:swapId                       admin: swap view (PII redacted)
  *   GET  /swaps?limit=                        admin: latest state per swap
- *   POST /webhooks/paypal                     RSA-verified, idempotent
  *
  * Only the engine (or the seller for lock/expire/refund) can advance a swap;
  * the state machine is append-only and every durable transition is anchored as
@@ -37,11 +33,10 @@
  *
  * Fiat rails (docs/p2p.md §7): the buyer pays the seller directly and the
  * seller's own confirmation is the fiat signal — same shape on every rail
- * (PayPal, WeChat, Alipay, bank); they differ only in conflict evidence (§4).
+ * (WeChat, Alipay, bank); they differ only in conflict evidence (§4).
  * The engine never touches fiat; it enforces instructions → proof → confirm,
  * freezes on dispute, and releases tokens only after the seller (or an
- * arbitration outcome) has confirmed payment. PayPal invoice/webhook
- * automation is a later phase (§17).
+ * arbitration outcome) has confirmed payment.
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import { pathToFileURL } from "node:url";
@@ -74,8 +69,6 @@ import {
   type EscrowKind,
 } from "./escrowSpend.js";
 import { HttpChainClient, verifyChainLock, verifyChainPayment, type ChainClient } from "./chain.js";
-import { paypalConfig, verifyWebhookSignature, type WebhookHeaders } from "./paypal.js";
-import { HttpPaypalClient, MockPaypalClient, type PaypalClient } from "./paypalClient.js";
 import {
   CNY_RAILS,
   isCnyRail,
@@ -110,12 +103,9 @@ export interface SettlementDeps {
   store: SettlementStore;
   env?: NodeJS.ProcessEnv;
   guard?: ReplayGuard;
-  paypal?: PaypalClient | null;
   chain?: ChainClient | null;
   now?: () => number;
   log?: boolean;
-  /** Verify a PayPal webhook (defaults to the RSA scheme + env webhook id). */
-  verifyWebhook?: (headers: WebhookHeaders, rawBody: string) => Promise<boolean>;
   /** Anchor a swap event on chain (returns the txid). Default: no-op. */
   anchor?: (event: P2pSwapEvent) => Promise<{ txid?: string } | void>;
   /**
@@ -162,7 +152,7 @@ function receiptBytes(receipt: string): Buffer | null {
 }
 
 function redact(swap: P2pSwapEvent): P2pSwapView {
-  const { paypalAccount: _p, receiveAddress: _r, buyerEmail: _b, ...view } = swap;
+  const { receiveAddress: _r, ...view } = swap;
   return view;
 }
 
@@ -575,24 +565,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   }
 
 
-  /** Step 4: create + send the exact-amount invoice (invoice_number = swapId). */
-  async function issueInvoice(
-    paypal: PaypalClient,
-    swapId: string,
-    email: string,
-    amount: string,
-    currency: string,
-  ): Promise<{ invoiceId: string; invoiceUrl?: string }> {
-    const invoice = await paypal.createInvoice(swapId, email, amount, currency);
-    await paypal.sendInvoice(invoice.id);
-    return { invoiceId: invoice.id, ...(invoice.url ? { invoiceUrl: invoice.url } : {}) };
-  }
-
-  /** Trust-model freeze: reversed capture, an open dispute, or a refund
-   *  arbitration pauses progress. expire/refund/cancel stay available so
-   *  locked tokens can still come home. */
+  /** Trust-model freeze: an open dispute or a refund arbitration pauses
+   *  progress. expire/refund/cancel stay available so locked tokens can still
+   *  come home. */
   function frozen(swap: P2pSwapEvent): string | null {
-    if (swap.paymentReversed) return "payment reversed (PayPal capture clawed back)";
     if (swap.disputeOutcome === "refund") return "dispute resolved: refund ordered";
     if (swap.dispute && swap.dispute !== "RESOLVED") return `dispute ${swap.dispute}`;
     return null;
@@ -610,17 +586,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   app.get("/healthz", async () => ({ ok: true }));
 
   /**
-   * Public capability report (no auth): which rails this engine actually
-   * serves. A CNY-only deploy has no PayPal credentials, and the PayPal
-   * endpoints answer 503 when `paypalConfig(env)` is null — so the wallet
-   * reads this at boot and hides rails that would only ever fail (docs/p2p.md).
+   * Public capability report (no auth): which rails this engine serves. CNY
+   * rails are engine config (`SETTLEMENT_CNY_RAILS`); the wallet reads this at
+   * boot and hides rails that would only ever fail (docs/p2p.md).
    * `escrow`/`chain` are diagnostics: `chain.l0` false means lock proofs are
    * accepted WITHOUT verification (server.ts escrow_lock), never a prod state.
    */
   app.get("/capabilities", async () => ({
     ok: true,
-    rails: [...(deps.paypal ? ["paypal"] : []), ...cnyRails()],
-    paypal: !!deps.paypal,
+    rails: [...cnyRails()],
     escrow: !!env.SETTLEMENT_ENGINE_PUBKEY?.trim(),
     /** Public escrow key: the wallet rebuilds the 2-of-3 vault with it. */
     escrowPubkey: env.SETTLEMENT_ENGINE_PUBKEY?.trim() || null,
@@ -662,10 +636,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!/^\d+(\.\d+)?$/.test(String(giveAmount)) || !/^\d+(\.\d+)?$/.test(String(wantAmount))) {
       return reply.code(400).send({ error: "amounts must be decimal strings" });
     }
-    // rail must be enabled: paypal, plus the CNY methods configured for this engine
-    if (!cnyRails().includes(String(wantRail)) && wantRail !== "paypal") {
-      const enabled = ["paypal", ...cnyRails()].join(", ");
-      return reply.code(400).send({ error: `wantRail not enabled (one of: ${enabled})` });
+    // rail must be one of the CNY methods configured for this engine
+    if (!cnyRails().includes(String(wantRail))) {
+      return reply.code(400).send({ error: `wantRail not enabled (one of: ${cnyRails().join(", ")})` });
     }
     if (typeof validUntil !== "number" || validUntil * 1000 <= now()) {
       return reply.code(400).send({ error: "validUntil must be in the future (unix seconds)" });
@@ -822,16 +795,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!order) return reply.code(404).send({ error: "unknown order" });
     if (order.status !== "ACTIVE") return reply.code(409).send({ error: `order is ${order.status}` });
     if (order.validUntil * 1000 <= now()) return reply.code(410).send({ error: "order expired" });
-    // CNY rails: the buyer pays the seller directly after match — no PayPal PII
-    // and no invoice recipient (docs/p2p.md §8).
-    const buyerEmail =
-      typeof body.buyerEmail === "string" && body.buyerEmail.trim() ? body.buyerEmail.trim() : undefined;
-    if (buyerEmail && buyerEmail.length > 256) return reply.code(400).send({ error: "invalid buyerEmail (1..256)" });
-    const paypalAccount =
-      typeof body.paypalAccount === "string" && body.paypalAccount ? body.paypalAccount : undefined;
-    if (!isCnyRail(order.wantRail) && !paypalAccount) {
-      return reply.code(400).send({ error: "paypalAccount required" });
-    }
     const signed = validateSignedRequest(body, buyerDid, guard);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
 
@@ -853,8 +816,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       wantCurrency: order.wantCurrency,
       escrowAddress: escrowFor(order.sellerDid, buyerDid),
       receiveAddress: body.receiveAddress,
-      paypalAccount: isCnyRail(order.wantRail) ? undefined : paypalAccount,
-      ...(buyerEmail ? { buyerEmail } : {}),
       at: now(),
     };
     // Conditional ACTIVE→MATCHED: two concurrent matches race here and the
@@ -875,36 +836,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return reply.code(201).send({ swapId, status: stored.status, escrowAddress: stored.escrowAddress ?? null });
   });
 
-  app.post("/payments/send", async (request, reply) => {
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swapId = body.swapId;
-    if (typeof swapId !== "string" || !SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    if (!swap.buyerDid) return reply.code(409).send({ error: "swap has no buyer" });
-    if (isCnyRail(swap.wantRail)) {
-      return reply.code(409).send({ error: "CNY swap: use POST /swaps/:swapId/proof" });
-    }
-    if (typeof body.paymentRef !== "string" || !body.paymentRef) {
-      return reply.code(400).send({ error: "paymentRef required" });
-    }
-    const signed = validateSignedRequest(body, swap.buyerDid, guard);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    const target = ACTION_STATUS.payment_send;
-    if (!canTransition(swap.status, target)) return reply.code(409).send({ error: `cannot ${swap.status} → ${target}` });
-    const stored = await persist({
-      ...swap,
-      seq: swap.seq + 1,
-      status: target,
-      eventType: "payment_send",
-      actorDid: swap.buyerDid,
-      paymentRail: "paypal",
-      paymentRef: body.paymentRef,
-      at: now(),
-    });
-    return { swapId, status: stored.status, rail: stored.paymentRail };
-  });
-
   app.post<{ Params: { swapId: string } }>("/swaps/:swapId/transitions", async (request, reply) => {
     const { swapId } = request.params;
     if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
@@ -922,24 +853,13 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         error: `action ${action} has a dedicated route (/swaps/:swapId/payment-instructions | proof | confirm)`,
       });
     }
-    // PayPal-only actions on a CNY swap (and vice versa): the fiat legs differ.
-    if (isCnyRail(swap.wantRail) && action === "payment_send") {
-      return reply.code(400).send({ error: "CNY swap: use POST /swaps/:swapId/proof" });
-    }
-    if (isCnyRail(swap.wantRail) && action === "payout") {
-      return reply.code(400).send({ error: "CNY swap: there is no fiat payout — use action complete" });
-    }
-    if (action === "complete" && !isCnyRail(swap.wantRail)) {
-      return reply.code(400).send({ error: "complete is for CNY swaps (PayPal completes via payout)" });
-    }
-
-    // Who must sign this transition? verify/release/payout/complete are the
-    // ENGINE's act (the old engine let the buyer self-assert them).
+    // Who must sign this transition? release/complete are the ENGINE's act
+    // (the old engine let the buyer self-assert them).
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (action === "cancel") {
       if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
-    } else if (action === "verify" || action === "release" || action === "payout" || action === "complete") {
+    } else if (action === "release" || action === "complete") {
       if (!engineDid() || did !== engineDid()) return reply.code(403).send({ error: "engine signer required" });
     } else if (did !== swap.sellerDid) {
       return reply.code(403).send({ error: "seller signer required" });
@@ -947,9 +867,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const signed = validateSignedRequest(body, did, guard);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (!canTransition(swap.status, target)) return reply.code(409).send({ error: `cannot ${swap.status} → ${target}` });
-    // Reversed capture / open dispute / refund arbitration freezes the forward
-    // path; expire/refund/cancel stay available so locked tokens can still come home.
-    if (action === "verify" || action === "release" || action === "payout" || action === "complete") {
+    // An open dispute / refund arbitration freezes the forward path;
+    // expire/refund/cancel stay available so locked tokens can still come home.
+    if (action === "release" || action === "complete") {
       const reason = frozen(swap);
       if (reason) return reply.code(422).send({ error: `swap frozen: ${reason}` });
     }
@@ -968,19 +888,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
       }
       evidence.escrowTxHash = body.txHash;
-      // Step 4 — the engine originates the invoice so INVOICING.INVOICE.PAID
-      // fires. Best-effort: a PayPal blip must not block an already-verified
-      // lock; the admin invoice route retries issuance.
-      if (deps.paypal && swap.buyerEmail && !swap.invoiceId) {
-        try {
-          Object.assign(
-            evidence,
-            await issueInvoice(deps.paypal, swapId, swap.buyerEmail, swap.wantAmount ?? "0", swap.wantCurrency ?? "USD"),
-          );
-        } catch (e) {
-          app.log.warn({ swapId, err: String(e) }, "invoice issuance failed");
-        }
-      }
     } else if (action === "release") {
       if (typeof body.txHash !== "string" || !body.txHash) return reply.code(400).send({ error: "txHash required" });
       if (deps.chain) {
@@ -990,22 +897,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
       }
       evidence.releaseTxHash = body.txHash;
-    } else if (action === "payout") {
-      if (deps.paypal) {
-        if (!swap.paypalAccount) return reply.code(409).send({ error: "swap has no paypal account" });
-        try {
-          const payout = await deps.paypal.createPayout(swapId, swap.paypalAccount, swap.wantAmount ?? "0", swap.wantCurrency ?? "USD");
-          evidence.payoutRef = payout.id;
-          if (payout.itemId) evidence.payoutItemId = payout.itemId;
-          // Step 7 evidence: item SUCCESS arrives via the payout webhook or
-          // payout-sync; until then the batch is PENDING.
-          evidence.payoutStatus = "PENDING";
-        } catch (e) {
-          return reply.code(502).send({ error: `payout failed: ${String(e).slice(0, 120)}` });
-        }
-      } else if (typeof body.payoutRef === "string") {
-        evidence.payoutRef = body.payoutRef;
-      }
     }
 
     const stored = await persist({
@@ -1017,15 +908,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       actorDid: did,
       at: now(),
     });
-    return {
-      swapId,
-      status: stored.status,
-      txid: stored.txid ?? null,
-      ...(stored.invoiceId
-        ? { invoiceId: stored.invoiceId, ...(stored.invoiceUrl ? { invoiceUrl: stored.invoiceUrl } : {}) }
-        : {}),
-      ...(stored.payoutRef ? { payoutRef: stored.payoutRef, payoutStatus: stored.payoutStatus ?? null } : {}),
-    };
+    return { swapId, status: stored.status, txid: stored.txid ?? null };
   });
 
   app.get<{ Params: { swapId: string } }>("/swaps/:swapId", async (request, reply) => {
@@ -1082,92 +965,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return { swaps: swaps.map(redact) };
   });
 
-  /**
-   * Step 4 — issue (or retry) the exact-amount invoice for a locked swap.
-   * The engine normally does this inside `escrow_lock`; this route is the
-   * retry path when issuance failed there or the swap matched without an
-   * email. Idempotent: an already-issued invoice is returned, not recreated.
-   */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/invoice", async (request, reply) => {
-    if (!requireAdmin(request, reply)) return;
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    if (!deps.paypal) return reply.code(503).send({ error: "paypal not configured" });
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    if (swap.invoiceId) {
-      return { swapId, status: swap.status, invoiceId: swap.invoiceId, invoiceUrl: swap.invoiceUrl ?? null, existing: true };
-    }
-    if (swap.status !== "ESCROW_LOCKED") {
-      return reply.code(409).send({ error: `invoice requires ESCROW_LOCKED (swap is ${swap.status})` });
-    }
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const email =
-      typeof body.buyerEmail === "string" && body.buyerEmail.trim() ? body.buyerEmail.trim() : swap.buyerEmail;
-    if (!email || email.length > 256) {
-      return reply.code(400).send({ error: "buyerEmail required (carry it on match or pass it here)" });
-    }
-    let issued: { invoiceId: string; invoiceUrl?: string };
-    try {
-      issued = await issueInvoice(deps.paypal, swapId, email, swap.wantAmount ?? "0", swap.wantCurrency ?? "USD");
-    } catch (e) {
-      return reply.code(502).send({ error: `invoice failed: ${String(e).slice(0, 120)}` });
-    }
-    const stored = await persist({
-      ...swap,
-      seq: swap.seq + 1,
-      eventType: "invoice",
-      actorDid: engineDid() || undefined,
-      buyerEmail: email,
-      ...issued,
-      at: now(),
-    });
-    return reply
-      .code(201)
-      .send({ swapId, status: stored.status, invoiceId: stored.invoiceId, invoiceUrl: stored.invoiceUrl ?? null });
-  });
-
-  /**
-   * Payout-outcome fallback (docs/p2p.md): poll the batch we created and
-   * record the observed status when it changed — the path when
-   * `PAYMENT.PAYOUTS-ITEM.*` webhooks are late or lost. The webhook handler
-   * persists the same fields; both are idempotent on the observed status.
-   */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/payout-sync", async (request, reply) => {
-    if (!requireAdmin(request, reply)) return;
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    if (!deps.paypal) return reply.code(503).send({ error: "paypal not configured" });
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    if (!swap.payoutRef) return reply.code(409).send({ error: "swap has no payout" });
-    let live: { status?: string; itemId?: string };
-    try {
-      live = await deps.paypal.getPayout(swap.payoutRef);
-    } catch (e) {
-      return reply.code(502).send({ error: `payout status failed: ${String(e).slice(0, 120)}` });
-    }
-    if (live.status && live.status !== swap.payoutStatus) {
-      const stored = await persist({
-        ...swap,
-        seq: swap.seq + 1,
-        eventType: "payout_poll",
-        actorDid: engineDid() || undefined,
-        payoutStatus: live.status,
-        ...(live.itemId ? { payoutItemId: live.itemId } : {}),
-        at: now(),
-      });
-      return { swapId, status: stored.status, payoutRef: stored.payoutRef, payoutStatus: stored.payoutStatus, changed: true };
-    }
-    return {
-      swapId,
-      status: swap.status,
-      payoutRef: swap.payoutRef,
-      payoutStatus: swap.payoutStatus ?? null,
-      changed: false,
-    };
-  });
-
   //────────── CNY rails (docs/p2p.md) ─────────────────────────────────────
   // No API and no webhook exists for a personal WeChat/Alipay/bank transfer:
   // the buyer pays the seller directly and the seller's own confirmation is
@@ -1212,7 +1009,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       status: "PAYMENT_PENDING",
       eventType: "instructions",
       actorDid: swap.buyerDid,
-      paymentRail: swap.wantRail,
       remark,
       at: now(),
     });
@@ -1281,7 +1077,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       status: "PAYMENT_CLAIMED",
       eventType: "payment_proof",
       actorDid: swap.buyerDid,
-      paymentRef: txId,
       ...(sha ? { receiptSha256: sha } : {}),
       paidAt,
       at: paidAt,
@@ -1290,9 +1085,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   });
 
   /**
-   * Seller confirms receipt on their own 流水 (§6). Seller-signed; this is the
-   * CNY rail's "webhook" — after it the engine releases tokens. PayPal swaps
-   * are rejected: their verification comes from the invoice webhook.
+   * Seller confirms receipt on their own 流水 (§6). Seller-signed — after it
+   * the engine releases tokens.
    */
   app.post<{ Params: { swapId: string } }>("/swaps/:swapId/confirm", async (request, reply) => {
     const { swapId } = request.params;
@@ -1300,9 +1094,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const swap = await deps.store.getSwap(swapId);
     if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    if (!isCnyRail(swap.wantRail)) {
-      return reply.code(400).send({ error: "confirm is for CNY swaps (PayPal swaps are verified by webhook)" });
-    }
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (did !== swap.sellerDid) return reply.code(403).send({ error: "seller signer required" });
@@ -1587,128 +1378,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return { profiles: await deps.store.listProfiles(did) };
   });
 
-  app.post("/webhooks/paypal", async (request, reply) => {
-    const raw = (request as { rawBody?: string }).rawBody ?? "";
-    const headers = request.headers as WebhookHeaders;
-    const cfg = paypalConfig(env);
-    if (!cfg && env.SETTLEMENT_PAYPAL_INSECURE !== "1") {
-      return reply.code(503).send({ error: "paypal not configured" });
-    }
-    const verify =
-      deps.verifyWebhook ??
-      ((h: WebhookHeaders, body: string) => verifyWebhookSignature(h, body, cfg?.webhookId ?? ""));
-    if (!(await verify(headers, raw))) return reply.code(401).send({ error: "invalid signature" });
-
-    let event: any;
-    try {
-      event = JSON.parse(raw);
-    } catch {
-      return reply.code(400).send({ error: "invalid json" });
-    }
-    const type = String(event?.event_type ?? "");
-    const resource = event.resource ?? {};
-
-    // Resolve the swap from correlation ids PayPal actually carries: the
-    // swap id itself (invoice_number / sender_batch_id) or a reference we
-    // stored earlier (invoice id, payout batch id).
-    async function matchSwap(candidates: unknown[]): Promise<P2pSwapEvent | null> {
-      for (const c of candidates) {
-        if (typeof c !== "string" || !c) continue;
-        const swap = SWAP_ID_RE.test(c) ? await deps.store.getSwap(c) : await deps.store.findSwapByRef(c);
-        if (swap) return swap;
-      }
-      return null;
-    }
-    function idempotent(swap: P2pSwapEvent, extra: Record<string, unknown> = {}) {
-      return { received: true, swapId: swap.swapId, status: swap.status, idempotent: true, ...extra };
-    }
-
-    if (type === "INVOICING.INVOICE.PAID") {
-      const swap = await matchSwap([
-        resource.invoice_number,
-        resource.invoice?.invoice_number,
-        resource.custom_id,
-        resource.invoice?.id,
-        resource.invoice_id,
-      ]);
-      if (!swap) return { received: true, ignored: "unknown invoice" };
-      // idempotent: only advance from PAYMENT_PENDING
-      if (swap.status !== "PAYMENT_PENDING") return idempotent(swap);
-      const stored = await persist({
-        ...swap,
-        seq: swap.seq + 1,
-        status: "PAYMENT_VERIFIED",
-        eventType: "paypal_webhook",
-        actorDid: engineDid() || undefined,
-        paymentRail: "paypal",
-        at: now(),
-      });
-      return { received: true, swapId: swap.swapId, status: stored.status };
-    }
-
-    // Outbound payout outcome (docs/p2p.md): SUCCEEDED finalizes the evidence,
-    // FAILED/HELD surfaces for a `payout` retry with the same request id.
-    if (type === "PAYMENT.PAYOUTS-ITEM.SUCCEEDED" || type === "PAYMENT.PAYOUTS-ITEM.FAILED" || type === "PAYMENT.PAYOUTS-ITEM.HELD") {
-      const observed = type.endsWith("SUCCEEDED") ? "SUCCESS" : type.endsWith("FAILED") ? "FAILED" : "ONHOLD";
-      const swap = await matchSwap([
-        resource.batch_header?.sender_batch_id,
-        resource.batch_header?.payout_batch_id,
-        resource.sender_batch_id,
-        resource.payout_batch_id,
-        resource.payout_item_id,
-        resource.payout_item?.payout_batch_id,
-      ]);
-      if (!swap) return { received: true, ignored: "unmatched payout event" };
-      if (swap.payoutStatus === observed) return idempotent(swap, { payoutStatus: observed });
-      const stored = await persist({
-        ...swap,
-        seq: swap.seq + 1,
-        eventType: "paypal_webhook",
-        actorDid: engineDid() || undefined,
-        payoutStatus: observed,
-        ...(typeof resource.payout_item_id === "string" ? { payoutItemId: resource.payout_item_id } : {}),
-        at: now(),
-      });
-      return { received: true, swapId: swap.swapId, status: stored.status, payoutStatus: stored.payoutStatus };
-    }
-
-    // Capture clawed back — freeze the swap; the seller's expire/refund path
-    // brings locked tokens home (docs/p2p.md: "freeze; refund if still locked").
-    if (type === "PAYMENT.CAPTURE.REVERSED") {
-      const swap = await matchSwap([resource.invoice_id, resource.invoice_number, resource.custom_id, resource.invoice?.id]);
-      if (!swap) return { received: true, ignored: "unmatched reversal" };
-      if (swap.paymentReversed) return idempotent(swap, { paymentReversed: true });
-      const stored = await persist({
-        ...swap,
-        seq: swap.seq + 1,
-        eventType: "paypal_webhook",
-        actorDid: engineDid() || undefined,
-        paymentReversed: true,
-        at: now(),
-      });
-      return { received: true, swapId: swap.swapId, status: stored.status, paymentReversed: true };
-    }
-
-    // Dispute opened/updated/resolved — pause the swap until RESOLVED.
-    if (type === "CUSTOMER.DISPUTE.CREATED" || type === "CUSTOMER.DISPUTE.UPDATED" || type === "CUSTOMER.DISPUTE.RESOLVED") {
-      const state = type.endsWith("RESOLVED") ? "RESOLVED" : type.endsWith("CREATED") ? "OPEN" : "UPDATED";
-      const swap = await matchSwap([resource.invoice_id, resource.invoice_number, resource.custom_id, resource.invoice?.id]);
-      if (!swap) return { received: true, ignored: "unmatched dispute" };
-      if (swap.dispute === state) return idempotent(swap, { dispute: swap.dispute });
-      const stored = await persist({
-        ...swap,
-        seq: swap.seq + 1,
-        eventType: "paypal_webhook",
-        actorDid: engineDid() || undefined,
-        dispute: state,
-        at: now(),
-      });
-      return { received: true, swapId: swap.swapId, status: stored.status, dispute: stored.dispute };
-    }
-
-    return { received: true, ignored: type || "unknown" };
-  });
-
   return app;
 }
 
@@ -1722,7 +1391,6 @@ async function main() {
   const pool = env.SETTLEMENT_STORE === "mem" || !env.POSTGRES_URL ? null : new Pool({ connectionString: env.POSTGRES_URL });
   const store = pool ? new PgSettlementStore(pool) : new MemSettlementStore();
   if (pool) await ensureWatchSchema(pool);
-  const cfg = paypalConfig(env);
   const anchorCfg = anchorFromEnv(env);
   if ((env.SETTLEMENT_L1_URL || env.SETTLEMENT_L1_SOCIAL_URL || env.SETTLEMENT_L1_SOCIAL_URLS) && !anchorCfg) {
     console.warn(
@@ -1798,11 +1466,6 @@ async function main() {
   const watchState = { height: null as number | null, hash: null as string | null, lastRunAt: null as number | null, lastError: null as string | null };
   const app = await buildApp({
     store,
-    paypal: cfg
-      ? new HttpPaypalClient(cfg)
-      : env.SETTLEMENT_PAYPAL_INSECURE === "1"
-        ? new MockPaypalClient()
-        : null,
     chain: l0Pool ? new PooledChainClient(l0Pool) : null,
     ...(anchor ? { anchor } : {}),
     ...(verifyOrderTx ? { verifyOrderTx, orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4) } : {}),
