@@ -899,8 +899,8 @@ geofencing — is an operator decision to make before shipping to users.
   unservable-head and truncated-walk safety, replay after an unserved cursor,
   and `replayVerify` drift detection (`missing` / `extra`).
 - **Reputation** (`services/p2p-engine/test/reputation.test.ts`): outcome
-  attribution (completed / expired / cancelled / refund, dispute losers,
-  reversals), latency averages, pair-cap wash resistance with raw totals, tier
+  attribution (completed / expired / cancelled / refund, dispute losers),
+  latency averages, pair-cap wash resistance with raw totals, tier
   thresholds, PII never in the summary, and the routes (public summary,
   seller badge embed in `/public/orders`, zero-fill for unknown DIDs,
   admin-only per-swap attribution).
@@ -952,7 +952,6 @@ seller can still be a slow payer.
 | `EXPIRED` | `expired` — the buyer no-show counter |
 | `ESCROW_REFUNDED` | `refunded`; with `disputeOutcome: "refund"` also the buyer's `lostDisputes` |
 | `disputeOutcome: "release"` | the seller's `lostDisputes` |
-| `paymentReversed` | `reversals` on both roles of the affected swap |
 | event timings | buyer `avgPayMs` (match → claim); seller `avgConfirmMs`, `avgReleaseMs` |
 
 `completionRate = completed / (completed + expired + refunded)` — cancellations

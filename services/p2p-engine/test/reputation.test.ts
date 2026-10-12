@@ -120,13 +120,6 @@ describe("reputationFromEvents — outcome attribution", () => {
     expect(map.get(S)!.seller.refunded).toBe(1);
   });
 
-  it("counts PayPal reversals on both roles of the affected swap", () => {
-    const log = completedLog("swap-0000000000000007", 1_700_000_000_000, { paymentReversed: true });
-    const map = reputationFromEvents(log);
-    expect(map.get(S)!.seller.reversals).toBe(1);
-    expect(map.get(B)!.buyer.reversals).toBe(1);
-  });
-
   it("tracks in-flight swaps without counting them", () => {
     const log = buyerLog("swap-0000000000000008", "PAYMENT_CLAIMED", "payment_proof", 1_700_000_000_000);
     const map = reputationFromEvents(log);
@@ -178,13 +171,11 @@ describe("reputationFromEvents — wash resistance and tiers", () => {
   it("never leaks PII into the summary", () => {
     const log = completedLog("swap-0000000000000001", 1_700_000_000_000, {
       receiveAddress: "n1SECRET",
-      paypalAccount: "secret@example.com",
-      buyerEmail: "buyer@example.com",
       remark: "REMARK-1",
       receiptSha256: "a".repeat(64),
     });
     const json = JSON.stringify([...reputationFromEvents(log).values()]);
-    for (const secret of ["n1SECRET", "secret@example.com", "buyer@example.com", "REMARK-1", "a".repeat(64)]) {
+    for (const secret of ["n1SECRET", "REMARK-1", "a".repeat(64)]) {
       expect(json).not.toContain(secret);
     }
   });

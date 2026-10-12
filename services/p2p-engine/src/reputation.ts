@@ -43,8 +43,6 @@ export interface RoleReputation {
   disputes: number;
   /** Arbitration decided against this role. */
   lostDisputes: number;
-  /** PayPal capture clawbacks observed on swaps this role took part in. */
-  reversals: number;
   /** Completed volume (pair-capped), want + give units. */
   volume: VolumeAmount[];
   /** Mean match → payment claim, ms (buyer-side). */
@@ -82,7 +80,6 @@ export interface SwapAttribution {
   refunded: boolean;
   disputed: boolean;
   lostDispute: boolean;
-  reversed: boolean;
   payMs: number | null;
   confirmMs: number | null;
   releaseMs: number | null;
@@ -111,7 +108,6 @@ function emptyRole(): RoleReputation {
     refunded: 0,
     disputes: 0,
     lostDisputes: 0,
-    reversals: 0,
     volume: [],
     avgPayMs: null,
     avgConfirmMs: null,
@@ -172,7 +168,6 @@ export function attributeSwap(list: readonly P2pSwapEvent[], counted: boolean): 
     refunded: latest.status === "ESCROW_REFUNDED",
     disputed,
     lostDispute: role === "seller" ? lostForSeller : lostForBuyer,
-    reversed: latest.paymentReversed === true,
     payMs: role === "buyer" ? payMs : null,
     confirmMs: role === "seller" ? confirmMs : null,
     releaseMs: role === "seller" ? releaseMs : null,
@@ -262,7 +257,6 @@ export function reputationFromEvents(
       if (attr.refunded) r.refunded += 1;
       if (attr.disputed) r.disputes += 1;
       if (attr.lostDispute) r.lostDisputes += 1;
-      if (attr.reversed) r.reversals += 1;
       if (attr.completed) {
         for (const [unit, amount] of [
           [row.latest.wantCurrency, row.latest.wantAmount],
