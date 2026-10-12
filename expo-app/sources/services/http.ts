@@ -549,7 +549,8 @@ export class HttpService {
       // Token metadata decimals (bc = BIGTANGLE_DECIMAL) — Java formats
       // balances with the token's own decimals, never a hardcoded 8.
       const decimals = decimalsFor(tokenid, token.decimals);
-      const human = formatTokenAmount(BigInt(c.value || 0), decimals);
+      const raw = BigInt(c.value || 0);
+      const human = formatTokenAmount(raw, decimals);
       return {
         tokenid,
         tokenname: token.tokenname || (tokenid === 'bc' ? 'BIG' : tokenid),
@@ -557,6 +558,7 @@ export class HttpService {
         confirmedBalance: human,
         unconfirmedBalance: '0',
         decimals,
+        raw: raw.toString(),
       };
     });
   }

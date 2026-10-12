@@ -71,6 +71,9 @@ export interface WalletAccountItem {
   confirmedBalance: string;
   unconfirmedBalance: string;
   decimals: number;
+  /** Raw smallest-unit amount as a decimal string — `balance` is the
+   *  human-formatted display string and is not `BigInt`-parseable. */
+  raw?: string;
   tokendisplay?: string;
 }
 

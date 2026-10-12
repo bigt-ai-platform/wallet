@@ -49,6 +49,21 @@ export function formatTokenAmount(value: bigint, decimals: number): string {
 }
 
 /**
+ * Inverse of {@link formatTokenAmount} for an exact BigInt round-trip:
+ * "3999999.99463" at 8 decimals → 3999999994630n. `BigInt()` on the display
+ * string alone throws on the fraction, so the scale has to come from `decimals`.
+ */
+export function parseTokenAmount(display: string, decimals: number): bigint {
+  const d = Math.max(0, decimals);
+  const text = (display ?? '0').trim();
+  const neg = text.startsWith('-');
+  const [whole, frac = ''] = text.replace('-', '').split('.');
+  const tail = frac.slice(0, d).padEnd(d, '0');
+  const magnitude = BigInt(whole || '0') * 10n ** BigInt(d) + (tail ? BigInt(tail) : 0n);
+  return neg ? -magnitude : magnitude;
+}
+
+/**
  * Short display form of a long token id (PQ-pubkey token ids are KBs long):
  * keeps the identifying head and tail, mirroring the profile identity rows in
  * the dai feeds app. Copy controls keep the full value.

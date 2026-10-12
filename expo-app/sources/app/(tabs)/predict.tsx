@@ -75,6 +75,29 @@ export default function PredictScreen() {
 
   React.useEffect(() => { load(); }, [load]);
 
+  const pollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+  React.useEffect(() => () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+  }, []);
+
+  /**
+   * Actions settle asynchronously: the tx lands in one block, the contract
+   * event in a later beacon block, and the payout in a later one still. A
+   * single load right after the action races that, so keep reloading for a
+   * bounded window until the state converges.
+   */
+  const schedulePoll = () => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    let n = 0;
+    pollRef.current = setInterval(() => {
+      load(true);
+      if (++n >= 30) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    }, 2000);
+  };
+
   const needUnlock = () => {
     if (!unlocked) { Alert.alert('', t('predict.unlockFirst')); return true; }
     return false;
@@ -87,6 +110,7 @@ export default function PredictScreen() {
       await fn();
       Alert.alert('', t('predict.actionDone'));
       await load(true);
+      schedulePoll();
     } catch (e) {
       console.error('Prediction action failed:', e);
       Alert.alert('', t('predict.actionFailed'));
@@ -142,6 +166,7 @@ export default function PredictScreen() {
       setQuestion('');
       Alert.alert(t('predict.created'), t('predict.createdDesc', { supply: s.toString() }));
       await load(true);
+      schedulePoll();
     } catch (e) {
       console.error('Create market failed:', e);
       Alert.alert('', t('predict.createFailed'));

@@ -29,6 +29,7 @@ import {
 } from 'bigtangle-ts';
 import { httpService } from './http';
 import { orderOnLayer1 } from './transaction';
+import { parseTokenAmount } from '@/lib/tokenformat';
 import { IS_DEV } from '@/constants/app';
 
 export const PREDICTION_CHAIN_ID = 'prediction';
@@ -171,13 +172,19 @@ export async function listEvents(): Promise<PredictionEvent[]> {
   return events;
 }
 
+/** Smallest-unit balance of a row: the raw server value when present, else the de-scaled display string. */
+function balanceUnits(item: { raw?: string; confirmedBalance?: string; balance?: string; decimals?: number }): bigint {
+  if (item.raw) return BigInt(item.raw);
+  return parseTokenAmount(item.confirmedBalance || item.balance || '0', item.decimals ?? 0);
+}
+
 /** Read the user's per-outcome balances for every listed event. */
 export async function getPositions(privateKeyHex: string, keyType?: 'PQ' | 'EC'): Promise<PredictionPosition[]> {
   const events = await listEvents();
   const balances = await httpService.getBalancesOn(predictionUrl(), privateKeyHex, keyType);
   const byToken = new Map<string, bigint>();
   if (balances.success && balances.data) {
-    for (const item of balances.data) byToken.set(item.tokenid, BigInt(item.confirmedBalance || item.balance || '0'));
+    for (const item of balances.data) byToken.set(item.tokenid, balanceUnits(item));
   }
   return events.map((event) => {
     const shares: Record<string, bigint> = {};
