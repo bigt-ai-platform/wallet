@@ -34,9 +34,10 @@ async function main(): Promise<number> {
       : "mem";
   const pool = storeMode === "pg" ? new Pool({ connectionString: env.POSTGRES_URL! }) : null;
   if (pool) await ensureWatchSchema(pool);
+  const receiptBlobs = env.SETTLEMENT_BLOB_URL?.trim() || env.SETTLEMENT_BLOB_DIR?.trim() ? blobStoreFromEnv(env) : null;
   const store =
     storeMode === "pg"
-      ? new PgSettlementStore(pool!)
+      ? new PgSettlementStore(pool!, receiptBlobs)
       : storeMode === "blob"
         ? new BlobSettlementStore(blobStoreFromEnv(env))
         : new MemSettlementStore();

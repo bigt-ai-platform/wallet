@@ -698,7 +698,10 @@ fields on chain.
 - **Receipts**: durable object storage (MinIO / user Drive — the durability
   rule below), the event carries only the file ref + sha256 + 流水号. The image
   itself never goes on chain and never leaves the party scope except to the
-  arbiter.
+  arbiter. When `SETTLEMENT_BLOB_*` is configured the proof row keeps only
+  `receipt_sha256` + a `receipt_ref` and the bytes live in the blob store
+  (any store backend — `PgSettlementStore` offloads them); without a blob target
+  the image stays in the row.
 - **Anchor**: `social.p2p-swap` records carry status transitions and refs only;
   the public view stays PII-redacted (`P2pSwapView` pattern, plus proof refs).
 - **PII is store-only by design**: `receiveAddress`,

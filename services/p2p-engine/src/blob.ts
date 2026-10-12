@@ -88,6 +88,27 @@ export class FsBlobStore implements BlobStore {
   }
 }
 
+/** In-memory store — tests and one-shot tools. */
+export class MemBlobStore implements BlobStore {
+  private readonly data = new Map<string, unknown>();
+  private id(collection: string, key: string): string {
+    return `${collection}\u0000${key}`;
+  }
+  async get(collection: string, key: string): Promise<Record<string, unknown> | null> {
+    return (this.data.get(this.id(collection, key)) as Record<string, unknown>) ?? null;
+  }
+  async put(collection: string, key: string, value: unknown): Promise<void> {
+    this.data.set(this.id(collection, key), value);
+  }
+  async del(collection: string, key: string): Promise<void> {
+    this.data.delete(this.id(collection, key));
+  }
+  async list(collection: string): Promise<string[]> {
+    const p = `${collection}\u0000`;
+    return [...this.data.keys()].filter((k) => k.startsWith(p)).map((k) => k.slice(p.length));
+  }
+}
+
 export interface S3BlobConfig {
   /** e.g. `http://127.0.0.1:9000` (MinIO) or `https://s3.eu-central-1.amazonaws.com`. */
   endpoint: string;

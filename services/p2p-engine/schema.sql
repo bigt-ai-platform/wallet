@@ -69,7 +69,10 @@ CREATE TABLE IF NOT EXISTS p2p_payment_proofs (
   tx_id          TEXT NOT NULL,
   remark         TEXT,
   receipt_sha256 TEXT,
+  -- receipt bytes live in the blob store when configured (`receipt_ref` is the
+  -- blob key); this column stays for the no-blob fallback. Additive: boot ALTERs it in.
   receipt        TEXT,
+  receipt_ref    TEXT,
   paid_at        BIGINT,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );

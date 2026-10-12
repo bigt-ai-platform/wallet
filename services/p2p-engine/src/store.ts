@@ -6,6 +6,10 @@
  * append-only shape means a replay never mutates history.
  */
 import type { EscrowSigning, PaymentProfile, PaymentProof, P2pOrder, P2pSwapEvent } from "./types.js";
+import type { BlobStore } from "./blob.js";
+
+/** Blob collection for buyer receipt bytes (docs/p2p.md §14). */
+const RECEIPTS = "receipts";
 
 export interface SettlementStore {
   createOrder(o: P2pOrder): Promise<void>;
@@ -173,7 +177,13 @@ function orderFromRow(row: any): P2pOrder {
 }
 
 export class PgSettlementStore implements SettlementStore {
-  constructor(private readonly db: Queryable) {}
+  /**
+   * `blobs` (optional) moves the buyer's receipt **bytes** out of Postgres into
+   * the durable blob store (MinIO/Drive); the row keeps only `receipt_sha256`
+   * and a ref. The image is evidence, not a row anyone queries — a DB should
+   * not carry the bytes.
+   */
+  constructor(private readonly db: Queryable, private readonly blobs: BlobStore | null = null) {}
 
   async createOrder(o: P2pOrder): Promise<void> {
     await this.db.query(
@@ -317,28 +327,44 @@ export class PgSettlementStore implements SettlementStore {
   }
 
   async addProof(p: PaymentProof): Promise<void> {
+    let receipt = p.receipt ?? null;
+    let receiptRef: string | null = null;
+    if (receipt && this.blobs) {
+      receiptRef = `${p.swapId}:${p.txId}:${p.createdAt}`;
+      await this.blobs.put(RECEIPTS, receiptRef, { receipt });
+      receipt = null; // the bytes live in the blob store, not the DB row
+    }
     await this.db.query(
-      `INSERT INTO p2p_payment_proofs (swap_id, tx_id, remark, receipt_sha256, receipt, paid_at, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [p.swapId, p.txId, p.remark ?? null, p.receiptSha256 ?? null, p.receipt ?? null, p.paidAt ?? null, new Date(p.createdAt)],
+      `INSERT INTO p2p_payment_proofs (swap_id, tx_id, remark, receipt_sha256, receipt, receipt_ref, paid_at, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+      [p.swapId, p.txId, p.remark ?? null, p.receiptSha256 ?? null, receipt, receiptRef, p.paidAt ?? null, new Date(p.createdAt)],
     );
   }
 
   async proofs(swapId: string): Promise<PaymentProof[]> {
     const res = await this.db.query(
-      `SELECT swap_id, tx_id, remark, receipt_sha256, receipt, paid_at, created_at
+      `SELECT swap_id, tx_id, remark, receipt_sha256, receipt, receipt_ref, paid_at, created_at
        FROM p2p_payment_proofs WHERE swap_id = $1 ORDER BY seq`,
       [swapId],
     );
-    return res.rows.map((r: any) => ({
-      swapId: r.swap_id,
-      txId: r.tx_id,
-      ...(r.remark ? { remark: r.remark } : {}),
-      ...(r.receipt_sha256 ? { receiptSha256: r.receipt_sha256 } : {}),
-      ...(r.receipt ? { receipt: r.receipt } : {}),
-      ...(r.paid_at != null ? { paidAt: Number(r.paid_at) } : {}),
-      createdAt: new Date(r.created_at).getTime(),
-    }));
+    const out: PaymentProof[] = [];
+    for (const r of res.rows as any[]) {
+      let receipt: string | undefined = r.receipt ?? undefined;
+      if (!receipt && r.receipt_ref && this.blobs) {
+        const blob = await this.blobs.get(RECEIPTS, r.receipt_ref);
+        if (typeof blob?.receipt === "string") receipt = blob.receipt;
+      }
+      out.push({
+        swapId: r.swap_id,
+        txId: r.tx_id,
+        ...(r.remark ? { remark: r.remark } : {}),
+        ...(r.receipt_sha256 ? { receiptSha256: r.receipt_sha256 } : {}),
+        ...(receipt ? { receipt } : {}),
+        ...(r.paid_at != null ? { paidAt: Number(r.paid_at) } : {}),
+        createdAt: new Date(r.created_at).getTime(),
+      });
+    }
+    return out;
   }
 
   async putEscrowSigning(s: EscrowSigning): Promise<void> {

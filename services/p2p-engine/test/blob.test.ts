@@ -3,8 +3,9 @@ import { mkdtemp, rm, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { FsBlobStore, EncryptedBlobStore, S3BlobStore, blobStoreFromEnv } from "../src/blob.js";
+import { FsBlobStore, EncryptedBlobStore, S3BlobStore, MemBlobStore, blobStoreFromEnv } from "../src/blob.js";
 import { BlobSettlementStore } from "../src/storeBlob.js";
+import { PgSettlementStore, type Queryable } from "../src/store.js";
 import { MemCursorStore, syncOnce, type ChainBlockView, type SocialSource } from "../src/replay.js";
 import type { PaymentProfile } from "../src/types.js";
 
@@ -165,5 +166,43 @@ describe("BlobSettlementStore", () => {
     const raw = await readFile(join(dir, Buffer.from("profiles").toString("base64url"), files[0]), "utf8");
     expect(raw).not.toContain("wxid_1");
     expect(Buffer.from(raw, "utf8").includes(Buffer.from(randomBytes(4)))).toBe(false);
+  });
+});
+
+/** Captures the INSERT params and serves them back for SELECTs. */
+class FakeDb implements Queryable {
+  inserted: unknown[][] = [];
+  private rows: Record<string, unknown>[] = [];
+  async query(sql: string, params: unknown[] = []): Promise<{ rows: any[]; rowCount: number | null }> {
+    if (sql.includes("INSERT INTO p2p_payment_proofs")) {
+      this.inserted.push(params);
+      this.rows.push({
+        swap_id: params[0], tx_id: params[1], remark: params[2], receipt_sha256: params[3],
+        receipt: params[4], receipt_ref: params[5], paid_at: params[6], created_at: params[7],
+      });
+      return { rows: [], rowCount: 1 };
+    }
+    return { rows: this.rows, rowCount: this.rows.length };
+  }
+}
+
+describe("PgSettlementStore — receipt bytes go to the blob store", () => {
+  const RECEIPT = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+
+  it("keeps only the sha256 + a ref in the row and rehydrates from the blob", async () => {
+    const db = new FakeDb();
+    const store = new PgSettlementStore(db, new MemBlobStore());
+    await store.addProof({ swapId: "swap-1", txId: "4200", receipt: RECEIPT, receiptSha256: "a".repeat(64), createdAt: 1 });
+    expect(db.inserted[0][4]).toBeNull(); // receipt column empty
+    expect(db.inserted[0][5]).toBe("swap-1:4200:1"); // receipt_ref set
+    expect((await store.proofs("swap-1"))[0].receipt).toBe(RECEIPT);
+  });
+
+  it("keeps the receipt inline when no blob store is configured", async () => {
+    const db = new FakeDb();
+    const store = new PgSettlementStore(db);
+    await store.addProof({ swapId: "s", txId: "t", receipt: RECEIPT, createdAt: 1 });
+    expect(db.inserted[0][4]).toBe(RECEIPT);
+    expect(db.inserted[0][5]).toBeNull();
   });
 });

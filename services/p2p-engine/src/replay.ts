@@ -71,6 +71,7 @@ export function pgCursorStore(db: Queryable): CursorStore {
 /** Idempotent DDL for stores that predate the watcher (additive columns/tables). */
 export async function ensureWatchSchema(db: Queryable): Promise<void> {
   await db.query(`ALTER TABLE p2p_orders ADD COLUMN IF NOT EXISTS txid TEXT`);
+  await db.query(`ALTER TABLE p2p_payment_proofs ADD COLUMN IF NOT EXISTS receipt_ref TEXT`);
   await db.query(
     `CREATE TABLE IF NOT EXISTS p2p_watch_cursor (
        id         BOOLEAN PRIMARY KEY DEFAULT true,
