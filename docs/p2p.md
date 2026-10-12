@@ -128,7 +128,9 @@ The feature uses the two chains that already exist, each as-is:
 - **L1-SOCIAL — the order book + audit records.** The social chain's ingestion
   gate (`l1-social-server/.../DispatcherController.promoteSocialRecord`) accepts
   any record whose `type` starts with `"social."` and that has `from`/`to`, and
-  stores the raw record JSON, so both record types pass with **no Java change**:
+  stores the raw record JSON — through the typed data-class path
+  (`dataclassname="SocialRecord"`) or a legacy `social.v1` memo path — so both
+  record types pass with **no Java change**:
   - `social.p2p-swap` — the engine-anchored settlement log (as before).
   - `social.p2p-order` — **seller-anchored**: the seller builds, author-signs
     and submits the order/cancel record from their own wallet key (§11), so the
@@ -136,7 +138,12 @@ The feature uses the two chains that already exist, each as-is:
     chain already has. The record is PII-free — exactly the fields the public
     book exposes.
 
-  Because dai no longer knows either type, the engine's own rebuild watcher
+  Two caveats on "any `social.*`": `social.group*` records additionally run the
+  group membership state machine (`SocialGroupStore`) at ingestion, and the gate
+  is an *ingestion* gate only — it runs on the `submitTransaction` HTTP path;
+  the `submitTransactions` batch endpoint and blocks arriving via sync bypass it
+  entirely, so it is **not** consensus validation. Because dai no longer knows
+  either type, the engine's own rebuild watcher
   (`services/p2p-engine/src/replay.ts`) owns validation and projection of the
   records; the wallet's independent watcher does the same for `social.p2p-swap`
   in the dai deployment.
@@ -538,6 +545,15 @@ SETTLEMENT_WATCH_INTERVAL_MS=15000        # watcher tick
 SETTLEMENT_WATCH_MAX_WALK=2000            # max blocks walked back per tick (rebuild uses 50000)
 ```
 
+`SETTLEMENT_NETWORK` governs the escrow derivation *and* every L1-SOCIAL anchor
+transaction. Operational prerequisite: the key that anchors a record must hold
+**BIG on L1-SOCIAL** to fund it — each anchor is a small self-paying
+transaction that spends the key's own outputs for fee + change (the engine's
+`submitSocialRecord`, the wallet's `anchorSocialRecord`) and the submit path
+fails closed with `insufficient spendable outputs for social tx` when the key is
+unfunded. That is the engine key for `social.p2p-swap`, and the **seller's own
+wallet key** for seller-anchored `social.p2p-order` records.
+
 Replay CLI (docs §14): `yarn workspace p2p-engine replay <sync|verify|rebuild>`
 — `sync` runs one incremental pass from `p2p_watch_cursor`, `verify` replays the
 chain into a scratch store and diffs (exit 1 on drift), `rebuild` wipes the
@@ -645,8 +661,9 @@ Residual risks, stated rather than hidden:
   derived from the engine-anchored `social.p2p-swap` event that references the
   order).
 - Each event is signed with `P2P_ENGINE_KEY` and anchored on L1-SOCIAL as a
-  `social.p2p-swap` record; the wallet's own rebuild watcher validates and
-  projects it.
+  `social.p2p-swap` record; the engine's rebuild watcher (`replay.ts`, below)
+  verifies the record signature and projects it, and the wallet can validate
+  the same records independently from the chain.
 - The record contract lives in `packages/p2p-protocol`:
   `P2P_SWAP_STATUSES`, `P2pSwapRecord`, `p2pSwapRecord()`,
   `validateP2pSwapRecord()`; plus `P2P_ORDER_TYPE`, `P2pOrderRecord`,
@@ -780,6 +797,12 @@ Reference material for that phase (kept because the code ships):
    rebuild skeleton → verify party sig → add engine key → broadcast → await
    `CONFIRMED`). The wallet's own half (`Escrow`, `p2pEscrow.ts`) co-signs the
    identical bytes.
+5. **Rebuild watcher** — *delivered:* the chain-scan projector that reads
+   `social.p2p-order` / `social.p2p-swap` records back from L1-SOCIAL,
+   verifies the author signatures, validates the shapes and replays the
+   projection (`services/p2p-engine/src/replay.ts` + `replay-cli`, §14).
+   Optional later work: the wallet-side independent watcher — a client-side
+   verify of the swap log that never has to trust the engine's projection.
 
 ---
 
@@ -908,6 +931,12 @@ geofencing — is an operator decision to make before shipping to users.
 - **Dispute e2e**: claim → dispute → arbitration resolve `refund` → escrow
   refund verified on-chain; and the mirror `release` case where the seller won't
   sign (engine + buyer force-release).
+- **Replay projector unit tests** (`services/p2p-engine/test/replay.test.ts`):
+  chain-walk sync + cursor advance, idempotent re-application, seller cancel
+  and match-after-cancel conflict reporting, `MATCHED` claimed from the engine
+  swap event, bad-signature/unknown-type records skipped (fail closed),
+  unservable-head and truncated-walk safety, replay after an unserved cursor,
+  and `replayVerify` drift detection (`missing` / `extra`).
 - Java-first rule from `AGENTS.md` applies to anything touching the chain —
   but this plan changes no chain code, so no Java surface is expected.
 
