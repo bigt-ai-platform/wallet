@@ -16,12 +16,13 @@
  * a state the durable chain seed lacks (AGENTS.md invariant #1). No key / no
  * URL → no hook, which is the mock mode.
  */
-import { Coin, NetworkParameters, TestParams, Transaction, Wallet } from "bigtangle-ts";
+import { Coin, NetworkParameters, Transaction, Wallet } from "bigtangle-ts";
 import { Utils } from "bigtangle-ts";
 import { PQKey } from "bigtangle-ts";
 import { didFromPQKey, signChallengePQ } from "did/pq";
 import { recordDigest } from "record-sig";
 import { p2pSwapRecord, type P2pSwapRecord } from "p2p-protocol";
+import { settlementParams } from "./escrow.js";
 import type { P2pSwapEvent } from "./types.js";
 
 export type SignedSwapRecord = P2pSwapRecord & { sig: string; sigScheme: string };
@@ -108,7 +109,10 @@ function arraysEqual(a: Uint8Array | string, b: Uint8Array | string): boolean {
  * candidates, zero-value self change, signed, submitted.
  */
 export async function submitSocialRecord(l1Url: string, pqKey: PQKey, record: unknown): Promise<string> {
-  const params = TestParams.get();
+  // Same network selection as the escrow half (`settlementParams`): mainnet by
+  // default, `SETTLEMENT_NETWORK=testnet` for the test infra — the anchor tx
+  // must be built with the params of the chain it is submitted to.
+  const params = settlementParams();
   const url = l1Url.endsWith("/") ? l1Url : l1Url + "/";
   const wallet = Wallet.fromKeysURL(params, [pqKey], url);
 
