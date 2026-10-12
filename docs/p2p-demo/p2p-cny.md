@@ -4,9 +4,9 @@ Status: **built and captured**. Every screenshot below was taken from the real
 wallet UI driving the real `p2p-engine` on 2026-10-09 by
 `e2e/capture-p2p-cny.mjs` — two fresh wallets, one engine, no mocks.
 
-Companion documents: [docs/p2pcny.md](../p2pcny.md) (design & threat model),
-[docs/p2p.md](../p2p.md) (protocol), [docs/p2p-demo/p2p.md](p2p.md) (PayPal
-demo guide), engine source `services/p2p-engine/src/`.
+Companion documents: [docs/p2p.md](../p2p.md) (design, protocol & threat model
+— both rails), [docs/p2p-demo/p2p.md](p2p.md) (PayPal demo guide), engine
+source `services/p2p-engine/src/`.
 
 ---
 
@@ -327,7 +327,8 @@ Open gaps, in the order they matter:
    `release`/`complete` itself when the seller confirms — an operator/cron must
    do it with the engine key. Today the wallet UI has no button for it either
    (by design: the wallet must not hold the engine key).
-2. **`docs/p2pcny.md` was stale** — it still said "Status: plan — not built",
+2. **The design doc was stale** (then `docs/p2pcny.md`, since merged into
+   `docs/p2p.md`) — it still said "Status: plan — not built",
    documented the instructions route as `GET`, and allowed disputes from "any
    pre-release state". Corrected in this pass (status, `POST` route, dispute
    states `PAYMENT_PENDING`/`PAYMENT_CLAIMED`, `confirm` no longer claiming to

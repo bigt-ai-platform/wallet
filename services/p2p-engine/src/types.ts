@@ -10,9 +10,10 @@ import type { P2pSwapStatus } from "p2p-protocol";
 
 export type { P2pSwapStatus };
 
-/** Fiat rails the engine can originate/settle. PayPal is the built one; the
- *  CNY rails (docs/p2pcny.md) settle peer-to-peer: buyer → seller directly,
- *  with the seller confirming receipt instead of a rail webhook. */
+/** Fiat rails. All rails settle peer-to-peer: buyer → seller directly, with
+ *  the seller confirming receipt (docs/p2p.md §7); the rails differ only in
+ *  conflict evidence (§4). PayPal invoice/webhook automation is a later phase
+ *  (§17), not the happy path. */
 export type PaymentRail = "paypal" | "wechat" | "alipay" | "bank";
 
 /** Peer-to-peer CNY collection methods (WeChat Pay / Alipay / bank transfer). */
@@ -55,7 +56,7 @@ export const SWAP_ACTIONS = [
   "expire",
   "refund",
   "cancel",
-  // CNY rails (docs/p2pcny.md) — driven by the dedicated routes, but they are
+  // CNY rails (docs/p2p.md) — driven by the dedicated routes, but they are
   // first-class actions so the transition table stays the single source of truth.
   "instructions",
   "payment_proof",

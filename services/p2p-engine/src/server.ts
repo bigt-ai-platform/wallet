@@ -9,9 +9,9 @@
  *   POST /swaps/:swapId/transitions           signed state transition
  *   POST /swaps/mine                          wallet: party-scoped swap list
  *   POST /swaps/get                           wallet: one party-scoped swap
- *   POST /swaps/:swapId/invoice               admin: issue/retry the fiat invoice (step 4)
- *   POST /swaps/:swapId/payout-sync           admin: poll payout outcome (webhook fallback)
- *   POST /swaps/:swapId/payment-instructions  buyer: reveal the seller's CNY profile (docs/p2pcny.md)
+ *   POST /swaps/:swapId/invoice               admin: issue/retry the fiat invoice (automation phase, §17)
+ *   POST /swaps/:swapId/payout-sync           admin: poll payout outcome (automation phase, §17)
+ *   POST /swaps/:swapId/payment-instructions  buyer: reveal the seller's payment profile (docs/p2p.md §11)
  *   POST /swaps/:swapId/proof                 buyer: claim payment → PAYMENT_CLAIMED
  *   POST /swaps/:swapId/confirm               seller: confirm receipt → PAYMENT_VERIFIED
  *   POST /swaps/:swapId/dispute               party: freeze the swap
@@ -30,11 +30,13 @@
  * a `social.p2p-swap` record through the injected `anchor` hook — anchor
  * failure fails the transition (the chain record is the durable seed).
  *
- * CNY rails (docs/p2pcny.md): personal WeChat/Alipay/bank transfers have no
- * API and no webhook, so the buyer pays the seller directly and the seller's
- * own confirmation is the fiat signal. The engine never touches CNY; it
- * enforces instructions → proof → confirm, freezes on dispute, and releases
- * tokens only after the seller (or the admin arbiter) has confirmed payment.
+ * Fiat rails (docs/p2p.md §7): the buyer pays the seller directly and the
+ * seller's own confirmation is the fiat signal — same shape on every rail
+ * (PayPal, WeChat, Alipay, bank); they differ only in conflict evidence (§4).
+ * The engine never touches fiat; it enforces instructions → proof → confirm,
+ * freezes on dispute, and releases tokens only after the seller (or an
+ * arbitration outcome) has confirmed payment. PayPal invoice/webhook
+ * automation is a later phase (§17).
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import { pathToFileURL } from "node:url";
@@ -97,7 +99,7 @@ const MAX_RECEIPT_CHARS = 700_000;
  * Decode a `data:image/…;base64,…` receipt to its bytes, or null when the
  * payload is not base64. The anchored hash is taken over these bytes — not
  * over the data-URL string — so `sha256 <the image file>` reproduces it
- * (docs/p2pcny.md §8).
+ * (docs/p2p.md §14).
  */
 function receiptBytes(receipt: string): Buffer | null {
   const comma = receipt.indexOf(",");
@@ -165,7 +167,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   const adminToken = () => env.SETTLEMENT_ADMIN_TOKEN?.trim() || "";
 
   /**
-   * Enabled CNY collection methods (docs/p2pcny.md §5). Unset or empty → all
+   * Enabled CNY collection methods (docs/p2p.md §11). Unset or empty → all
    * three (an env file that forgets the line must not silently kill the
    * rails); `SETTLEMENT_CNY_RAILS=wechat,bank` restricts.
    */
@@ -564,7 +566,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * Public capability report (no auth): which rails this engine actually
    * serves. A CNY-only deploy has no PayPal credentials, and the PayPal
    * endpoints answer 503 when `paypalConfig(env)` is null — so the wallet
-   * reads this at boot and hides rails that would only ever fail (docs/p2pcny.md).
+   * reads this at boot and hides rails that would only ever fail (docs/p2p.md).
    * `escrow`/`chain` are diagnostics: `chain.l0` false means lock proofs are
    * accepted WITHOUT verification (server.ts escrow_lock), never a prod state.
    */
@@ -647,7 +649,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (order.status !== "ACTIVE") return reply.code(409).send({ error: `order is ${order.status}` });
     if (order.validUntil * 1000 <= now()) return reply.code(410).send({ error: "order expired" });
     // CNY rails: the buyer pays the seller directly after match — no PayPal PII
-    // and no invoice recipient (docs/p2pcny.md §3).
+    // and no invoice recipient (docs/p2p.md §8).
     const buyerEmail =
       typeof body.buyerEmail === "string" && body.buyerEmail.trim() ? body.buyerEmail.trim() : undefined;
     if (buyerEmail && buyerEmail.length > 256) return reply.code(400).send({ error: "invalid buyerEmail (1..256)" });
@@ -727,7 +729,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const swap = await deps.store.getSwap(swapId);
     if (!swap) return reply.code(404).send({ error: "unknown swap" });
     // The CNY-rail actions have dedicated routes with their own input validation
-    // (docs/p2pcny.md §5); the generic transitions route must not bypass it.
+    // (docs/p2p.md §11); the generic transitions route must not bypass it.
     if (DEDICATED_ACTIONS.has(action)) {
       return reply.code(400).send({
         error: `action ${action} has a dedicated route (/swaps/:swapId/payment-instructions | proof | confirm)`,
@@ -979,7 +981,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     };
   });
 
-  //────────── CNY rails (docs/p2pcny.md) ─────────────────────────────────────
+  //────────── CNY rails (docs/p2p.md) ─────────────────────────────────────
   // No API and no webhook exists for a personal WeChat/Alipay/bank transfer:
   // the buyer pays the seller directly and the seller's own confirmation is
   // the fiat signal. The engine never touches CNY — it enforces the protocol

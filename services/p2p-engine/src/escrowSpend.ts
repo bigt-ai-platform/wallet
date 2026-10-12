@@ -128,7 +128,7 @@ export interface Skeleton {
 
 /**
  * Rebuild the unsigned spend: identical bytes on every machine that follows
- * this rule (docs/p2p.md §settlement closure).
+ * this rule (docs/p2p.md §6, Path B).
  */
 export async function buildSkeleton(opts: {
   chain: ChainClient;

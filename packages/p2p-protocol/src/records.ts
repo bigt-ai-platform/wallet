@@ -15,8 +15,8 @@
 export const P2P_SWAP_TYPE = "social.p2p-swap";
 
 /** Swap lifecycle. Pre-release states may move to EXPIRED → ESCROW_REFUNDED, or CANCELLED.
- *  PAYMENT_CLAIMED is the CNY-rail state (docs/p2pcny.md): the buyer uploaded a
- *  payment proof and the seller has not yet confirmed receipt. */
+ *  PAYMENT_CLAIMED is the buyer-claim state (docs/p2p.md §9): the buyer uploaded
+ *  a payment proof and the seller has not yet confirmed receipt. */
 export const P2P_SWAP_STATUSES = [
   "MATCHED",
   "ESCROW_LOCKED",
@@ -56,7 +56,7 @@ export interface P2pSwapRecord {
   paymentRail?: string;
   paymentRef?: string;
   payoutRef?: string;
-  /** CNY rails: sha256 of the buyer's receipt evidence (docs/p2pcny.md) — a
+  /** sha256 of the buyer's receipt evidence (docs/p2p.md §14) — a
    *  hash only, so the image itself never reaches the chain. */
   receiptSha256?: string;
 }

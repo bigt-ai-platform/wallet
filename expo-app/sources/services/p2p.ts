@@ -33,7 +33,7 @@ export type P2pSwapAction =
   | 'payment_confirm'
   | 'complete';
 
-/** CNY collection rails (docs/p2pcny.md): settle peer-to-peer, manual confirm. */
+/** Fiat rails (docs/p2p.md §7): buyer pays seller directly, seller confirms. */
 export type P2pCnyRail = 'wechat' | 'alipay' | 'bank';
 
 export interface P2pOrder {
@@ -109,7 +109,7 @@ export interface MatchOrderInput {
   buyerEmail?: string;
 }
 
-/** Seller's CNY payment instructions for one swap (docs/p2pcny.md §5). */
+/** Seller's payment instructions for one swap (docs/p2p.md §11). */
 export interface P2pPaymentInstructions {
   method: P2pCnyRail;
   rail: string;

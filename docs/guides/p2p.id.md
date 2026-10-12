@@ -20,7 +20,7 @@ hanya panggilan PayPal eksternal dan siaran L0 yang dibuat stub.
 **Tidak ada “Konfirmasi” manual.** Di rel PayPal tidak ada tombol “Konfirmasi”
 penjual — mesin memverifikasi pembayaran dari buktinya sendiri. (Rel CNY, yang
 tidak punya webhook, memakai konfirmasi eksplisit dari penjual; lihat
-`docs/p2pcny.md`.)
+`docs/p2p.md`.)
 
 ---
 

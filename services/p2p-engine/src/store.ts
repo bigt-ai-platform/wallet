@@ -21,7 +21,7 @@ export interface SettlementStore {
   listSwapsForDid(did: string, limit?: number): Promise<P2pSwapEvent[]>;
   /** Resolve a swap by id, payout batch id, or invoice id (webhook correlation). */
   findSwapByRef(ref: string): Promise<P2pSwapEvent | null>;
-  /** The seller's CNY collection profile for one rail (docs/p2pcny.md §5). */
+  /** The seller's collection profile for one rail (docs/p2p.md §11). */
   getProfile(sellerDid: string, method: string): Promise<PaymentProfile | null>;
   /** All CNY profiles the seller has saved. */
   listProfiles(sellerDid: string): Promise<PaymentProfile[]>;

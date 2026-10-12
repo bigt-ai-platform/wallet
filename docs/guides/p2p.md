@@ -18,7 +18,7 @@ real thing; only the external PayPal calls and the L0 broadcast are stubbed.
 
 **No manual "Confirm".** There is no seller "confirm" button on the PayPal rail —
 the engine verifies the payment from its own evidence. (The CNY rails, which
-have no webhook, use an explicit seller confirmation instead; see `docs/p2pcny.md`.)
+have no webhook, use an explicit seller confirmation instead; see `docs/p2p.md`.)
 
 ---
 

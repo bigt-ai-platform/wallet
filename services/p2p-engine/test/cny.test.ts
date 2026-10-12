@@ -105,7 +105,7 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
   return swapId;
 }
 
-describe("CNY rails (docs/p2pcny.md)", () => {
+describe("CNY rails (docs/p2p.md)", () => {
   beforeEach(async () => {
     clock = 1_700_000_000_000;
     store.orders.clear();
@@ -180,7 +180,7 @@ describe("CNY rails (docs/p2pcny.md)", () => {
     expect(proof.statusCode).toBe(200);
     expect(proof.json()).toMatchObject({ status: "PAYMENT_CLAIMED", txId: "4200001234567890" });
     // the hash covers the image bytes, not the data-URL string — `sha256 <file>`
-    // reproduces it (docs/p2pcny.md §8)
+    // reproduces it (docs/p2p.md §14)
     const bytes = Buffer.from(receipt.slice(receipt.indexOf(",") + 1), "base64");
     const sha = createHash("sha256").update(bytes).digest("hex");
     expect(proof.json().receiptSha256).toBe(sha);
@@ -224,7 +224,7 @@ describe("CNY rails (docs/p2pcny.md)", () => {
     expect(complete.json().status).toBe("COMPLETED");
 
     // anchored sequence covers every step; the anchored record has the hash,
-    // never the receipt bytes (docs/p2pcny.md §8)
+    // never the receipt bytes (docs/p2p.md §14)
     expect(anchored.map((e) => e.status)).toEqual([
       "MATCHED",
       "ESCROW_LOCKED",
@@ -237,7 +237,7 @@ describe("CNY rails (docs/p2pcny.md)", () => {
     const claimAnchor = anchored.find((e) => e.eventType === "payment_proof")!;
     expect(claimAnchor.receiptSha256).toBe(sha);
     // receipt bytes never reach the anchor; the non-secret remark code does
-    // (arbiter evidence check, docs/p2pcny.md §6/§8)
+    // (arbiter evidence check, docs/p2p.md §12/§14)
     expect((claimAnchor as Record<string, unknown>).receipt).toBeUndefined();
     expect(claimAnchor.remark).toBe(ins.json().remark);
   });

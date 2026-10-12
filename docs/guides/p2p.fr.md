@@ -22,7 +22,7 @@ externes et la diffusion L0 sont simulés.
 **Aucun « Confirmer » manuel.** Sur le rail PayPal, il n'y a pas de bouton
 « Confirmer » côté vendeur — le moteur vérifie le paiement à partir de ses
 propres preuves. (Les rails CNY, sans webhook, utilisent à la place une
-confirmation explicite du vendeur ; voir `docs/p2pcny.md`.)
+confirmation explicite du vendeur ; voir `docs/p2p.md`.)
 
 ---
 

@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS p2p_swap_events (
 CREATE INDEX IF NOT EXISTS p2p_swap_events_swap_idx ON p2p_swap_events (swap_id, event_seq);
 CREATE UNIQUE INDEX IF NOT EXISTS p2p_swap_events_seq_uidx ON p2p_swap_events (swap_id, event_seq);
 
--- CNY rails (docs/p2pcny.md): the seller's collection profile (PII — never
+-- Fiat rails (docs/p2p.md §11): the seller's collection profile (PII — never
 -- anchored, party-scoped reads only) and the buyer's payment proofs (receipt
 -- bytes live here, never on the swap event or the chain).
 CREATE TABLE IF NOT EXISTS p2p_payment_profiles (
@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS p2p_payment_proofs (
 );
 CREATE INDEX IF NOT EXISTS p2p_payment_proofs_swap_idx ON p2p_payment_proofs (swap_id, seq);
 
--- Escrow spend signatures (docs/p2p.md §escrow closure): the seller's
+-- Escrow spend signatures (docs/p2p.md §6, Path B): the seller's
 -- pre-signatures over the deterministic release/refund skeletons, plus the
 -- transaction hashes the engine submitted for them. Store-only — the
 -- signatures are over transactions anyone can rebuild, and the row is what

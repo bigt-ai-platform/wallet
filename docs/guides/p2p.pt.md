@@ -21,7 +21,7 @@ difusão na L0 são simuladas.
 **Sem “Confirmar” manual.** No trilho PayPal não há botão de “Confirmar” do
 vendedor — o motor verifica o pagamento a partir da própria evidência. (Os
 trilhos CNY, que não têm webhook, usam em vez disso uma confirmação explícita do
-vendedor; veja `docs/p2pcny.md`.)
+vendedor; veja `docs/p2p.md`.)
 
 ---
 

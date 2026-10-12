@@ -23,7 +23,7 @@ import {
 
 type Tab = 'open' | 'mine';
 
-/** CNY rails (docs/p2pcny.md): settle peer-to-peer with manual confirmation. */
+/** Fiat rails (docs/p2p.md §7): buyer pays seller directly; seller confirms receipt. */
 const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank'];
 /** Built-in rail list — used until the engine's /capabilities report arrives. */
 const DEFAULT_RAILS: readonly string[] = ['paypal', ...CNY_RAILS];
@@ -278,7 +278,7 @@ export default function P2pScreen() {
     }
   };
 
-  // ── CNY rails (docs/p2pcny.md): instructions → proof → seller confirm ──
+  // ── Fiat rails (docs/p2p.md §8): instructions → proof → seller confirm ──
 
   const showInstructions = async (swap: P2pSwap) => {
     const id = requireIdentity();

@@ -9,11 +9,11 @@ import type { P2pSwapEvent, SwapAction } from "./types.js";
 export const VALID_TRANSITIONS: Record<P2pSwapStatus, readonly P2pSwapStatus[]> = {
   MATCHED: ["ESCROW_LOCKED", "CANCELLED", "EXPIRED"],
   ESCROW_LOCKED: ["PAYMENT_PENDING", "EXPIRED", "CANCELLED"],
-  // PAYMENT_PENDING is reached by the PayPal payment hint or, on the CNY rails,
-  // by the buyer pulling the seller's payment instructions (docs/p2pcny.md §3).
+  // PAYMENT_PENDING is reached by the buyer pulling the seller's payment
+  // instructions (docs/p2p.md §8) — same shape on every rail.
   PAYMENT_PENDING: ["PAYMENT_CLAIMED", "PAYMENT_VERIFIED", "EXPIRED", "CANCELLED"],
-  // PAYMENT_CLAIMED is the CNY state: buyer uploaded proof, seller has not
-  // confirmed. It leaves via the seller's confirm, an admin dispute resolve
+  // PAYMENT_CLAIMED is the buyer's claim (uploaded proof, seller has not
+  // confirmed). It leaves via the seller's confirm, an arbitration resolve
   // (release), or the ordinary timeout/cancel path to a refund.
   PAYMENT_CLAIMED: ["PAYMENT_VERIFIED", "EXPIRED", "CANCELLED"],
   PAYMENT_VERIFIED: ["ESCROW_RELEASED", "CANCELLED"],

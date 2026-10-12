@@ -21,7 +21,7 @@ externen PayPal-Aufrufe und der L0-Broadcast sind gestubbt.
 **Kein manuelles „Bestätigen“.** Auf dem PayPal-Weg gibt es keinen
 Verkäufer-„Bestätigen“-Knopf — die Engine prüft die Zahlung anhand ihrer eigenen
 Nachweise. (Die CNY-Wege ohne Webhook nutzen stattdessen eine ausdrückliche
-Bestätigung durch den Verkäufer; siehe `docs/p2pcny.md`.)
+Bestätigung durch den Verkäufer; siehe `docs/p2p.md`.)
 
 ---
 

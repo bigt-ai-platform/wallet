@@ -11,7 +11,7 @@ describe("p2p settlement state machine", () => {
     expect(canTransition("ESCROW_RELEASED", "COMPLETED")).toBe(true);
   });
 
-  it("allows the CNY claim transitions (docs/p2pcny.md)", () => {
+  it("allows the CNY claim transitions (docs/p2p.md)", () => {
     expect(canTransition("PAYMENT_PENDING", "PAYMENT_CLAIMED")).toBe(true);
     expect(canTransition("PAYMENT_CLAIMED", "PAYMENT_VERIFIED")).toBe(true);
     expect(canTransition("ESCROW_LOCKED", "PAYMENT_CLAIMED")).toBe(false);

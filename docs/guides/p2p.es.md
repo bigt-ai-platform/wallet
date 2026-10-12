@@ -21,7 +21,7 @@ difusión en L0.
 **Sin «Confirmar» manual.** En el riel PayPal no hay botón de «Confirmar» del
 vendedor — el motor verifica el pago a partir de su propia evidencia. (Los rieles
 CNY, que no tienen webhook, usan en su lugar una confirmación explícita del
-vendedor; ver `docs/p2pcny.md`.)
+vendedor; ver `docs/p2p.md`.)
 
 ---
 
