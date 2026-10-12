@@ -7,7 +7,7 @@
 #   ./deploy/deploy.sh                # bump patch of the latest vX.Y.Z tag
 #   ./deploy/deploy.sh 0.3.1          # explicit version
 #   ./deploy/deploy.sh --commit       # commit the dirty tree first
-#   ./deploy/deploy.sh --yes          # skip the confirmation prompt
+#   ./deploy/deploy.sh --yes          # accepted, no-op (there is no prompt)
 #   ./deploy/deploy.sh --dry-run      # print the plan, do nothing
 #   ./deploy/deploy.sh --deploy-only  # no tag/build — deploy existing :latest
 #
@@ -35,11 +35,11 @@ source "$SCRIPT_DIR/region.conf"
 source "$SCRIPT_DIR/network.sh"
 ALL_REGIONS=("${REGIONS[@]}")
 
-COMMIT=0; YES=0; DRY=0; DEPLOY_ONLY=0; VERSION=""
+COMMIT=0; DRY=0; DEPLOY_ONLY=0; VERSION=""
 for a in "$@"; do
   case "$a" in
     --commit)    COMMIT=1 ;;
-    --yes|-y)    YES=1 ;;
+    --yes|-y)    ;; # no-op — release runs without a confirmation prompt
     --dry-run)   DRY=1 ;;
     --deploy-only) DEPLOY_ONLY=1 ;;
     v[0-9]* | [0-9]*) VERSION="${a#v}" ;;
@@ -96,11 +96,6 @@ if [ "$DRY" = 1 ]; then
   echo -e "${YELLOW}[dry-run] nothing executed${NC}"
   exit 0
 fi
-
-[ "$YES" = 1 ] || {
-  read -r -p "Continue? [y/N] " ans
-  case "$ans" in y|Y) ;; *) echo -e "${RED}aborted${NC}"; exit 1 ;; esac
-}
 
 # 1. tag + build + push the shared image (creates git tag vX.Y.Z, pushes :v + :latest)
 # NOTE: deploy/tag.sh builds the expo export + nginx image and pushes $APP_IMAGE

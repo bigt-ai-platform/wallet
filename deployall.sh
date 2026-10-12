@@ -3,9 +3,9 @@
 # (deploy/deploy.sh) then the Android artifact deploy (deploy.apk.sh).
 #
 #   ./deployall.sh                        # web deploy + signed release APK (--release --env=production)
-#   ./deployall.sh --yes                  # same, no confirmation prompt
+#   ./deployall.sh --yes                  # accepted, no-op (the release has no prompt)
 #   ./deployall.sh --env=preview          # signed release APK on the preview channel
-#   ./deployall.sh --app-only --yes       # regions only
+#   ./deployall.sh --app-only             # regions only
 #   ./deployall.sh --apk-only             # Android artifact only (release/production)
 #   ./deployall.sh --dry-run              # web deploy dry-run (APK skipped)
 #
