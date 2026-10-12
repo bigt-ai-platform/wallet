@@ -7,7 +7,7 @@ import { waitForApp, configureServerUrl, goToKeys, clickTab } from '../helpers';
  * P2P demo guide — a REAL e2e test that both asserts the flow and renders the
  * committed guide screenshots (docs/p2p-demo/assets/screenshots).
  *
- * Unlike e2e/capture-p2p-guide.mjs (mock engine, no chain), this runs the
+ * Unlike e2e/capture-p2p-cny.mjs (mock engine, no chain), this runs the
  * wallet's P2pScreen against a p2p-engine wired to the REAL L0 node
  * (`SETTLEMENT_L0_URL`, testnet params) with a real engine escrow key, so the
  * meaningful legs are proved on-chain:
@@ -167,7 +167,7 @@ test.describe('P2P Demo (real L0)', () => {
       await seller.page.waitForTimeout(1500);
       await el(seller.page, 'p2p-tab-open').click();
       await refresh(seller.page);
-      await shot(seller.page, 'p2p-01-order-en.png');
+      await shot(seller.page, 'p2p-real-01-order-en.png');
 
       await clickTab(buyer.page, 'P2P');
       await el(buyer.page, 'p2p-order-0').waitFor({ timeout: 20000 });
@@ -175,8 +175,8 @@ test.describe('P2P Demo (real L0)', () => {
       await el(buyer.page, 'p2p-buy-recv').fill(receiveAddress);
       await el(buyer.page, 'p2p-buy-confirm').click();
       await waitStatus(buyer.page, 'MATCHED');
-      await shot(buyer.page, 'p2p-03-match-en.png');
-      await shot(buyer.page, 'p2p-04-matched-en.png');
+      await shot(buyer.page, 'p2p-real-03-match-en.png');
+      await shot(buyer.page, 'p2p-real-04-matched-en.png');
 
       // ── 3. seller locks with the REAL funding txHash ──────────────────────
       // The engine caps signed calls per DID (10/60s); pace past the window.
@@ -188,7 +188,7 @@ test.describe('P2P Demo (real L0)', () => {
       await el(seller.page, 'p2p-swap-0-lock').click();
       // ESCROW_LOCKED is only reachable when verifyChainLock passed on L0.
       await waitStatus(seller.page, 'ESCROW_LOCKED');
-      await shot(seller.page, 'p2p-05-escrow-locked-en.png');
+      await shot(seller.page, 'p2p-real-05-escrow-locked-en.png');
 
       // ── 4. seller saves a CNY profile, buyer pulls instructions + claims ──
       await el(seller.page, 'p2p-profile-method-wechat').click();
@@ -198,10 +198,10 @@ test.describe('P2P Demo (real L0)', () => {
       await sleep(1500);
       await refresh(buyer.page);
       await waitStatus(buyer.page, 'ESCROW_LOCKED');
-      await shot(buyer.page, 'p2p-06-buyer-locked-en.png');
+      await shot(buyer.page, 'p2p-real-06-buyer-locked-en.png');
       await el(buyer.page, 'p2p-swap-0-instructions').click();
       await waitStatus(buyer.page, 'PAYMENT_PENDING');
-      await shot(buyer.page, 'p2p-07-payment-pending-en.png');
+      await shot(buyer.page, 'p2p-real-07-payment-pending-en.png');
       await el(buyer.page, 'p2p-swap-0-txid').fill('4200001234567890');
       await el(buyer.page, 'p2p-swap-0-proof').click();
       await waitStatus(buyer.page, 'PAYMENT_CLAIMED');
@@ -213,7 +213,7 @@ test.describe('P2P Demo (real L0)', () => {
       await waitStatus(seller.page, 'PAYMENT_VERIFIED');
       await refresh(buyer.page);
       await waitStatus(buyer.page, 'PAYMENT_VERIFIED');
-      await shot(buyer.page, 'p2p-08-payment-verified-en.png');
+      await shot(buyer.page, 'p2p-real-08-payment-verified-en.png');
 
       // ── 6. the escrow hook releases with a real spend to the buyer ────────
       const releaseTx = await waitConfirmedByAddress(request, receiveAddress);
@@ -221,7 +221,7 @@ test.describe('P2P Demo (real L0)', () => {
       await assertEvidence(request, releaseTx.txHash, receiveAddress);
       await refresh(buyer.page);
       await waitStatus(buyer.page, 'ESCROW_RELEASED');
-      await shot(buyer.page, 'p2p-09-escrow-released-en.png');
+      await shot(buyer.page, 'p2p-real-09-escrow-released-en.png');
       console.log('escrow released:', releaseTx.txHash, '→', receiveAddress);
 
       await fs.promises.writeFile(

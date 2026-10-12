@@ -1,144 +1,173 @@
-# Liquidación P2P — intercambio entre rieles nativo del wallet
+# Liquidación P2P — intercambio CNY nativo del wallet
 
-**Qué es.** Un intercambio entre pares de cripto en **Bigtangle L0** y fiat en
-**PayPal** (o los rieles CNY — WeChat Pay / Alipay / banco). El vendedor deposita
-los tokens en una **dirección P2SH 2-de-3** (vendedor, comprador, motor); el
-comprador paga una obligación fiat de **importe exacto**; el motor demuestra el
-pago y libera el depósito. Cada paso irreversible se firma con la clave PQ del
-wallet, y el motor solo puede **co-firmar** un gasto — nunca custodia tus fondos.
+**Qué es.** Un intercambio entre pares de cripto en **Bigtangle L0** y fiat CNY
+(WeChat Pay / Alipay / banco). El vendedor deposita los tokens en una **dirección
+P2SH 2-de-3** (vendedor, comprador, motor); el comprador paga al vendedor
+**directamente** en su propia app de pago; el vendedor confirma la recepción en
+su propio extracto y el depósito se libera. Cada paso irreversible se firma con
+la clave PQ del wallet, y el motor solo puede **co-firmar** un gasto — nunca
+custodia tus fondos ni toca el fiat.
 
 **Dónde.** La pantalla **P2P** del wallet (barra lateral → Trade → P2P). Todo lo
 que sigue está capturado desde esa pantalla en la compilación de demostración
 local.
 
-**Demo vs. real.** Las capturas provienen de la demo: el motor funciona en modo
-PayPal simulado (URL de factura y hashes de transacción sintéticos) y los pasos
-lock/verify/release se firman con una clave de motor local. La máquina de estados,
-las firmas, el registro de eventos de solo-anexado y el anclaje de auditoría
-on-chain son reales; solo se simulan las llamadas externas a PayPal y la
-difusión en L0.
+**Demo vs. real.** Las capturas provienen de la demo: el motor funciona con un
+almacén en memoria y sin comprobación de cadena, así que las etapas lock/release
+usan hashes de transacción sintéticos. La máquina de estados, las firmas, el
+registro de eventos de solo-anexado y el anclaje de auditoría on-chain son
+reales; solo se simula la difusión en L0.
 
-**Sin «Confirmar» manual.** En el riel PayPal no hay botón de «Confirmar» del
-vendedor — el motor verifica el pago a partir de su propia evidencia. (Los rieles
-CNY, que no tienen webhook, usan en su lugar una confirmación explícita del
-vendedor; ver `docs/p2p.md`.)
+**La confirmación del vendedor es la señal fiat.** No hay API de cobro para una
+cuenta personal de WeChat/Alipay/banco, así que no hay ningún evento de pago
+verificable por máquina que esperar. El vendedor comprueba **importe + concepto
++ hora + 流水号 en su propia app** — una captura de pantalla nunca cuenta — y
+confirma. Los detalles de diseño están en `docs/p2p.md`.
 
 ---
 
 ## El flujo de un vistazo
 
 ```
-ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──payment──▶ PAYMENT_PENDING
-                                                                     │
-PAYMENT_PENDING ──verify──▶ PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──payout──▶ COMPLETED
+ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──instructions──▶ PAYMENT_PENDING
+                                                                          │
+   PAYMENT_PENDING ──proof──▶ PAYMENT_CLAIMED ──confirm──▶ PAYMENT_VERIFIED
+                                                                  │
+                            PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──complete──▶ COMPLETED
 ```
 
 | # | Paso | Quién actúa | On-chain / motor |
 |---|---|---|---|
-| 1 | El vendedor publica una orden de venta firmada | vendedor | orden guardada, sin financiar |
-| 2 | El comprador hace match (dirección de recepción + cuenta PayPal) | comprador | se crea `swapId`, se deriva la dirección de depósito |
-| 3 | El vendedor financia el depósito 2-de-3, el motor prueba el bloqueo | vendedor + motor | `ESCROW_LOCKED` en L0 |
-| 4 | El comprador paga la factura de importe exacto y la reporta | comprador | `PAYMENT_PENDING` |
-| 5 | El motor verifica el pago por sí mismo | motor | `PAYMENT_VERIFIED` |
-| 6 | Motor + comprador co-firman la liberación, los tokens se mueven | motor + comprador | `ESCROW_RELEASED` |
-| 7 | El motor paga al vendedor vía PayPal Payouts | motor | `COMPLETED` |
+| 1 | El vendedor guarda un perfil de cobro CNY | vendedor | perfil guardado en el servidor, nunca en el libro |
+| 2 | El vendedor publica una orden de venta firmada | vendedor | orden guardada, sin financiar |
+| 3 | El comprador hace match (dirección de recepción) | comprador | se crea `swapId`, se deriva la dirección de depósito |
+| 4 | El vendedor financia el depósito 2-de-3, el motor prueba el bloqueo | vendedor + motor | `ESCROW_LOCKED` en L0 |
+| 5 | El comprador obtiene las instrucciones de pago | comprador | `PAYMENT_PENDING` (+ concepto por intercambio) |
+| 6 | El comprador paga en su propia app y reclama con el 流水号 | comprador | `PAYMENT_CLAIMED` |
+| 7 | El vendedor comprueba su propio extracto y confirma | vendedor | `PAYMENT_VERIFIED` |
+| 8 | El motor libera los tokens, el intercambio se completa | motor | `ESCROW_RELEASED` → `COMPLETED` |
 
 Cada transición se ancla como un registro `social.p2p-swap` en la cadena
 L1-SOCIAL, de modo que todo el ciclo de vida es auditable públicamente sin
-exponer los datos de PayPal de ninguna parte.
+exponer los datos de cuenta de ninguna de las partes.
 
 ---
 
-## 1. El vendedor publica una orden de venta
+## 1. El vendedor guarda un perfil de cobro
+
+En la pestaña **My swaps**, el vendedor elige un riel (WeChat, Alipay o banco) e
+introduce el nombre de 收款 y la cuenta. El perfil se guarda en el servidor bajo
+el DID del vendedor y **no** forma parte del libro de órdenes público — solo se
+revela al comprador emparejado mediante la llamada de instrucciones.
+
+![El vendedor guarda el perfil de pago de WeChat](/demo/p2p/p2p-cny-wechat-01-profile-es.png)
+
+---
+
+## 2. El vendedor publica una orden de venta
 
 En la pestaña **Open sells**, completa la orden: el token y la cantidad que
-entregas, el precio fiat que quieres, la moneda, la cadena del token y el
-**método de pago** (PayPal o un riel CNY). Los términos se fijan en la orden al
-publicarla, así que esto se firma con la clave de tu wallet.
+entregas, el precio en CNY que quieres, la cadena en la que están los tokens y el
+**método de pago** (wechat / alipay / bank). Elegir un riel CNY cambia la moneda
+a CNY. Los términos se fijan en la orden al publicarla, así que esto se firma con
+la clave de tu wallet:
 
-![El formulario de orden de venta, riel PayPal elegido](/demo/p2p/p2p-01-order-es.png)
+![El formulario de orden de venta con el riel wechat](/demo/p2p/p2p-cny-wechat-02-order-es.png)
 
 Una vez publicada, la orden es `ACTIVE` en el motor y aparece en el libro de
-órdenes público (sin datos personales):
-
-![La orden está viva en el libro](/demo/p2p/p2p-02-active-es.png)
+órdenes público (no lleva ningún dato personal).
 
 ---
 
-## 2. El comprador hace match
+## 3. El comprador hace match
 
 El comprador abre la orden y facilita la **dirección de recepción** de los tokens
-liberados y la **cuenta PayPal** a la que facturar (y un correo para la factura).
-El match compromete al comprador a pagar, así que también se firma:
+liberados. El match compromete al comprador a pagar, así que también se firma:
 
-![El comprador rellena la dirección de recepción y la cuenta PayPal](/demo/p2p/p2p-03-match-es.png)
+![El comprador rellena la dirección de recepción](/demo/p2p/p2p-cny-wechat-03-match-es.png)
 
 El motor crea un `swapId` único para el ciclo de vida y el intercambio pasa a
 `MATCHED`, visible en la pestaña **My swaps** del comprador:
 
-![El intercambio está MATCHED](/demo/p2p/p2p-04-matched-es.png)
+![El intercambio está MATCHED](/demo/p2p/p2p-cny-wechat-04-matched-es.png)
 
 ---
 
-## 3. Bloqueo del depósito — el vendedor financia L0
+## 4. Bloqueo del depósito — el vendedor financia L0
 
 El vendedor envía los tokens a la dirección de depósito determinista 2-de-3 y
 reporta el `txHash` de la transferencia. El motor prueba el bloqueo desde la
 cadena (`CONFIRMED`, destino `escrowAddress`, importe) y falla si alguna
-comprobación no se cumple. El intercambio es ahora `ESCROW_LOCKED`:
+comprobación no se cumple:
 
-![El vendedor bloquea el depósito](/demo/p2p/p2p-05-escrow-locked-es.png)
+![El vendedor pega el hash de la transacción del depósito](/demo/p2p/p2p-cny-wechat-05-escrow-lock-es.png)
 
-El comprador ve los fondos asegurados **antes** de enviar fiat alguno, y obtiene
-una acción **I have paid** (He pagado) en cuanto se prueba el bloqueo:
+El intercambio es ahora `ESCROW_LOCKED`. El comprador ve los fondos asegurados
+**antes** de enviar fiat alguno, y obtiene una acción **Payment details**
+(Detalles del pago):
 
-![El comprador ve el depósito bloqueado](/demo/p2p/p2p-06-buyer-locked-es.png)
-
----
-
-## 4. El comprador paga
-
-El comprador paga la factura alojada de PayPal (PayPal custodia el dinero —
-nunca el motor) y reporta el pago. Esto es solo una *pista*; la verificación real
-es la evidencia propia del motor. El intercambio es `PAYMENT_PENDING`, y arranca
-un temporizador de espera — si la factura nunca se paga, el vendedor puede
-expirar y reembolsar el depósito sin el consentimiento del comprador:
-
-![PAYMENT_PENDING](/demo/p2p/p2p-07-payment-pending-es.png)
+![ESCROW_LOCKED](/demo/p2p/p2p-cny-wechat-06-escrow-locked-es.png)
 
 ---
 
-## 5. El motor verifica el pago
+## 5. El comprador obtiene las instrucciones de pago
 
-No interviene ninguna confirmación del vendedor. El motor comprueba el pago
-desde su propia fuente y avanza el intercambio a `PAYMENT_VERIFIED` — el depósito
-ya puede liberarse a la dirección de recepción del comprador:
+El comprador pulsa **Payment details** (Detalles del pago); el motor revela el
+perfil del vendedor y acuña un **código de concepto por intercambio** que la
+transferencia *debe* llevar, más el importe exacto y una fecha límite. Las
+instrucciones se muestran en línea en la tarjeta del intercambio:
 
-![PAYMENT_VERIFIED](/demo/p2p/p2p-08-payment-verified-es.png)
+![Instrucciones de pago: 户名, cuenta, 715 CNY, concepto](/demo/p2p/p2p-cny-wechat-08-instructions-es.png)
 
----
-
-## 6. Liberación — los fondos se mueven
-
-La liberación mueve los tokens depositados: el motor y el comprador firman cada
-uno un gasto de la salida del depósito, y dos firmas satisfacen el script 2-de-3.
-Los tokens llegan a la dirección de recepción del comprador y el intercambio es
-`ESCROW_RELEASED`:
-
-![ESCROW_RELEASED](/demo/p2p/p2p-09-escrow-released-es.png)
+El intercambio es `PAYMENT_PENDING`, y arranca un temporizador de espera — si el
+comprador nunca paga, el vendedor puede expirar y reembolsar el depósito sin el
+consentimiento del comprador.
 
 ---
 
-## 7. Pago — el vendedor recibe el fiat
+## 6. El comprador paga y reclama con el 流水号
 
-El último paso paga al vendedor mediante PayPal Payouts, y el intercambio llega a
-`COMPLETED`:
+El comprador transfiere el importe exacto en su propia app de
+WeChat/Alipay/banco, pega el número de transacción (流水号) en **Transaction ID**
+y pulsa **I have paid** (He pagado). Una imagen de recibo opcional se guarda en
+el servidor; solo su `sha256` se ancla en el evento del intercambio:
 
-![COMPLETED](/demo/p2p/p2p-10-completed-es.png)
+![Transaction ID (流水号) introducido](/demo/p2p/p2p-cny-wechat-09-payment-pending-es.png)
 
-El resultado del pago (`SUCCESS` / `FAILED` / `HELD` / `ONHOLD`) llega por webhook
-de PayPal o se consulta como respaldo; un fallo puede reintentarse desde
-`COMPLETED` sin rehacer el intercambio.
+El estado es ahora `PAYMENT_CLAIMED` — **los tokens siguen bloqueados.** Este
+estado existe puramente como la reclamación del comprador:
+
+![PAYMENT_CLAIMED](/demo/p2p/p2p-cny-wechat-10-payment-claimed-es.png)
+
+---
+
+## 7. El vendedor confirma en su propio extracto
+
+La tarjeta del vendedor muestra el 流水号 del comprador y el concepto. El
+vendedor comprueba **importe + concepto + hora + 流水号 en su propia cuenta** y
+solo entonces pulsa **Confirm received** (Confirmar recepción):
+
+![El vendedor ve el 流水号 y el aviso de confirmación](/demo/p2p/p2p-cny-wechat-11-seller-confirm-es.png)
+
+El intercambio es `PAYMENT_VERIFIED`:
+
+![PAYMENT_VERIFIED](/demo/p2p/p2p-cny-wechat-12-payment-verified-es.png)
+
+---
+
+## 8. Liberación — los fondos se mueven
+
+La liberación mueve los tokens depositados: el vendedor (prefirma o co-firma) y
+el motor firman cada uno un gasto de la salida del depósito, y dos firmas
+satisfacen el script 2-de-3. Los tokens llegan a la dirección de recepción del
+comprador:
+
+![ESCROW_RELEASED](/demo/p2p/p2p-cny-wechat-13-escrow-released-es.png)
+
+Como el vendedor cobró directamente, no hay paso de pago fiat — el intercambio se
+completa:
+
+![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-es.png)
 
 ---
 
@@ -147,19 +176,19 @@ de PayPal o se consulta como respaldo; un fallo puede reintentarse desde
 | Riesgo | Mitigación |
 |---|---|
 | La contraparte se marcha | Los fondos están en una dirección P2SH 2-de-3; nadie puede moverlos solo |
-| Pago de menos o de más | La factura es de importe exacto: se paga entera o queda sin pagar |
-| Reclamación de pago falsa | El motor verifica el pago por sí mismo — el pagador no puede autoatribuírselo |
+| Pago de menos o de más | El importe se fija en el match; las instrucciones llevan la cifra exacta y un concepto por intercambio |
+| Reclamación de pago falsa | La reclamación del comprador por sí sola nunca libera — el vendedor confirma en su propio extracto |
+| El vendedor alega no recepción | Arbitraje; el registro de la cadena y el almacén de pruebas son la evidencia |
 | Motor malicioso | Los pasos exclusivos del motor exigen la firma DID del motor; cada transición se ancla y es auditable públicamente |
-| Contracargo tras la liberación | `PAYMENT.CAPTURE.REVERSED` activa un congelamiento: los pasos hacia delante se detienen, reembolso/expiración siguen disponibles |
-| Disputa | `CUSTOMER.DISPUTE.*` pausa el intercambio hasta que se resuelva |
-| Fallo de pago | `HELD`/`FAILED`/`BLOCKED` son estados de primer nivel; reintentar con la misma referencia de pago |
+| Disputa | Cualquiera de las partes congela el intercambio; los tokens permanecen bloqueados hasta que se resuelva |
+| Reembolso | `expire` → `refund`, co-firmados por el motor y el vendedor — sin consentimiento del comprador, sin timelock |
 
 ---
 
 ## Pasar a producción
 
-La demo se ejecuta contra el servicio de liquidación del repositorio con PayPal
-simulado. Para el flujo real necesitas una cuenta business de PayPal con Payouts
-activados, sus credenciales API y su webhook id, y el firmante del depósito
-conectado al paso de difusión en L0. Hasta entonces, el motor ejecuta la misma
-máquina de estados sin tocar dinero real.
+La demo se ejecuta contra el servicio de liquidación del repositorio con un
+almacén en memoria y sin comprobación de cadena. El flujo real conecta el
+firmante del depósito al paso de difusión en L0 y ejecuta el motor contra
+L1-SOCIAL para el libro de órdenes y el anclaje de auditoría; el comprador paga
+al vendedor directamente, y el motor sigue limitándose a co-firmar.

@@ -2,8 +2,8 @@
 # p2pdemo.sh — one entry point for the P2P demo guides.
 #
 # Renders the P2P demo PDFs from the markdown sources in docs/guides (the
-# 12-language wallet guide) and docs/p2p-demo (the all-rails walkthrough —
-# PayPal / WeChat / Alipay / bank), optionally regenerating screenshots first.
+# 12-language wallet guide) and docs/p2p-demo (the CNY walkthrough —
+# WeChat / Alipay / bank), optionally regenerating screenshots first.
 #
 #   ./p2pdemo.sh              # pdf (default): render both PDFs from current shots
 #   ./p2pdemo.sh pdf          # same as above
@@ -80,9 +80,9 @@ build_web() {
 
 capture_guide() {
   require_bin node
-  info "Capturing guide screenshots (PayPal rail)..."
+  info "Capturing guide screenshots (CNY rails)..."
   ( cd "$ROOT/e2e" && APP_URL="$APP_URL" E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
-      CAPTURE_LANGS="${CAPTURE_LANGS:-en}" node capture-p2p-guide.mjs ) || fail "capture-p2p-guide failed"
+      node capture-p2p-cny.mjs ) || fail "capture-p2p-cny failed"
   log "Guide screenshots captured."
 }
 
@@ -140,13 +140,11 @@ case "$CMD" in
       walkthrough|cny) capture_walkthrough; pdf_walkthrough ;;
       all)   capture_guide; capture_walkthrough; pdf_guide; pdf_walkthrough ;;
       *)     fail "unknown target '$TARGET' (use guide | walkthrough | all)" ;;
-    esac
-    ;;
+    esac    ;;
   all)
     build_ws
     build_engine
     build_web
-    capture_guide
     capture_walkthrough
     pdf_guide
     pdf_walkthrough

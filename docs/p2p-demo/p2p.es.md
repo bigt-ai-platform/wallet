@@ -1,134 +1,137 @@
-# Liquidación P2P — Swap entre rails con verificación IA
+# Liquidación P2P — Swap de CNY con liberación confirmada por el vendedor
 
-**Estado: diseño objetivo, sin construir.** Todo lo que sigue describe el flujo de liquidación que estamos construyendo: depósito en garantía P2SH de 2-de-3 en Bigtangle L0 y verificación real contra la API de PayPal. La versión de demostración actual es una máquina de estados sobre Postgres con la pata fiat simulada. Las capturas son de esa versión; el diseño vive en el repositorio dai, `docs/p2p.md`.
+**Estado: build de demostración + motor en el repositorio.** Todo lo que sigue es el flujo de liquidación tal como está construido: depósito en garantía P2SH de 2-de-3 en Bigtangle L0 y una pata CNY confirmada por el vendedor (WeChat Pay / Alipay / banco). Una transferencia personal no tiene un evento de pago verificable por máquina, así que el propio extracto del vendedor es la señal fiat. Las capturas son del build de demostración (almacén en memoria, sin comprobación de cadena — los hashes de bloqueo/liberación son sintéticos). El diseño vive en `docs/p2p.md`.
 
-Esta guía demuestra el flujo de liquidación P2P nativo de IA: publicar USDT en venta, emparejar con un comprador, bloqueo del depósito, pago fiat con verificación automática, liberación del depósito y reembolso por tiempo agotado. Sin botón manual de «Confirmar» — el Motor de Liquidación verifica el pago mediante un webhook de PayPal.
+Esta guía recorre la publicación de USDT en venta, el emparejamiento con un comprador, el bloqueo del depósito, el pago de CNY del comprador **directamente** al vendedor, la confirmación del vendedor en su propio extracto, la liberación del depósito y el reembolso por tiempo agotado.
+
+Para el recorrido combinado de tres raíles (WeChat / Alipay / banco) véase [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`.
 
 ---
 
-## 1. Vista del panel
+## 1. El vendedor guarda un perfil de cobro
 
-El panel P2P muestra todos los swaps activos con su estado, tasa y referencias de transacción.
+El vendedor abre **P2P → Mis swaps**, elige el raíl (`wechat`) e introduce el nombre y la cuenta de 收款. El perfil se almacena en el servidor bajo el DID del vendedor y **no** forma parte del libro público de órdenes — solo se revela al comprador emparejado.
 
-![Panel](demo-output/screenshots/p2p-dashboard-es.png)
-
-El panel muestra todos los swaps activos con estado, tasa y referencias de transacción. Cada tarjeta muestra el ID del swap, el par de activos (p. ej. 100 USDT ⇄ 101 USD), una insignia de estado con código de colores y una línea de tiempo desplegable.
+![El vendedor guarda el perfil de pago de WeChat](assets/screenshots/p2p-cny-wechat-01-profile-es.png)
 
 ---
 
 ## 2. El vendedor publica USDT
 
-Envía una orden limitada firmada con DID al Motor de Liquidación.
+Envía una orden limitada firmada con DID al motor de liquidación:
 
-```typescript
-const signature = signPayload(
-  { sellerDid, giveToken: "USDT", giveAmount: "100",
-    giveChain: "L0", wantCurrency: "USD",
-    wantAmount: "101", wantRail: "paypal" },
-  sellerPriv,
-);
+```json
+{ "sellerDid": "did:key:z446G…", "giveToken": "USDT", "giveAmount": "10",
+  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "715",
+  "wantRail": "wechat", "validUntil": 1791510000,
+  "nonce": "…", "timestamp": 1791509100000, "signature": "…" }
 ```
 
-El vendedor envía una orden limitada firmada: vender 100 USDT por 101 USD vía PayPal. El Motor de Liquidación valida la firma DID. Estado: ACTIVE. La orden caduca tras validUntil.
+La orden se valida contra la firma DID del vendedor. Estado: `ACTIVE`; caduca tras `validUntil`.
+
+![Publicar una orden de venta con wechat / CNY](assets/screenshots/p2p-cny-wechat-02-order-es.png)
 
 ---
 
 ## 3. El comprador empareja la orden
 
-El comprador envía una orden de mercado firmada. La tasa se fija al momento del emparejamiento mediante un oráculo, y el importe de la factura queda fijo desde ese instante.
+El comprador envía un emparejamiento firmado con DID, indicando la dirección que debe recibir la liberación del depósito. No hay cuenta/correo que recoger — nada sobre el raíl fiat es necesario en el momento del emparejamiento:
 
-```typescript
-const signature = signPayload(
-  { orderId, buyerDid, amount: "100",
-    receiveAddress, paypalAccount },
-  buyerPriv,
-);
+```json
+{ "orderId": "ord-…", "buyerDid": "did:key:z6Mk…",
+  "receiveAddress": "mBuyer…", "nonce": "…", "timestamp": …, "signature": "…" }
 ```
 
-El comprador empareja la orden con una orden de mercado firmada con DID, indicando la dirección que debe recibir la liberación y la cuenta PayPal a abonar. Estado: MATCHED. Se crea un swapId único para el ciclo de vida.
+Estado: `MATCHED`. Se crea un `swapId` único para el ciclo de vida y la dirección de depósito 2-de-3 se deriva de las claves vendedor + comprador + motor.
+
+![El comprador rellena la dirección de recepción](assets/screenshots/p2p-cny-wechat-03-match-es.png)
+
+![Swap creado en MATCHED](assets/screenshots/p2p-cny-wechat-04-matched-es.png)
 
 ---
 
-## 4. El vendedor bloquea USDT en un depósito de 2-de-3
+## 4. El vendedor bloquea USDT en el depósito de 2-de-3
 
-La dirección de depósito es un script P2SH con tres claves — vendedor, comprador, motor — y un umbral de dos.
+La dirección de depósito es un script P2SH con tres claves — vendedor, comprador, motor — y un umbral de dos:
 
 ```typescript
 // redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
 const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "100");
+await L0.transfer(escrowAddress, "10");
 ```
 
-El vendedor financia la dirección de depósito en Bigtangle L0. El Motor demuestra el bloqueo con `getTransactionStatus` — `CONFIRMED`, destino `escrowAddress`, importe 100 — y falla en modo cerrado si cualquiera de las tres comprobaciones no se cumple. Estado: ESCROW_LOCKED. El comprador ve los fondos asegurados antes de enviar el fiat.
+El motor demuestra el bloqueo con `getTransactionStatus` — `CONFIRMED`, destino `escrowAddress`, importe 10 — y falla en modo cerrado si alguna comprobación no se cumple. Estado: `ESCROW_LOCKED`. El comprador ve los fondos asegurados antes de pagar.
+
+![El vendedor pega el hash de la tx de depósito](assets/screenshots/p2p-cny-wechat-05-escrow-lock-es.png)
+
+![ESCROW_LOCKED](assets/screenshots/p2p-cny-wechat-06-escrow-locked-es.png)
 
 ---
 
-## 5. El Motor emite la factura, el comprador paga con PayPal
+## 5. El comprador obtiene las instrucciones de pago
 
-El Motor crea una factura PayPal de importe exacto y entrega la URL alojada al comprador.
+El comprador pulsa **Detalles de pago**. El motor revela el perfil del vendedor más un **concepto por swap** que la transferencia *debe* llevar, el importe exacto y una fecha límite:
 
-```typescript
-const res = await fetch("/api/p2p/payments/invoice", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", currency: "USD" }),
-});
-// → URL de pago alojada; número de factura = swapId
+```json
+{ "method": "wechat", "rail": "wechat", "accountName": "Zhang San",
+  "account": "wxid_pay8888", "amount": "715", "currency": "CNY",
+  "remark": "f71ade2d23e9", "payBy": 1791510060 }
 ```
 
-El comprador paga la factura alojada. El Motor no toca el dinero — PayPal lo retiene. No se necesita confirmación del vendedor. Estado: PAYMENT_PENDING. Arranca el temporizador de expiración.
+Estado: `PAYMENT_PENDING`. Arranca un temporizador — un swap impagado puede expirar y reembolsarse sin el consentimiento del comprador.
+
+![Instrucciones de pago: 户名, cuenta, 715 CNY, concepto](assets/screenshots/p2p-cny-wechat-08-instructions-es.png)
 
 ---
 
-## 6. El Motor verifica automáticamente el pago
+## 6. El comprador paga CNY y reclama con el 流水号
 
-**Innovación clave**: ningún botón humano de «Confirmar». El pago lo demuestra PayPal, no lo afirma una parte.
+El comprador transfiere `715 CNY` en su propia app de WeChat, pega el número de transacción (流水号) en **Transaction ID** y pulsa **He pagado**. La imagen de recibo opcional se almacena en el servidor; solo su `sha256` se ancla al evento del swap.
 
-```typescript
-// POST /api/webhooks/paypal — SHA256withRSA over transmissionId|time|webhookId|crc32(body)
-const ok = verifyPayPalWebhook(rawBody, headers);
-if (ok) await transitions(swapId, "verify");
-```
+![Número de transacción (流水号) introducido](assets/screenshots/p2p-cny-wechat-09-payment-pending-es.png)
 
-El Motor verifica el webhook `INVOICING.INVOICE.PAID`, deduplicado por `event.id`. Esto sustituye al botón manual de «Confirmar» de Binance P2P. Ningún vendedor puede negar la recepción. Estado: PAYMENT_VERIFIED.
+Estado: `PAYMENT_CLAIMED` — los tokens siguen bloqueados. Este estado es la reclamación del comprador y nada más.
+
+![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-wechat-10-payment-claimed-es.png)
 
 ---
 
-## 7. El Motor y el comprador liberan el depósito
+## 7. El vendedor confirma en su propio extracto
 
-Dos firmas satisfacen el script: la del comprador y la del motor. Ninguna parte por sí sola puede mover los fondos.
+La tarjeta del vendedor muestra el 流水号 del comprador y el concepto. El vendedor comprueba **importe + concepto + hora + 流水号 en su propia cuenta** (las capturas nunca cuentan) y solo entonces pulsa **Confirmar recepción**:
+
+![El vendedor ve el 流水号 + la advertencia de confirmación](assets/screenshots/p2p-cny-wechat-11-seller-confirm-es.png)
+
+Estado: `PAYMENT_VERIFIED`.
+
+![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-wechat-12-payment-verified-es.png)
+
+---
+
+## 8. El motor y el vendedor liberan el depósito
+
+Dos firmas satisfacen el script: la del vendedor (prefirmada en el bloqueo, o una cofirma) y la del motor. Ninguna parte por sí sola puede mover los fondos.
 
 ```typescript
 const scriptSig = updateScriptWithSignature(unsigned, [
-  await buyerKey.signInput(tx, 0),
+  await sellerKey.signInput(tx, 0),
   await engineKey.signInput(tx, 0),
   redeemScript,
 ]);
 await L0.submitTransaction(serialize(tx));
 ```
 
-El gasto de liberación se ensambla y se emite hacia `receiveAddress`. Estado: ESCROW_RELEASED. El comprador ya tiene los tokens; el trabajo restante del motor es el pago en fiat.
+El gasto de liberación se ensambla y se emite hacia `receiveAddress`. Estado: `ESCROW_RELEASED`. El comprador ya tiene los tokens; como el vendedor ya cobró en CNY, no hay paso de pago fiat — `complete` cierra el swap.
 
----
+![ESCROW_RELEASED](assets/screenshots/p2p-cny-wechat-13-escrow-released-es.png)
 
-## 8. El Motor paga al vendedor
-
-El Motor envía USD a la cuenta PayPal del vendedor mediante Payouts v1, de forma idempotente por swap.
-
-```typescript
-const res = await fetch("/api/p2p/payments/payout", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", paypalAccount: sellerPaypal }),
-});
-// → PayPal-Request-Id: swapId, sender_batch_id: swapId
-```
-
-El Motor envía USD a la cuenta PayPal del vendedor. Swap COMPLETED. Tiempo total: ~3-5 minutos. Todo firmado con DID, cada paso auditable en cadena o en PayPal.
+![COMPLETED](assets/screenshots/p2p-cny-wechat-14-completed-es.png)
 
 ---
 
 ## 9. Tiempo agotado o fallo → reembolso
 
-Si la factura nunca se paga, el motor y el vendedor cosignan el mismo script de vuelta al vendedor.
+Si el comprador nunca paga, el motor y el vendedor cosignan el mismo script de vuelta al vendedor:
 
 ```typescript
 const scriptSig = updateScriptWithSignature(unsigned, [
@@ -139,41 +142,32 @@ const scriptSig = updateScriptWithSignature(unsigned, [
 await L0.submitTransaction(serialize(tx));
 ```
 
-El reembolso no requiere consentimiento del comprador ni un bloqueo temporal — el umbral se alcanza con las otras dos claves. Estado: EXPIRED → ESCROW_REFUNDED. Ninguna parte retiene nunca los fondos de la otra.
+El reembolso no requiere consentimiento del comprador ni bloqueo temporal — el umbral se alcanza con las otras dos claves. Estado: `EXPIRED` → `ESCROW_REFUNDED`. Ninguna parte retiene nunca los fondos de la otra.
 
 ---
 
-## 10. Vista de historial
+## Comparativa: Binance P2P vs esta liquidación
 
-Los swaps completados, expirados y cancelados se ven en la página de historial.
-
-![Historial](demo-output/screenshots/p2p-history-es.png)
-
-La página de historial lista los swaps completados, expirados y cancelados. Cada entrada muestra el par de activos, el estado final, los pasos de la línea de tiempo y los DID de las partes.
-
----
-
-## Comparativa: Binance P2P vs liquidación IA
-
-| Función | Binance P2P | Liquidación IA |
-|---------|-------------|---------------|
-| Verificación fiat | El vendedor pulsa «Confirmar» (honor) | Webhook de PayPal, verificado con RSA (determinista) |
-| Custodia fiat | P2P (comprador → vendedor) | PayPal retiene hasta el pago (comprador → PayPal → vendedor) |
+| Función | Binance P2P | Esta liquidación |
+|---|---|---|
+| Verificación fiat | El vendedor pulsa «Confirmar» (sistema de honor) | El vendedor confirma en su propio extracto; el motor impone el protocolo |
+| Custodia fiat | P2P (comprador → vendedor) | P2P (comprador → vendedor) — el motor nunca toca el fiat |
 | Depósito | Libro interno | P2SH de 2-de-3 en Bigtangle L0 (verificable) |
 | Reembolso | Ticket de soporte | Motor + vendedor cosignan, sin consentimiento del comprador |
-| Resolución de disputas | Soporte humano (días) | Prueba de transacción en cadena + evento PayPal (minutos) |
+| Resolución de disputas | Soporte humano (días) | Prueba de tx en cadena + almacén de pruebas + concepto por swap (minutos) |
 
 ---
 
 ## Línea de tiempo completa
 
 ```
-MATCHED          14:20:00  Tasa fijada, importe de factura fijo
+MATCHED          14:20:00  Importe fijado en el emparejamiento
 ESCROW_LOCKED    14:23:15  Tx L0 CONFIRMED en la dirección de 2-de-3
-PAYMENT_PENDING  14:24:00  Factura INV-7f3c91 emitida
-PAYMENT_VERIFIED 14:24:10  Webhook INVOICING.INVOICE.PAID, verificado con RSA
-ESCROW_RELEASED  14:24:30  Gasto cosignado hacia receiveAddress
-COMPLETED        14:25:00  Lote de pago PAYOUT-abc SUCCESS
+PAYMENT_PENDING  14:24:00  instrucciones emitidas (cuenta + concepto f71ade2d23e9)
+PAYMENT_CLAIMED  14:25:10  el comprador pegó el 流水号 4200001234567890
+PAYMENT_VERIFIED 14:26:40  el vendedor confirmó en su propio extracto de WeChat
+ESCROW_RELEASED  14:27:20  vendedor + motor cosignaron el gasto hacia receiveAddress
+COMPLETED        14:27:21  sin pago fiat — el vendedor ya tiene los CNY
 ```
 
 ---
@@ -181,14 +175,15 @@ COMPLETED        14:25:00  Lote de pago PAYOUT-abc SUCCESS
 ## Flujo completo de la demostración
 
 ```typescript
-// 1. El vendedor envía orden limitada firmada (POST /api/p2p/orders)
-// 2. El comprador empareja con orden de mercado firmada (POST /api/p2p/orders/:id/match)
-// 3. El vendedor financia el depósito P2SH de 2-de-3 en L0; el motor lo demuestra (getTransactionStatus)
-// 4. El Motor emite factura PayPal; el comprador paga (POST /api/p2p/payments/invoice)
-// 5. El Motor verifica el webhook INVOICING.INVOICE.PAID (POST /api/webhooks/paypal)
-// 6. Motor + comprador cosignan el gasto de liberación (POST .../transitions, action: release)
-// 7. El Motor paga al vendedor (POST /api/p2p/payments/payout)
-// 8. Ambas partes ven el estado COMPLETED en el panel
+// 1. El vendedor guarda un perfil de cobro en CNY     (POST /profiles)
+// 2. El vendedor envía una orden limitada firmada     (POST /orders)
+// 3. El comprador empareja con un match firmado       (POST /orders/:id/match)
+// 4. El vendedor financia el depósito P2SH 2-de-3 en L0; el motor lo demuestra (escrow_lock)
+// 5. El comprador obtiene las instrucciones de pago   (POST /swaps/:id/payment-instructions)
+// 6. El comprador paga en WeChat y reclama el 流水号   (POST /swaps/:id/proof)
+// 7. El vendedor confirma en su propio extracto       (POST /swaps/:id/confirm)
+// 8. Vendedor + motor cosignan la liberación          (POST /swaps/:id/transitions, action: release)
+// 9. El motor completa el swap                        (…/transitions, action: complete)
 ```
 
-Diferencia clave con Binance P2P: **sin botón de «Confirmar» del vendedor.** El pago lo demuestra un webhook de PayPal y los fondos residen en un script de 2-de-3 que ninguna parte controla por sí sola — determinista, auditable, instantáneo.
+Diferencia clave con Binance P2P: los fondos reposan en un script 2-de-3 que ninguna parte controla por sí sola, cada transición se ancla en L1-SOCIAL y el propio extracto del vendedor — no un ticket de soporte — es la verdad fiat.

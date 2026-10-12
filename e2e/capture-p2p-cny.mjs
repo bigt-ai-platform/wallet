@@ -7,7 +7,7 @@
  * The guide built from them is docs/p2p-demo/p2p-all.md → assets/p2p-all.pdf
  * (the same "markdown + screenshots → PDF" pattern as the dai idif guide).
  *
- * Self-contained: starts the p2p-engine (mem store, insecure PayPal, no chain
+ * Self-contained: starts the p2p-engine (mem store, no chain
  * check — a CNY swap needs no L0/L1) with a generated engine DID, serves
  * e2e/web-build, and drives two fresh wallet pairs (one per rail) through
  *   profile → list (rail=wechat|alipay|bank) → match → lock → instructions →
@@ -124,7 +124,6 @@ function startServers() {
       PORT: String(ENGINE_PORT),
       HOST: '127.0.0.1',
       SETTLEMENT_STORE: 'mem',
-      SETTLEMENT_PAYPAL_INSECURE: '1',
       SETTLEMENT_ADMIN_TOKEN: 'adm',
       SETTLEMENT_ENGINE_DID: engineDid,
       SETTLEMENT_ENGINE_PUBKEY: enginePubHex,
@@ -307,7 +306,7 @@ async function captureRail(browser, rail) {
   await s.waitForTimeout(2000);
   railAt(`sell order listed (wantRail=${rail}, ${profile.price} CNY)`);
 
-  // ── 3. buyer matches — no PayPal fields on a CNY order ───────────────────
+  // ── 3. buyer matches — only a receive address on a CNY order ─────────────
   const b = buyer.page;
   await openNav(b, 'P2P');
   await el(b, 'p2p-order-0').waitFor({ timeout: TIMEOUT });
@@ -318,7 +317,7 @@ async function captureRail(browser, rail) {
   await el(b, 'p2p-buy-confirm').click();
   await waitForStatus(b, 'MATCHED');
   await shotN(4, 'matched', b);
-  railAt('buyer matched the order (no paypalAccount / buyerEmail)');
+  railAt('buyer matched the order (receive address only)');
 
   // ── 4. seller locks the 2-of-3 escrow ────────────────────────────────────
   // The engine allows 10 signed calls per DID per 60s (sign.ts RATE_LIMIT);

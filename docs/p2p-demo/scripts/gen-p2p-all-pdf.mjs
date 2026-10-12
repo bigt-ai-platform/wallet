@@ -2,9 +2,9 @@
 /**
  * Render docs/p2p-demo/p2p-all.md → docs/p2p-demo/assets/p2p-all.pdf
  *
- * One combined PDF covering all four P2P fiat rails — PayPal, WeChat Pay,
- * Alipay and bank — from the latest capture reports (PayPal leg via
- * e2e/capture-p2p-guide.mjs, CNY legs via e2e/capture-p2p-cny.mjs).
+ * One combined PDF covering the P2P CNY fiat rails — WeChat Pay, Alipay and
+ * bank — from the latest capture reports (all three legs via
+ * e2e/capture-p2p-cny.mjs).
  *
  * Self-contained (no `marked`, no workspace deps): a minimal markdown → HTML
  * pass, the local screenshots embedded as data URIs, and a headless Chromium
@@ -246,16 +246,9 @@ const [titleLine, ...rest] = md.split("\n");
 const title = titleLine.replace(/^#\s*/, "").trim();
 
 const E2E_OUT = join(resolve(DEMO, "..", ".."), "e2e", "demo-output");
-let meta = "P2P settlement · PayPal / WeChat / Alipay / bank<br>Step-by-step demo guide — all four rails";
+let meta = "P2P settlement · WeChat / Alipay / bank<br>Step-by-step demo guide — the CNY rails";
 const swapParts = [];
 let capturedAt;
-const guideReport = join(E2E_OUT, "p2p-guide-capture.json");
-if (existsSync(guideReport)) {
-  const run = JSON.parse(readFileSync(guideReport, "utf-8"));
-  const entry = run.report?.[0];
-  if (entry?.swapId) swapParts.push(`paypal <code>${entry.swapId}</code>`);
-  if (run.capturedAt && (!capturedAt || run.capturedAt > capturedAt)) capturedAt = run.capturedAt;
-}
 const cnyReport = join(E2E_OUT, "p2p-cny-capture.json");
 if (existsSync(cnyReport)) {
   const run = JSON.parse(readFileSync(cnyReport, "utf-8"));

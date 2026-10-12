@@ -1,136 +1,168 @@
-# P2P Settlement — Cross-Rail Swap with AI Verification
+# P2P Settlement — CNY Swap with Seller-Confirmed Release
 
-**Status: target design, not built.** Everything below is the settlement flow we are building: 2-of-3 P2SH escrow on Bigtangle L0 and real PayPal API verification. The demo build running today is a state machine over Postgres with a mocked fiat leg. Screenshots are from that demo build; the design lives in the dai repo, `docs/p2p.md`.
+**Status: demo build + in-repo engine.** Everything below is the settlement flow
+as built: 2-of-3 P2SH escrow on Bigtangle L0 and a seller-confirmed CNY leg
+(WeChat Pay / Alipay / bank). A personal transfer has no machine-verifiable
+payment event, so the seller's own statement is the fiat signal. Screenshots are
+from the demo build (memory store, no chain check — the lock/release hashes are
+synthetic). The design lives in `docs/p2p.md`.
 
-This guide demonstrates the AI-native P2P settlement flow: listing USDT for sale, matching with a buyer, escrow lock, fiat payment with automated verification, escrow release, and refund on timeout. No manual "Confirm" button — the Settlement Engine verifies payment from a PayPal webhook.
+This guide walks through listing USDT for sale, matching with a buyer, escrow
+lock, the buyer paying CNY **directly** to the seller, the seller confirming on
+their own statement, escrow release, and refund on timeout.
 
-For the **combined all-rails walkthrough** (PayPal + WeChat Pay / Alipay / bank, the rails where the seller's own confirmation *is* the fiat signal when there is no webhook) see [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`.
-
----
-
-## 1. Dashboard Overview
-
-The P2P dashboard shows all active swaps with their current status, rate, and transaction references.
-
-![Dashboard](demo-output/screenshots/p2p-dashboard-en.png)
-
-The dashboard shows all active swaps with status, rate, and transaction references. Each card displays the swap ID, asset pair (e.g. 100 USDT ⇄ 101 USD), color-coded status badge, and expandable timeline.
+For the combined three-rail walkthrough (WeChat / Alipay / bank) see
+[p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`.
 
 ---
 
-## 2. Seller Lists USDT
+## 1. Seller saves a collection profile
 
-Submit a DID-signed limit order to the Settlement Engine.
+The seller opens **P2P → My swaps**, picks the rail (`wechat`) and enters the 收款
+name and account. The profile is stored server-side under the seller's DID and
+is **not** part of the public order book — it is revealed only to the matched
+buyer.
 
-```typescript
-const signature = signPayload(
-  { sellerDid, giveToken: "USDT", giveAmount: "100",
-    giveChain: "L0", wantCurrency: "USD",
-    wantAmount: "101", wantRail: "paypal" },
-  sellerPriv,
-);
+![Seller saves the WeChat payment profile](assets/screenshots/p2p-cny-wechat-01-profile-en.png)
+
+---
+
+## 2. Seller lists USDT
+
+Submit a DID-signed limit order to the settlement engine:
+
+```json
+{ "sellerDid": "did:key:z446G…", "giveToken": "USDT", "giveAmount": "10",
+  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "715",
+  "wantRail": "wechat", "validUntil": 1791510000,
+  "nonce": "…", "timestamp": 1791509100000, "signature": "…" }
 ```
 
-The seller submits a signed limit order: sell 100 USDT for $101 USD via PayPal. The Settlement Engine validates the DID signature. Status: ACTIVE. Order expires after validUntil.
+The order is validated against the seller's DID signature. Status: `ACTIVE`; it
+expires after `validUntil`.
+
+![List a sell order with wechat / CNY](assets/screenshots/p2p-cny-wechat-02-order-en.png)
 
 ---
 
-## 3. Buyer Matches Order
+## 3. Buyer matches order
 
-Buyer submits a signed market order. Rate is locked at match time via an oracle, and the invoice amount is fixed from this moment.
+The buyer submits a DID-signed match, supplying the address that must receive
+the escrow release. There is no account/email to collect — nothing about the
+fiat rail is needed at match time:
 
-```typescript
-const signature = signPayload(
-  { orderId, buyerDid, amount: "100",
-    receiveAddress, paypalAccount },
-  buyerPriv,
-);
+```json
+{ "orderId": "ord-…", "buyerDid": "did:key:z6Mk…",
+  "receiveAddress": "mBuyer…", "nonce": "…", "timestamp": …, "signature": "…" }
 ```
 
-The buyer matches the order with a DID-signed market order, supplying the address that must receive the escrow release and the PayPal account to be paid. Status: MATCHED. A unique swapId is created for the lifecycle.
+Status: `MATCHED`. A unique `swapId` is created for the lifecycle and the
+2-of-3 escrow address is derived from the seller + buyer + engine keys.
+
+![The buyer fills the receive address](assets/screenshots/p2p-cny-wechat-03-match-en.png)
+
+![Swap created at MATCHED](assets/screenshots/p2p-cny-wechat-04-matched-en.png)
 
 ---
 
-## 4. Seller Locks USDT in 2-of-3 Escrow
+## 4. Seller locks USDT in 2-of-3 escrow
 
-The escrow address is a P2SH script with three keys — seller, buyer, engine — and a threshold of two.
+The escrow address is a P2SH script with three keys — seller, buyer, engine —
+and a threshold of two:
 
 ```typescript
 // redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
 const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "100");
+await L0.transfer(escrowAddress, "10");
 ```
 
-The seller funds the escrow address on Bigtangle L0. The Engine proves the lock with `getTransactionStatus` — `CONFIRMED`, destination `escrowAddress`, amount 100 — and fails closed if any of the three checks does not hold. Status: ESCROW_LOCKED. The buyer sees funds secured before sending fiat.
+The engine proves the lock with `getTransactionStatus` — `CONFIRMED`,
+destination `escrowAddress`, amount 10 — and fails closed if any check does not
+hold. Status: `ESCROW_LOCKED`. The buyer sees funds secured before paying.
+
+![The seller pastes the escrow tx hash](assets/screenshots/p2p-cny-wechat-05-escrow-lock-en.png)
+
+![ESCROW_LOCKED](assets/screenshots/p2p-cny-wechat-06-escrow-locked-en.png)
 
 ---
 
-## 5. Engine Issues Invoice, Buyer Pays via PayPal
+## 5. Buyer pulls the payment instructions
 
-The Engine creates an exact-amount PayPal invoice and hands the hosted URL to the buyer.
+The buyer presses **Payment details**. The engine reveals the seller's profile
+plus a **per-swap remark** the transfer *must* carry, the exact amount and a
+deadline:
 
-```typescript
-const res = await fetch("/api/p2p/payments/invoice", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", currency: "USD" }),
-});
-// → hosted checkout URL; invoice number = swapId
+```json
+{ "method": "wechat", "rail": "wechat", "accountName": "Zhang San",
+  "account": "wxid_pay8888", "amount": "715", "currency": "CNY",
+  "remark": "f71ade2d23e9", "payBy": 1791510060 }
 ```
 
-The buyer pays the hosted invoice. The Engine does not touch the money — PayPal holds it. No seller confirmation needed. Status: PAYMENT_PENDING. Timeout timer starts.
+Status: `PAYMENT_PENDING`. A timeout starts — an unpaid swap can be expired and
+refunded without the buyer's consent.
+
+![Payment instructions: 户名, account, 715 CNY, remark](assets/screenshots/p2p-cny-wechat-08-instructions-en.png)
 
 ---
 
-## 6. Engine Auto-Verifies Payment
+## 6. Buyer pays CNY and claims with the 流水号
 
-**Key innovation**: no human "Confirm" button. Payment is proved by PayPal, not asserted by a party.
+The buyer transfers `715 CNY` in their own WeChat app, pastes the transaction
+number (流水号) into **Transaction ID**, and presses **I have paid**. The optional
+receipt image is stored server-side; only its `sha256` is anchored on the swap
+event.
 
-```typescript
-// POST /api/webhooks/paypal — SHA256withRSA over transmissionId|time|webhookId|crc32(body)
-const ok = verifyPayPalWebhook(rawBody, headers);
-if (ok) await transitions(swapId, "verify");
-```
+![Transaction ID (流水号) entered](assets/screenshots/p2p-cny-wechat-09-payment-pending-en.png)
 
-The Engine verifies the `INVOICING.INVOICE.PAID` webhook, deduplicated on `event.id`. This replaces Binance P2P's manual "Confirm" button. No seller can lie about non-receipt. Status: PAYMENT_VERIFIED.
+Status: `PAYMENT_CLAIMED` — the tokens are still locked. This state is the
+buyer's claim and nothing more.
+
+![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-wechat-10-payment-claimed-en.png)
 
 ---
 
-## 7. Engine and Buyer Release Escrow
+## 7. Seller confirms on their own statement
 
-Two signatures satisfy the script: the buyer's and the engine's. No single party can move the funds.
+The seller's card shows the buyer's 流水号 and the remark. The seller checks
+**amount + remark + time + 流水号 in their own account** (screenshots never
+count) and only then presses **Confirm received**:
+
+![Seller sees 流水号 + the confirm warning](assets/screenshots/p2p-cny-wechat-11-seller-confirm-en.png)
+
+Status: `PAYMENT_VERIFIED`.
+
+![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-wechat-12-payment-verified-en.png)
+
+---
+
+## 8. Engine and seller release escrow
+
+Two signatures satisfy the script: the seller's (presigned at lock, or a
+co-sign) and the engine's. No single party can move the funds.
 
 ```typescript
 const scriptSig = updateScriptWithSignature(unsigned, [
-  await buyerKey.signInput(tx, 0),
+  await sellerKey.signInput(tx, 0),
   await engineKey.signInput(tx, 0),
   redeemScript,
 ]);
 await L0.submitTransaction(serialize(tx));
 ```
 
-The release spend is assembled and broadcast to `receiveAddress`. Status: ESCROW_RELEASED. The buyer now holds the tokens; the engine's remaining job is the fiat payout.
+The release spend is assembled and broadcast to `receiveAddress`. Status:
+`ESCROW_RELEASED`. The buyer holds the tokens; because the seller was already
+paid in CNY, there is no fiat payout step — `complete` closes the swap.
+
+![ESCROW_RELEASED](assets/screenshots/p2p-cny-wechat-13-escrow-released-en.png)
+
+![COMPLETED](assets/screenshots/p2p-cny-wechat-14-completed-en.png)
 
 ---
 
-## 8. Engine Payouts Seller
+## 9. Timeout or failure → refund
 
-The Engine sends USD to the seller's PayPal through Payouts v1, idempotent on the swap.
-
-```typescript
-const res = await fetch("/api/p2p/payments/payout", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", paypalAccount: sellerPaypal }),
-});
-// → PayPal-Request-Id: swapId, sender_batch_id: swapId
-```
-
-The Engine sends USD to the seller's PayPal. Swap COMPLETED. Total time: ~3-5 minutes. All DID-signed, every step auditable on chain or at PayPal.
-
----
-
-## 9. Timeout or Failure → Refund
-
-If the invoice is never paid, the engine and the seller co-sign the same script back to the seller.
+If the buyer never pays, the engine and the seller co-sign the same script back
+to the seller:
 
 ```typescript
 const scriptSig = updateScriptWithSignature(unsigned, [
@@ -141,56 +173,52 @@ const scriptSig = updateScriptWithSignature(unsigned, [
 await L0.submitTransaction(serialize(tx));
 ```
 
-Refund needs no buyer consent and no timelock — the threshold is reached with the other two keys. Status: EXPIRED → ESCROW_REFUNDED. Neither party ever holds the other's funds.
+Refund needs no buyer consent and no timelock — the threshold is reached with the
+other two keys. Status: `EXPIRED` → `ESCROW_REFUNDED`. Neither party ever holds
+the other's funds.
 
 ---
 
-## 10. History View
+## Comparison: Binance P2P vs this settlement
 
-Completed, expired, and cancelled swaps are visible in the history page.
-
-![History](demo-output/screenshots/p2p-history-en.png)
-
-The history page lists completed, expired, and cancelled swaps. Each entry shows the asset pair, final status, timeline steps, and party DIDs.
-
----
-
-## Comparison: Binance P2P vs AI Settlement
-
-| Feature | Binance P2P | AI Settlement |
-|---------|-------------|---------------|
-| Fiat verification | Seller clicks "Confirm" (honor system) | PayPal webhook, RSA-verified (deterministic) |
-| Fiat custody | P2P (buyer → seller) | PayPal holds until payout (buyer → PayPal → seller) |
+| Feature | Binance P2P | This settlement |
+|---|---|---|
+| Fiat verification | Seller clicks "Confirm" (honor system) | Seller confirms on their own statement; the engine enforces the protocol |
+| Fiat custody | P2P (buyer → seller) | P2P (buyer → seller) — the engine never touches fiat |
 | Escrow | Internal ledger | 2-of-3 P2SH on Bigtangle L0 (verifiable) |
 | Refund | Support ticket | Engine + seller co-sign, no buyer consent |
-| Dispute resolution | Human support (days) | On-chain tx proof + PayPal event (minutes) |
+| Dispute resolution | Human support (days) | Chain tx proof + proof store + per-swap remark (minutes) |
 
 ---
 
-## Complete Timeline
+## Complete timeline
 
 ```
-MATCHED          14:20:00  Rate locked, invoice amount fixed
+MATCHED          14:20:00  Amount fixed at match
 ESCROW_LOCKED    14:23:15  L0 tx CONFIRMED at the 2-of-3 address
-PAYMENT_PENDING  14:24:00  Invoice INV-7f3c91 issued
-PAYMENT_VERIFIED 14:24:10  INVOICING.INVOICE.PAID webhook, RSA-verified
-ESCROW_RELEASED  14:24:30  Co-signed spend to receiveAddress
-COMPLETED        14:25:00  Payout batch PAYOUT-abc SUCCESS
+PAYMENT_PENDING  14:24:00  instructions issued (account + remark f71ade2d23e9)
+PAYMENT_CLAIMED  14:25:10  buyer pasted 流水号 4200001234567890
+PAYMENT_VERIFIED 14:26:40  seller confirmed on their own WeChat statement
+ESCROW_RELEASED  14:27:20  seller + engine co-signed spend to receiveAddress
+COMPLETED        14:27:21  no fiat payout — the seller already holds the CNY
 ```
 
 ---
 
-## Full Demo Flow
+## Full demo flow
 
 ```typescript
-// 1. Seller submits signed limit order (POST /api/p2p/orders)
-// 2. Buyer matches with signed market order (POST /api/p2p/orders/:id/match)
-// 3. Seller funds 2-of-3 P2SH escrow on L0; engine proves it (getTransactionStatus)
-// 4. Engine issues a PayPal invoice; buyer pays (POST /api/p2p/payments/invoice)
-// 5. Engine verifies INVOICING.INVOICE.PAID webhook (POST /api/webhooks/paypal)
-// 6. Engine + buyer co-sign the release spend (POST .../transitions, action: release)
-// 7. Engine payouts seller (POST /api/p2p/payments/payout)
-// 8. Both parties see COMPLETED status on dashboard
+// 1. Seller saves a CNY collection profile            (POST /profiles)
+// 2. Seller submits a signed limit order              (POST /orders)
+// 3. Buyer matches with a signed match                (POST /orders/:id/match)
+// 4. Seller funds 2-of-3 P2SH escrow on L0; engine proves it (escrow_lock)
+// 5. Buyer pulls the payment instructions             (POST /swaps/:id/payment-instructions)
+// 6. Buyer pays in WeChat and claims the 流水号        (POST /swaps/:id/proof)
+// 7. Seller confirms on their own statement           (POST /swaps/:id/confirm)
+// 8. Seller + engine co-sign the release              (POST /swaps/:id/transitions, action: release)
+// 9. Engine completes the swap                        (…/transitions, action: complete)
 ```
 
-Key difference from Binance P2P: **no seller "Confirm" button.** Payment is proved by a PayPal webhook and funds sit in a 2-of-3 script neither party controls alone — deterministic, auditable, instant.
+Key difference from Binance P2P: funds sit in a 2-of-3 script neither party
+controls alone, every transition is anchored on L1-SOCIAL, and the seller's own
+statement — not a support ticket — is the fiat truth.

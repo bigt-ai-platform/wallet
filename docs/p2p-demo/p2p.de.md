@@ -1,134 +1,137 @@
-# P2P-Abwicklung — Cross-Rail-Swap mit KI-Prüfung
+# P2P-Abwicklung — CNY-Swap mit vom Verkäufer bestätigter Freigabe
 
-**Status: Zielentwurf, nicht umgesetzt.** Alles nachfolgende beschreibt den Abwicklungs­fluss, den wir bauen: 2-von-3-P2SH-Eskrow auf Bigtangle L0 und echte PayPal-API-Prüfung. Der heute laufende Demo-Build ist eine State Machine auf Postgres mit simulierter Fiat-Strecke. Screenshots stammen aus diesem Demo-Build; das Design liegt im dai-Repository, `docs/p2p.md`.
+**Status: Demo-Build + Engine im Repo.** Alles nachfolgende ist der Abwicklungsfluss wie gebaut: 2-von-3-P2SH-Eskrow auf Bigtangle L0 und eine vom Verkäufer bestätigte CNY-Strecke (WeChat Pay / Alipay / Bank). Eine persönliche Überweisung hat kein maschinell verifizierbares Zahlungsereignis, daher ist der eigene Kontoauszug des Verkäufers das Fiat-Signal. Screenshots stammen aus dem Demo-Build (Memory Store, keine Chain-Prüfung — die Lock/Release-Hashes sind synthetisch). Das Design liegt in `docs/p2p.md`.
 
-Diese Anleitung demonstriert den KI-nativen P2P-Abwicklungsfluss: USDT zum Verkauf einstellen, mit einem Käufer matchen, Eskrow-Sperre, Fiat-Zahlung mit automatischer Prüfung, Eskrow-Freigabe und Rückerstattung bei Timeout. Kein manueller „Bestätigen"-Button — die Settlement Engine prüft die Zahlung anhand eines PayPal-Webhooks.
+Diese Anleitung führt durch das Einlisten von USDT zum Verkauf, das Matching mit einem Käufer, die Eskrow-Sperre, die Zahlung von CNY durch den Käufer **direkt** an den Verkäufer, die Bestätigung des Verkäufers auf dem eigenen Kontoauszug, die Eskrow-Freigabe und die Rückerstattung bei Timeout.
 
----
-
-## 1. Dashboard-Übersicht
-
-Das P2P-Dashboard zeigt alle aktiven Swaps mit Status, Kurs und Transaktionsreferenzen.
-
-![Dashboard](demo-output/screenshots/p2p-dashboard-de.png)
-
-Das Dashboard zeigt alle aktiven Swaps mit Status, Kurs und Transaktionsreferenzen. Jede Karte zeigt die Swap-ID, das Asset-Paar (z. B. 100 USDT ⇄ 101 USD), ein farbcodiertes Status-Badge und eine ausklappbare Timeline.
+Für den kombinierten Drei-Schienen-Durchlauf (WeChat / Alipay / Bank) siehe [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`.
 
 ---
 
-## 2. Verkäufer stellt USDT ein
+## 1. Verkäufer speichert ein Zahlungsprofil
 
-Übergibt eine DID-signierte Limit-Order an die Settlement Engine.
+Der Verkäufer öffnet **P2P → Meine Swaps**, wählt die Schiene (`wechat`) und gibt den 收款-Namen und das Konto ein. Das Profil wird serverseitig unter der DID des Verkäufers gespeichert und ist **nicht** Teil des öffentlichen Orderbuchs — es wird nur dem gematchten Käufer offengelegt.
 
-```typescript
-const signature = signPayload(
-  { sellerDid, giveToken: "USDT", giveAmount: "100",
-    giveChain: "L0", wantCurrency: "USD",
-    wantAmount: "101", wantRail: "paypal" },
-  sellerPriv,
-);
+![Verkäufer speichert das WeChat-Zahlungsprofil](assets/screenshots/p2p-cny-wechat-01-profile-de.png)
+
+---
+
+## 2. Verkäufer listet USDT
+
+Übermittelt eine DID-signierte Limit-Order an die Settlement Engine:
+
+```json
+{ "sellerDid": "did:key:z446G…", "giveToken": "USDT", "giveAmount": "10",
+  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "715",
+  "wantRail": "wechat", "validUntil": 1791510000,
+  "nonce": "…", "timestamp": 1791509100000, "signature": "…" }
 ```
 
-Der Verkäufer übergibt eine signierte Limit-Order: 100 USDT für 101 USD über PayPal verkaufen. Die Settlement Engine validiert die DID-Signatur. Status: ACTIVE. Die Order läuft nach validUntil ab.
+Die Order wird gegen die DID-Signatur des Verkäufers validiert. Status: `ACTIVE`; sie läuft nach `validUntil` ab.
+
+![Eine Verkaufsorder mit wechat / CNY einstellen](assets/screenshots/p2p-cny-wechat-02-order-de.png)
 
 ---
 
 ## 3. Käufer matcht die Order
 
-Der Käufer übergibt eine signierte Market-Order. Der Kurs wird zum Matchzeitpunkt über einen Oracle gesichert, der Rechnungsbetrag ist ab diesem Moment fest.
+Der Käufer übermittelt ein DID-signiertes Match und gibt die Adresse an, die die Eskrow-Freigabe erhalten soll. Es gibt kein Konto/E-Mail zu erfassen — zum Matchzeitpunkt ist nichts über die Fiat-Schiene nötig:
 
-```typescript
-const signature = signPayload(
-  { orderId, buyerDid, amount: "100",
-    receiveAddress, paypalAccount },
-  buyerPriv,
-);
+```json
+{ "orderId": "ord-…", "buyerDid": "did:key:z6Mk…",
+  "receiveAddress": "mBuyer…", "nonce": "…", "timestamp": …, "signature": "…" }
 ```
 
-Der Käufer matcht die Order mit einer DID-signierten Market-Order und liefert die Adresse für die Eskrow-Freigabe sowie das zu zahlende PayPal-Konto. Status: MATCHED. Für den Lebenszyklus entsteht eine eindeutige swapId.
+Status: `MATCHED`. Für den Lebenszyklus wird eine eindeutige `swapId` erzeugt und die 2-von-3-Eskrow-Adresse aus den Schlüsseln von Verkäufer + Käufer + Engine abgeleitet.
+
+![Der Käufer trägt die Empfangsadresse ein](assets/screenshots/p2p-cny-wechat-03-match-de.png)
+
+![Swap bei MATCHED erstellt](assets/screenshots/p2p-cny-wechat-04-matched-de.png)
 
 ---
 
 ## 4. Verkäufer sperrt USDT im 2-von-3-Eskrow
 
-Die Eskrow-Adresse ist ein P2SH-Skript mit drei Schlüsseln — Verkäufer, Käufer, Engine — und einer Schwelle von zwei.
+Die Eskrow-Adresse ist ein P2SH-Skript mit drei Schlüsseln — Verkäufer, Käufer, Engine — und einer Schwelle von zwei:
 
 ```typescript
 // redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
 const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "100");
+await L0.transfer(escrowAddress, "10");
 ```
 
-Der Verkäufer finanziert die Eskrow-Adresse auf Bigtangle L0. Die Engine belegt die Sperre mit `getTransactionStatus` — `CONFIRMED`, Ziel `escrowAddress`, Betrag 100 — und schlägt fehlgeschlossen, wenn einer der drei Prüfpunkte nicht gilt. Status: ESCROW_LOCKED. Der Käufer sieht die gesicherten Mittel, bevor er Fiat sendet.
+Die Engine belegt die Sperre mit `getTransactionStatus` — `CONFIRMED`, Ziel `escrowAddress`, Betrag 10 — und schlägt fehlgeschlossen fehl, wenn eine Prüfung nicht besteht. Status: `ESCROW_LOCKED`. Der Käufer sieht die Mittel gesichert, bevor er zahlt.
+
+![Der Verkäufer fügt den Eskrow-Tx-Hash ein](assets/screenshots/p2p-cny-wechat-05-escrow-lock-de.png)
+
+![ESCROW_LOCKED](assets/screenshots/p2p-cny-wechat-06-escrow-locked-de.png)
 
 ---
 
-## 5. Engine stellt Rechnung, Käufer zahlt via PayPal
+## 5. Käufer ruft die Zahlungsanweisungen ab
 
-Die Engine erstellt eine PayPal-Rechnung mit exaktem Betrag und übergibt die gehostete URL an den Käufer.
+Der Käufer drückt **Zahlungsdetails**. Die Engine legt das Profil des Verkäufers offen, plus einen **Swap-spezifischen Verwendungszweck**, den die Überweisung *tragen muss*, den exakten Betrag und eine Frist:
 
-```typescript
-const res = await fetch("/api/p2p/payments/invoice", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", currency: "USD" }),
-});
-// → gehostete Checkout-URL; Rechnungsnummer = swapId
+```json
+{ "method": "wechat", "rail": "wechat", "accountName": "Zhang San",
+  "account": "wxid_pay8888", "amount": "715", "currency": "CNY",
+  "remark": "f71ade2d23e9", "payBy": 1791510060 }
 ```
 
-Der Käufer zahlt die gehostete Rechnung. Die Engine berührt das Geld nicht — PayPal hält es. Keine Bestätigung durch den Verkäufer nötig. Status: PAYMENT_PENDING. Der Timeout-Timer startet.
+Status: `PAYMENT_PENDING`. Ein Timeout startet — ein unbezahlter Swap kann ohne Zustimmung des Käufers verfallen und erstattet werden.
+
+![Zahlungsanweisungen: 户名, Konto, 715 CNY, Verwendungszweck](assets/screenshots/p2p-cny-wechat-08-instructions-de.png)
 
 ---
 
-## 6. Engine prüft Zahlung automatisch
+## 6. Käufer zahlt CNY und reklamiert mit der 流水号
 
-**Kerninnovation**: kein menschlicher „Bestätigen"-Button. Die Zahlung wird von PayPal belegt, nicht von einer Partei behauptet.
+Der Käufer überweist `715 CNY` in seiner eigenen WeChat-App, fügt die Transaktionsnummer (流水号) in **Transaction ID** ein und drückt **Ich habe bezahlt**. Das optionale Belegbild wird serverseitig gespeichert; nur sein `sha256` wird am Swap-Ereignis verankert.
 
-```typescript
-// POST /api/webhooks/paypal — SHA256withRSA over transmissionId|time|webhookId|crc32(body)
-const ok = verifyPayPalWebhook(rawBody, headers);
-if (ok) await transitions(swapId, "verify");
-```
+![Transaction ID (流水号) eingegeben](assets/screenshots/p2p-cny-wechat-09-payment-pending-de.png)
 
-Die Engine prüft den Webhook `INVOICING.INVOICE.PAID`, dedupliziert über `event.id`. Das ersetzt Binance P2Ps manuellen „Bestätigen"-Button. Kein Verkäufer kann den Nicht-Eingang der Zahlung bestreiten. Status: PAYMENT_VERIFIED.
+Status: `PAYMENT_CLAIMED` — die Token sind noch gesperrt. Dieser Zustand ist die Behauptung des Käufers und nichts weiter.
+
+![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-wechat-10-payment-claimed-de.png)
 
 ---
 
-## 7. Engine und Käufer geben das Eskrow frei
+## 7. Verkäufer bestätigt auf dem eigenen Kontoauszug
 
-Zwei Signaturen erfüllen das Skript: die des Käufers und die der Engine. Keine einzelne Partei kann die Mittel bewegen.
+Die Karte des Verkäufers zeigt die 流水号 des Käufers und den Verwendungszweck. Der Verkäufer prüft **Betrag + Verwendungszweck + Zeit + 流水号 im eigenen Konto** (Screenshots zählen nie) und drückt erst dann **Empfang bestätigen**:
+
+![Verkäufer sieht 流水号 + die Bestätigungswarnung](assets/screenshots/p2p-cny-wechat-11-seller-confirm-de.png)
+
+Status: `PAYMENT_VERIFIED`.
+
+![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-wechat-12-payment-verified-de.png)
+
+---
+
+## 8. Engine und Verkäufer geben das Eskrow frei
+
+Zwei Signaturen erfüllen das Skript: die des Verkäufers (bei der Sperre vorab signiert, oder eine Co-Signatur) und die der Engine. Keine einzelne Partei kann die Mittel bewegen.
 
 ```typescript
 const scriptSig = updateScriptWithSignature(unsigned, [
-  await buyerKey.signInput(tx, 0),
+  await sellerKey.signInput(tx, 0),
   await engineKey.signInput(tx, 0),
   redeemScript,
 ]);
 await L0.submitTransaction(serialize(tx));
 ```
 
-Der Freigabe-Spend wird zusammengesetzt und an `receiveAddress` broadcastet. Status: ESCROW_RELEASED. Der Käufer hält jetzt die Token; der Restaufgabe der Engine ist die Fiat-Auszahlung.
+Der Freigabe-Spend wird zusammengesetzt und an `receiveAddress` broadcastet. Status: `ESCROW_RELEASED`. Der Käufer hält die Token; da der Verkäufer bereits in CNY bezahlt wurde, gibt es keinen Fiat-Auszahlungsschritt — `complete` schließt den Swap ab.
 
----
+![ESCROW_RELEASED](assets/screenshots/p2p-cny-wechat-13-escrow-released-de.png)
 
-## 8. Engine zahlt Verkäufer aus
-
-Die Engine sendet USD über Payouts v1 an das PayPal-Konto des Verkäufers, idempotent pro Swap.
-
-```typescript
-const res = await fetch("/api/p2p/payments/payout", {
-  method: "POST",
-  body: JSON.stringify({ swapId, amount: "101", paypalAccount: sellerPaypal }),
-});
-// → PayPal-Request-Id: swapId, sender_batch_id: swapId
-```
-
-Die Engine sendet USD an das PayPal-Konto des Verkäufers. Swap COMPLETED. Gesamtdauer: ~3-5 Minuten. Alles DID-signiert, jeder Schritt on-chain oder bei PayPal prüfbar.
+![COMPLETED](assets/screenshots/p2p-cny-wechat-14-completed-de.png)
 
 ---
 
 ## 9. Timeout oder Fehler → Rückerstattung
 
-Wird die Rechnung nie bezahlt, unterzeichnen Engine und Verkäufer dasselbe Skript zurück an den Verkäufer.
+Wenn der Käufer nie zahlt, co-signieren Engine und Verkäufer dasselbe Skript zurück an den Verkäufer:
 
 ```typescript
 const scriptSig = updateScriptWithSignature(unsigned, [
@@ -139,41 +142,32 @@ const scriptSig = updateScriptWithSignature(unsigned, [
 await L0.submitTransaction(serialize(tx));
 ```
 
-Die Rückerstattung braucht weder Zustimmung des Käufers noch einen Timelock — die Schwelle wird mit den anderen zwei Schlüsseln erreicht. Status: EXPIRED → ESCROW_REFUNDED. Keine Partei hält jemals die Mittel der anderen.
+Die Rückerstattung braucht weder Zustimmung des Käufers noch einen Timelock — die Schwelle wird mit den anderen zwei Schlüsseln erreicht. Status: `EXPIRED` → `ESCROW_REFUNDED`. Keine Partei hält jemals die Mittel der anderen.
 
 ---
 
-## 10. Verlaufsansicht
+## Vergleich: Binance P2P vs. diese Abwicklung
 
-Abgeschlossene, abgelaufene und stornierte Swaps sind in der Verlaufsseite sichtbar.
-
-![Verlauf](demo-output/screenshots/p2p-history-de.png)
-
-Die Verlaufsseite listet abgeschlossene, abgelaufene und stornierte Swaps. Jeder Eintrag zeigt das Asset-Paar, den Endstatus, die Timeline-Schritte und die DIDs der Parteien.
-
----
-
-## Vergleich: Binance P2P vs. AI-Abwicklung
-
-| Funktion | Binance P2P | AI-Abwicklung |
-|---------|-------------|---------------|
-| Fiat-Prüfung | Verkäufer klickt „Bestätigen" (Ehrensystem) | PayPal-Webhook, RSA-verifiziert (deterministisch) |
-| Fiat-Custody | P2P (Käufer → Verkäufer) | PayPal hält bis zur Auszahlung (Käufer → PayPal → Verkäufer) |
+| Funktion | Binance P2P | Diese Abwicklung |
+|---|---|---|
+| Fiat-Prüfung | Verkäufer klickt „Bestätigen" (Ehrensystem) | Verkäufer bestätigt auf dem eigenen Kontoauszug; die Engine erzwingt das Protokoll |
+| Fiat-Custody | P2P (Käufer → Verkäufer) | P2P (Käufer → Verkäufer) — die Engine berührt Fiat nie |
 | Eskrow | Internes Ledger | 2-von-3-P2SH auf Bigtangle L0 (prüfbar) |
-| Rückerstattung | Support-Ticket | Engine + Verkäufer unterzeichnen, ohne Zustimmung des Käufers |
-| Streitlösung | Menschlicher Support (Tage) | On-chain-Tx-Beleg + PayPal-Ereignis (Minuten) |
+| Rückerstattung | Support-Ticket | Engine + Verkäufer co-signieren, keine Zustimmung des Käufers |
+| Streitlösung | Menschlicher Support (Tage) | Chain-Tx-Beleg + Proof Store + Swap-Verwendungszweck (Minuten) |
 
 ---
 
 ## Vollständige Timeline
 
 ```
-MATCHED          14:20:00  Kurs gesichert, Rechnungsbetrag fest
-ESCROW_LOCKED    14:23:15  L0-Tx CONFIRMED auf der 2-von-3-Adresse
-PAYMENT_PENDING  14:24:00  Rechnung INV-7f3c91 erstellt
-PAYMENT_VERIFIED 14:24:10  Webhook INVOICING.INVOICE.PAID, RSA-verifiziert
-ESCROW_RELEASED  14:24:30  Ko-signierter Spend an receiveAddress
-COMPLETED        14:25:00  Auszahlungslauf PAYOUT-abc SUCCESS
+MATCHED          14:20:00  Betrag beim Match festgelegt
+ESCROW_LOCKED    14:23:15  L0-Tx CONFIRMED an der 2-von-3-Adresse
+PAYMENT_PENDING  14:24:00  Anweisungen ausgegeben (Konto + Verwendungszweck f71ade2d23e9)
+PAYMENT_CLAIMED  14:25:10  Käufer fügte 流水号 4200001234567890 ein
+PAYMENT_VERIFIED 14:26:40  Verkäufer bestätigte auf dem eigenen WeChat-Kontoauszug
+ESCROW_RELEASED  14:27:20  Verkäufer + Engine co-signierten den Spend an receiveAddress
+COMPLETED        14:27:21  keine Fiat-Auszahlung — der Verkäufer hält die CNY bereits
 ```
 
 ---
@@ -181,14 +175,15 @@ COMPLETED        14:25:00  Auszahlungslauf PAYOUT-abc SUCCESS
 ## Vollständiger Demo-Ablauf
 
 ```typescript
-// 1. Verkäufer sendet signierte Limit-Order (POST /api/p2p/orders)
-// 2. Käufer matcht mit signierter Market-Order (POST /api/p2p/orders/:id/match)
-// 3. Verkäufer finanziert 2-von-3-P2SH-Eskrow auf L0; Engine prüft (getTransactionStatus)
-// 4. Engine stellt PayPal-Rechnung; Käufer zahlt (POST /api/p2p/payments/invoice)
-// 5. Engine prüft Webhook INVOICING.INVOICE.PAID (POST /api/webhooks/paypal)
-// 6. Engine + Käufer ko-signieren den Freigabe-Spend (POST .../transitions, action: release)
-// 7. Engine zahlt Verkäufer aus (POST /api/p2p/payments/payout)
-// 8. Beide Parteien sehen COMPLETED-Status auf dem Dashboard
+// 1. Verkäufer speichert ein CNY-Zahlungsprofil            (POST /profiles)
+// 2. Verkäufer übermittelt eine signierte Limit-Order     (POST /orders)
+// 3. Käufer matcht mit einem signierten Match             (POST /orders/:id/match)
+// 4. Verkäufer finanziert 2-von-3-P2SH-Eskrow auf L0; Engine belegt es (escrow_lock)
+// 5. Käufer ruft die Zahlungsanweisungen ab               (POST /swaps/:id/payment-instructions)
+// 6. Käufer zahlt in WeChat und reklamiert die 流水号      (POST /swaps/:id/proof)
+// 7. Verkäufer bestätigt auf dem eigenen Kontoauszug      (POST /swaps/:id/confirm)
+// 8. Verkäufer + Engine co-signieren die Freigabe         (POST /swaps/:id/transitions, action: release)
+// 9. Engine schließt den Swap ab                          (…/transitions, action: complete)
 ```
 
-Entscheidender Unterschied zu Binance P2P: **kein „Bestätigen"-Button des Verkäufers.** Die Zahlung wird durch einen PayPal-Webhook belegt, und die Mittel liegen in einem 2-von-3-Skript, das keine Partei allein kontrolliert — deterministisch, prüfbar, sofort.
+Entscheidender Unterschied zu Binance P2P: Die Mittel liegen in einem 2-von-3-Skript, das keine Partei allein kontrolliert, jeder Übergang wird auf L1-SOCIAL verankert, und der eigene Kontoauszug des Verkäufers — nicht ein Support-Ticket — ist die Fiat-Wahrheit.

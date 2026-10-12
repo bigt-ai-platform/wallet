@@ -1,104 +1,125 @@
-# P2P 结算 — 钱包原生的跨渠道兑换
+# P2P 结算 — 钱包原生的人民币兑换
 
-**这是什么。** 在 **Bigtangle L0** 上的加密货币与 **PayPal**（或人民币渠道：微信支付 / 支付宝 / 银行）法币之间的点对点兑换。卖方将代币托管到一个 **2-of-3 P2SH 地址**（卖方、买方、引擎）；买方支付一笔**精确金额**的法币；引擎验证付款后释放托管。每一步不可逆操作都由钱包自己的 PQ 私钥签名，引擎只能**共同签名**一笔支出——它从不持有你的资金。
+**这是什么。** 在 **Bigtangle L0** 上的加密货币与人民币法币（微信支付 / 支付宝 / 银行）之间的点对点兑换。卖方将代币托管到一个 **2-of-3 P2SH 地址**（卖方、买方、引擎）；买方在自己的支付应用里**直接**付款给卖方；卖方在自己的账单上确认收款后，托管随即释放。每一步不可逆操作都由钱包自己的 PQ 私钥签名，引擎只能**共同签名**一笔支出——它从不持有你的资金，也从不触碰法币。
 
 **在哪里。** 钱包中的 **P2P** 页面（侧边栏 → 交易 → P2P）。以下所有截图都取自本地演示构建的该页面。
 
-**演示与线上。** 截图来自演示构建：引擎运行在模拟 PayPal 模式（伪造的发票 URL 和合成的交易哈希），锁定/验证/释放步骤由本地引擎密钥签名。状态机、签名、只追加事件日志以及链上审计锚定都是真实的；只有对外的 PayPal 调用和 L0 广播被替换为桩实现。
+**演示与线上。** 截图来自演示构建：引擎运行在内存存储模式且不做链上检查，因此锁定/释放步骤使用合成的交易哈希。状态机、签名、只追加事件日志以及链上审计锚定都是真实的；只有 L0 广播被替换为桩实现。
 
-**没有手动“确认”。** PayPal 渠道上没有卖方“确认”按钮——引擎根据自身的证据验证付款。（人民币渠道没有 webhook，改用卖方的显式确认；参见 `docs/p2p.md`。）
+**卖方确认就是法币到账信号。** 个人微信/支付宝/银行账户没有收款 API，因此不存在可供等待的、可机器验证的付款事件。卖方在**自己的应用里核对金额 + 备注 + 时间 + 流水号**——截图永远不算数——然后确认。设计细节见 `docs/p2p.md`。
 
 ---
 
 ## 流程一览
 
 ```
-ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──payment──▶ PAYMENT_PENDING
-                                                                     │
-PAYMENT_PENDING ──verify──▶ PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──payout──▶ COMPLETED
+ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──instructions──▶ PAYMENT_PENDING
+                                                                          │
+   PAYMENT_PENDING ──proof──▶ PAYMENT_CLAIMED ──confirm──▶ PAYMENT_VERIFIED
+                                                                  │
+                            PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──complete──▶ COMPLETED
 ```
 
 | # | 步骤 | 操作方 | 链上 / 引擎 |
 |---|---|---|---|
-| 1 | 卖方挂出签名的卖单 | 卖方 | 订单入库，尚未注资 |
-| 2 | 买方撮合（收款地址 + PayPal 账户） | 买方 | 创建 `swapId`，推导托管地址 |
-| 3 | 卖方为 2-of-3 托管注资，引擎证明锁定 | 卖方 + 引擎 | L0 上 `ESCROW_LOCKED` |
-| 4 | 买方支付精确金额发票并上报 | 买方 | `PAYMENT_PENDING` |
-| 5 | 引擎自行验证付款 | 引擎 | `PAYMENT_VERIFIED` |
-| 6 | 引擎 + 买方共同签名释放，代币转移 | 引擎 + 买方 | `ESCROW_RELEASED` |
-| 7 | 引擎通过 PayPal Payouts 向卖方付款 | 引擎 | `COMPLETED` |
+| 1 | 卖方保存人民币收款资料 | 卖方 | 资料存于服务端，绝不进入订单簿 |
+| 2 | 卖方挂出签名的卖单 | 卖方 | 订单入库，尚未注资 |
+| 3 | 买方撮合（收款地址） | 买方 | 创建 `swapId`，推导托管地址 |
+| 4 | 卖方为 2-of-3 托管注资，引擎证明锁定 | 卖方 + 引擎 | L0 上 `ESCROW_LOCKED` |
+| 5 | 买方拉取付款说明 | 买方 | `PAYMENT_PENDING`（+ 每笔交易的备注） |
+| 6 | 买方在自己的应用里付款，用流水号认领 | 买方 | `PAYMENT_CLAIMED` |
+| 7 | 卖方核对自己的账单并确认 | 卖方 | `PAYMENT_VERIFIED` |
+| 8 | 引擎释放代币，交易完成 | 引擎 | `ESCROW_RELEASED` → `COMPLETED` |
 
-每次状态转换都会作为一条 `social.p2p-swap` 记录锚定到 L1-SOCIAL 链上，因此整个生命周期都可公开审计，同时不暴露任何一方的 PayPal 信息。
-
----
-
-## 1. 卖方挂出卖单
-
-在 **Open sells（卖单）** 标签页填写订单：你给出的代币与数量、你想要的法币价格、币种、代币所在的链，以及**支付方式**（PayPal 或人民币渠道）。条款在挂单时即被锁定，因此这一步用你的钱包密钥签名。
-
-![卖单表单，已选择 PayPal 渠道](/demo/p2p/p2p-01-order-zh.png)
-
-挂出后，订单在引擎中为 `ACTIVE`，并出现在公开订单簿中（订单不包含任何个人资料）：
-
-![订单位于订单簿中](/demo/p2p/p2p-02-active-zh.png)
+每次状态转换都会作为一条 `social.p2p-swap` 记录锚定到 L1-SOCIAL 链上，因此整个生命周期都可公开审计，同时不暴露任何一方的账户信息。
 
 ---
 
-## 2. 买方撮合
+## 1. 卖方保存收款资料
 
-买方打开订单，提供用于接收释放代币的**收款地址**，以及发票应账单的 **PayPal 账户**（并填写接收发票的邮箱）。撮合意味着买方承诺付款，因此这一步同样需要签名：
+在 **My swaps（我的交易）** 标签页，卖方选择一个渠道（微信、支付宝或银行），并填写收款名称与账号。资料存放在服务端、挂在卖方 DID 之下，且**不**属于公开订单簿——只有通过说明调用才会向已撮合的买方披露。
 
-![买方填写收款地址与 PayPal 账户](/demo/p2p/p2p-03-match-zh.png)
+![卖方保存微信收款资料](/demo/p2p/p2p-cny-wechat-01-profile-zh.png)
+
+---
+
+## 2. 卖方挂出卖单
+
+在 **Open sells（卖单）** 标签页填写订单：你给出的代币与数量、你想要的人民币价格、代币所在的链，以及**支付方式**（wechat / alipay / bank）。选择人民币渠道会将币种切换为 CNY。条款在挂单时即被锁定进订单，因此这一步用你的钱包密钥签名：
+
+![卖单表单，已选择微信渠道](/demo/p2p/p2p-cny-wechat-02-order-zh.png)
+
+挂出后，订单在引擎中为 `ACTIVE`，并出现在公开订单簿中（订单不包含任何个人资料）。
+
+---
+
+## 3. 买方撮合
+
+买方打开订单，提供用于接收释放代币的**收款地址**。撮合意味着买方承诺付款，因此这一步同样需要签名：
+
+![买方填写收款地址](/demo/p2p/p2p-cny-wechat-03-match-zh.png)
 
 引擎为该生命周期创建一个唯一的 `swapId`，交易进入 `MATCHED`，显示在买方的 **My swaps（我的交易）** 标签页：
 
-![交易为 MATCHED](/demo/p2p/p2p-04-matched-zh.png)
+![交易为 MATCHED](/demo/p2p/p2p-cny-wechat-04-matched-zh.png)
 
 ---
 
-## 3. 托管锁定 — 卖方为 L0 注资
+## 4. 托管锁定 — 卖方为 L0 注资
 
-卖方把代币发送到确定性的 2-of-3 托管地址，并上报该笔转账的 `txHash`。引擎从链上证明锁定（`CONFIRMED`、目标为 `escrowAddress`、金额匹配），任一检查不通过则**失败即关闭**。交易此时为 `ESCROW_LOCKED`：
+卖方把代币发送到确定性的 2-of-3 托管地址，并上报该笔转账的 `txHash`。引擎从链上证明锁定（`CONFIRMED`、目标为 `escrowAddress`、金额匹配），任一检查不通过则**失败即关闭**：
 
-![卖方锁定托管](/demo/p2p/p2p-05-escrow-locked-zh.png)
+![卖方粘贴托管交易哈希](/demo/p2p/p2p-cny-wechat-05-escrow-lock-zh.png)
 
-买方在发送任何法币**之前**就能看到资金已被锁定，并在锁定被证明后获得一个 **I have paid（我已付款）** 操作：
+交易此时为 `ESCROW_LOCKED`。买方在支付任何法币**之前**就能看到资金已被锁定，并获得一个 **Payment details（付款详情）** 操作：
 
-![买方看到已锁定的托管](/demo/p2p/p2p-06-buyer-locked-zh.png)
-
----
-
-## 4. 买方付款
-
-买方支付 PayPal 托管的发票（钱由 PayPal 代管——引擎从不经手），并上报该笔付款。这只是一个*提示*；真正的验证来自引擎自身的证据。交易为 `PAYMENT_PENDING`，并启动一个超时计时器——若发票始终未支付，卖方无需买方同意即可让其过期并退还托管：
-
-![PAYMENT_PENDING](/demo/p2p/p2p-07-payment-pending-zh.png)
+![ESCROW_LOCKED](/demo/p2p/p2p-cny-wechat-06-escrow-locked-zh.png)
 
 ---
 
-## 5. 引擎验证付款
+## 5. 买方拉取付款说明
 
-此步骤不涉及卖方确认。引擎根据自己的来源核验付款，并将交易推进到 `PAYMENT_VERIFIED`——托管此刻已可释放到买方的收款地址：
+买方点击 **Payment details（付款详情）**；引擎会披露卖方的收款资料，并生成一个转账*必须*附带的**每笔交易备注码**，以及精确金额和截止时间。说明会内联渲染在交易卡片中：
 
-![PAYMENT_VERIFIED](/demo/p2p/p2p-08-payment-verified-zh.png)
+![付款说明：户名、账号、715 CNY、备注](/demo/p2p/p2p-cny-wechat-08-instructions-zh.png)
 
----
-
-## 6. 释放 — 资金转移
-
-释放会移动托管的代币：引擎与买方各签名一笔托管输出的支出，两个签名即可满足 2-of-3 脚本。代币到达买方的收款地址，交易为 `ESCROW_RELEASED`：
-
-![ESCROW_RELEASED](/demo/p2p/p2p-09-escrow-released-zh.png)
+交易为 `PAYMENT_PENDING`，并启动一个超时计时器——若买方始终未付款，卖方无需买方同意即可让其过期并退还托管。
 
 ---
 
-## 7. 出金 — 卖方拿到法币
+## 6. 买方付款并用流水号认领
 
-最后一步通过 PayPal Payouts 向卖方付款，交易达到 `COMPLETED`：
+买方在自己的微信/支付宝/银行应用里转账精确金额，将交易号（流水号）粘贴到 **Transaction ID（交易号）**，然后点击 **I have paid（我已付款）**。可选的收据图片存放在服务端；只有它的 `sha256` 会被锚定到交易事件上：
 
-![COMPLETED](/demo/p2p/p2p-10-completed-zh.png)
+![已输入 Transaction ID（流水号）](/demo/p2p/p2p-cny-wechat-09-payment-pending-zh.png)
 
-出金结果（`SUCCESS` / `FAILED` / `HELD` / `ONHOLD`）来自 PayPal 的 webhook，或以轮询作为后备；失败可从 `COMPLETED` 重试，而无需重做整笔交易。
+状态现在是 `PAYMENT_CLAIMED`——**代币仍然被锁定。** 这个状态纯粹代表买方的声明：
+
+![PAYMENT_CLAIMED](/demo/p2p/p2p-cny-wechat-10-payment-claimed-zh.png)
+
+---
+
+## 7. 卖方在自己的账单上确认
+
+卖方的卡片会显示买方的流水号和备注。卖方在**自己的账户里核对金额 + 备注 + 时间 + 流水号**，然后才点击 **Confirm received（确认已收款）**：
+
+![卖方看到流水号和确认警告](/demo/p2p/p2p-cny-wechat-11-seller-confirm-zh.png)
+
+交易为 `PAYMENT_VERIFIED`：
+
+![PAYMENT_VERIFIED](/demo/p2p/p2p-cny-wechat-12-payment-verified-zh.png)
+
+---
+
+## 8. 释放 — 资金转移
+
+释放会移动托管的代币：卖方（预签名或共同签名）与引擎各自对托管输出的支出签名，两个签名即可满足 2-of-3 脚本。代币到达买方的收款地址：
+
+![ESCROW_RELEASED](/demo/p2p/p2p-cny-wechat-13-escrow-released-zh.png)
+
+由于卖方是直接收款的，因此没有法币出金步骤——交易就此完成：
+
+![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-zh.png)
 
 ---
 
@@ -107,15 +128,15 @@ PAYMENT_PENDING ──verify──▶ PAYMENT_VERIFIED ──release──▶ ES
 | 风险 | 缓解措施 |
 |---|---|
 | 对手方走人 | 资金存放在 2-of-3 P2SH 地址中；任何一方都无法单独移动 |
-| 少付或多付 | 发票为精确金额，要么全额支付，要么保持未付 |
-| 伪造付款声明 | 引擎自行验证付款——付款方无法自行断言 |
+| 少付或多付 | 金额在撮合时即固定；说明会带上精确数字和每笔交易的备注 |
+| 伪造付款声明 | 仅凭买方的声明永远不会释放——卖方要在自己的账单上确认 |
+| 卖方声称未收到款 | 仲裁；链上记录和证明存储即为证据 |
 | 引擎作恶 | 仅引擎可执行的步骤需要引擎 DID 签名；每次转换都被锚定且可公开审计 |
-| 释放后拒付 | `PAYMENT.CAPTURE.REVERSED` 触发冻结：前进步骤停止，退款/过期仍可执行 |
-| 争议 | `CUSTOMER.DISPUTE.*` 暂停交易直至解决 |
-| 出金失败 | `HELD`/`FAILED`/`BLOCKED` 是一等状态；使用相同的出金参考号重试 |
+| 争议 | 任一方都可冻结交易；代币保持锁定直至争议解决 |
+| 退款 | `expire` → `refund`，由引擎与卖方共同签名——无需买方同意，无时间锁 |
 
 ---
 
 ## 上线运行
 
-演示运行在仓库内、使用模拟 PayPal 的结算服务上。要运行真实流程，你需要一个已开通 Payouts 的 PayPal 商业账户、其 API 凭据与 webhook id，并将托管签名器接入 L0 广播步骤。在此之前，引擎运行相同的状态机，但不触碰真实资金。
+演示运行在仓库内、使用内存存储且不做链上检查的结算服务上。真实流程会把托管签名器接入 L0 广播步骤，并让引擎对接 L1-SOCIAL 来承载订单簿和审计锚定；买方直接付款给卖方，引擎仍然只能共同签名。
