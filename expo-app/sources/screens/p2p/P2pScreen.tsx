@@ -14,9 +14,9 @@ import { buildEscrowSighash, escrowVault, signEscrow, type EscrowHistoryOutput }
 import { httpService } from '@/services/http';
 import type { TokenItem } from '@/types/api';
 import {
-  confirmPayment, cosignEscrow, createOrder, escrowContext, fetchInstructions, getCapabilities, getMyProfiles,
-  getSwap, listOpenOrders, matchOrder, mySwaps, openDispute, p2pConfigured, presignEscrow, saveProfile,
-  sendPayment, submitProof, transition,
+  cancelOrder, confirmPayment, cosignEscrow, createOrder, escrowContext, fetchInstructions, getCapabilities,
+  getMyProfiles, getSwap, listOpenOrders, matchOrder, mySwaps, openDispute, p2pConfigured, presignEscrow,
+  saveProfile, sendPayment, submitProof, transition,
   type P2pCapabilities, type P2pCnyRail, type P2pIdentity, type P2pOrder,
   type P2pPaymentInstructions, type P2pPaymentProfile, type P2pSwap, type P2pSwapAction,
 } from '@/services/p2p';
@@ -247,6 +247,22 @@ export default function P2pScreen() {
       await loadSwaps();
     } catch (e) {
       setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.buyFailed') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitCancel = async (order: P2pOrder) => {
+    const id = requireIdentity();
+    if (!id) return;
+    setBusy(true);
+    try {
+      await cancelOrder(id, order.orderId);
+      setSelected(null);
+      setNotice({ ok: true, text: t('p2p.cancelled') });
+      await loadOrders();
+    } catch (e) {
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.cancelOrderFailed') });
     } finally {
       setBusy(false);
     }
@@ -591,6 +607,11 @@ export default function P2pScreen() {
                 </View>
                 <Text style={s.sub}>{t('p2p.giveChain')}: {o.giveChain} · {o.wantRail}</Text>
                 <Text style={s.subMono}>{o.sellerDid}</Text>
+                {identity && o.sellerDid === identity.did && o.status === 'ACTIVE' ? (
+                  <View style={s.actions}>
+                    <Action label={t('p2p.cancelOrder')} color={theme.colors.accent.red} onPress={() => submitCancel(o)} disabled={busy} testID={`p2p-cancel-order-${i}`} />
+                  </View>
+                ) : null}
                 {selected?.orderId === o.orderId ? (
                   <View style={s.buyPanel}>
                     <Field label={t('p2p.receiveAddress')} value={buyRecv} onChange={setBuyRecv} testID="p2p-buy-recv" />

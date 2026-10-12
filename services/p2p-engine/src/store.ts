@@ -11,7 +11,12 @@ export interface SettlementStore {
   createOrder(o: P2pOrder): Promise<void>;
   getOrder(orderId: string): Promise<P2pOrder | null>;
   listOrders(status?: string): Promise<P2pOrder[]>;
-  markOrderMatched(orderId: string, swapId: string): Promise<void>;
+  /** ACTIVE → MATCHED. Returns false when the order was not ACTIVE (lost race). */
+  markOrderMatched(orderId: string, swapId: string): Promise<boolean>;
+  /** ACTIVE → CANCELLED. Returns false when the order was not ACTIVE (lost race). */
+  markOrderCancelled(orderId: string): Promise<boolean>;
+  /** Undo a match whose event never anchored: ACTIVE again, only for `swapId`. */
+  reopenOrder(orderId: string, swapId: string): Promise<void>;
   appendEvent(e: P2pSwapEvent): Promise<void>;
   events(swapId: string): Promise<P2pSwapEvent[]>;
   getSwap(swapId: string): Promise<P2pSwapEvent | null>;
@@ -56,9 +61,25 @@ export class MemSettlementStore implements SettlementStore {
       .slice(0, 100);
   }
 
-  async markOrderMatched(orderId: string, swapId: string): Promise<void> {
+  async markOrderMatched(orderId: string, swapId: string): Promise<boolean> {
     const o = this.orders.get(orderId);
-    if (o) this.orders.set(orderId, { ...o, status: "MATCHED", swapId });
+    if (!o || o.status !== "ACTIVE") return false;
+    this.orders.set(orderId, { ...o, status: "MATCHED", swapId });
+    return true;
+  }
+
+  async markOrderCancelled(orderId: string): Promise<boolean> {
+    const o = this.orders.get(orderId);
+    if (!o || o.status !== "ACTIVE") return false;
+    this.orders.set(orderId, { ...o, status: "CANCELLED" });
+    return true;
+  }
+
+  async reopenOrder(orderId: string, swapId: string): Promise<void> {
+    const o = this.orders.get(orderId);
+    if (o && o.status === "MATCHED" && o.swapId === swapId) {
+      this.orders.set(orderId, { ...o, status: "ACTIVE", swapId: undefined });
+    }
   }
 
   async appendEvent(e: P2pSwapEvent): Promise<void> {
@@ -131,7 +152,7 @@ export class MemSettlementStore implements SettlementStore {
   }
 }
 
-interface Queryable {
+export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
 }
 
@@ -150,6 +171,7 @@ function orderFromRow(row: any): P2pOrder {
     status: row.status,
     signature: row.signature,
     swapId: row.swap_id ?? undefined,
+    txid: row.txid ?? undefined,
     createdAt: new Date(row.created_at).getTime(),
   };
 }
@@ -160,8 +182,8 @@ export class PgSettlementStore implements SettlementStore {
   async createOrder(o: P2pOrder): Promise<void> {
     await this.db.query(
       `INSERT INTO p2p_orders (order_id, seller_did, type, give_token, give_amount, give_chain,
-         want_currency, want_amount, want_rail, valid_until, status, signature, swap_id, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         want_currency, want_amount, want_rail, valid_until, status, signature, swap_id, txid, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (order_id) DO NOTHING`,
       [
         o.orderId,
@@ -177,6 +199,7 @@ export class PgSettlementStore implements SettlementStore {
         o.status,
         o.signature,
         o.swapId ?? null,
+        o.txid ?? null,
         new Date(o.createdAt),
       ],
     );
@@ -194,8 +217,28 @@ export class PgSettlementStore implements SettlementStore {
     return res.rows.map(orderFromRow);
   }
 
-  async markOrderMatched(orderId: string, swapId: string): Promise<void> {
-    await this.db.query(`UPDATE p2p_orders SET status = 'MATCHED', swap_id = $2 WHERE order_id = $1`, [orderId, swapId]);
+  async markOrderMatched(orderId: string, swapId: string): Promise<boolean> {
+    const res = await this.db.query(
+      `UPDATE p2p_orders SET status = 'MATCHED', swap_id = $2 WHERE order_id = $1 AND status = 'ACTIVE'`,
+      [orderId, swapId],
+    );
+    return (res.rowCount ?? 0) === 1;
+  }
+
+  async markOrderCancelled(orderId: string): Promise<boolean> {
+    const res = await this.db.query(
+      `UPDATE p2p_orders SET status = 'CANCELLED' WHERE order_id = $1 AND status = 'ACTIVE'`,
+      [orderId],
+    );
+    return (res.rowCount ?? 0) === 1;
+  }
+
+  async reopenOrder(orderId: string, swapId: string): Promise<void> {
+    await this.db.query(
+      `UPDATE p2p_orders SET status = 'ACTIVE', swap_id = NULL
+       WHERE order_id = $1 AND status = 'MATCHED' AND swap_id = $2`,
+      [orderId, swapId],
+    );
   }
 
   async appendEvent(e: P2pSwapEvent): Promise<void> {

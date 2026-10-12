@@ -44,6 +44,8 @@ export interface P2pOrder extends Omit<P2pOrderInput, "validUntil"> {
   /** seller's Ed25519 signature over the canonical order payload */
   signature: string;
   swapId?: string;
+  /** L1-SOCIAL txid of the seller-anchored `social.p2p-order` record, when on-chain */
+  txid?: string;
   createdAt: number;
 }
 

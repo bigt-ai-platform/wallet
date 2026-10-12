@@ -226,10 +226,13 @@ to be up first:
 
 ```bash
 ./e2e/e2etest.sh payment       # parts: payment tracking order predict token
-                               #       blocks p2p p2p-ui p2p-demo remaining tests all
+                               #       blocks p2p p2p-ui p2p-demo p2p-orders
+                               #       remaining tests all
 ./e2e/e2etest.sh predict       # Predict tab; chain tests need L1P on :24088,
                                # the full create/split/merge lifecycle also needs
                                # export E2E_PREDICTION_KEY=<funded operator key hex>
+./e2e/e2etest.sh p2p-orders    # seller-anchored order book; brings up L1-SOCIAL
+                               # itself (e2e/l1social.sh up, needs e2e/infra.sh)
 
 cd e2e
 npx playwright test --config playwright.config.ts   # mobile + desktop projects

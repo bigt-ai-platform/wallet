@@ -2,6 +2,11 @@
  * P2P settlement engine (docs/p2p.md).
  *
  *   POST /orders                              seller posts a signed limit order
+ *                                             (optional orderId+txid: the order
+ *                                              was anchored on L1-SOCIAL by the
+ *                                              seller — docs/p2p.md §11)
+ *   POST /orders/:orderId/cancel              seller withdraws an ACTIVE order
+ *                                             (optional txid, same chain path)
  *   GET  /orders                              admin: list open orders
  *   GET  /public/orders                       wallet: list open orders (no PII, no sig)
  *   POST /orders/:orderId/match               buyer matches (derives escrow)
@@ -45,6 +50,7 @@ import { hexToBytes } from "did";
 import { pqPubFromDid } from "did/pq";
 import { PQKey, Utils } from "bigtangle-ts";
 import type { Escrow } from "bigtangle-ts";
+import { P2P_ORDER_ID_RE } from "p2p-protocol";
 import { ACTION_STATUS, DEDICATED_ACTIONS, canTransition, statusForAction } from "./state.js";
 import { ReplayGuard, validateSignedRequest } from "./sign.js";
 import { escrowAddress, settlementParams } from "./escrow.js";
@@ -60,7 +66,7 @@ import {
   vaultFor,
   type EscrowKind,
 } from "./escrowSpend.js";
-import { verifyChainLock, verifyChainPayment, type ChainClient } from "./chain.js";
+import { HttpChainClient, verifyChainLock, verifyChainPayment, type ChainClient } from "./chain.js";
 import { paypalConfig, verifyWebhookSignature, type WebhookHeaders } from "./paypal.js";
 import { HttpPaypalClient, MockPaypalClient, type PaypalClient } from "./paypalClient.js";
 import {
@@ -88,10 +94,21 @@ export interface SettlementDeps {
   verifyWebhook?: (headers: WebhookHeaders, rawBody: string) => Promise<boolean>;
   /** Anchor a swap event on chain (returns the txid). Default: no-op. */
   anchor?: (event: P2pSwapEvent) => Promise<{ txid?: string } | void>;
+  /**
+   * Confirm a seller-anchored order/cancel txid on L1-SOCIAL. When present,
+   * POST /orders and /orders/:id/cancel require the txid to land before the
+   * index advances (docs/p2p.md §11). Default: no check (mock mode).
+   */
+  verifyTx?: (txid: string) => Promise<boolean>;
+  /** Bounded polls for verifyTx before 409 (default 4; tests set 1). */
+  orderTxTries?: number;
+  /** Mutable watch-loop state surfaced by /capabilities (replay.ts sync). */
+  watchState?: { height: number | null; hash: string | null; lastRunAt: number | null; lastError: string | null };
 }
 
-const ORDER_ID_RE = /^ord-[0-9a-f]{16}$/;
+const ORDER_ID_RE = P2P_ORDER_ID_RE;
 const SWAP_ID_RE = /^swap-[0-9a-f]{16}$/;
+const TXID_RE = /^[0-9a-f]{64}$/i;
 /** Receipt/QR cap as data-URL characters (≈512 KiB binary image). */
 const MAX_RECEIPT_CHARS = 700_000;
 
@@ -577,8 +594,24 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     escrow: !!env.SETTLEMENT_ENGINE_PUBKEY?.trim(),
     /** Public escrow key: the wallet rebuilds the 2-of-3 vault with it. */
     escrowPubkey: env.SETTLEMENT_ENGINE_PUBKEY?.trim() || null,
-    chain: { l0: !!deps.chain, l1: !!deps.anchor },
+    chain: { l0: !!deps.chain, l1: !!deps.anchor, orderTxVerify: !!deps.verifyTx },
+    /** Chain-scan projector position (null until the watcher has run). */
+    watch: deps.watchState ? { ...deps.watchState } : null,
   }));
+
+  /**
+   * Confirm a seller-anchored order txid: bounded polls of verifyTx (the tx
+   * was just submitted, so one 0-wait check would race confirmation).
+   */
+  async function orderTxConfirmed(txid: string): Promise<boolean> {
+    if (!deps.verifyTx) return true;
+    const tries = Math.max(1, deps.orderTxTries ?? 4);
+    for (let i = 0; i < tries; i++) {
+      if (await deps.verifyTx(txid)) return true;
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 500));
+    }
+    return false;
+  }
 
   app.post("/orders", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
@@ -598,11 +631,28 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (typeof validUntil !== "number" || validUntil * 1000 <= now()) {
       return reply.code(400).send({ error: "validUntil must be in the future (unix seconds)" });
     }
+    // Seller-anchored orders carry the orderId the record already committed to
+    // and the L1-SOCIAL txid that landed it; both are optional so the legacy
+    // engine-intake path (mock / no chain) keeps working.
+    const orderId = body.orderId === undefined ? `ord-${randomBytes(8).toString("hex")}` : String(body.orderId);
+    if (!ORDER_ID_RE.test(orderId)) return reply.code(400).send({ error: "invalid orderId" });
+    const txid = body.txid === undefined ? undefined : String(body.txid);
+    if (txid !== undefined && !TXID_RE.test(txid)) return reply.code(400).send({ error: "invalid txid" });
     const signed = validateSignedRequest(body, sellerDid, guard);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    if (txid !== undefined && !(await orderTxConfirmed(txid))) {
+      return reply.code(409).send({ error: "txid not confirmed on L1-SOCIAL" });
+    }
+    const existing = await deps.store.getOrder(orderId);
+    if (existing) {
+      // Idempotent re-register of the same order (app retry after a dropped
+      // response); a different seller/order collision is a hard conflict.
+      if (existing.sellerDid !== sellerDid) return reply.code(409).send({ error: "orderId already in use" });
+      return reply.code(200).send({ orderId, status: existing.status, txid: existing.txid ?? txid ?? null });
+    }
 
     const order: P2pOrder = {
-      orderId: `ord-${randomBytes(8).toString("hex")}`,
+      orderId,
       type: "limit_sell",
       sellerDid,
       giveToken,
@@ -614,10 +664,35 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       validUntil,
       status: "ACTIVE",
       signature: String(body.signature),
+      ...(txid !== undefined ? { txid } : {}),
       createdAt: now(),
     };
     await deps.store.createOrder(order);
-    return reply.code(201).send({ orderId: order.orderId, status: order.status });
+    return reply.code(201).send({ orderId: order.orderId, status: order.status, txid: order.txid ?? null });
+  });
+
+  app.post<{ Params: { orderId: string } }>("/orders/:orderId/cancel", async (request, reply) => {
+    const { orderId } = request.params;
+    if (!ORDER_ID_RE.test(orderId)) return reply.code(400).send({ error: "invalid orderId" });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const sellerDid = body.sellerDid;
+    if (typeof sellerDid !== "string" || !sellerDid) return reply.code(400).send({ error: "sellerDid required" });
+    const order = await deps.store.getOrder(orderId);
+    if (!order) return reply.code(404).send({ error: "unknown order" });
+    if (order.sellerDid !== sellerDid) return reply.code(403).send({ error: "not the seller" });
+    const txid = body.txid === undefined ? undefined : String(body.txid);
+    if (txid !== undefined && !TXID_RE.test(txid)) return reply.code(400).send({ error: "invalid txid" });
+    const signed = validateSignedRequest(body, sellerDid, guard);
+    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    if (order.status === "CANCELLED") return reply.code(200).send({ orderId, status: "CANCELLED" });
+    if (order.status !== "ACTIVE") return reply.code(409).send({ error: `order is ${order.status}` });
+    if (txid !== undefined && !(await orderTxConfirmed(txid))) {
+      return reply.code(409).send({ error: "txid not confirmed on L1-SOCIAL" });
+    }
+    if (!(await deps.store.markOrderCancelled(orderId))) {
+      return reply.code(409).send({ error: "order is no longer active" });
+    }
+    return reply.code(200).send({ orderId, status: "CANCELLED", txid: txid ?? null });
   });
 
   app.get("/orders", async (request, reply) => {
@@ -683,8 +758,21 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       ...(buyerEmail ? { buyerEmail } : {}),
       at: now(),
     };
-    await deps.store.markOrderMatched(orderId, swapId);
-    const stored = await persist(event);
+    // Conditional ACTIVE→MATCHED: two concurrent matches race here and the
+    // first claim wins (the loser never anchors a second MATCHED event).
+    if (!(await deps.store.markOrderMatched(orderId, swapId))) {
+      return reply.code(409).send({ error: "order is no longer active" });
+    }
+    let stored: P2pSwapEvent;
+    try {
+      stored = await persist(event);
+    } catch (e) {
+      // Anchor/store failure after the claim: put the order back so the seller
+      // is not left with a MATCHED order that has no swap (replay would flag
+      // the same gap later — better to heal it now).
+      await deps.store.reopenOrder(orderId, swapId);
+      throw e;
+    }
     return reply.code(201).send({ swapId, status: stored.status, escrowAddress: stored.escrowAddress ?? null });
   });
 
@@ -1530,11 +1618,11 @@ async function main() {
   const { PgSettlementStore, MemSettlementStore } = await import("./store.js");
   const { anchorFromEnv, l1Anchor } = await import("./anchor.js");
   const { PooledChainClient, poolFromEnv } = await import("./discovery.js");
+  const { syncOnce, HttpSocialSource, pgCursorStore, MemCursorStore, ensureWatchSchema } = await import("./replay.js");
   const env = process.env;
-  const store =
-    env.SETTLEMENT_STORE === "mem" || !env.POSTGRES_URL
-      ? new MemSettlementStore()
-      : new PgSettlementStore(new Pool({ connectionString: env.POSTGRES_URL }));
+  const pool = env.SETTLEMENT_STORE === "mem" || !env.POSTGRES_URL ? null : new Pool({ connectionString: env.POSTGRES_URL });
+  const store = pool ? new PgSettlementStore(pool) : new MemSettlementStore();
+  if (pool) await ensureWatchSchema(pool);
   const cfg = paypalConfig(env);
   const anchorCfg = anchorFromEnv(env);
   if ((env.SETTLEMENT_L1_URL || env.SETTLEMENT_L1_SOCIAL_URL || env.SETTLEMENT_L1_SOCIAL_URLS) && !anchorCfg) {
@@ -1551,6 +1639,24 @@ async function main() {
   const anchor = anchorCfg
     ? l1Anchor(socialPool ? { ...anchorCfg, resolveUrl: () => socialPool.best() } : anchorCfg)
     : undefined;
+  // Seller-anchored orders land on L1-SOCIAL before the index sees them: confirm
+  // the txid before create/cancel (docs/p2p.md §11). No social endpoint → no
+  // check (mock/dev), same fail-open rule the anchor path already uses.
+  const socialUrl = () => socialPool?.best() ?? (env.SETTLEMENT_L1_SOCIAL_URL?.trim() || null);
+  const verifyTx =
+    socialUrl() && env.SETTLEMENT_ORDER_TX_VERIFY !== "0"
+      ? async (txid: string): Promise<boolean> => {
+          const url = socialUrl();
+          if (!url) return false;
+          try {
+            const st = await new HttpChainClient(url).transactionStatus(txid);
+            return st.status === "CONFIRMED";
+          } catch {
+            return false;
+          }
+        }
+      : undefined;
+  const watchState = { height: null as number | null, hash: null as string | null, lastRunAt: null as number | null, lastError: null as string | null };
   const app = await buildApp({
     store,
     paypal: cfg
@@ -1560,11 +1666,43 @@ async function main() {
         : null,
     chain: l0Pool ? new PooledChainClient(l0Pool) : null,
     ...(anchor ? { anchor } : {}),
+    ...(verifyTx ? { verifyTx, orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4) } : {}),
+    ...(env.SETTLEMENT_WATCH === "1" && socialUrl() ? { watchState } : {}),
   });
   app.addHook("onClose", async () => {
     l0Pool?.stop();
     socialPool?.stop();
+    if (watchTimer) clearInterval(watchTimer);
   });
+  // Chain-scan projector (docs/p2p.md §14): on boot + every interval, walk
+  // back from the head to the cursor and apply new records. Mem store replays
+  // from genesis each boot (idempotent); PG resumes from p2p_watch_cursor.
+  let watchTimer: NodeJS.Timeout | undefined;
+  if (env.SETTLEMENT_WATCH === "1" && socialUrl()) {
+    const cursors = pool ? pgCursorStore(pool) : new MemCursorStore();
+    const maxWalk = Number(env.SETTLEMENT_WATCH_MAX_WALK ?? 2000);
+    const tick = async () => {
+      try {
+        const url = socialUrl();
+        if (!url) throw new Error("no healthy L1-SOCIAL endpoint");
+        const r = await syncOnce(new HttpSocialSource(url), store, cursors, { maxWalk });
+        if (r.error) watchState.lastError = r.error;
+        else {
+          watchState.height = r.cursor?.height ?? null;
+          watchState.hash = r.cursor?.hash ?? null;
+          watchState.lastError = r.conflicts.length ? `${r.conflicts.length} conflict(s)` : null;
+          if (r.conflicts.length) console.warn("p2p-engine watch: conflicts", r.conflicts.slice(0, 5));
+        }
+      } catch (e) {
+        watchState.lastError = e instanceof Error ? e.message : String(e);
+      } finally {
+        watchState.lastRunAt = Date.now();
+      }
+    };
+    await tick();
+    watchTimer = setInterval(() => void tick(), Number(env.SETTLEMENT_WATCH_INTERVAL_MS ?? 15_000));
+    watchTimer.unref?.();
+  }
   await app.listen({ port: Number(env.PORT ?? 8108), host: env.HOST ?? "127.0.0.1" });
 }
 

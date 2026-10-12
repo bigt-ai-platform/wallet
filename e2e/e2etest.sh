@@ -11,6 +11,7 @@ L1P_PORT="${L1P_PORT:-24088}"
 P2P_PORT="${P2P_PORT:-18089}"
 P2P_ENGINE_URL="http://localhost:${P2P_PORT}"
 P2P_PID=""
+P2P_PID2=""
 HTTP_PID=""
 RAISE_PID=""
 
@@ -20,11 +21,11 @@ fail()  { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
 info()  { echo -e "${YELLOW}[INFO]${NC} $1"; }
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | predict | token | blocks | p2p | p2p-ui | p2p-demo | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | predict | token | blocks | p2p | p2p-ui | p2p-demo | p2p-orders | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" predict "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, token, blocks, p2p, p2p-ui, p2p-demo, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" predict "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" p2p-orders "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, token, blocks, p2p, p2p-ui, p2p-demo, p2p-orders, remaining, tests, demo";;
 esac
 
 # Independently verify the payment e2e test's result on-chain. The payment spec
@@ -147,6 +148,7 @@ verify_p2p_escrow() {
 cleanup() {
   info "Cleaning up..."
   [[ -n "$P2P_PID" ]] && kill "$P2P_PID" 2>/dev/null || true
+  [[ -n "$P2P_PID2" ]] && kill "$P2P_PID2" 2>/dev/null || true
   # Kill by saved PID: http-server rewrites its process title to just
   # "http-server", so a `pkill -f` cmdline pattern can never match it and the
   # 18081 listener would leak into the next run (EADDRINUSE).
@@ -265,6 +267,74 @@ start_p2p_engine_real() {
   caps="$(curl -sf "http://localhost:${P2P_PORT}/capabilities" 2>/dev/null || true)"
   echo "$caps" | grep -q '"l0":true' || fail "engine has no L0 client (capabilities: $caps)"
   log "P2P engine (real L0, testnet) ready."
+}
+
+# Chain-backed engines for the p2p-orders part: L1-SOCIAL carries the
+# seller-anchored `social.p2p-order` records. Engine A (P2P_PORT) does
+# txid-gated intake AND the chain-scan projection; engine B (P2P_PORT+1) is a
+# cold replay-only instance (fresh mem store) so the spec can prove the book
+# rebuilds from the chain alone (docs/p2p.md §14). Both watch the chain
+# (SETTLEMENT_WATCH=1); SETTLEMENT_L1_SOCIAL_URL arms verifyTx + the anchor.
+# The engines boot their first walk BEFORE listen, so health waits allow 60s
+# (a stale social chain has more genesis history to walk than a fresh `up`).
+start_p2p_engines_chain() {
+  build_p2p_engine
+  info "Generating p2p-orders engine key..."
+  local keys
+  keys="$(node "$ROOT/scripts/p2p-engine-key.mjs" 2>/dev/null)" || fail "engine key generation failed"
+  ENGINE_KEY="$(printf '%s\n' "$keys" | sed -n 's/^SETTLEMENT_ENGINE_KEY=//p')"
+  ENGINE_DID="$(printf '%s\n' "$keys" | sed -n 's/^SETTLEMENT_ENGINE_DID=//p')"
+  ENGINE_PUB="$(printf '%s\n' "$keys" | sed -n 's/^SETTLEMENT_ENGINE_PUBKEY=//p')"
+  [[ -n "$ENGINE_KEY" && -n "$ENGINE_DID" && -n "$ENGINE_PUB" ]] || fail "engine key generation produced empty values"
+
+  local social="http://127.0.0.1:${L1_SOCIAL_PORT:-24091}/"
+  info "Starting p2p-orders engines (intake :${P2P_PORT}, replay :$((P2P_PORT+1))) on $social ..."
+
+  PORT="$P2P_PORT" HOST=127.0.0.1 \
+    SETTLEMENT_STORE=mem \
+    SETTLEMENT_PAYPAL_INSECURE=1 \
+    SETTLEMENT_ADMIN_TOKEN=adm \
+    SETTLEMENT_NETWORK=testnet \
+    SETTLEMENT_L1_SOCIAL_URL="$social" \
+    SETTLEMENT_ENGINE_KEY="$ENGINE_KEY" \
+    SETTLEMENT_ENGINE_DID="$ENGINE_DID" \
+    SETTLEMENT_ENGINE_PUBKEY="$ENGINE_PUB" \
+    SETTLEMENT_ORDER_TX_TRIES=40 \
+    SETTLEMENT_WATCH=1 \
+    SETTLEMENT_WATCH_INTERVAL_MS=2000 \
+    SETTLEMENT_WATCH_MAX_WALK=100000 \
+    CORS_ORIGIN="http://localhost:${WEB_PORT},http://127.0.0.1:${WEB_PORT}" \
+    node "$ROOT/services/p2p-engine/dist/server.bundle.mjs" >/tmp/p2p-engine.log 2>&1 &
+  P2P_PID=$!
+  PORT="$((P2P_PORT + 1))" HOST=127.0.0.1 \
+    SETTLEMENT_STORE=mem \
+    SETTLEMENT_PAYPAL_INSECURE=1 \
+    SETTLEMENT_ADMIN_TOKEN=adm \
+    SETTLEMENT_NETWORK=testnet \
+    SETTLEMENT_L1_SOCIAL_URL="$social" \
+    SETTLEMENT_ENGINE_KEY="$ENGINE_KEY" \
+    SETTLEMENT_ENGINE_DID="$ENGINE_DID" \
+    SETTLEMENT_ENGINE_PUBKEY="$ENGINE_PUB" \
+    SETTLEMENT_ORDER_TX_TRIES=40 \
+    SETTLEMENT_WATCH=1 \
+    SETTLEMENT_WATCH_INTERVAL_MS=2000 \
+    SETTLEMENT_WATCH_MAX_WALK=100000 \
+    CORS_ORIGIN="http://localhost:${WEB_PORT},http://127.0.0.1:${WEB_PORT}" \
+    node "$ROOT/services/p2p-engine/dist/server.bundle.mjs" >/tmp/p2p-engine-replay.log 2>&1 &
+  P2P_PID2=$!
+  for i in $(seq 1 120); do
+    curl -sf "http://localhost:${P2P_PORT}/healthz" >/dev/null 2>&1 \
+      && curl -sf "http://localhost:$((P2P_PORT + 1))/healthz" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  curl -sf "http://localhost:${P2P_PORT}/healthz" >/dev/null 2>&1 \
+    || fail "p2p-orders intake engine not ready (see /tmp/p2p-engine.log)"
+  curl -sf "http://localhost:$((P2P_PORT + 1))/healthz" >/dev/null 2>&1 \
+    || fail "p2p-orders replay engine not ready (see /tmp/p2p-engine-replay.log)"
+  local caps
+  caps="$(curl -sf "http://localhost:${P2P_PORT}/capabilities" 2>/dev/null || true)"
+  echo "$caps" | grep -q '"orderTxVerify":true' || fail "engine has no L1-SOCIAL verifyTx (capabilities: $caps)"
+  log "P2P order-book engines (L1-SOCIAL, watch) ready."
 }
 
 # The P2P UI flow (p2p-ui) is self-contained: it never touches L0/L1, so the
@@ -443,6 +513,26 @@ SETTLEMENT_ENGINE_PUBKEY="$ENGINE_PUB" \
 log "P2P demo passed."
 # Re-check both escrow legs via the L0 getTransactionStatus API.
 verify_p2p_escrow
+fi
+
+# 4b8. Chain order book (standalone part): seller-anchored social.p2p-order
+#      records on L1-SOCIAL, txid-gated intake + cancel, match conflicts, and
+#      a cold replay rebuild. Brings up L1-SOCIAL itself (needs the infra the
+#      l1social.sh script documents: ./e2e/infra.sh first); the spec skips
+#      cleanly when these envs are absent, so other parts are unaffected.
+if [[ "$CMD" == "p2p-orders" ]]; then
+info "Bringing up L1-SOCIAL..."
+"$ROOT/e2e/l1social.sh" up || fail "l1social.sh up failed"
+start_p2p_engines_chain
+info "Running chain order-book e2e tests..."
+cd "$E2E_DIR"
+APP_URL="http://localhost:${WEB_PORT}/" \
+E2E_P2P_ORDERS_URL="$P2P_ENGINE_URL" \
+E2E_P2P_REPLAY_URL="http://localhost:$((P2P_PORT + 1))" \
+E2E_L1_SOCIAL_URL="http://127.0.0.1:${L1_SOCIAL_PORT:-24091}/" \
+SETTLEMENT_ENGINE_KEY="$ENGINE_KEY" \
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list p2p-orders.spec.ts 2>&1
+log "Chain order-book e2e tests passed."
 fi
 
 # 4c. Run remaining specs (tokens, settings, order, wallet-flow, L1 Test Tab,

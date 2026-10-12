@@ -47,6 +47,41 @@ export function canonicalJson(payload: Record<string, unknown>): string {
   return JSON.stringify(payload, Object.keys(payload).sort());
 }
 
+/** Deep canonical JSON — sorted keys at every level, `sig`/`sigScheme`
+ *  stripped — the exact bytes `record-sig` digests engine-side. */
+export function canonicalRecordJson(record: object): string {
+  return JSON.stringify(canonicalize(record));
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+      if (k === 'sig' || k === 'sigScheme') continue;
+      out[k] = canonicalize((value as Record<string, unknown>)[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Author-sign a `social.*` record: sha256 over the canonical record JSON,
+ *  PQ-signed — the exact shape `verifyRecordSig` checks (docs/p2p.md §11). */
+export function signP2pRecord(
+  key: PQKey,
+  record: object,
+): { sig: string; sigScheme: 'mldsa' } {
+  const digest = Sha256Hash.hash(new TextEncoder().encode(canonicalRecordJson(record)));
+  const bundle = key.sign(Sha256Hash.wrap(digest));
+  return { sig: Utils.HEX.encode(bundle.serialize()), sigScheme: 'mldsa' };
+}
+
+/** Fresh seller order id (`ord-<16hex>`, the engine's P2P_ORDER_ID_RE). */
+export function newOrderId(): string {
+  return `ord-${randomHex(8)}`;
+}
+
 /** Sign the sha256 digest of the canonical payload, hex-encoded SignatureBundle. */
 export function signP2pPayload(key: PQKey, payload: Record<string, unknown>): string {
   const digest = Sha256Hash.hash(new TextEncoder().encode(canonicalJson(payload)));

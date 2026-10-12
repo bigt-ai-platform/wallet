@@ -8,6 +8,7 @@
     "build": "tsc -p tsconfig.json",
     "bundle": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.bundle.mjs --external:pg --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
     "dev": "tsx watch src/server.ts",
+    "replay": "tsx src/replay-cli.ts",
     "start": "node dist/server.bundle.mjs",
     "test": "vitest run"
   },

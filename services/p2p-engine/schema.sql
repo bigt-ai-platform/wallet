@@ -19,9 +19,21 @@ CREATE TABLE IF NOT EXISTS p2p_orders (
   status        TEXT NOT NULL DEFAULT 'ACTIVE',
   signature     TEXT NOT NULL,
   swap_id       TEXT,
+  -- L1-SOCIAL txid of the seller-anchored social.p2p-order record (NULL for
+  -- legacy engine-intake orders). Additive: main() ALTERs it in on boot.
+  txid          TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS p2p_orders_open_idx ON p2p_orders (status, created_at DESC);
+
+-- Watcher cursor (src/replay.ts): the last L1-SOCIAL block the chain-scan
+-- projector applied. A single-row table; NULL/absent row = replay from genesis.
+CREATE TABLE IF NOT EXISTS p2p_watch_cursor (
+  id         BOOLEAN PRIMARY KEY DEFAULT true,
+  block_hash TEXT NOT NULL,
+  height     BIGINT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS p2p_swap_events (
   seq        BIGSERIAL PRIMARY KEY,

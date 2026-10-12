@@ -164,3 +164,12 @@ export const DEFAULT_L1_CHAINS_TESTNET = [
  */
 export const P2P_ENGINE_URL =
   process.env.EXPO_PUBLIC_P2P_ENGINE_URL || (IS_DEV ? 'http://127.0.0.1:8108' : '');
+
+/**
+ * L1-SOCIAL base URL for seller-anchored `social.p2p-order` records
+ * (docs/p2p.md §11). Dev points at the local social node (e2e/l1social.sh);
+ * production has no social node yet, so the P2P screen keeps the legacy
+ * engine-intake path until EXPO_PUBLIC_P2P_SOCIAL_URL is baked.
+ */
+export const P2P_SOCIAL_URL =
+  process.env.EXPO_PUBLIC_P2P_SOCIAL_URL || (IS_DEV ? 'http://127.0.0.1:24091/' : '');

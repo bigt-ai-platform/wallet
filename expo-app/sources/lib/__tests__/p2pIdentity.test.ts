@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { PQKey, Sha256Hash, Utils, SignatureBundle } from 'bigtangle-ts';
-import { canonicalJson, pqDidFromKey, pqKeyFromPrivateHex, signP2pPayload, signedBody } from '../p2pIdentity';
+import { verifyRecordSig, type AnchoredRecord } from 'record-sig';
+import { P2P_ORDER_ID_RE } from 'p2p-protocol';
+import {
+  canonicalJson, canonicalRecordJson, newOrderId, pqDidFromKey, pqKeyFromPrivateHex,
+  signP2pPayload, signP2pRecord, signedBody,
+} from '../p2pIdentity';
 
 /** Deterministic ML-DSA-87 test key. The wallet stores the serialized
  *  `getPrivateKeyHex()`, so round-trip through that same form. */
@@ -44,5 +49,36 @@ describe('p2pIdentity', () => {
     expect((body.nonce as string).length).toBeGreaterThanOrEqual(16);
     const { signature, ...payload } = body;
     expect(engineVerifies(payload, signature as string, key.getPrefixedPublicKeyBytes())).toBe(true);
+  });
+
+  it('author-signs a social record so record-sig verifyRecordSig accepts it', () => {
+    const key = pqKeyFromPrivateHex(STORED_HEX);
+    const record = {
+      type: 'social.p2p-order',
+      from: pqDidFromKey(key),
+      to: 'ord-0123456789abcdef',
+      ts: Date.now(),
+      status: 'OPEN',
+      orderSeq: 0,
+      giveToken: 'USDT',
+      giveAmount: '100',
+      giveChain: 'L0',
+      wantCurrency: 'USD',
+      wantAmount: '101',
+      wantRail: 'paypal',
+      validUntil: Math.floor(Date.now() / 1000) + 3600,
+    };
+    const signed = { ...record, ...signP2pRecord(key, record) };
+    expect(verifyRecordSig(signed as unknown as AnchoredRecord)).toBe(true);
+    // any tampered field invalidates it (canonicalization strips sig only)
+    expect(verifyRecordSig({ ...signed, giveAmount: '99' } as unknown as AnchoredRecord)).toBe(false);
+    // deep canonical form: nested keys sorted, sig/sigScheme stripped
+    expect(canonicalRecordJson(signed as unknown as Record<string, unknown>)).toBe(
+      canonicalRecordJson(record as unknown as Record<string, unknown>),
+    );
+  });
+
+  it('mints order ids the engine accepts', () => {
+    expect(P2P_ORDER_ID_RE.test(newOrderId())).toBe(true);
   });
 });

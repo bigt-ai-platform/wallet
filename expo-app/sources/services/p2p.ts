@@ -1,6 +1,8 @@
-import { P2P_ENGINE_URL } from '@/constants/app';
+import { P2P_ENGINE_URL, P2P_SOCIAL_URL } from '@/constants/app';
 import type { PQKey } from 'bigtangle-ts';
-import { signedBody } from '@/lib/p2pIdentity';
+import { p2pOrderRecord } from 'p2p-protocol';
+import { newOrderId, signP2pRecord, signedBody } from '@/lib/p2pIdentity';
+import { anchorSocialRecord } from '@/services/transaction';
 
 /**
  * Thin client for the P2P settlement engine (services/p2p-engine). Reads that
@@ -49,6 +51,8 @@ export interface P2pOrder {
   validUntil: number;
   status: 'ACTIVE' | 'MATCHED' | 'CANCELLED';
   swapId?: string;
+  /** L1-SOCIAL txid of the seller-anchored social.p2p-order record. */
+  txid?: string;
   createdAt: number;
 }
 
@@ -150,8 +154,11 @@ export interface P2pCapabilities {
   escrow: boolean;
   /** Public engine escrow key: rebuilds the 2-of-3 vault to sign escrow spends. */
   escrowPubkey: string | null;
-  /** Chain clients wired: l0 = escrow proof/broadcast, l1 = social anchor. */
-  chain: { l0: boolean; l1: boolean };
+  /** Chain clients wired: l0 = escrow proof/broadcast, l1 = social anchor,
+   *  orderTxVerify = the engine confirms order/cancel txids before indexing. */
+  chain: { l0: boolean; l1: boolean; orderTxVerify?: boolean };
+  /** Chain-scan projector position (null until the watcher has run). */
+  watch?: { height: number | null; hash: string | null; lastRunAt: number | null; lastError: string | null } | null;
 }
 
 /**
@@ -218,13 +225,49 @@ export async function listOpenOrders(): Promise<P2pOrder[]> {
   return data.orders ?? [];
 }
 
-/** Seller lists a sell order (signed by the seller's wallet key). */
+/** Seller lists a sell order (signed by the seller's wallet key).
+ *
+ *  With L1-SOCIAL configured the order is anchored first — the seller's own
+ *  key signs the `social.p2p-order` record and submits it, then POST /orders
+ *  carries `{orderId, txid}` so the engine only indexes what the chain
+ *  already has (docs/p2p.md §11). Without a social URL (production today)
+ *  the legacy engine-intake path signs the order into the request itself. */
 export async function createOrder(
   id: P2pIdentity,
   input: CreateOrderInput,
+): Promise<{ orderId: string; status: string; txid?: string | null }> {
+  if (!P2P_SOCIAL_URL) {
+    const body = signedBody(id.key, id.did, { ...input, sellerDid: id.did });
+    return request<{ orderId: string; status: string; txid?: string | null }>('/orders', body);
+  }
+  const orderId = newOrderId();
+  const record = p2pOrderRecord({ from: id.did, to: orderId, ...input, ts: Date.now() });
+  const txid = await anchorSocialRecord({
+    key: id.key,
+    l1Url: P2P_SOCIAL_URL,
+    record: { ...record, ...signP2pRecord(id.key, record) },
+  });
+  const body = signedBody(id.key, id.did, { orderId, txid, ...input, sellerDid: id.did });
+  return request<{ orderId: string; status: string; txid?: string | null }>('/orders', body);
+}
+
+/** Seller withdraws an ACTIVE order: anchor a CANCELLED `social.p2p-order`
+ *  (same chain-first path as createOrder), then have the engine index it. */
+export async function cancelOrder(
+  id: P2pIdentity,
+  orderId: string,
 ): Promise<{ orderId: string; status: string }> {
-  const body = signedBody(id.key, id.did, { ...input, sellerDid: id.did });
-  return request<{ orderId: string; status: string }>('/orders', body);
+  let txid: string | undefined;
+  if (P2P_SOCIAL_URL) {
+    const record = p2pOrderRecord({ from: id.did, to: orderId, status: 'CANCELLED', orderSeq: 1, ts: Date.now() });
+    txid = await anchorSocialRecord({
+      key: id.key,
+      l1Url: P2P_SOCIAL_URL,
+      record: { ...record, ...signP2pRecord(id.key, record) },
+    });
+  }
+  const body = signedBody(id.key, id.did, { sellerDid: id.did, ...(txid ? { txid } : {}) });
+  return request(`/orders/${orderId}/cancel`, body);
 }
 
 /** Buyer matches an order; the engine derives the 2-of-3 escrow address. */

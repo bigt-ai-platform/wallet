@@ -125,12 +125,21 @@ The feature uses the two chains that already exist, each as-is:
   `PQScriptUtils.verifyPQ` instead of `ECKey.verify`
   (`core/script/Script.java` `executeMultiSig` ~L1521, `executeCheckSig`
   ~L1422); the TS `PQKey.getPubKey()` emits the prefixed key.
-- **L1-SOCIAL — audit records.** The social chain's ingestion gate
-  (`l1-social-server/.../DispatcherController.promoteSocialRecord`) accepts any
-  record whose `type` starts with `"social."` and that has `from`/`to`, and
-  stores the raw record JSON. `social.p2p-swap` therefore passes with **no Java
-  change**. Because dai no longer knows the type, the wallet's own rebuild
-  watcher owns validation and projection of the record.
+- **L1-SOCIAL — the order book + audit records.** The social chain's ingestion
+  gate (`l1-social-server/.../DispatcherController.promoteSocialRecord`) accepts
+  any record whose `type` starts with `"social."` and that has `from`/`to`, and
+  stores the raw record JSON, so both record types pass with **no Java change**:
+  - `social.p2p-swap` — the engine-anchored settlement log (as before).
+  - `social.p2p-order` — **seller-anchored**: the seller builds, author-signs
+    and submits the order/cancel record from their own wallet key (§11), so the
+    public order book is chain-derived and the engine only indexes what the
+    chain already has. The record is PII-free — exactly the fields the public
+    book exposes.
+
+  Because dai no longer knows either type, the engine's own rebuild watcher
+  (`services/p2p-engine/src/replay.ts`) owns validation and projection of the
+  records; the wallet's independent watcher does the same for `social.p2p-swap`
+  in the dai deployment.
 
 The only *chain-level* work is a later phase, not required here:
 
@@ -211,12 +220,19 @@ constants in the app.
     │ co-signs release or refund                                   │
 ```
 
+Order-book intake (§11) is chain-first: the seller anchors a signed
+`social.p2p-order` on L1-SOCIAL (own key, own BIG UTXO for the zero-fee tx),
+then `POST /orders {orderId, txid}` — the engine confirms the txid is
+`CONFIRMED` before the index advances, and the replay watcher (§14) projects
+the same record into a wiped store. A deploy without L1-SOCIAL keeps the legacy
+engine-intake path (no `orderId`/`txid`, order signed into the request).
+
 Two outbound dependencies, no Ethereum, **no fiat API on the happy path**:
 
 | Dependency | Protocol | Endpoint |
 |---|---|---|
 | Bigtangle L0 node | JSON over HTTP | `submitTransaction`, `getTransactionStatus`, `getOutputs`, `getBalances`, `launchPayMultiSign`, `payMultiSign`, `getPayMultiSignAddressList` |
-| Bigtangle L1-SOCIAL | JSON over HTTP | `submitTransaction` with `dataclassname="SocialRecord"` (audit anchor) |
+| Bigtangle L1-SOCIAL | JSON over HTTP | `submitTransaction` with `dataclassname="SocialRecord"` (order/cancel/audit anchor); `getTips`, `getBlockByHash`, `getTransactionStatus` (replay watcher + txid confirmation) |
 | PayPal (automation phase only, §20) | REST + webhooks | `https://api-m.paypal.com` (live) / `https://api-m.sandbox.paypal.com` (sandbox) |
 
 Node auth is off on a stock node (`server.permissioned=false`,
@@ -491,7 +507,8 @@ from `wantRail` at match time and never touches both.
 
 | Endpoint | Who | Effect |
 |---|---|---|
-| `POST /orders`, `POST /orders/:id/match` | seller / buyer | signed limit order / signed match |
+| `POST /orders`, `POST /orders/:id/match` | seller / buyer | signed limit order / signed match. `POST /orders` accepts optional `orderId` (`ord-<16hex>`) + `txid`: the seller already anchored the `social.p2p-order` record, the engine polls `verifyTx` (bounded, `SETTLEMENT_ORDER_TX_TRIES`) and 409s until it is `CONFIRMED`. Re-posting the same `{orderId, sellerDid}` is idempotent (200); a colliding id from another seller is 409. No `orderId`/`txid` = legacy engine intake (mock/tests) |
+| `POST /orders/:orderId/cancel` | seller | withdraw an ACTIVE order. Optional `txid` of the anchored `CANCELLED` record (same confirmation rule); idempotent on an already-CANCELLED order, 409 on `MATCHED`/lost race, 403 for a non-seller |
 | `POST /swaps/:swapId/escrow/context` | party | escrow signing context (`escrowAddress`, `escrowTxHash`, `receiveAddress`, `presigned`) |
 | `POST /escrow/presign` | seller | pre-sign both spend skeletons (settlement closure; Path B) |
 | `POST /escrow/cosign` | party | co-sign a spend → engine broadcasts + settles (Path A; arbitration forced-release uses the buyer here) |
@@ -513,7 +530,18 @@ SETTLEMENT_CNY_RAILS=wechat,alipay,bank   # enabled methods (empty = rail off)
 SETTLEMENT_CNY_REMARK_TTL=900             # seconds the remark code is valid
 SETTLEMENT_CNY_CONFIRM_TIMEOUT=900        # NOT IMPLEMENTED yet — claim → confirm deadline
 SETTLEMENT_CNY_MAX_CENTS=...              # NOT IMPLEMENTED yet — per-trade cap (§16)
+SETTLEMENT_L1_SOCIAL_URL / _URLS          # social node(s): order txid confirmation + anchor + watcher
+SETTLEMENT_ORDER_TX_VERIFY=0              # disable the txid check (default: on when a social URL exists)
+SETTLEMENT_ORDER_TX_TRIES=4               # bounded verifyTx polls per order/cancel (500ms apart)
+SETTLEMENT_WATCH=1                        # run the chain-scan projector loop in-process
+SETTLEMENT_WATCH_INTERVAL_MS=15000        # watcher tick
+SETTLEMENT_WATCH_MAX_WALK=2000            # max blocks walked back per tick (rebuild uses 50000)
 ```
+
+Replay CLI (docs §14): `yarn workspace p2p-engine replay <sync|verify|rebuild>`
+— `sync` runs one incremental pass from `p2p_watch_cursor`, `verify` replays the
+chain into a scratch store and diffs (exit 1 on drift), `rebuild` wipes the
+chain-derived tables and replays (needs `POSTGRES_URL`).
 
 The PayPal invoice/payout endpoints and `POST /swaps/:id/invoice` stay in the
 codebase for the automation phase (§20); no happy-path step calls them.
@@ -610,13 +638,36 @@ Residual risks, stated rather than hidden:
 
 - Swap state is an **append-only event log** (`p2p_swap_events`) that can be
   replayed, not rows mutated in place. Postgres is a rebuildable projection.
+- The order book is chain-derived too: `p2p_orders` is a projection of
+  seller-anchored `social.p2p-order` records. The engine never authors them —
+  it verifies the author signature and indexes; a wiped projection replays from
+  the chain (`replay.ts`), and `MATCHED` is never seller-asserted (it is
+  derived from the engine-anchored `social.p2p-swap` event that references the
+  order).
 - Each event is signed with `P2P_ENGINE_KEY` and anchored on L1-SOCIAL as a
   `social.p2p-swap` record; the wallet's own rebuild watcher validates and
   projects it.
 - The record contract lives in `packages/p2p-protocol`:
   `P2P_SWAP_STATUSES`, `P2pSwapRecord`, `p2pSwapRecord()`,
-  `validateP2pSwapRecord()`. Amounts are decimal strings; `swapSeq` orders
-  events per swap; `to` is the opaque `swapId`.
+  `validateP2pSwapRecord()`; plus `P2P_ORDER_TYPE`, `P2pOrderRecord`,
+  `p2pOrderRecord()`, `validateP2pOrderRecord()`, `P2P_ORDER_ID_RE` for the
+  order book. Amounts are decimal strings; `swapSeq`/`orderSeq` order events;
+  `to` is the opaque `swapId`/`orderId`. `OPEN` carries the six terms +
+  `validUntil` (unix seconds); `CANCELLED` references the order only and must
+  not carry terms.
+- **Engine watcher** (`services/p2p-engine/src/replay.ts`, `SETTLEMENT_WATCH=1`
+  or `yarn workspace p2p-engine replay …`): walks L1-SOCIAL back from the head
+  (`getTips` → `getBlockByHash` by prev-hash) to the `p2p_watch_cursor` row,
+  applies blocks oldest-first, and advances the cursor. Fails closed: an
+  unservable head or a truncated walk applies nothing. `verify` diffs the whole
+  chain against the projection (`missing` = chain rows the store lost; `extra`
+  = store-only rows, which is expected for legacy engine-intake orders and all
+  PII).
+- **Conflict rule**: chain inclusion order decides. The watcher claims
+  `ACTIVE→MATCHED` / `ACTIVE→CANCELLED` with the same conditional updates the
+  API routes use, so a cancel and a match that both landed resolve to whichever
+  the chain ordered first; the loser is reported as a conflict, never applied
+  over the winner.
 - **The model never supplies trusted evidence** — signatures are produced by the
   service, and claimed transactions are re-checked against the node (status,
   destination address **and amount**).
@@ -628,6 +679,10 @@ Residual risks, stated rather than hidden:
   arbiter.
 - **Anchor**: `social.p2p-swap` records carry status transitions and refs only;
   the public view stays PII-redacted (`P2pSwapView` pattern, plus proof refs).
+- **PII is store-only by design**: `receiveAddress`, `paypalAccount`,
+  payment profiles and receipt bytes exist only in the engine store — they are
+  not in any record, so a full rebuild restores the book and the event log but
+  never the private fields (they are keyed to the parties, not to the chain).
 - **Replay**: `payment_proof` / `payment_confirm` are re-derivable from the
   store; the chain record stays a signature-covered audit trail, not evidence.
 
@@ -760,6 +815,11 @@ they share a feature. The escrow script is a wallet capability, so it lives in
    `instructions → proof → confirm → dispute` routes, payment profiles, the
    `PAYMENT_CLAIMED` state, seller presign/cosign release, and the L1-SOCIAL
    anchor. `services/p2p-engine/test/cny.test.ts` covers the CNY legs.
+   **On-chain order book (delivered):** seller-anchored `social.p2p-order`
+   intake (`orderId` + `txid` with bounded confirmation, `POST /orders/:id/
+   cancel`), race-safe `ACTIVE→MATCHED` claims with reopen-on-anchor-failure,
+   and the chain-scan projector (`replay.ts` + `replay` CLI) that makes
+   `p2p_orders` / `p2p_swap_events` replayable from L1-SOCIAL.
 3. **UI + guide** — *delivered:* Binance-P2P-style order book / order detail /
    match / pay / confirm / dispute screens in the wallet app, for all rails,
    plus the guide and PDFs in all 12 languages.
@@ -775,7 +835,10 @@ they share a feature. The escrow script is a wallet capability, so it lives in
    future) in both `MempoolService.verifyTransaction` and `ServiceBaseCheck`.
    Consensus-breaking; needs a coordinated upgrade.
 8. **Distributed matching** — the L1 order book for the crypto/crypto leg, with
-   the cross-rail fiat obligation still settling through the service.
+   the cross-rail fiat obligation still settling through the service. The
+   fiat-cross book already lives on L1-SOCIAL (`social.p2p-order`, §11), so
+   this phase adds only the token↔token venue (prediction/ordermatch chain,
+   §3) — not a second book for fiat.
 
 ---
 
@@ -784,7 +847,12 @@ they share a feature. The escrow script is a wallet capability, so it lives in
 - **Durability** — only chain, user Drive and MinIO are durable. Swap state is
   an append-only event log that can be replayed; Postgres is a projection.
 - **Never write the projection directly** — durable output is anchored on chain
-  (`social.p2p-swap`), not inserted into serving tables.
+  (`social.p2p-swap`), not inserted into serving tables. The order book is
+  authored the same way by the seller (`social.p2p-order`): the engine only
+  verifies and indexes, and `replay rebuild` regenerates PG from the chain.
+- **PII never reaches the chain** — order records mirror the public book fields
+  only; profiles, receive addresses, accounts and receipts stay store-only, so
+  a rebuild is expected to lose them (that is the design, not a gap).
 - **The seller's own confirmation (or an arbitration outcome) is the only
   trigger for release** — no rail API, no buyer claim alone, no silence.
 - **The engine never touches fiat** — buyer → seller, directly, on every rail.
@@ -810,10 +878,33 @@ geofencing — is an operator decision to make before shipping to users.
   `PAYMENT_PENDING` and `PAYMENT_CLAIMED`), confirm with open dispute (409),
   lock re-check fails closed, idempotent proof overwrite, PII never in the
   anchored record, CNY claim transitions (`state.test.ts`).
+- **Order book + watcher** (`orderRoutes.test.ts`, `replay.test.ts`,
+  `packages/p2p-protocol/test/orderRecord.test.ts`): txid-gated intake (409
+  until `CONFIRMED`, idempotent re-post, orderId collision), cancel (404/403/
+  409/idempotent), match-after-cancel 409, reopen-on-anchor-failure; the
+  projector's open/cancel/match application, bad-signature and unknown-type
+  skips, conflict reporting, fail-closed unservable head / truncated walk,
+  cursor restart, and `replayVerify` missing/extra diffs. App side:
+  `signP2pRecord` cross-checked against `record-sig`'s `verifyRecordSig`
+  (`expo-app/sources/lib/__tests__/p2pIdentity.test.ts`) and the i18n key
+  parity guard for the new cancel strings.
 - **e2e** (`e2e/playwright/tests/p2p-demo.spec.ts`, `p2p-settlement.spec.ts`
   pattern): two-wallet flow with the fiat leg — seller profile, match, lock,
   buyer proof upload, seller confirm, release verified on-chain (the fiat leg's
   assertion is the state machine + anchor, since there is no rail API to poll).
+- **Chain order-book e2e** (`e2e/e2etest.sh p2p-orders` →
+  `e2e/playwright/tests/p2p-orders.spec.ts`): starts `e2e/l1social.sh up` plus
+  two chain engines — intake (`E2E_P2P_ORDERS_URL`) and a cold replay instance
+  (`E2E_P2P_REPLAY_URL`) — then, via the `e2e/p2p-order-chain.mjs` fixture
+  (keygen / fund / anchor-order / sign), asserts: seller-anchored
+  `social.p2p-order` OPEN + txid-gated 201, idempotent re-post, unknown-txid
+  409 never indexed, cold replay indexing the OPEN record from the chain alone,
+  buyer match (201 + engine-anchored swap → both books flip MATCHED), anchored
+  cancel (200 + idempotent → both books CANCELLED), cancel-of-matched /
+  match-of-cancelled 409, unknown 404, non-seller 403, both watchers settling
+  with no errors, and intake-vs-replay order-set equality per status. The spec
+  skips unless the part's env is present, so `all`/`remaining` greps stay green
+  without L1-SOCIAL.
 - **Dispute e2e**: claim → dispute → arbitration resolve `refund` → escrow
   refund verified on-chain; and the mirror `release` case where the seller won't
   sign (engine + buyer force-release).

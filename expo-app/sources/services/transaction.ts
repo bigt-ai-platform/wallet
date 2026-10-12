@@ -4,7 +4,7 @@
  * Handles transaction creation, signing, and broadcasting
  */
 
-import { PQKey, ECKey, TestParams, MainNetParams, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigtangle-ts';
+import { PQKey, ECKey, TestParams, MainNetParams, NetworkParameters, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigtangle-ts';
 import i18n from '../lib/i18n';
 // @ts-ignore
 import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
@@ -524,6 +524,68 @@ export async function pegInToL1(params: {
     throw new Error(broadcastResult.error || i18n.t('errors.pegInSubmit'));
   }
 
+  return tx.getHash().toString();
+}
+
+function tokenIdsEqual(a: Uint8Array | string | undefined, b: Uint8Array): boolean {
+  if (a === undefined) return false;
+  const A = typeof a === 'string' ? Utils.HEX.decode(a) : a;
+  return A.length === b.length && A.every((v, i) => v === b[i]);
+}
+
+/**
+ * Anchor a signed `social.*` record on L1-SOCIAL from the wallet's own key —
+ * the app-side port of services/p2p-engine `submitSocialRecord`. The record
+ * rides in the tx's typed data (`dataclassname="SocialRecord"`); the tx is
+ * funded with BIG inputs + zero-value self change (L1-SOCIAL is fee-free),
+ * signed, and submitted to the social node's `submitTransaction`. Returns the
+ * tx hash the engine confirms (`POST /orders` `verifyTx`).
+ *
+ * Throws when the wallet holds no BIG output on L1-SOCIAL — the seller must
+ * peg in ≥1 BIG first (docs/p2p.md §11).
+ */
+export async function anchorSocialRecord(params: {
+  key: PQKey;
+  l1Url: string;
+  record: unknown;
+}): Promise<string> {
+  const { key, l1Url, record } = params;
+  const netParams = TestParams.get();
+  const url = l1Url.endsWith('/') ? l1Url : l1Url + '/';
+  const wallet = await Wallet.fromKeysURL(netParams, [key], url);
+  wallet.setFee(false);
+
+  const coinList = await wallet.calculateAllSpendCandidates(null, false);
+  const tx = new Transaction(netParams);
+  tx.setData(new TextEncoder().encode(JSON.stringify(record)));
+  tx.setDataClassName('SocialRecord');
+
+  const BIG = NetworkParameters.getBIGTANGLE_TOKENID();
+  let beneficiary: unknown = null;
+  let amount = Coin.valueOf(0n, BIG).negate();
+  for (const spendable of coinList) {
+    const utxo = spendable.getUTXO();
+    if (!utxo || !tokenIdsEqual(utxo.getValue().getTokenid(), BIG)) continue;
+    beneficiary = await (wallet as unknown as { getECKey(a: unknown, b: unknown): Promise<unknown> }).getECKey(
+      null,
+      utxo.getAddress(),
+    );
+    amount = amount.add(utxo.getValue());
+    tx.addInput2(utxo.getBlockHash(), spendable);
+    if (!amount.isNegative()) {
+      if (amount.isPositive()) tx.addOutputEckey(amount, beneficiary as never);
+      break;
+    }
+  }
+  if (beneficiary == null || amount.isNegative()) {
+    throw new Error('anchorSocialRecord: no BIG output on L1-SOCIAL (peg in ≥1 BIG first)');
+  }
+  await (wallet as unknown as { signTransaction(t: Transaction, a: unknown, m: string): Promise<void> }).signTransaction(
+    tx,
+    null,
+    'THROW',
+  );
+  await (wallet as unknown as { submitTransaction(t: Transaction): Promise<void> }).submitTransaction(tx);
   return tx.getHash().toString();
 }
 
