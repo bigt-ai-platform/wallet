@@ -1,16 +1,18 @@
 #!/usr/bin/env node
 /**
- * Render docs/p2p-demo/p2p-cny.md → docs/p2p-demo/assets/p2p-cny.pdf
+ * Render docs/p2p-demo/p2p-all.md → docs/p2p-demo/assets/p2p-all.pdf
+ *
+ * One combined PDF covering all four P2P fiat rails — PayPal, WeChat Pay,
+ * Alipay and bank — from the latest capture reports (PayPal leg via
+ * e2e/capture-p2p-guide.mjs, CNY legs via e2e/capture-p2p-cny.mjs).
  *
  * Self-contained (no `marked`, no workspace deps): a minimal markdown → HTML
  * pass, the local screenshots embedded as data URIs, and a headless Chromium
  * print-to-pdf — the same pipeline the help guides use (scripts/docs-pdf.mts).
  *
  * Usage:
- *   node docs/p2p-demo/scripts/gen-p2p-cny-pdf.mjs
- *   CHROME_BIN=/path/to/chrome node docs/p2p-demo/scripts/gen-p2p-cny-pdf.mjs
- *
- * Companion: e2e/capture-p2p-cny.mjs regenerates the screenshots first.
+ *   node docs/p2p-demo/scripts/gen-p2p-all-pdf.mjs
+ *   CHROME_BIN=/path/to/chrome node docs/p2p-demo/scripts/gen-p2p-all-pdf.mjs
  */
 import { execFileSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
@@ -20,8 +22,8 @@ import { fileURLToPath } from "url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEMO = resolve(HERE, ".."); // docs/p2p-demo
-const MD_PATH = join(DEMO, "p2p-cny.md");
-const OUT_PDF = join(DEMO, "assets", "p2p-cny.pdf");
+const MD_PATH = join(DEMO, "p2p-all.md");
+const OUT_PDF = join(DEMO, "assets", "p2p-all.pdf");
 
 const THEME = {
   primary: "#0A8462",
@@ -243,15 +245,31 @@ const md = readFileSync(MD_PATH, "utf-8");
 const [titleLine, ...rest] = md.split("\n");
 const title = titleLine.replace(/^#\s*/, "").trim();
 
-const report = join(resolve(DEMO, "..", ".."), "e2e", "demo-output", "p2p-cny-capture.json");
-let meta = "P2P settlement · WeChat Pay / Alipay (CNY rails)<br>Step-by-step demo guide";
-if (existsSync(report)) {
-  const run = JSON.parse(readFileSync(report, "utf-8"));
-  meta = `${meta}<br><strong>captured</strong> ${run.capturedAt} · swap <code>${run.swapId}</code>`;
+const E2E_OUT = join(resolve(DEMO, "..", ".."), "e2e", "demo-output");
+let meta = "P2P settlement · PayPal / WeChat / Alipay / bank<br>Step-by-step demo guide — all four rails";
+const swapParts = [];
+let capturedAt;
+const guideReport = join(E2E_OUT, "p2p-guide-capture.json");
+if (existsSync(guideReport)) {
+  const run = JSON.parse(readFileSync(guideReport, "utf-8"));
+  const entry = run.report?.[0];
+  if (entry?.swapId) swapParts.push(`paypal <code>${entry.swapId}</code>`);
+  if (run.capturedAt && (!capturedAt || run.capturedAt > capturedAt)) capturedAt = run.capturedAt;
+}
+const cnyReport = join(E2E_OUT, "p2p-cny-capture.json");
+if (existsSync(cnyReport)) {
+  const run = JSON.parse(readFileSync(cnyReport, "utf-8"));
+  for (const [rail, s] of Object.entries(run.swaps ?? {})) {
+    swapParts.push(`${rail} <code>${s.swapId}</code>`);
+  }
+  if (run.capturedAt && (!capturedAt || run.capturedAt > capturedAt)) capturedAt = run.capturedAt;
+}
+if (capturedAt) {
+  meta = `${meta}<br><strong>captured</strong> ${capturedAt}${swapParts.length ? ` · ${swapParts.join(" · ")}` : ""}`;
 }
 
 const html = renderHtml(title, mdToHtml(rest.join("\n"), DEMO), meta);
-const htmlPath = join(tmpdir(), "p2p-cny.html");
+const htmlPath = join(tmpdir(), "p2p-all.html");
 writeFileSync(htmlPath, html);
 mkdirSync(dirname(OUT_PDF), { recursive: true });
 execFileSync(

@@ -40,10 +40,10 @@ arbitration outcome — never on silence, never on the buyer's claim alone.
 `layer0-server/src/main/java/net/bigtangle/`. Everything else is a full path
 from the repo that owns it.
 
-**Demos.** Step-by-step walkthroughs with captured screenshots:
-[PayPal rail](p2p-demo/p2p.md) and
-[CNY rails — WeChat Pay / Alipay / bank](p2p-demo/p2p-cny.md) (PDF:
-`docs/p2p-demo/assets/p2p-cny.pdf`). The whole pipeline has one entry point,
+**Demos.** A step-by-step walkthrough of all four fiat rails — PayPal, WeChat
+Pay, Alipay, bank — with captured screenshots:
+[p2p-demo/p2p-all.md](p2p-demo/p2p-all.md) (PDF: `docs/p2p-demo/assets/p2p-all.pdf`).
+The whole pipeline has one entry point,
 `./p2pdemo.sh` (no chain infra): `./p2pdemo.sh` re-renders both PDFs from the
 current screenshots, `./p2pdemo.sh capture` regenerates the screenshots first
 (starts only a local p2p-engine + static server), and `./p2pdemo.sh all` also

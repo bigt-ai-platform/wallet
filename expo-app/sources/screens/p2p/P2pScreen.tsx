@@ -66,15 +66,17 @@ export default function P2pScreen() {
   }, [notice]);
   const [instructions, setInstructions] = React.useState<Record<string, P2pPaymentInstructions>>({});
 
-  const [giveToken, setGiveToken] = React.useState('');
+  // USDT is the market base (Binance-P2P style): sellers list USDT, buyers
+  // pay fiat and receive USDT. Default fiat is CNY on the WeChat rail.
+  const [giveToken, setGiveToken] = React.useState('USDT');
   const [tokenResults, setTokenResults] = React.useState<TokenItem[]>([]);
   const [tokenSearching, setTokenSearching] = React.useState(false);
   const [giveAmount, setGiveAmount] = React.useState('');
   const [giveChain, setGiveChain] = React.useState('L0');
-  const [wantCurrency, setWantCurrency] = React.useState('USD');
+  const [wantCurrency, setWantCurrency] = React.useState('CNY');
   const [wantAmount, setWantAmount] = React.useState('');
   const [validHours, setValidHours] = React.useState('24');
-  const [wantRail, setWantRail] = React.useState('paypal');
+  const [wantRail, setWantRail] = React.useState('wechat');
   // What this engine actually serves (GET /capabilities): a CNY-only deploy
   // has no PayPal credentials, so its paypal chip/fields are hidden instead of
   // failing at /invoice. null → keep DEFAULT_RAILS (older engine, see p2p.ts).
@@ -211,12 +213,12 @@ export default function P2pScreen() {
         giveToken: giveToken.trim(),
         giveAmount: giveAmount.trim(),
         giveChain: giveChain.trim() || 'L0',
-        wantCurrency: wantCurrency.trim() || 'USD',
+        wantCurrency: wantCurrency.trim() || 'CNY',
         wantAmount: wantAmount.trim(),
         wantRail,
         validUntil: Math.floor(Date.now() / 1000) + Math.floor(hours * 3600),
       });
-      setGiveToken(''); setGiveAmount(''); setWantAmount('');
+      setGiveToken('USDT'); setGiveAmount(''); setWantAmount('');
       setNotice({ ok: true, text: t('p2p.created') });
       setTab('mine');
       await loadSwaps();
@@ -554,7 +556,7 @@ export default function P2pScreen() {
             </View>
             <Field label={t('p2p.giveAmount')} value={giveAmount} onChange={setGiveAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-give-amount" />
             <Field label={t('p2p.wantAmount')} value={wantAmount} onChange={setWantAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
-            <Field label={t('p2p.wantCurrency')} value={wantCurrency} onChange={setWantCurrency} placeholder="USD" testID="p2p-want-currency" />
+            <Field label={t('p2p.wantCurrency')} value={wantCurrency} onChange={setWantCurrency} placeholder="CNY" testID="p2p-want-currency" />
             <Field label={t('p2p.giveChain')} value={giveChain} onChange={setGiveChain} placeholder="L0" testID="p2p-give-chain" />
             <View style={s.field}>
               <Text style={s.fieldLabel}>{t('p2p.rail')}</Text>

@@ -2,15 +2,15 @@
 # p2pdemo.sh — one entry point for the P2P demo guides.
 #
 # Renders the P2P demo PDFs from the markdown sources in docs/guides (the
-# 12-language wallet guide) and docs/p2p-demo (the PayPal + CNY walkthroughs),
-# optionally regenerating the screenshots first.
+# 12-language wallet guide) and docs/p2p-demo (the all-rails walkthrough —
+# PayPal / WeChat / Alipay / bank), optionally regenerating screenshots first.
 #
 #   ./p2pdemo.sh              # pdf (default): render both PDFs from current shots
 #   ./p2pdemo.sh pdf          # same as above
 #   ./p2pdemo.sh pdf guide    # only the 12-language guide PDFs
-#   ./p2pdemo.sh pdf cny      # only the CNY walkthrough PDF
+#   ./p2pdemo.sh pdf walkthrough   # only the all-rails walkthrough PDF (p2p-all.pdf)
 #   ./p2pdemo.sh capture      # (re)capture screenshots, then render PDFs
-#   ./p2pdemo.sh capture guide|cny
+#   ./p2pdemo.sh capture guide|walkthrough
 #   ./p2pdemo.sh all          # rebuild workspace deps + web + engine, shots, PDFs
 #   ./p2pdemo.sh e2e          # REAL L0 e2e (escrow proved on-chain) via e2etest.sh
 #                             #  p2p-demo — needs `e2e/infra.sh` up first
@@ -86,7 +86,7 @@ capture_guide() {
   log "Guide screenshots captured."
 }
 
-capture_cny() {
+capture_walkthrough() {
   require_bin node
   info "Capturing CNY screenshots (WeChat/Alipay/bank)..."
   ( cd "$ROOT/e2e" && APP_URL="$APP_URL" E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
@@ -101,11 +101,11 @@ pdf_guide() {
   log "Guide PDFs → docs/p2p-demo/assets/p2p*.pdf"
 }
 
-pdf_cny() {
+pdf_walkthrough() {
   require_bin node
-  info "Rendering CNY walkthrough PDF..."
-  node docs/p2p-demo/scripts/gen-p2p-cny-pdf.mjs || fail "gen-p2p-cny-pdf failed"
-  log "CNY PDF → docs/p2p-demo/assets/p2p-cny.pdf"
+  info "Rendering all-rails walkthrough PDF..."
+  node docs/p2p-demo/scripts/gen-p2p-all-pdf.mjs || fail "gen-p2p-all-pdf failed"
+  log "Walkthrough PDF → docs/p2p-demo/assets/p2p-all.pdf"
 }
 
 # ── down ─────────────────────────────────────────────────────────────────────
@@ -127,9 +127,9 @@ case "$CMD" in
   pdf)
     case "$TARGET" in
       guide) pdf_guide ;;
-      cny)   pdf_cny ;;
-      all)   pdf_guide; pdf_cny ;;
-      *)     fail "unknown target '$TARGET' (use guide | cny | all)" ;;
+      walkthrough|cny) pdf_walkthrough ;;
+      all)   pdf_guide; pdf_walkthrough ;;
+      *)     fail "unknown target '$TARGET' (use guide | walkthrough | all)" ;;
     esac
     ;;
   capture)
@@ -137,9 +137,9 @@ case "$CMD" in
     build_web
     case "$TARGET" in
       guide) capture_guide; pdf_guide ;;
-      cny)   capture_cny; pdf_cny ;;
-      all)   capture_guide; capture_cny; pdf_guide; pdf_cny ;;
-      *)     fail "unknown target '$TARGET' (use guide | cny | all)" ;;
+      walkthrough|cny) capture_walkthrough; pdf_walkthrough ;;
+      all)   capture_guide; capture_walkthrough; pdf_guide; pdf_walkthrough ;;
+      *)     fail "unknown target '$TARGET' (use guide | walkthrough | all)" ;;
     esac
     ;;
   all)
@@ -147,9 +147,9 @@ case "$CMD" in
     build_engine
     build_web
     capture_guide
-    capture_cny
+    capture_walkthrough
     pdf_guide
-    pdf_cny
+    pdf_walkthrough
     ;;
   down|stop) down; exit 0 ;;
   e2e) "$ROOT/e2e/e2etest.sh" p2p-demo; exit 0 ;;

@@ -60,10 +60,14 @@ test.describe('P2P Flow', () => {
 
     try {
       // 1. Seller lists a sell order (the screen switches to "My swaps").
+      //    USDT is the market base; this test exercises the PayPal rail (the
+      //    default rail is now the CNY/wechat flow — see capture-p2p-cny.mjs).
       await clickTab(seller.page, 'P2P');
       await el(seller.page, 'p2p-give-token').fill('USDT');
       await el(seller.page, 'p2p-give-amount').fill('10');
       await el(seller.page, 'p2p-want-amount').fill('10');
+      await el(seller.page, 'p2p-rail-paypal').click();
+      await el(seller.page, 'p2p-want-currency').fill('USD');
       await el(seller.page, 'p2p-create').click();
       await seller.page.waitForTimeout(1500);
 

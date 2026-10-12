@@ -160,8 +160,10 @@ trap cleanup EXIT
 # HEADED=1: Playwright's browser window can map behind an already-open
 # (typically maximized) browser on the X desktop, so nothing appears to
 # happen even though the tests are running. Watch for each new Playwright
-# window and raise/focus it as soon as it appears. No-op when headless, when
-# DISPLAY is unset, or when xdotool is unavailable.
+# window and raise/focus it as soon as it appears — also pin it
+# always-on-top (xprop _NET_WM_STATE_ABOVE) so the KasmVNC client windows
+# on the e2e box cannot cover it. No-op when headless, when DISPLAY is
+# unset, or when xdotool is unavailable.
 start_window_raiser() {
   [[ "${HEADED:-}" == "1" ]] || return 0
   [[ -n "${DISPLAY:-}" ]] || return 0
@@ -170,8 +172,14 @@ start_window_raiser() {
   (
     raised=""
     for _ in $(seq 1 1800); do
-      for wid in $(xdotool search --onlyvisible --name "Google Chrome for Testing" 2>/dev/null || true); do
+      for wid in $(xdotool search --name "Google Chrome for Testing" 2>/dev/null || true); do
         case " $raised " in *" $wid "*) continue ;; esac
+        # Pin always-on-top so other windows cannot bury the test browser.
+        if command -v xprop >/dev/null 2>&1; then
+          xprop -id "$wid" -f _NET_WM_STATE 32a \
+            -set _NET_WM_STATE "_NET_WM_STATE_ABOVE,_NET_WM_STATE_STICKY" 2>/dev/null || true
+        fi
+        xdotool windowmap "$wid" 2>/dev/null || true
         if xdotool windowactivate --sync "$wid" 2>/dev/null; then
           xdotool windowraise "$wid" 2>/dev/null || true
           raised="$raised $wid"

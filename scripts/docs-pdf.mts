@@ -13,7 +13,7 @@
  *   npx tsx scripts/docs-pdf.mts            # every guide, every language
  *   npx tsx scripts/docs-pdf.mts p2p        # one guide, all languages
  *   npx tsx scripts/docs-pdf.mts p2p ja     # one guide, one language
- *   npx tsx scripts/docs-pdf.mts --md docs/p2p-demo/p2p-cny.md [--out <pdf>] [--lang <code>]
+ *   npx tsx scripts/docs-pdf.mts --md docs/p2p-demo/p2p-all.md [--out <pdf>] [--lang <code>]
  *
  * Guide sources are `<guide>.md` (English) and `<guide>.<lang>.md`; the output
  * is `<guide>.pdf` / `<guide>.<lang>.pdf`, the names lib/docs.ts links to.
@@ -302,7 +302,7 @@ function discoverGuides(): string[] {
 const argv = process.argv.slice(2);
 
 // `--md <file> [--out <pdf>] [--lang <code>]` renders an arbitrary markdown doc
-// (e.g. docs/p2p-demo/p2p-cny.md).
+// (e.g. docs/p2p-demo/p2p-all.md).
 const mdIdx = argv.indexOf("--md");
 if (mdIdx >= 0) {
   const mdPath = resolve(argv[mdIdx + 1]);
