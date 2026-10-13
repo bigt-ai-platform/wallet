@@ -47,21 +47,25 @@ TAR="${TAR_DIR}/wallet-web.latest.tar"
 
 if ! command -v docker >/dev/null 2>&1; then echo -e "${RED}docker not found${NC}"; exit 1; fi
 
-# 1. Host web export (Metro). expo-app/node_modules must be present; bootstrap
-#    the workspace once if it is missing.
-if [ ! -d expo-app/node_modules ]; then
-  echo -e "${YELLOW}expo-app/node_modules missing — running yarn install (workspace)…${NC}"
-  yarn install --frozen-lockfile
+# 1. Host web export (Metro). expo-app/node_modules must be present AND the
+#    workspace packages the app imports must be linked (a newly added package
+#    under packages/* is not linked until an install runs) and compiled
+#    (dist/ is gitignored). Bootstrap the workspace when either is missing.
+if [ ! -d expo-app/node_modules ] || [ ! -e node_modules/mobile-control ]; then
+  echo -e "${YELLOW}workspace deps not linked — running yarn install (workspace)…${NC}"
+  yarn install --frozen-lockfile --ignore-engines
 fi
 
 echo -e "${GREEN}--- network guard: pin mainnet defaults ---${NC}"
 assert_mainnet_default
 
-# The app imports the `chain-discovery` workspace package, whose runtime entry
-# is its compiled dist/ (gitignored, like bigtangle-ts). Build it here so the
-# Metro export below resolves it.
-echo -e "${GREEN}--- build chain-discovery ---${NC}"
-( cd packages/chain-discovery && yarn build )
+# The app imports the workspace packages below, whose runtime entry is their
+# compiled dist/ (gitignored, like bigtangle-ts). Build them here so the Metro
+# export below resolves them.
+for pkg in chain-discovery mobile-control; do
+  echo -e "${GREEN}--- build $pkg ---${NC}"
+  ( cd "packages/$pkg" && yarn build )
+done
 
 echo -e "${GREEN}--- expo web export (host) ---${NC}"
 rm -rf web-build
