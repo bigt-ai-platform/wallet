@@ -1993,6 +1993,11 @@ async function main() {
     socialPool?.stop();
     if (watchTimer) clearInterval(watchTimer);
   });
+  // Listen BEFORE the boot chain-scan replay: the projector's first pass walks
+  // up to SETTLEMENT_WATCH_MAX_WALK blocks over HTTP (minutes from a cold
+  // cursor), and gating listen() on it left the engine unreachable — the
+  // health check failed and Caddy served 502 for ~10 min after each (re)start.
+  await app.listen({ port: Number(env.PORT ?? 8108), host: env.HOST ?? "127.0.0.1" });
   // Chain-scan projector (docs/p2p.md §14): on boot + every interval, walk
   // back from the head to the cursor and apply new records. Mem store replays
   // from genesis each boot (idempotent); PG resumes from p2p_watch_cursor.
@@ -2018,11 +2023,10 @@ async function main() {
         watchState.lastRunAt = Date.now();
       }
     };
-    await tick();
+    void tick(); // boot replay in the background — must never gate listen()
     watchTimer = setInterval(() => void tick(), Number(env.SETTLEMENT_WATCH_INTERVAL_MS ?? 15_000));
     watchTimer.unref?.();
   }
-  await app.listen({ port: Number(env.PORT ?? 8108), host: env.HOST ?? "127.0.0.1" });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
