@@ -45,7 +45,18 @@ import { hexToBytes } from "did";
 import { pqPubFromDid } from "did/pq";
 import { PQKey, Utils } from "bigtangle-ts";
 import type { Escrow } from "bigtangle-ts";
-import { P2P_ORDER_ID_RE, validateP2pOrderRecord, type P2pOrderRecord } from "p2p-protocol";
+import {
+  P2P_ORDER_ID_RE,
+  grantAllows,
+  machineConfirm,
+  validatePairingGrant,
+  validatePaymentVerdict,
+  validateP2pOrderRecord,
+  type PaymentVerdict,
+  type P2pOrderRecord,
+  type VerdictCheck,
+  type VerdictExpectation,
+} from "p2p-protocol";
 import { verifyRecordSig } from "record-sig";
 import { ACTION_STATUS, DEDICATED_ACTIONS, canTransition, statusForAction } from "./state.js";
 import {
@@ -75,9 +86,11 @@ import {
   type CnyRail,
   type EscrowSigning,
   type PaymentProfile,
+  type PaymentVerification,
   type P2pOrder,
   type P2pSwapEvent,
   type P2pSwapView,
+  type StoredPairing,
   type SwapAction,
 } from "./types.js";
 import type { SettlementStore } from "./store.js";
@@ -97,6 +110,23 @@ export interface OrderTxCheck {
     wantRail: string;
     validUntil: number;
   };
+}
+
+/** One engine-driven read of the party's own rail app (docs/p2p.md §12). */
+export interface DeviceReadArgs {
+  grant: Pick<StoredPairing, "endpoint" | "deviceId" | "token">;
+  side: "buyer" | "seller";
+  rail: string;
+  expected: VerdictExpectation;
+  evidenceKind?: PaymentVerdict["evidenceKind"];
+  receiptVerified?: boolean;
+}
+
+export interface DeviceReadResult {
+  verdict: PaymentVerdict;
+  check: VerdictCheck;
+  captures?: string[];
+  entry?: unknown;
 }
 
 export interface SettlementDeps {
@@ -122,6 +152,12 @@ export interface SettlementDeps {
   verifyOrderTx?: (check: OrderTxCheck) => Promise<{ ok: boolean; error?: string }>;
   /** Bounded polls for verifyTx before 409 (default 4; tests set 1). */
   orderTxTries?: number;
+  /**
+   * Read the party's rail app through their paired mobile-mcp endpoint (§12).
+   * Default: p2p-verify's `connectFromGrant` + `verifyPayment`. Tests inject a
+   * fake so no device is ever touched.
+   */
+  readDevice?: (args: DeviceReadArgs) => Promise<DeviceReadResult>;
   /** Mutable watch-loop state surfaced by /capabilities (replay.ts sync). */
   watchState?: { height: number | null; hash: string | null; lastRunAt: number | null; lastError: string | null };
 }
@@ -163,6 +199,27 @@ function escrowKeyFromDid(did: string | undefined): PQKey | null {
     return PQKey.fromPrefixedPublicKey(pqPubFromDid(did));
   } catch {
     return null;
+  }
+}
+
+/**
+ * Default device reader (docs/p2p.md §12): p2p-verify against the party's own
+ * paired endpoint. Imported lazily — an engine without the worker, or a test
+ * injecting a fake reader, never loads it.
+ */
+async function defaultDeviceRead(args: DeviceReadArgs): Promise<DeviceReadResult> {
+  const { connectFromGrant, verifyPayment } = await import("p2p-verify");
+  const gateway = await connectFromGrant(args.grant);
+  try {
+    return await verifyPayment(gateway, {
+      side: args.side,
+      rail: args.rail as "wechat" | "alipay" | "bank",
+      expected: args.expected,
+      ...(args.evidenceKind ? { evidenceKind: args.evidenceKind } : {}),
+      ...(args.receiptVerified !== undefined ? { receiptVerified: args.receiptVerified } : {}),
+    });
+  } finally {
+    gateway.close?.();
   }
 }
 
@@ -495,10 +552,12 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 
   // ── escrow settlement hook ────────────────────────────────────────────────
   // Finishes pre-signed swaps while nobody is watching: release at
-  // PAYMENT_VERIFIED, refund at EXPIRED. A swap only qualifies when the
-  // seller presigned at lock (no stored row → the parties drive it), so
-  // e2e/manual flows behave exactly as before. SETTLEMENT_ESCROW_HOOK_MS=0
-  // (the default) disables the timer — the tick stays exported for tests.
+  // PAYMENT_VERIFIED, refund at EXPIRED or after a post-lock CANCELLED (the
+  // cancel settles through the same refund spend — docs/p2p.md §9). A swap
+  // only qualifies when the seller presigned at lock (no stored row → the
+  // parties drive it), so e2e/manual flows behave exactly as before.
+  // SETTLEMENT_ESCROW_HOOK_MS=0 (the default) disables the timer — the tick
+  // stays exported for tests.
   const inFlight = new Set<string>();
   const escrowHookTick = async () => {
     if (inFlight.size || !deps.chain) return;
@@ -509,7 +568,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       return;
     }
     for (const swap of swaps) {
-      if (swap.status !== "PAYMENT_VERIFIED" && swap.status !== "EXPIRED") continue;
+      const refundable = swap.status === "EXPIRED" || swap.status === "CANCELLED";
+      if (swap.status !== "PAYMENT_VERIFIED" && !refundable) continue;
       if (inFlight.has(swap.swapId)) continue;
       const row = await deps.store.getEscrowSigning(swap.swapId);
       if (!row) continue;
@@ -557,6 +617,111 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const timer = setInterval(() => void escrowHookTick(), hookMs);
     timer.unref?.();
     const boot = setTimeout(() => void escrowHookTick(), Math.min(hookMs, 5_000));
+    boot.unref?.();
+    app.addHook("onClose", async () => {
+      clearInterval(timer);
+      clearTimeout(boot);
+    });
+  }
+
+  // ── conflict sweep: deterministic timers, no judgment (docs/p2p.md §12) ──
+  // Two rules, both evidence-free, both fail closed:
+  //  · a silent pre-payment swap (no claim ∧ no confirm ∧ no dispute) that
+  //    idles past SETTLEMENT_CNY_EXPIRE_AFTER expires and refunds — nobody
+  //    asserted payment, so the tokens come home to the seller;
+  //  · a payment claim the seller never confirms past
+  //    SETTLEMENT_CNY_CONFIRM_TIMEOUT opens a dispute — silence always
+  //    resolves through the dispute path, NEVER by auto-refunding over a
+  //    claim (the buyer may really have paid).
+  // The seller's confirm from PAYMENT_PENDING is the rescue hatch for a paid
+  // but unclaimed transfer. SETTLEMENT_SWEEP_MS=0 (the default) disables the
+  // timer — the tick stays exported for tests.
+  function secondsMs(raw: string | undefined, fallbackSec: number): number {
+    const n = Number(raw ?? "");
+    const sec = Number.isFinite(n) ? n : fallbackSec;
+    return sec > 0 ? sec * 1000 : 0;
+  }
+
+  const sweepInFlight = new Set<string>();
+  const sweepTick = async () => {
+    if (sweepInFlight.size) return;
+    let swaps: P2pSwapEvent[] = [];
+    try {
+      swaps = await deps.store.listSwaps(500);
+    } catch {
+      return;
+    }
+    const confirmMs = secondsMs(env.SETTLEMENT_CNY_CONFIRM_TIMEOUT, 900);
+    const expireMs = secondsMs(env.SETTLEMENT_CNY_EXPIRE_AFTER, 3600);
+    for (const swap of swaps) {
+      if (sweepInFlight.has(swap.swapId)) continue;
+      // An open dispute is arbitration's; a resolved one is settled below.
+      if (swap.dispute && swap.dispute !== "RESOLVED") continue;
+      const idle = now() - swap.at;
+      if (swap.status === "PAYMENT_CLAIMED") {
+        if (confirmMs > 0 && idle >= confirmMs) {
+          sweepInFlight.add(swap.swapId);
+          try {
+            await persist({
+              ...swap,
+              seq: swap.seq + 1,
+              eventType: "dispute_open",
+              actorDid: engineDid() || undefined,
+              dispute: "OPEN",
+              disputeReason: `auto: payment claim unconfirmed for ${Math.round(confirmMs / 1000)}s`,
+              at: now(),
+            });
+          } catch (e) {
+            app.log.warn({ swapId: swap.swapId, err: String(e) }, "sweep: auto-dispute failed");
+          } finally {
+            sweepInFlight.delete(swap.swapId);
+          }
+        }
+        continue;
+      }
+      if (swap.status !== "MATCHED" && swap.status !== "ESCROW_LOCKED" && swap.status !== "PAYMENT_PENDING") continue;
+      if (!(expireMs > 0) || idle < expireMs) continue;
+      sweepInFlight.add(swap.swapId);
+      try {
+        const stored = await persist({
+          ...swap,
+          seq: swap.seq + 1,
+          status: "EXPIRED",
+          eventType: "expire",
+          actorDid: engineDid() || undefined,
+          at: now(),
+        });
+        if (swap.escrowTxHash) {
+          // Bring the locked tokens home while nobody is watching: the
+          // seller's presign finishes the refund; without one it waits for
+          // the seller to cosign (nothing is ever self-asserted).
+          const row = await deps.store.getEscrowSigning(swap.swapId);
+          const res = await settleEscrow({
+            swap: stored,
+            kind: "refund",
+            sigHex: null,
+            signerDid: row?.refundSignerDid || swap.sellerDid || "",
+            signerKey: null,
+            refundAddress: row?.refundAddress || "",
+            actorDid: swap.sellerDid || "",
+          });
+          if (!res.ok) app.log.warn({ swapId: swap.swapId, reason: res.reason }, "sweep: refund deferred");
+        }
+      } catch (e) {
+        app.log.warn({ swapId: swap.swapId, err: String(e) }, "sweep: auto-expire failed");
+      } finally {
+        sweepInFlight.delete(swap.swapId);
+      }
+    }
+  };
+  app.decorate("sweepTick", sweepTick);
+
+  const sweepRaw = Number(env.SETTLEMENT_SWEEP_MS ?? "");
+  const sweepMs = Number.isFinite(sweepRaw) && sweepRaw > 0 ? sweepRaw : 0;
+  if (sweepMs > 0) {
+    const timer = setInterval(() => void sweepTick(), sweepMs);
+    timer.unref?.();
+    const boot = setTimeout(() => void sweepTick(), Math.min(sweepMs, 5_000));
     boot.unref?.();
     app.addHook("onClose", async () => {
       clearInterval(timer);
@@ -860,10 +1025,33 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!did) return reply.code(400).send({ error: "did required" });
     if (action === "cancel") {
       if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
+      // Conflict policy (docs/p2p.md §9): the seller may walk away only before
+      // payment instructions exist. Once the buyer may have paid
+      // (PAYMENT_PENDING), only the buyer — the only party who knows whether
+      // they paid — may cancel, and a claim or a confirmed payment bars cancel
+      // entirely: those unwind only through the dispute path.
+      if (did === swap.sellerDid && swap.status !== "MATCHED" && swap.status !== "ESCROW_LOCKED") {
+        return reply.code(409).send({
+          error: `seller cancel requires MATCHED or ESCROW_LOCKED (swap is ${swap.status}) — after instructions the refund paths are expire or dispute`,
+        });
+      }
     } else if (action === "release" || action === "complete") {
       if (!engineDid() || did !== engineDid()) return reply.code(403).send({ error: "engine signer required" });
     } else if (did !== swap.sellerDid) {
       return reply.code(403).send({ error: "seller signer required" });
+    }
+    // An open dispute is arbitration's: nothing advances (release/complete,
+    // handled by frozen()) and nothing unwinds (cancel/expire) until the
+    // outcome lands — which now settles by itself (docs/p2p.md §12).
+    if ((action === "cancel" || action === "expire") && swap.dispute && swap.dispute !== "RESOLVED") {
+      return reply.code(422).send({ error: `swap frozen: dispute ${swap.dispute}` });
+    }
+    // A payment claim is an assertion that the fiat moved — a refund over it
+    // is reachable only through arbitration (docs/p2p.md §12).
+    if (action === "expire" && swap.status === "PAYMENT_CLAIMED" && swap.disputeOutcome !== "refund") {
+      return reply.code(409).send({
+        error: "payment claim in flight — expire requires PAYMENT_PENDING or a resolved refund arbitration (docs/p2p.md §12)",
+      });
     }
     const signed = validateSignedRequest(body, did, guard);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
@@ -898,6 +1086,20 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
       }
       evidence.releaseTxHash = body.txHash;
+    } else if (action === "refund") {
+      // Same proof rule as release: a refund is only real if the spend landed.
+      if (typeof body.txHash !== "string" || !body.txHash) return reply.code(400).send({ error: "txHash required" });
+      if (deps.chain) {
+        const row = await deps.store.getEscrowSigning(swapId);
+        const refundAddress =
+          (typeof body.refundAddress === "string" && body.refundAddress.trim()) || row?.refundAddress || "";
+        if (!destAddress(refundAddress)) {
+          return reply.code(400).send({ error: "refundAddress required (body or presign)" });
+        }
+        const proof = await verifyChainPayment(deps.chain, { txHash: body.txHash, toAddress: refundAddress });
+        if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
+      }
+      evidence.refundTxHash = body.txHash;
     }
 
     const stored = await persist({
@@ -1102,8 +1304,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const frozenReason = frozen(swap);
     if (frozenReason) return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
-    if (swap.status !== "PAYMENT_CLAIMED") {
-      return reply.code(409).send({ error: `confirm requires PAYMENT_CLAIMED (swap is ${swap.status})` });
+    // PAYMENT_PENDING is allowed too: the seller may see the transfer land
+    // before the buyer uploads proof (docs/p2p.md §9) — and a seller confirm
+    // over an unclaimed payment is what rescues it from the silent-expiry timer.
+    if (swap.status !== "PAYMENT_CLAIMED" && swap.status !== "PAYMENT_PENDING") {
+      return reply.code(409).send({ error: `confirm requires PAYMENT_CLAIMED or PAYMENT_PENDING (swap is ${swap.status})` });
     }
     const stored = await persist({
       ...swap,
@@ -1114,6 +1319,258 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       at: now(),
     });
     return { swapId, status: stored.status };
+  });
+
+  /**
+   * Device-side payment verification (docs/p2p.md §12): the caller submits the
+   * verdict their own device agent read in their own rail app (mobile-mcp,
+   * user-authorized), signed with their DID key. Always store-only evidence
+   * (§14); under SETTLEMENT_CNY_AUTO_RELEASE_ON it may also act as the machine
+   * confirmation — under exactly the confirm's rules (payment phase, not
+   * frozen), never by default.
+   */
+  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/verify", async (request, reply) => {
+    const { swapId } = request.params;
+    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const swap = await deps.store.getSwap(swapId);
+    if (!swap) return reply.code(404).send({ error: "unknown swap" });
+    const did = typeof body.did === "string" ? body.did : "";
+    if (!did) return reply.code(400).send({ error: "did required" });
+    if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
+    const signed = validateSignedRequest(body, did, guard);
+    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    if (!isCnyRail(swap.wantRail)) return reply.code(400).send({ error: "not a CNY swap" });
+
+    // The verdict's side is the caller's role — a party can never file the
+    // other side's story.
+    const side = did === swap.buyerDid ? "buyer" : "seller";
+    if (body.side !== undefined && body.side !== side) {
+      return reply.code(422).send({ error: `side must be ${side} (the signer's role)` });
+    }
+    const counterpartyName =
+      typeof body.counterpartyName === "string" ? body.counterpartyName.slice(0, 128) : undefined;
+    const verdict = {
+      side,
+      observed: body.observed,
+      evidenceKind: body.evidenceKind,
+      ...(typeof body.txId === "string" ? { txId: body.txId.trim() } : {}),
+      ...(typeof body.amount === "string" ? { amount: body.amount.trim() } : {}),
+      ...(counterpartyName ? { counterpartyName } : {}),
+      ...(typeof body.remark === "string" ? { remark: body.remark } : {}),
+      ...(typeof body.paidAt === "number" ? { paidAt: body.paidAt } : {}),
+      ...(body.receiptVerified !== undefined ? { receiptVerified: !!body.receiptVerified } : {}),
+      ...(Array.isArray(body.captures) ? { captures: body.captures } : {}),
+    } as PaymentVerdict;
+
+    // The four checks (§12): amount exact, remark = the swap code, entry
+    // inside the swap window, 流水号 sane — and any claim mismatch is surfaced
+    // as arbitration evidence instead of failing the verdict.
+    const claims = await deps.store.proofs(swapId);
+    const claimedTxId = claims.length ? claims[claims.length - 1].txId : undefined;
+    const history = await deps.store.events(swapId);
+    const check = validatePaymentVerdict(verdict, {
+      amount: swap.wantAmount ?? "",
+      ...(swap.remark ? { remark: swap.remark } : {}),
+      ...(claimedTxId ? { claimedTxId } : {}),
+      paidFrom: history.length ? history[0].at : swap.at,
+      paidTo: now(),
+    });
+    if (!check.ok) return reply.code(422).send({ error: check.error });
+
+    await deps.store.addVerification({ ...verdict, swapId, did, createdAt: now() } as PaymentVerification);
+
+    // The verdict anchors as its own event (§12/§14): the small evidence —
+    // fields + capture hashes. The counterparty name (PII) and any bytes stay
+    // store-only; only large blobs stay off chain, as hashes.
+    const stored = await persist({
+      ...swap,
+      seq: swap.seq + 1,
+      eventType: "payment_verify",
+      actorDid: did,
+      verify: {
+        side: verdict.side,
+        observed: verdict.observed,
+        evidenceKind: verdict.evidenceKind,
+        ...(verdict.txId !== undefined ? { txId: verdict.txId } : {}),
+        ...(verdict.amount !== undefined ? { amount: verdict.amount } : {}),
+        ...(verdict.remark !== undefined ? { remark: verdict.remark } : {}),
+        ...(verdict.paidAt !== undefined ? { paidAt: verdict.paidAt } : {}),
+        ...(verdict.receiptVerified !== undefined ? { receiptVerified: verdict.receiptVerified } : {}),
+        ...(verdict.captures?.length ? { captures: verdict.captures } : {}),
+      },
+      at: now(),
+    });
+
+    // Policy-gated machine confirmation (docs/p2p.md §12). The signature on
+    // the qualifying verdict is the attestation — the engine adds no trust of
+    // its own, and a frozen swap never advances.
+    const verdicts = await deps.store.verifications(swapId);
+    const confirm = machineConfirm(env.SETTLEMENT_CNY_AUTO_RELEASE_ON, verdicts);
+    let advanced = false;
+    if (confirm && (swap.status === "PAYMENT_CLAIMED" || swap.status === "PAYMENT_PENDING") && !frozen(swap)) {
+      await persist({
+        ...stored,
+        seq: stored.seq + 1,
+        status: "PAYMENT_VERIFIED",
+        eventType: "payment_confirm",
+        actorDid: confirm.side === "seller" ? swap.sellerDid : swap.buyerDid,
+        verifySource: confirm.evidenceKind,
+        at: now(),
+      });
+      advanced = true;
+    }
+    return {
+      swapId,
+      stored: true,
+      side,
+      claimMismatch: check.claimMismatch ?? null,
+      machineConfirmed: !!confirm,
+      advanced,
+    };
+  });
+
+  /**
+   * Pair a device endpoint (docs/p2p.md §12): the user's wallet submits a
+   * DID-signed grant — endpoint, device, optional single-swap scope, expiry,
+   * pairing id. The whole-body signature **is** the authorization (DID auth),
+   * and the grant is the only way the engine ever learns the endpoint's bearer
+   * capability. Consent record: store-only (§14). Idempotent on {did, pairingId}.
+   */
+  app.post("/pairings", async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const did = typeof body.did === "string" ? body.did : "";
+    if (!did) return reply.code(400).send({ error: "did required" });
+    const signed = validateSignedRequest(body, did, guard);
+    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    const grant = {
+      did,
+      endpoint: typeof body.endpoint === "string" ? body.endpoint.trim() : "",
+      deviceId: typeof body.deviceId === "string" ? body.deviceId.trim() : "",
+      pairingId: typeof body.pairingId === "string" ? body.pairingId : "",
+      issuedAt: body.issuedAt as number,
+      expiresAt: body.expiresAt as number,
+      ...(typeof body.token === "string" ? { token: body.token } : {}),
+      ...(typeof body.swapId === "string" ? { swapId: body.swapId } : {}),
+    };
+    const check = validatePairingGrant(grant, now());
+    if (!check.ok) return reply.code(422).send({ error: check.error });
+    const existing = await deps.store.getPairing(did, grant.pairingId);
+    if (existing) {
+      // Idempotent re-post of the same grant; a different grant under the same
+      // id is a collision.
+      const same =
+        existing.endpoint === grant.endpoint &&
+        existing.deviceId === grant.deviceId &&
+        existing.swapId === grant.swapId &&
+        existing.expiresAt === grant.expiresAt;
+      if (!same) return reply.code(409).send({ error: "pairingId collision" });
+      return reply.code(200).send({ did, pairingId: grant.pairingId, expiresAt: grant.expiresAt });
+    }
+    await deps.store.putPairing({ ...grant, createdAt: now() } as StoredPairing);
+    return reply.code(201).send({ did, pairingId: grant.pairingId, expiresAt: grant.expiresAt });
+  });
+
+  /** The caller's own pairings (token values never leave — `tokenSet` only). */
+  app.post("/pairings/mine", async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const did = typeof body.did === "string" ? body.did : "";
+    if (!did) return reply.code(400).send({ error: "did required" });
+    const signed = validateSignedRequest(body, did, guard);
+    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    const pairings = await deps.store.pairingsForDid(did);
+    return {
+      pairings: pairings.map((p) => ({
+        pairingId: p.pairingId,
+        endpoint: p.endpoint,
+        deviceId: p.deviceId,
+        swapId: p.swapId ?? null,
+        issuedAt: p.issuedAt,
+        expiresAt: p.expiresAt,
+        revoked: !!p.revoked,
+        tokenSet: !!p.token,
+      })),
+    };
+  });
+
+  /** The owner revokes a pairing — the endpoint is never reached again. */
+  app.post("/pairings/revoke", async (request, reply) => {
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const did = typeof body.did === "string" ? body.did : "";
+    if (!did) return reply.code(400).send({ error: "did required" });
+    const signed = validateSignedRequest(body, did, guard);
+    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    const pairingId = typeof body.pairingId === "string" ? body.pairingId : "";
+    if (!pairingId) return reply.code(400).send({ error: "pairingId required" });
+    const existing = await deps.store.getPairing(did, pairingId);
+    if (!existing) return reply.code(404).send({ error: "unknown pairing" });
+    if (existing.revoked) return { ok: true, revoked: true };
+    await deps.store.putPairing({ ...existing, revoked: true });
+    return { ok: true, revoked: true };
+  });
+
+  /**
+   * Engine-driven verification through the party's own paired endpoint (§12):
+   * the engine controls the user-paired mobile-mcp connection, reads the
+   * matching entry in the **caller's own** rail app, and returns the verdict
+   * payload for the wallet to sign and POST /verify — the read is never
+   * trusted evidence by itself (§14: the model never supplies trusted
+   * evidence).
+   */
+  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/device-read", async (request, reply) => {
+    const { swapId } = request.params;
+    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const swap = await deps.store.getSwap(swapId);
+    if (!swap) return reply.code(404).send({ error: "unknown swap" });
+    const did = typeof body.did === "string" ? body.did : "";
+    if (!did) return reply.code(400).send({ error: "did required" });
+    if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
+    const signed = validateSignedRequest(body, did, guard);
+    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    if (!isCnyRail(swap.wantRail)) return reply.code(400).send({ error: "not a CNY swap" });
+
+    // The caller's own, still-valid pairing — never someone else's endpoint.
+    const wanted = typeof body.pairingId === "string" ? body.pairingId.trim() : "";
+    const pairings = await deps.store.pairingsForDid(did);
+    const grant = pairings.find(
+      (p) => !p.revoked && grantAllows(p, swapId, now()) && (!wanted || p.pairingId === wanted),
+    );
+    if (!grant) return reply.code(409).send({ error: "no active pairing for this swap (POST /pairings first)" });
+
+    const side = did === swap.buyerDid ? "buyer" : "seller";
+    const claims = await deps.store.proofs(swapId);
+    const history = await deps.store.events(swapId);
+    const expected: VerdictExpectation = {
+      amount: swap.wantAmount ?? "",
+      ...(swap.remark ? { remark: swap.remark } : {}),
+      ...(claims.length ? { claimedTxId: claims[claims.length - 1].txId } : {}),
+      paidFrom: history.length ? history[0].at : swap.at,
+      paidTo: now(),
+    };
+    const evidenceKind = body.evidenceKind === "bank_ereceipt" ? "bank_ereceipt" : "device_read";
+    const read = deps.readDevice ?? defaultDeviceRead;
+    let result: DeviceReadResult;
+    try {
+      result = await read({
+        grant,
+        side,
+        rail: swap.wantRail,
+        expected,
+        evidenceKind,
+        ...(body.receiptVerified !== undefined ? { receiptVerified: !!body.receiptVerified } : {}),
+      });
+    } catch (e) {
+      return reply.code(502).send({ error: `device read failed: ${String(e).slice(0, 200)}` });
+    }
+    return {
+      swapId,
+      side,
+      verdict: result.verdict,
+      check: result.check,
+      entry: result.entry ?? null,
+      next: "the wallet signs `verdict` and POSTs it to /swaps/:swapId/verify",
+    };
   });
 
   /** Either party can freeze a CNY swap mid-review; tokens stay locked. */
@@ -1147,9 +1604,12 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 
   /**
    * Admin arbitration (§1: arbiter = the engine operator, off-platform
-   * evidence). `release` verifies the swap and resumes the forward path;
-   * `refund` keeps the status but freezes the swap permanently — expire/refund
-   * then bring the tokens home.
+   * evidence). Self-executing (docs/p2p.md §12): the outcome drives the escrow
+   * settlement itself from the stored presign — `release` resumes the forward
+   * path and settles the release spend, `refund` brings the tokens home via an
+   * engine-act `expire` + the refund spend. Without a presign the outcome stays
+   * armed and the winning party finishes via /escrow/cosign (buyer for a forced
+   * release, seller for a refund).
    */
   app.post<{ Params: { swapId: string } }>("/swaps/:swapId/dispute/resolve", async (request, reply) => {
     if (!requireAdmin(request, reply)) return;
@@ -1166,7 +1626,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (outcome === "release" && !canTransition(swap.status, "PAYMENT_VERIFIED")) {
       return reply.code(409).send({ error: `cannot ${swap.status} → PAYMENT_VERIFIED` });
     }
-    const stored = await persist({
+    let stored = await persist({
       ...swap,
       seq: swap.seq + 1,
       ...(outcome === "release" ? { status: "PAYMENT_VERIFIED" as const } : {}),
@@ -1176,7 +1636,40 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       disputeOutcome: outcome,
       at: now(),
     });
-    return { swapId, status: stored.status, dispute: stored.dispute, disputeOutcome: stored.disputeOutcome };
+    if (outcome === "refund" && stored.status !== "EXPIRED" && canTransition(stored.status, "EXPIRED")) {
+      // An arbitration refund unwinds the payment states: expire (the engine's
+      // act, ordered by the arbiter) then the refund spend brings the tokens
+      // home — the seller does not have to be online to be made whole.
+      stored = await persist({
+        ...stored,
+        seq: stored.seq + 1,
+        status: "EXPIRED",
+        eventType: "expire",
+        actorDid: engineDid() || undefined,
+        at: now(),
+      });
+    }
+    const row = await deps.store.getEscrowSigning(swapId);
+    const res = await settleEscrow({
+      swap: stored,
+      kind: outcome === "release" ? "release" : "refund",
+      sigHex: null,
+      signerDid:
+        (outcome === "release" ? row?.releaseSignerDid : row?.refundSignerDid) || swap.sellerDid || "",
+      signerKey: null,
+      refundAddress: row?.refundAddress || "",
+      actorDid: engineDid() || swap.sellerDid || "",
+    });
+    return {
+      swapId,
+      status: res.ok ? res.status : stored.status,
+      dispute: stored.dispute,
+      disputeOutcome: stored.disputeOutcome,
+      settled: res.ok && !res.pending,
+      txHash: res.ok ? res.txHash : null,
+      pending: res.ok ? res.pending : true,
+      ...(!res.ok ? { settleReason: res.reason } : {}),
+    };
   });
 
   /**

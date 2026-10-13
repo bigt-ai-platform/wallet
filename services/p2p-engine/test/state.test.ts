@@ -20,18 +20,28 @@ describe("p2p settlement state machine", () => {
     expect(canTransition("PAYMENT_CLAIMED", "EXPIRED")).toBe(true);
   });
 
-  it("reaches ESCROW_REFUNDED only via EXPIRED", () => {
+  it("reaches ESCROW_REFUNDED via EXPIRED or a settled CANCELLED", () => {
     expect(canTransition("ESCROW_LOCKED", "ESCROW_REFUNDED")).toBe(false);
     expect(canTransition("EXPIRED", "ESCROW_REFUNDED")).toBe(true);
+    // A post-lock cancel settles through the same refund spend — CANCELLED is
+    // never the end of escrowed funds (docs/p2p.md §9).
+    expect(canTransition("CANCELLED", "ESCROW_REFUNDED")).toBe(true);
     expect(ACTION_STATUS.refund).toBe("ESCROW_REFUNDED");
+  });
+
+  it("bars cancel once a payment is asserted or confirmed", () => {
+    expect(canTransition("PAYMENT_CLAIMED", "CANCELLED")).toBe(false);
+    expect(canTransition("PAYMENT_VERIFIED", "CANCELLED")).toBe(false);
+    // Release is the only honest forward path once the fiat is confirmed.
+    expect(canTransition("PAYMENT_VERIFIED", "ESCROW_RELEASED")).toBe(true);
   });
 
   it("terminal states are final except a complete retry from COMPLETED", () => {
     expect(allowedActions("COMPLETED")).toEqual(["complete"]);
     expect(canTransition("COMPLETED", "CANCELLED")).toBe(false);
-    for (const s of ["ESCROW_REFUNDED", "CANCELLED"] as const) {
-      expect(allowedActions(s)).toEqual([]);
-    }
+    expect(allowedActions("ESCROW_REFUNDED")).toEqual([]);
+    // CANCELLED may still settle the escrow refund spend.
+    expect(allowedActions("CANCELLED")).toEqual(["refund"]);
   });
 
   it("maps actions to statuses", () => {

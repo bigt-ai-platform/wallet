@@ -86,6 +86,24 @@ export function swapEventRecord(event: P2pSwapEvent, from: string): P2pSwapRecor
     // CNY receipt evidence anchors as a hash only — the image stays in the
     // engine store (docs/p2p.md §14).
     receiptSha256: event.receiptSha256,
+    // Device verdicts anchor the small evidence (§12): fields + capture
+    // hashes. The counterparty name and any bytes stay in the engine store —
+    // only large blobs stay off chain, as hashes.
+    ...(event.eventType === "payment_verify" && event.verify
+      ? {
+          verifySide: event.verify.side,
+          verifyObserved: event.verify.observed,
+          ...(event.verify.txId !== undefined ? { verifyTxId: event.verify.txId } : {}),
+          ...(event.verify.amount !== undefined ? { verifyAmount: event.verify.amount } : {}),
+          ...(event.verify.remark !== undefined ? { verifyRemark: event.verify.remark } : {}),
+          ...(event.verify.paidAt !== undefined ? { verifyPaidAt: event.verify.paidAt } : {}),
+          verifyEvidence: event.verify.evidenceKind,
+          ...(event.verify.receiptVerified !== undefined ? { verifyReceipt: event.verify.receiptVerified } : {}),
+          ...(event.verify.captures?.length ? { verifyCaptures: event.verify.captures.join(",") } : {}),
+        }
+      : {}),
+    // A machine confirm anchors how it was obtained (§12 provenance).
+    ...(event.eventType === "payment_confirm" && event.verifySource ? { verifyEvidence: event.verifySource } : {}),
     ts: event.at,
   });
 }

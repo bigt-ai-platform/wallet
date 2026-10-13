@@ -208,7 +208,9 @@ function eventFromSwapRecord(rec: P2pSwapRecord, txid: string): P2pSwapEvent {
     swapId: rec.to,
     seq: rec.swapSeq,
     status: rec.status,
-    eventType: EVENT_TYPE_FOR_STATUS[rec.status] ?? "match",
+    // A verdict keeps the swap's status — the record's verify block is what
+    // marks the event (§12).
+    eventType: rec.verifySide !== undefined ? "payment_verify" : EVENT_TYPE_FOR_STATUS[rec.status] ?? "match",
     ...(rec.orderId !== undefined ? { orderId: rec.orderId } : {}),
     ...(rec.sellerDid !== undefined ? { sellerDid: rec.sellerDid } : {}),
     ...(rec.buyerDid !== undefined ? { buyerDid: rec.buyerDid } : {}),
@@ -223,6 +225,23 @@ function eventFromSwapRecord(rec: P2pSwapRecord, txid: string): P2pSwapEvent {
     ...(rec.releaseTxHash !== undefined ? { releaseTxHash: rec.releaseTxHash } : {}),
     ...(rec.refundTxHash !== undefined ? { refundTxHash: rec.refundTxHash } : {}),
     ...(rec.receiptSha256 !== undefined ? { receiptSha256: rec.receiptSha256 } : {}),
+    ...(rec.verifySide !== undefined
+      ? {
+          verify: {
+            side: rec.verifySide,
+            observed: rec.verifyObserved ?? "none",
+            evidenceKind: rec.verifyEvidence ?? "device_read",
+            ...(rec.verifyTxId !== undefined ? { txId: rec.verifyTxId } : {}),
+            ...(rec.verifyAmount !== undefined ? { amount: rec.verifyAmount } : {}),
+            ...(rec.verifyRemark !== undefined ? { remark: rec.verifyRemark } : {}),
+            ...(rec.verifyPaidAt !== undefined ? { paidAt: rec.verifyPaidAt } : {}),
+            ...(rec.verifyReceipt !== undefined ? { receiptVerified: rec.verifyReceipt } : {}),
+            ...(rec.verifyCaptures !== undefined ? { captures: rec.verifyCaptures.split(",") } : {}),
+          },
+        }
+      : {}),
+    // A confirm record carries only the provenance — restore it (§12).
+    ...(rec.verifySide === undefined && rec.verifyEvidence !== undefined ? { verifySource: rec.verifyEvidence } : {}),
     at: rec.ts,
     txid,
   };

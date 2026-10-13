@@ -28,6 +28,46 @@ describe("p2pSwapRecord", () => {
   });
 });
 
+describe("device verdict fields on the record (docs/p2p.md §12)", () => {
+  const base = () => p2pSwapRecord({ from: "did:key:z1", to: "swap-x", status: "PAYMENT_CLAIMED", swapSeq: 2 });
+
+  it("anchors the small evidence and validates it", () => {
+    const r = p2pSwapRecord({
+      ...base(),
+      verifySide: "buyer",
+      verifyObserved: "sent",
+      verifyTxId: "4200001234567890",
+      verifyAmount: "715.00",
+      verifyRemark: "p2p-9f3a",
+      verifyPaidAt: 1_700_000_000_000,
+      verifyEvidence: "device_read",
+      verifyCaptures: `${"a".repeat(64)},${"b".repeat(64)}`,
+    });
+    expect(validateP2pSwapRecord(r)).toEqual({ ok: true });
+    expect(r.verifySide).toBe("buyer");
+    // the anchored block has no slot for PII — only fields and hashes
+    expect(r).not.toHaveProperty("counterpartyName");
+  });
+
+  it("rejects malformed verdict fields", () => {
+    expect(validateP2pSwapRecord({ ...base(), verifySide: "payer" as never }).ok).toBe(false);
+    expect(validateP2pSwapRecord({ ...base(), verifyObserved: "maybe" as never }).ok).toBe(false);
+    expect(validateP2pSwapRecord({ ...base(), verifyEvidence: "screenshot" as never }).ok).toBe(false);
+    expect(validateP2pSwapRecord({ ...base(), verifyTxId: "not valid!" }).ok).toBe(false);
+    expect(validateP2pSwapRecord({ ...base(), verifyAmount: "715.0.0" }).ok).toBe(false);
+    expect(validateP2pSwapRecord({ ...base(), verifyRemark: "" }).ok).toBe(false);
+    expect(validateP2pSwapRecord({ ...base(), verifyCaptures: "nope" }).ok).toBe(false);
+    expect(validateP2pSwapRecord({ ...base(), verifyReceipt: "yes" as never }).ok).toBe(false);
+    expect(validateP2pSwapRecord({ ...base(), verifyPaidAt: -1 }).ok).toBe(false);
+  });
+
+  it("omits the verify block entirely when there is no verdict", () => {
+    const r = base();
+    expect(Object.keys(r).some((k) => k.startsWith("verify"))).toBe(false);
+    expect(validateP2pSwapRecord(r)).toEqual({ ok: true });
+  });
+});
+
 describe("validateP2pSwapRecord", () => {
   const base = () => p2pSwapRecord({ from: "did:key:z1", to: "swap-x", status: "MATCHED", swapSeq: 0 });
 

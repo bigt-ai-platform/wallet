@@ -13,18 +13,24 @@ export const VALID_TRANSITIONS: Record<P2pSwapStatus, readonly P2pSwapStatus[]> 
   // instructions (docs/p2p.md §8) — same shape on every rail.
   PAYMENT_PENDING: ["PAYMENT_CLAIMED", "PAYMENT_VERIFIED", "EXPIRED", "CANCELLED"],
   // PAYMENT_CLAIMED is the buyer's claim (uploaded proof, seller has not
-  // confirmed). It leaves via the seller's confirm, an arbitration resolve
-  // (release), or the ordinary timeout/cancel path to a refund.
-  PAYMENT_CLAIMED: ["PAYMENT_VERIFIED", "EXPIRED", "CANCELLED"],
-  PAYMENT_VERIFIED: ["ESCROW_RELEASED", "CANCELLED"],
+  // confirmed). It leaves via the seller's confirm or an arbitration/timeout
+  // refund — never a bare cancel: the buyer has asserted a payment, so only
+  // the dispute path may unwind it (docs/p2p.md §9/§12).
+  PAYMENT_CLAIMED: ["PAYMENT_VERIFIED", "EXPIRED"],
+  // PAYMENT_VERIFIED: the seller confirmed the fiat arrived. Release is the
+  // only honest forward path — a cancel here would strand the tokens while
+  // the seller holds the fiat (docs/p2p.md §9).
+  PAYMENT_VERIFIED: ["ESCROW_RELEASED"],
   ESCROW_RELEASED: ["COMPLETED"],
   // COMPLETED → COMPLETED exists only for `complete` (CNY: no fiat payout
   // step — the seller already got the CNY). No other action targets
   // COMPLETED, so nothing can rewind a finished swap.
   COMPLETED: ["COMPLETED"],
   EXPIRED: ["ESCROW_REFUNDED"],
+  // A cancel after the lock settles through the same refund spend as EXPIRED —
+  // CANCELLED is never the end of escrowed funds (docs/p2p.md §9).
+  CANCELLED: ["ESCROW_REFUNDED"],
   ESCROW_REFUNDED: [],
-  CANCELLED: [],
 };
 
 export const ACTION_STATUS: Record<SwapAction, P2pSwapStatus> = {

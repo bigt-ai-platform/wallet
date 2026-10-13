@@ -277,6 +277,10 @@ function hookTick(a: TestApp): Promise<void> {
   return (a as unknown as { escrowHookTick: () => Promise<void> }).escrowHookTick();
 }
 
+function sweepTick(a: TestApp): Promise<void> {
+  return (a as unknown as { sweepTick: () => Promise<void> }).sweepTick();
+}
+
 /** The broadcast spend: parses, script-verifies, and asserts value + destination. */
 async function expectSpendTx(rawHex: string, toBase58: string): Promise<Transaction> {
   const parsed = params.getDefaultSerializer().makeTransaction(Utils.HEX.decode(rawHex));
@@ -812,5 +816,144 @@ describe("escrow settlement hook (Path B)", () => {
     await hookTick(a);
     expect(chain.submitted).toHaveLength(0);
     expect(((await store.getSwap(swapId))!).status).toBe("PAYMENT_CLAIMED");
+  });
+});
+
+describe("arbitration settlements are self-executing (docs/p2p.md §12)", () => {
+  /** instructions → proof: the buyer claims, the seller has not confirmed. */
+  async function toClaimed(a: TestApp, swapId: string): Promise<void> {
+    const ins = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/payment-instructions`,
+      payload: signed(buyerKey, buyerDid, {}),
+    });
+    expect(ins.statusCode).toBe(201);
+    bump();
+    const proof = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/proof`,
+      payload: signed(buyerKey, buyerDid, { txId: "4200001234567890", remark: ins.json().remark }),
+    });
+    expect(proof.statusCode).toBe(200);
+    bump();
+  }
+
+  it("refund outcome: expire + the presigned refund spend lands without the seller", async () => {
+    const chain = makeChain();
+    const a = await app(chain);
+    const swapId = await toEscrowLocked(a);
+    const { releaseSig, refundSig } = await presign(a, swapId);
+    expect((await presignRequest(a, swapId, { releaseSig, refundSig, refundAddress })).statusCode).toBe(200);
+    await toClaimed(a, swapId);
+
+    // seller disputes (money never arrived) and the arbiter orders a refund
+    const opened = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/dispute`,
+      payload: signed(sellerKey, sellerDid, { reason: "buyer never paid" }),
+    });
+    expect(opened.statusCode).toBe(200);
+    bump();
+    const resolved = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/dispute/resolve`,
+      headers: { "x-settlement-admin-token": "adm" },
+      payload: { outcome: "refund" },
+    });
+    expect(resolved.statusCode).toBe(200);
+    expect(resolved.json()).toMatchObject({
+      disputeOutcome: "refund",
+      status: "ESCROW_REFUNDED",
+      settled: true,
+      pending: false,
+    });
+    expect(chain.submitted).toHaveLength(1);
+    const parsed = await expectSpendTx(chain.submitted[0], refundAddress);
+    const stored = (await store.getSwap(swapId))!;
+    expect(stored.status).toBe("ESCROW_REFUNDED");
+    expect(stored.refundTxHash).toBe(parsed.getHash().toString());
+    // the arbitration unwind is on the log: dispute_resolve → expire → refund
+    const tail = (await store.events(swapId)).map((e) => e.eventType).slice(-3);
+    expect(tail).toEqual(["dispute_resolve", "expire", "refund"]);
+  });
+
+  it("release outcome: the presigned release spend lands without the seller", async () => {
+    const chain = makeChain();
+    const a = await app(chain);
+    const swapId = await toEscrowLocked(a);
+    const { releaseSig, refundSig } = await presign(a, swapId);
+    expect((await presignRequest(a, swapId, { releaseSig, refundSig, refundAddress })).statusCode).toBe(200);
+    await toClaimed(a, swapId);
+
+    // buyer disputes (paid, seller silent) and the arbiter orders a release
+    const opened = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/dispute`,
+      payload: signed(buyerKey, buyerDid, { reason: "paid but seller silent" }),
+    });
+    expect(opened.statusCode).toBe(200);
+    bump();
+    const resolved = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/dispute/resolve`,
+      headers: { "x-settlement-admin-token": "adm" },
+      payload: { outcome: "release" },
+    });
+    expect(resolved.statusCode).toBe(200);
+    expect(resolved.json()).toMatchObject({
+      disputeOutcome: "release",
+      status: "COMPLETED",
+      settled: true,
+      pending: false,
+    });
+    expect(chain.submitted).toHaveLength(1);
+    const parsed = await expectSpendTx(chain.submitted[0], receiveAddress);
+    const stored = (await store.getSwap(swapId))!;
+    expect(stored.status).toBe("COMPLETED");
+    expect(stored.releaseTxHash).toBe(parsed.getHash().toString());
+  });
+
+  it("sweep: auto-expire brings a silent presigned swap home", async () => {
+    const chain = makeChain();
+    const a = await app(chain, { SETTLEMENT_CNY_EXPIRE_AFTER: "60", SETTLEMENT_CNY_CONFIRM_TIMEOUT: "30" });
+    const swapId = await toEscrowLocked(a);
+    const { releaseSig, refundSig } = await presign(a, swapId);
+    expect((await presignRequest(a, swapId, { releaseSig, refundSig, refundAddress })).statusCode).toBe(200);
+
+    clock += 61_000;
+    await sweepTick(a);
+    expect(chain.submitted).toHaveLength(1);
+    const parsed = await expectSpendTx(chain.submitted[0], refundAddress);
+    const stored = (await store.getSwap(swapId))!;
+    expect(stored.status).toBe("ESCROW_REFUNDED");
+    expect(stored.refundTxHash).toBe(parsed.getHash().toString());
+    const tail = (await store.events(swapId)).map((e) => e.eventType).slice(-2);
+    expect(tail).toEqual(["expire", "refund"]);
+  });
+
+  it("hook: a post-lock CANCELLED settles through the refund spend", async () => {
+    const chain = makeChain();
+    const a = await app(chain);
+    const swapId = await toEscrowLocked(a);
+    const { releaseSig, refundSig } = await presign(a, swapId);
+    expect((await presignRequest(a, swapId, { releaseSig, refundSig, refundAddress })).statusCode).toBe(200);
+
+    // the seller walks away before instructions: CANCELLED is not the end of
+    // escrowed funds — the hook brings the tokens home
+    const cancel = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/transitions`,
+      payload: signed(sellerKey, sellerDid, { action: "cancel" }),
+    });
+    expect(cancel.statusCode).toBe(200);
+    expect(cancel.json().status).toBe("CANCELLED");
+    bump();
+
+    await hookTick(a);
+    expect(chain.submitted).toHaveLength(1);
+    const parsed = await expectSpendTx(chain.submitted[0], refundAddress);
+    const stored = (await store.getSwap(swapId))!;
+    expect(stored.status).toBe("ESCROW_REFUNDED");
+    expect(stored.refundTxHash).toBe(parsed.getHash().toString());
   });
 });

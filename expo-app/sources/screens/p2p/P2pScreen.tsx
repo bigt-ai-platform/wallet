@@ -8,6 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { MONO_FONT } from '@/constants/fonts';
 import WalletUnlock from '@/components/WalletUnlock';
+import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
 import { buildEscrowSighash, escrowVault, signEscrow, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
@@ -52,6 +53,8 @@ export default function P2pScreen() {
   const [swaps, setSwaps] = React.useState<P2pSwap[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [selected, setSelected] = React.useState<P2pOrder | null>(null);
+  // The swap whose device-side verification ("Verify with my phone") is open.
+  const [verifySwap, setVerifySwap] = React.useState<P2pSwap | null>(null);
   const [buyRecv, setBuyRecv] = React.useState('');
   const [txHashes, setTxHashes] = React.useState<Record<string, string>>({});
   const [txIds, setTxIds] = React.useState<Record<string, string>>({});
@@ -653,6 +656,16 @@ export default function P2pScreen() {
             {profiles.length ? <Text style={s.sub}>{profiles.map((p) => p.method).join(' · ')}</Text> : null}
           </View>
 
+          {verifySwap && identity ? (
+            <PhoneVerifyCard
+              id={identity}
+              swap={verifySwap}
+              onStatus={(text) => setNotice({ ok: true, text })}
+              onClose={() => setVerifySwap(null)}
+              onDone={() => { setVerifySwap(null); void reload(); }}
+            />
+          ) : null}
+
           {loading ? <ActivityIndicator color={theme.colors.primary} style={s.loader} />
             : swaps.length === 0 ? <Text style={s.emptyText}>{t('p2p.emptyMine')}</Text>
             : swaps.map((sw, i) => (
@@ -675,6 +688,7 @@ export default function P2pScreen() {
                 onPaid={() => submitPaid(sw)}
                 onConfirm={() => confirmReceived(sw)}
                 onDispute={() => doDispute(sw)}
+                onVerify={() => setVerifySwap(sw)}
                 instruction={instructions[sw.swapId]}
                 index={i}
               />
@@ -723,12 +737,13 @@ function Field({ label, value, onChange, placeholder, keyboardType, mono, testID
   );
 }
 
-function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, instruction, index }: {
+function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, onVerify, instruction, index }: {
   swap: P2pSwap; myDid?: string; busy: boolean; txHash: string; onTxHash: (v: string) => void;
   txId: string; onTxId: (v: string) => void;
   onLock: () => void; onExpire: () => void; onRefund: () => void;
   onRelease: () => void; onPresign: () => void; onCancel: () => void;
   onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void;
+  onVerify: () => void;
   instruction?: P2pPaymentInstructions; index: number;
 }) {
   const { t } = useTranslation();
@@ -783,7 +798,7 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
           {st !== 'MATCHED' && !swap.presigned ? (
             <Action label={t('p2p.aPresign')} color={theme.colors.primary} onPress={onPresign} disabled={busy} testID={`p2p-swap-${index}-presign`} />
           ) : null}
-          {st !== 'MATCHED' ? (
+          {st === 'ESCROW_LOCKED' || st === 'PAYMENT_PENDING' ? (
             <Action label={t('p2p.aExpire')} color={theme.colors.accent.red} onPress={onExpire} disabled={busy} testID={`p2p-swap-${index}-expire`} />
           ) : null}
           {cny && st === 'PAYMENT_CLAIMED' ? (
@@ -792,7 +807,9 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
               <Action label={t('p2p.aConfirm')} color={theme.colors.accent.emerald} onPress={onConfirm} disabled={busy} testID={`p2p-swap-${index}-confirm`} />
             </>
           ) : null}
-          <Action label={t('p2p.aCancel')} color={theme.colors.text.secondary} onPress={onCancel} disabled={busy} testID={`p2p-swap-${index}-cancel`} />
+          {st === 'MATCHED' || st === 'ESCROW_LOCKED' ? (
+            <Action label={t('p2p.aCancel')} color={theme.colors.text.secondary} onPress={onCancel} disabled={busy} testID={`p2p-swap-${index}-cancel`} />
+          ) : null}
         </View>
       ) : null}
 
@@ -805,6 +822,13 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
       {isBuyer && st === 'ESCROW_LOCKED' ? (
         <View style={s.actions}>
           <Action label={t('p2p.aInstructions')} color={theme.colors.accent.emerald} onPress={onInstructions} disabled={busy} testID={`p2p-swap-${index}-instructions`} />
+          <Action label={t('p2p.aCancel')} color={theme.colors.text.secondary} onPress={onCancel} disabled={busy} testID={`p2p-swap-${index}-cancel`} />
+        </View>
+      ) : null}
+
+      {/* Before a claim the buyer ("I never paid") may still walk away. */}
+      {isBuyer && st === 'PAYMENT_PENDING' ? (
+        <View style={s.actions}>
           <Action label={t('p2p.aCancel')} color={theme.colors.text.secondary} onPress={onCancel} disabled={busy} testID={`p2p-swap-${index}-cancel`} />
         </View>
       ) : null}
@@ -827,6 +851,14 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
           <View style={s.actions}>
             <Action label={t('p2p.aPaid')} color={theme.colors.accent.emerald} onPress={onPaid} disabled={busy} testID={`p2p-swap-${index}-proof`} />
           </View>
+        </View>
+      ) : null}
+
+      {/* Device-side verification (docs/p2p.md §12): read this party's own rail
+          app through the phone they paired, then sign and submit the verdict. */}
+      {isParty && cny && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
+        <View style={s.actions}>
+          <Action label={t('p2pdev.title')} color={theme.colors.accent.purple} onPress={onVerify} disabled={busy} testID={`p2p-swap-${index}-verify`} />
         </View>
       ) : null}
 

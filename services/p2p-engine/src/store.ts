@@ -5,7 +5,15 @@
  * seed), so Postgres here is a projection, per AGENTS.md invariant #1 — the
  * append-only shape means a replay never mutates history.
  */
-import type { EscrowSigning, PaymentProfile, PaymentProof, P2pOrder, P2pSwapEvent } from "./types.js";
+import type {
+  EscrowSigning,
+  PaymentProfile,
+  PaymentProof,
+  PaymentVerification,
+  P2pOrder,
+  P2pSwapEvent,
+  StoredPairing,
+} from "./types.js";
 import type { BlobStore } from "./blob.js";
 
 /** Blob collection for buyer receipt bytes (docs/p2p.md §14). */
@@ -38,6 +46,13 @@ export interface SettlementStore {
   /** Append a buyer payment proof (multiple kept: overwrites before confirm). */
   addProof(p: PaymentProof): Promise<void>;
   proofs(swapId: string): Promise<PaymentProof[]>;
+  /** Append a device-side payment verdict (store-only evidence, docs/p2p.md §12). */
+  addVerification(v: PaymentVerification): Promise<void>;
+  verifications(swapId: string): Promise<PaymentVerification[]>;
+  /** Store a device pairing grant (consent record, store-only — docs/p2p.md §12). */
+  putPairing(p: StoredPairing): Promise<void>;
+  getPairing(did: string, pairingId: string): Promise<StoredPairing | null>;
+  pairingsForDid(did: string): Promise<StoredPairing[]>;
   /** Upsert the escrow spend signatures / submitted tx for one swap. */
   putEscrowSigning(s: EscrowSigning): Promise<void>;
   getEscrowSigning(swapId: string): Promise<EscrowSigning | null>;
@@ -48,6 +63,8 @@ export class MemSettlementStore implements SettlementStore {
   readonly swapEvents = new Map<string, P2pSwapEvent[]>();
   readonly paymentProfiles = new Map<string, PaymentProfile>();
   readonly paymentProofs = new Map<string, PaymentProof[]>();
+  readonly paymentVerifications = new Map<string, PaymentVerification[]>();
+  readonly pairings = new Map<string, StoredPairing>();
   readonly escrowSignings = new Map<string, EscrowSigning>();
 
   async createOrder(o: P2pOrder): Promise<void> {
@@ -143,6 +160,30 @@ export class MemSettlementStore implements SettlementStore {
     return [...(this.paymentProofs.get(swapId) ?? [])];
   }
 
+  async addVerification(v: PaymentVerification): Promise<void> {
+    const list = this.paymentVerifications.get(v.swapId) ?? [];
+    list.push(v);
+    this.paymentVerifications.set(v.swapId, list);
+  }
+
+  async verifications(swapId: string): Promise<PaymentVerification[]> {
+    return [...(this.paymentVerifications.get(swapId) ?? [])];
+  }
+
+  async putPairing(p: StoredPairing): Promise<void> {
+    this.pairings.set(`${p.did}|${p.pairingId}`, { ...p });
+  }
+
+  async getPairing(did: string, pairingId: string): Promise<StoredPairing | null> {
+    return this.pairings.get(`${did}|${pairingId}`) ?? null;
+  }
+
+  async pairingsForDid(did: string): Promise<StoredPairing[]> {
+    return [...this.pairings.values()]
+      .filter((p) => p.did === did)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
   async putEscrowSigning(s: EscrowSigning): Promise<void> {
     this.escrowSignings.set(s.swapId, { ...s });
   }
@@ -154,6 +195,21 @@ export class MemSettlementStore implements SettlementStore {
 
 export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
+}
+
+function pairingFromRow(row: any): StoredPairing {
+  return {
+    did: row.did,
+    pairingId: row.pairing_id,
+    endpoint: row.endpoint,
+    deviceId: row.device_id,
+    ...(row.token ? { token: row.token } : {}),
+    ...(row.swap_id ? { swapId: row.swap_id } : {}),
+    issuedAt: Number(row.issued_at),
+    expiresAt: Number(row.expires_at),
+    createdAt: new Date(row.created_at).getTime(),
+    ...(row.revoked ? { revoked: true } : {}),
+  };
 }
 
 function orderFromRow(row: any): P2pOrder {
@@ -365,6 +421,91 @@ export class PgSettlementStore implements SettlementStore {
       });
     }
     return out;
+  }
+
+  async addVerification(v: PaymentVerification): Promise<void> {
+    await this.db.query(
+      `INSERT INTO p2p_payment_verifications
+         (swap_id, did, side, tx_id, observed, amount, counterparty_name, remark, paid_at,
+          evidence_kind, receipt_verified, captures, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [
+        v.swapId,
+        v.did,
+        v.side,
+        v.txId ?? null,
+        v.observed,
+        v.amount ?? null,
+        v.counterpartyName ?? null,
+        v.remark ?? null,
+        v.paidAt ?? null,
+        v.evidenceKind,
+        v.receiptVerified ?? null,
+        v.captures ? JSON.stringify(v.captures) : null,
+        new Date(v.createdAt),
+      ],
+    );
+  }
+
+  async verifications(swapId: string): Promise<PaymentVerification[]> {
+    const res = await this.db.query(
+      `SELECT swap_id, did, side, tx_id, observed, amount, counterparty_name, remark, paid_at,
+              evidence_kind, receipt_verified, captures, created_at
+       FROM p2p_payment_verifications WHERE swap_id = $1 ORDER BY seq`,
+      [swapId],
+    );
+    return (res.rows as any[]).map((r) => ({
+      swapId: r.swap_id,
+      did: r.did,
+      side: r.side,
+      ...(r.tx_id ? { txId: r.tx_id } : {}),
+      observed: r.observed,
+      ...(r.amount != null ? { amount: r.amount } : {}),
+      ...(r.counterparty_name ? { counterpartyName: r.counterparty_name } : {}),
+      ...(r.remark ? { remark: r.remark } : {}),
+      ...(r.paid_at != null ? { paidAt: Number(r.paid_at) } : {}),
+      evidenceKind: r.evidence_kind,
+      ...(r.receipt_verified != null ? { receiptVerified: !!r.receipt_verified } : {}),
+      ...(r.captures ? { captures: JSON.parse(r.captures) } : {}),
+      createdAt: new Date(r.created_at).getTime(),
+    }));
+  }
+
+  async putPairing(p: StoredPairing): Promise<void> {
+    await this.db.query(
+      `INSERT INTO p2p_pairings (did, pairing_id, endpoint, device_id, token, swap_id, issued_at, expires_at, revoked, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       ON CONFLICT (did, pairing_id) DO UPDATE SET
+         endpoint   = EXCLUDED.endpoint,
+         device_id  = EXCLUDED.device_id,
+         token      = EXCLUDED.token,
+         swap_id    = EXCLUDED.swap_id,
+         issued_at  = EXCLUDED.issued_at,
+         expires_at = EXCLUDED.expires_at,
+         revoked    = EXCLUDED.revoked`,
+      [
+        p.did,
+        p.pairingId,
+        p.endpoint,
+        p.deviceId,
+        p.token ?? null,
+        p.swapId ?? null,
+        p.issuedAt,
+        p.expiresAt,
+        p.revoked ?? false,
+        new Date(p.createdAt),
+      ],
+    );
+  }
+
+  async getPairing(did: string, pairingId: string): Promise<StoredPairing | null> {
+    const res = await this.db.query(`SELECT * FROM p2p_pairings WHERE did = $1 AND pairing_id = $2`, [did, pairingId]);
+    return res.rows[0] ? pairingFromRow(res.rows[0]) : null;
+  }
+
+  async pairingsForDid(did: string): Promise<StoredPairing[]> {
+    const res = await this.db.query(`SELECT * FROM p2p_pairings WHERE did = $1 ORDER BY created_at DESC`, [did]);
+    return res.rows.map(pairingFromRow);
   }
 
   async putEscrowSigning(s: EscrowSigning): Promise<void> {

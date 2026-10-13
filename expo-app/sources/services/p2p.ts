@@ -287,8 +287,10 @@ export async function matchOrder(
 
 /**
  * Signed state transition. Which party may sign depends on the action: the
- * seller drives escrow_lock/expire/refund, the buyer cancel, and
- * release/complete are the engine's (the app never calls those).
+ * seller drives escrow_lock/expire/refund (expire only before a payment
+ * claim), the buyer cancel (only before claiming), and release/complete are
+ * the engine's (the app never calls those). A claim or an open dispute bars
+ * the unwind paths — those resolve through dispute (docs/p2p.md §9/§12).
  */
 export async function transition(
   id: P2pIdentity,
@@ -423,4 +425,110 @@ export async function getMyProfiles(id: P2pIdentity): Promise<P2pPaymentProfile[
   const body = signedBody(id.key, id.did, {});
   const data = await request<{ profiles: P2pPaymentProfile[] }>('/profiles/mine', body);
   return data.profiles ?? [];
+}
+
+// ── Device-side verification (docs/p2p.md §12) ─────────────────────────────
+// The party pairs their own phone (the Mobile Agent app) once, then the engine
+// reads the matching entry in that party's own rail app and returns a verdict
+// the wallet signs. Only the caller's own pairing is ever used, and only the
+// caller's own side (buyer reads the sending ledger, seller the receiving one).
+
+/** A stored device pairing (the bearer token never comes back — `tokenSet` only). */
+export interface P2pPairing {
+  pairingId: string;
+  endpoint: string;
+  deviceId: string;
+  swapId: string | null;
+  issuedAt: number;
+  expiresAt: number;
+  revoked: boolean;
+  tokenSet: boolean;
+}
+
+/** Fresh pairing id (`pr-<24hex>`, the engine's pairingId pattern). */
+function newPairingId(): string {
+  const arr = new Uint8Array(12);
+  const c = (globalThis as { crypto?: { getRandomValues?: (a: Uint8Array) => void } }).crypto;
+  if (c?.getRandomValues) c.getRandomValues(arr);
+  else for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 256);
+  return `pr-${Array.from(arr).map((b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
+ * Pair the party's own phone with the engine: a DID-signed grant naming the
+ * endpoint, the device and the endpoint's bearer token (never logged). `swapId`
+ * scopes the grant to one swap; omit it for a general pairing (≤ 30 days).
+ */
+export async function createPairing(
+  id: P2pIdentity,
+  input: { endpoint: string; token: string; deviceId?: string; swapId?: string; ttlMs?: number },
+): Promise<{ pairingId: string; expiresAt: number }> {
+  const now = Date.now();
+  const ttl = Math.min(Math.max(input.ttlMs ?? 24 * 60 * 60 * 1000, 60_000), 30 * 24 * 60 * 60 * 1000);
+  const body = signedBody(
+    id.key,
+    id.did,
+    {
+      pairingId: newPairingId(),
+      endpoint: input.endpoint.trim().replace(/\/+$/, ''),
+      deviceId: input.deviceId?.trim() || 'self',
+      token: input.token.trim(),
+      ...(input.swapId ? { swapId: input.swapId } : {}),
+      issuedAt: now,
+      expiresAt: now + ttl,
+    },
+    now,
+  );
+  return request('/pairings', body);
+}
+
+/** The caller's own pairings (revoke any of them at will). */
+export async function listMyPairings(id: P2pIdentity): Promise<P2pPairing[]> {
+  const body = signedBody(id.key, id.did, {});
+  const data = await request<{ pairings: P2pPairing[] }>('/pairings/mine', body);
+  return data.pairings ?? [];
+}
+
+/** Revoke a pairing — the endpoint is never reached again. */
+export async function revokePairing(id: P2pIdentity, pairingId: string): Promise<void> {
+  const body = signedBody(id.key, id.did, { pairingId });
+  await request('/pairings/revoke', body);
+}
+
+/** The engine's device read (docs/p2p.md §12) — the verdict payload the wallet signs. */
+export interface P2pDeviceReadResult {
+  swapId: string;
+  side: 'buyer' | 'seller';
+  verdict: Record<string, unknown>;
+  check: { ok: boolean; error?: string; claimMismatch?: { claimed: string; observed: string } };
+  entry: Record<string, unknown> | null;
+}
+
+/**
+ * Ask the engine to read the caller's own paired phone and extract the matching
+ * entry (buyer → sending ledger, seller → receiving ledger). Only the caller's
+ * own pairing is used; the read is never trusted on its own — the wallet signs
+ * the returned verdict and posts it to `/swaps/:swapId/verify`.
+ */
+export async function deviceRead(
+  id: P2pIdentity,
+  swapId: string,
+  input: { pairingId?: string; evidenceKind?: 'device_read' | 'bank_ereceipt'; receiptVerified?: boolean } = {},
+): Promise<P2pDeviceReadResult> {
+  const body = signedBody(id.key, id.did, {
+    ...(input.pairingId ? { pairingId: input.pairingId } : {}),
+    ...(input.evidenceKind ? { evidenceKind: input.evidenceKind } : {}),
+    ...(input.receiptVerified !== undefined ? { receiptVerified: input.receiptVerified } : {}),
+  });
+  return request(`/swaps/${swapId}/device-read`, body);
+}
+
+/** Sign the engine-read verdict with the party's key and submit it (side = the signer's role). */
+export async function submitVerdict(
+  id: P2pIdentity,
+  swapId: string,
+  verdict: Record<string, unknown>,
+): Promise<{ swapId: string; status: string; verifySource?: string }> {
+  const body = signedBody(id.key, id.did, { ...verdict });
+  return request(`/swaps/${swapId}/verify`, body);
 }

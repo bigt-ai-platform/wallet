@@ -138,6 +138,26 @@ describe("BlobSettlementStore", () => {
     expect(await two.getSwap("swap-1")).toBeNull();
   });
 
+  it("round-trips device pairings keyed by pairingId", async () => {
+    const store = new BlobSettlementStore(new EncryptedBlobStore(new FsBlobStore(dir), KEY));
+    const grant = {
+      did: "did:key:zBUYER", endpoint: "http://192.168.1.20:8080", deviceId: "self", token: "tok",
+      pairingId: "pr-0123456789abcdef", issuedAt: 1, expiresAt: 9_999_999_999, createdAt: 1,
+    };
+    await store.putPairing(grant);
+    const got = await store.getPairing("did:key:zBUYER", "pr-0123456789abcdef");
+    expect(got).toMatchObject({ pairingId: "pr-0123456789abcdef", endpoint: "http://192.168.1.20:8080", token: "tok" });
+    // a different pairingId under the same DID is a distinct record (never the nonce)
+    expect(await store.getPairing("did:key:zBUYER", "pr-other")).toBeNull();
+    await store.putPairing({ ...grant, pairingId: "pr-ffffffffffffffff", createdAt: 2 });
+    expect((await store.pairingsForDid("did:key:zBUYER")).map((p) => p.pairingId).sort()).toEqual([
+      "pr-0123456789abcdef", "pr-ffffffffffffffff",
+    ]);
+    // another DID's pairings are never returned
+    await store.putPairing({ ...grant, did: "did:key:zSELLER", pairingId: "pr-sellerseller" });
+    expect((await store.pairingsForDid("did:key:zBUYER")).every((p) => p.did === "did:key:zBUYER")).toBe(true);
+  });
+
   it("rebuilds the order/swap projection from L1 at boot", async () => {
     const GENESIS = { hash: "h0", height: 0, prevHash: "0".repeat(64), records: [] };
     const block = (hash: string, height: number, prevHash: string, records: ChainBlockView["records"]): ChainBlockView => ({ hash, height, prevHash, records });

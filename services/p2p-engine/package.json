@@ -17,6 +17,7 @@
     "chain-discovery": "*",
     "did": "*",
     "p2p-protocol": "*",
+    "p2p-verify": "*",
     "record-sig": "*",
     "fastify": "^5.12.3",
     "pg": "^8.13.0"

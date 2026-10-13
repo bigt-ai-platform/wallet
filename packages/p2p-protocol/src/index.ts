@@ -23,3 +23,29 @@ export {
   type SettlementExpectation,
   type SettlementResult,
 } from "./settlement.js";
+export {
+  VERIFY_SIDES,
+  VERIFY_OBSERVED,
+  VERIFY_EVIDENCE_KINDS,
+  AUTO_RELEASE_POLICIES,
+  sameAmount,
+  validatePaymentVerdict,
+  verdictsAgree,
+  machineConfirm,
+  normalizeAutoReleasePolicy,
+  type VerifySide,
+  type VerifyObserved,
+  type VerifyEvidenceKind,
+  type PaymentVerdict,
+  type VerdictExpectation,
+  type VerdictCheck,
+  type AutoReleasePolicy,
+} from "./verify.js";
+export {
+  SWAP_ID_RE as P2P_SWAP_ID_RE,
+  MAX_GRANT_TTL_MS,
+  validatePairingGrant,
+  grantAllows,
+  type PairingGrant,
+  type GrantCheck,
+} from "./pairing.js";

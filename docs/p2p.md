@@ -220,9 +220,9 @@ constants in the app.
     │                            │  9. anchor social.p2p-swap      │
     │                            │     on L1-SOCIAL                │
     │                            │                                │
-    │ conflict at any pre-release state → dispute → freeze →      │
-    │ AI-assisted arbitration (§12) → engine + winning party      │
-    │ co-signs release or refund                                   │
+    │ conflict in the payment phase → dispute → freeze →          │
+    │ auto-rule or AI-assisted arbitration (§12) → self-executing  │
+    │ release or refund (presign / winning-party cosign)           │
 ```
 
 Order-book intake (§11) is chain-first: the seller anchors a signed
@@ -269,7 +269,7 @@ Which pair signs what:
 |---|---|---|
 | **Release** → buyer | **seller + engine** | seller confirmed fiat (`PAYMENT_VERIFIED`) |
 | **Release** → buyer (forced) | **engine + buyer** | arbitration awards the buyer and the seller won't sign |
-| **Refund** → seller | **engine + seller** | timeout / failure, or arbitration awards the seller |
+| **Refund** → seller | **engine + seller** | timeout / failure, a post-lock cancel, or arbitration awards the seller |
 
 The buyer can never be *required* for a normal release (they are the payee),
 and the seller can never move escrowed funds alone — which is exactly why a
@@ -444,8 +444,9 @@ PAYMENT_PENDING ──buyer proof──▶ PAYMENT_CLAIMED
 PAYMENT_PENDING / PAYMENT_CLAIMED ──seller confirm──▶ PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──▶ COMPLETED
 
 PAYMENT_PENDING / PAYMENT_CLAIMED ──dispute open──▶ frozen (status unchanged, `dispute` field set)
-any pre-release state ──timeout / failure──▶ EXPIRED ──refund──▶ ESCROW_REFUNDED
-any pre-release state ──either party──▶ CANCELLED
+MATCHED / ESCROW_LOCKED / PAYMENT_PENDING (no claim) ──timeout / failure──▶ EXPIRED ──refund──▶ ESCROW_REFUNDED
+MATCHED / ESCROW_LOCKED ──either party──▶ CANCELLED ──refund spend──▶ ESCROW_REFUNDED
+PAYMENT_PENDING ──buyer cancel ("I never paid")──▶ CANCELLED ──refund spend──▶ ESCROW_REFUNDED
 ```
 
 - **`PAYMENT_PENDING → PAYMENT_CLAIMED`** is the buyer's claim; it never
@@ -453,10 +454,24 @@ any pre-release state ──either party──▶ CANCELLED
 - **`PAYMENT_CLAIMED → PAYMENT_VERIFIED`** requires the **seller's** DID-signed
   `confirm`. `PAYMENT_PENDING → PAYMENT_VERIFIED` is also allowed (the seller
   confirmed without the buyer uploading proof — e.g. a transfer visible
-  instantly in the seller's app).
+  instantly in the seller's app); it is also the rescue hatch that keeps a
+  paid-but-unclaimed payment out of the silent-expiry timer (§12).
 - A dispute freezes the swap via the existing `dispute` field (no new status);
-  resolution is an explicit arbitration outcome (§12).
-- `ESCROW_REFUNDED` must be reachable from `allowedActions`.
+  it is openable only from `PAYMENT_PENDING`/`PAYMENT_CLAIMED` (a conflict
+  before payment resolves by cancel/expire), and resolution is an explicit
+  arbitration outcome (§12).
+- **Cancel is barred once a payment may have moved.** The seller cancels only
+  from `MATCHED`/`ESCROW_LOCKED`; after instructions exist only the buyer — the
+  only party who knows whether they paid — may cancel, and a claim or a
+  confirmed payment bars cancel entirely: those unwind only through the dispute
+  path. `PAYMENT_VERIFIED` has exactly one way out: release. `expire` follows
+  the same rule (no refund over a live claim without arbitration).
+- **`CANCELLED` never strands escrow.** After the lock a cancel settles through
+  the same refund spend as `EXPIRED` (`CANCELLED → ESCROW_REFUNDED`), driven by
+  the seller's cosign or the presign hook (§6).
+- `ESCROW_REFUNDED` must be reachable from `allowedActions` (via `EXPIRED` or a
+  settled `CANCELLED`) — and it is always chain-proven: the generic `refund`
+  transition verifies the refund spend exactly like `release` does.
 
 The single status list lives in `packages/p2p-protocol/src/records.ts`
 (`P2P_SWAP_STATUSES`); the transition table in
@@ -518,8 +533,9 @@ from `wantRail` at match time and never touches both.
 | `POST /swaps/:id/payment-instructions` | buyer | matched profile fields + exact amount + remark code; only after `ESCROW_LOCKED` (idempotent while `PAYMENT_PENDING`) |
 | `POST /swaps/:id/proof` | buyer | `payment_proof` → `PAYMENT_CLAIMED`. Body: required `txId` (1..64 alnum `._-`), matching `remark`, optional `receipt` image data URL (the engine decodes the payload and recomputes the sha256 of the **image bytes**, not the data-URL string; receipt bytes stay out of the chain) |
 | `POST /swaps/:id/confirm` | seller | checks: status `PAYMENT_CLAIMED` or `PAYMENT_PENDING`, no open dispute → `PAYMENT_VERIFIED`. The engine-signed `release` follows as a separate step (seller cosign/presign) |
-| `POST /swaps/:id/dispute` | buyer or seller | sets `dispute`, freezes the swap |
-| `POST /swaps/:id/dispute/resolve` | `SETTLEMENT_ADMIN_TOKEN` | `release` (buyer wins) or `refund` (seller wins); engine co-signs the matching spend with the winning party |
+| `POST /swaps/:id/verify` | buyer or seller | a device-side payment verdict (§12): `side` is the signer's role (a party can never file the other side's story), checked against the four fields — amount exact, remark = the swap code, entry inside the swap window, 流水号 sane. A claim/observation 流水号 mismatch is reported as arbitration evidence, never fatal. Anchored minus PII (§14: the `payment_verify` record carries the small evidence; the name/bytes stay store-only); under `SETTLEMENT_CNY_AUTO_RELEASE_ON` the qualifying verdict acts as the `confirm` (same rules: payment phase, not frozen) with its provenance anchored |
+| `POST /swaps/:id/dispute` | buyer or seller | sets `dispute`, freezes the swap (from `PAYMENT_PENDING`/`PAYMENT_CLAIMED` only) |
+| `POST /swaps/:id/dispute/resolve` | `SETTLEMENT_ADMIN_TOKEN` | `release` (buyer wins) or `refund` (seller wins). **Self-executing** (§12): the resolve settles the spend itself from the seller's presign — release to the buyer, or an engine-act `expire` + refund to the seller — so neither party has to be online; without a presign the outcome stays armed and the winning party finishes via `/escrow/cosign` (buyer for a forced release, seller for a refund). Responds `settled`/`txHash`/`pending` |
 | `POST /profiles`, `POST /profiles/mine` | seller | payment profile upsert / list (store-only PII, §14) |
 | `GET /public/orders` | anyone | PII-free active order book |
 
@@ -535,8 +551,13 @@ SETTLEMENT_ADMIN_TOKEN=…            # arbitration / admin routes
 SETTLEMENT_ENGINE_KEY / _PUBKEY     # engine key (scripts/p2p-engine-key.mjs)
 SETTLEMENT_CNY_RAILS=wechat,alipay,bank   # enabled methods (empty = rail off)
 SETTLEMENT_CNY_REMARK_TTL=900             # seconds the remark code is valid
-SETTLEMENT_CNY_CONFIRM_TIMEOUT=900        # NOT IMPLEMENTED yet — claim → confirm deadline
+SETTLEMENT_CNY_CONFIRM_TIMEOUT=900        # claim → confirm deadline: past it the sweep opens a dispute (§12); 0 = never
+SETTLEMENT_CNY_EXPIRE_AFTER=3600          # silent pre-payment idle: past it the sweep expires + refunds (§12); 0 = never
+SETTLEMENT_CNY_AUTO_RELEASE_ON=off        # device-verified payment (§12): off | seller_receipt | two_sided | verified_receipt
 SETTLEMENT_CNY_MAX_CENTS=...              # NOT IMPLEMENTED yet — per-trade cap (§16)
+SETTLEMENT_SWEEP_MS=0                     # conflict-sweep tick (the two timers above); 0 = off (the tick is exported for tests)
+SETTLEMENT_ESCROW_HOOK_MS=0               # presign settlement hook tick (release at PAYMENT_VERIFIED, refund at EXPIRED/CANCELLED); 0 = off
+SETTLEMENT_ESCROW_POLL_MS=25000           # per-spend CONFIRMED wait before reporting pending
 SETTLEMENT_L1_SOCIAL_URL / _URLS          # social node(s): order txid confirmation + anchor + watcher
 SETTLEMENT_ORDER_TX_VERIFY=0              # disable the txid check (default: on when a social URL exists)
 SETTLEMENT_ORDER_TX_TRIES=4               # bounded verifyTx polls per order/cancel (500ms apart)
@@ -561,7 +582,7 @@ chain-derived tables and replays (needs `POSTGRES_URL`).
 
 ---
 
-## 12. Conflict resolution — AI-assisted arbitration
+## 12. Conflict resolution — automatic where the evidence is, AI-assisted where it isn't
 
 The honest restatement of the trust model: **the seller's confirmation is the
 fiat truth; arbitration is the safety net; the engine operator (with AI help)
@@ -570,10 +591,11 @@ asks for, minus the custody.
 
 ### Process
 
-1. Either party opens a dispute (`POST /swaps/:id/dispute`) → the swap freezes:
-   forward transitions (`release`/`complete`) are blocked;
-   `expire`/`refund`/`cancel` stay available so locked tokens can still come
-   home.
+1. Either party opens a dispute (`POST /swaps/:id/dispute`, from
+   `PAYMENT_PENDING`/`PAYMENT_CLAIMED` — a conflict before payment resolves by
+   cancel/expire) → the swap freezes: nothing advances (`release`/`complete`)
+   and nothing unwinds (`cancel`/`expire`) until the outcome lands. A stuck
+   escrow is not a risk: the outcome settles by itself (step 3).
 2. The engine assembles the **evidence pack**: both parties' signed statements,
    the payment instructions as delivered (engine-signed, so a mid-swap account
    change provably fails), the proof upload (流水号 + receipt sha256 + remark +
@@ -581,11 +603,167 @@ asks for, minus the custody.
    offers (CNY 流水号 + the seller's in-app ledger view).
 3. **AI arbitration** reviews the pack against the rules below and proposes
    `release` or `refund` with a written rationale. The human operator confirms
-   (or overrides, on the record) and the admin route executes: the engine
-   co-signs the matching spend — release with the **buyer**'s signature if the
-   seller won't sign, refund with the **seller**'s.
+   (or overrides, on the record) and the admin route **executes**:
+   `dispute/resolve` is self-driving — it settles the spend itself from the
+   seller's presign (release to the buyer, or an engine-act `expire` + refund
+   to the seller), so neither party has to be online; without a presign the
+   outcome stays armed and the winning party finishes via `/escrow/cosign`
+   (buyer for a forced release, seller for a refund).
 4. The outcome is anchored like every other transition (`dispute_resolve` event,
-   fail closed).
+   fail closed), together with the unwind it executed (`expire`, `refund`).
+
+### Automatic resolution — the deterministic ladder
+
+Conflicts are not all human work. The rule: **only signature- or chain-derived
+evidence may resolve automatically; anything whose sole source is a person's
+private app (their bank / WeChat / Alipay 流水) stays with a human.** Every
+automatic action is an ordinary anchored event with the engine as actor and an
+`auto:` reason — auditable, replayable, and the human operator can still open
+the case afterwards.
+
+| Tier | Rule (engine) | Resolves | Why it is safe |
+|---|---|---|---|
+| 0 | chain inclusion order decides (§14) | match/cancel races | deterministic on-chain ordering |
+| 0 | fail-closed lock proof (status ∧ address ∧ amount) | fake or short locks | the chain is the oracle |
+| 1 | seller's signed `confirm` + presign → release closes itself (escrow hook, §6) | "seller confirmed then refuses to release" | the signed confirm **is** the fiat truth — no judgment needed; without a presign an `release` outcome self-executes with the buyer |
+| 1 | silent pre-payment idle > `SETTLEMENT_CNY_EXPIRE_AFTER` → auto-`expire` → refund (sweep) | buyer no-show (§15) | no claim ∧ no confirm ∧ no dispute — nobody ever asserted payment |
+| 1 | claim unconfirmed > `SETTLEMENT_CNY_CONFIRM_TIMEOUT` → auto-`dispute_open` | fake-receipt stalling | the buyer may really have paid, so silence after a claim **enters** the dispute path and never auto-refunds |
+| 1 | `dispute/resolve` settles the spend itself | every arbitration outcome | the arbiter's decision needs no party online |
+| 1 | device-side two-sided verification (next section) → acts as the confirm under policy | "buyer paid, seller claims non-receipt" when both ledgers agree | both parties' **own** ledgers describe one 交易号; colluding fakes would need both devices to lie consistently |
+| 2 | AI triage proposes, human confirms | seller-claims-non-receipt over a claimed payment **with only one device read**; payer-name mismatch; key-compromise claims | a one-sided device read is spoofable by its owner — evidence, not truth |
+| 3 | human only | colluding pairs, wash, 冻卡 cases | abuse, not per-swap facts (§16) |
+
+Timers are engine config (`SETTLEMENT_SWEEP_MS` arms the sweep; `0` on either
+timeout disables that rule), and the confirm deadline is a **seller promise** —
+the UI counts it down. The residual race the ladder cannot see is a buyer who
+pays but never claims before the silent-expiry window: the claim deadline is
+the buyer's hard obligation (the UI must push the claim immediately after
+paying), and the seller's confirm from `PAYMENT_PENDING` is the rescue hatch.
+
+### Device-side payment verification — the on-phone app, user-paired
+
+The one thing the ladder could not automate — "the only evidence is a person's
+private app ledger" — shrinks when the read itself is automated **on the owner's
+own device**: a party installs the deployed **Mobile Agent** app
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
+on their own phone — it runs the MCP server *on the phone* (AccessibilityService
++ screenshots, no adb, no host machine) — and pairs that endpoint with the
+engine. The engine then connects to the paired endpoint and reads the matching
+entry in the party's own rail app. `services/p2p-verify` extracts the entry
+(accessibility tree — no screenshots of secrets), checks it against the swap,
+and the **wallet signs the verdict** with the party's DID key.
+
+**Pairing is the consent step.** The user installs the app (download from the
+dai **Data → Mobile** page, `#mobile`), grants it the Accessibility service, and
+starts its server. The app then shows an endpoint URL and a bearer token:
+
+```
+  Mobile Agent app  →  Settings › Accessibility: grant Mobile Agent
+                    →  Server tab: Start
+                    →  http://<phone-ip>:8080/mcp  +  the bearer token
+```
+
+They hand the engine exactly two things — the endpoint URL and the bearer
+token — scoped to the one device they paired. Neither is a credential the
+engine could use elsewhere, and the pairing dies the moment the user stops the
+server or rotates the token. Reachability is the user's choice and the user's
+exposure: bind `127.0.0.1` and put a tunnel in front (the app can open a
+Cloudflare/ngrok tunnel itself), or bind the LAN for a home setup. Nothing
+auto-discovers; the engine connects to endpoints a person deliberately gave it,
+one swap at a time.
+
+The wallet app surfaces this per swap: **"Verify with my phone"** (buyer or
+seller, CNY swaps in `PAYMENT_PENDING`/`PAYMENT_CLAIMED`) pairs the phone once
+(endpoint + token → a DID-signed grant → `POST /pairings`), asks the engine to
+read (`POST /swaps/:id/device-read` — the caller's own pairing and own side
+only), then **signs the returned verdict** and submits it
+(`POST /swaps/:id/verify`). Only a swap party can trigger either call, each for
+their own side and their own device; the engine never initiates a read.
+
+```
+  buyer's phone                            p2p-engine                     seller's phone
+  Mobile Agent app: endpoint + token       (connects only to paired       Mobile Agent app: endpoint + token
+  reads the SENDING rail app ────────────▶ endpoints, one swap)          reads the RECEIVING rail app
+                                          │◀─────────────────────────────│
+                                          │  engine reads the SENDING app │  engine reads the RECEIVING app
+                                          │  → {status 成功, amount,       │  → {amount, remark, time,
+                                          │     实名 name, remark, time,   │     交易号, payer name}
+                                          │     交易号}                    │
+                                          │  re-checks the four fields    │
+                                          │  against the swap terms       │
+  wallet signs verdict_B ◀────────────────┤◀───────────── verdict_S ────── wallet signs verdict_S
+```
+
+- **The 流水号/交易号 is the shared correlation id** — both apps display the
+  same id for the same transfer, so two independent reads describing one id is
+  verification, not two stories.
+- **Consent is the pairing, and it is revocable.** The engine reaches a device
+  only through an endpoint a person chose to expose and can pull back at any
+  time; it never owns, provisions, or auto-discovers one ("no engine-*operated*
+  devices" now means no engine-*owned* ones — §14). The verdict is the only
+  thing that leaves the phone's control: the entry fields plus sha256 capture
+  refs. The verdict **anchors** on L1-SOCIAL like every other event
+  (`payment_verify`): the chain rule is *only large blobs stay off chain, as
+  hashes* — so the small evidence (amount, 流水号, remark, time, capture
+  hashes) is on chain and survives a rebuild, while the capture bytes and the
+  entry's PII (counterparty name) stay in the engine store
+  (`p2p_payment_verifications`). The wallet key never leaves the device; the
+  engine reads, the wallet signs.
+- **What a verdict may change is policy** (`SETTLEMENT_CNY_AUTO_RELEASE_ON`):
+  `off` (default) — evidence only; `seller_receipt` — the seller's own ledger
+  saying received stands in for the confirm tap; `two_sided` — stricter, both
+  ledgers must agree on one 交易号 first; `verified_receipt` — a bank 电子回单
+  whose 回单 verification passes on the bank's **public** verification page
+  settles it alone (the one near-oracle signal, bank rail). The qualifying
+  verdict's signature is the attestation (`verifySource` records how it was
+  obtained); a frozen swap never advances.
+- **What it does not change:** a payer still controls their own phone, so a
+  one-sided read is evidence (tier 2) and never releases — they could pair an
+  endpoint in front of a fake rail app. A *seller's* `received` verdict under
+  `seller_receipt` is exactly the confirm tap the seller was trusted for
+  anyway, now machine-read under their own pairing. The bank 回单 path is the
+  only tier that approaches machine truth.
+- **Transports.** The device transports live in the shared
+  **`packages/mobile-control`** client — the general device-control surface
+  (Streamable HTTP + stdio, plus the Ed25519 DID request signer) used by the
+  worker, the p2p engine and the wallet's Device screen alike.
+  `services/p2p-verify` adapts that client to its narrow `DeviceGateway`.
+  The default is `AndroidMcpClient`, speaking
+  [`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp):
+  the **deployed on-phone agent** that runs the MCP server on the phone itself
+  (AccessibilityService + screenshots, no adb, no host), so `connectFromGrant`
+  connects straight to the party's phone over its `/mcp` endpoint (bearer or DID
+  auth, one stateless JSON-RPC POST per tool call). The mobile-mcp host+adb
+  transports remain for the CLI: `McpHttpGateway` calls a paired `--listen`
+  endpoint, `McpGateway` spawns the server over stdio beside the phone. All
+  expose the same `DeviceGateway`, so a swap verifies identically either way.
+- **Platform reality:** Android drives third-party apps via adb/UIAutomator
+  accessibility (the text tree survives `FLAG_SECURE`); iOS needs WebDriverAgent
+  pairing to a host the user controls (desktop companion) — no on-app API reads
+  other apps there. Pilot order: emulator + mock rail app → test Android phone
+  → iOS companion pairing. Automating WeChat/Alipay UI can trip their risk
+  controls (§16): human-paced, user-initiated, never a scraper.
+
+The worker is the extraction half (`services/p2p-verify`: `parseRailEntry` /
+`verifyPayment` plus the `AndroidMcpClient` transport for the on-phone app and
+the `McpHttpGateway`/`McpGateway` transports for a mobile-mcp host, tested
+against WeChat / Alipay / bank entry fixtures) and the same code path is the
+e2e harness for the mock-rail screens. Against the app the engine connects from
+the stored grant (`connectFromGrant` in `../services/p2p-verify/src/gateway.ts`
+→ `AndroidMcpClient`), and one verification from the shell is:
+
+```bash
+node services/p2p-verify/dist/cli.js --devices
+node services/p2p-verify/dist/cli.js --side buyer --rail wechat --amount 715 \
+    --remark <code> --tx-id <流水号> [--app com.tencent.mm] [--device <id>] \
+    --http http://<phone-ip>:8080 --token <bearer-token>
+```
+
+`--side buyer` reads the buyer's **sending** ledger, `--side seller` the
+seller's **receiving** ledger. The CLI reads, extracts and checks, then prints
+the verdict for the wallet to sign and POST to `/swaps/:id/verify` — it holds no
+keys and never talks to the engine (`--evidence bank_ereceipt --receipt-verified`
+covers the 回单 path).
 
 ### What the seller must check before confirming (never the screenshot)
 
@@ -609,15 +787,17 @@ asks for, minus the custody.
 
 | Case | Handling |
 |---|---|
-| Fake receipt, buyer never paid | seller doesn't see it in their app → never confirms → buyer's claim times out → dispute → refund |
-| Buyer paid, seller claims non-receipt → buyer appeals | arbitration asks the seller for their in-app 流水 for the window; the transfer either exists or it doesn't → release (engine + buyer, seller cannot block) or seller-flag |
-| Seller confirmed but then refuses to release | same evidence path — the seller's own confirm is already signed; arbitration orders release and the engine co-signs with the buyer |
+| Fake receipt, buyer never paid | seller doesn't see it in their app → never confirms → the confirm-timeout sweep auto-opens the dispute → arbitration refund, which **settles itself** (§12 ladder) |
+| Buyer paid, seller claims non-receipt → buyer appeals | **device-side verification first** (§12): both ledgers describing one 交易号 resolves it under policy before any human; one-sided or `none` reads go to arbitration as interactive evidence (the seller's in-app 流水 for the window) — the transfer either exists or it doesn't → release (self-executing; engine + buyer if no presign, seller cannot block) or seller-flag |
+| Seller confirmed but then refuses to release | **no arbitration needed** — the confirm is already signed and the presigned release closes itself; without a presign a `release` outcome self-executes with the buyer |
 | Seller changes payment details mid-swap | instructions are engine-signed per swap; a mismatch is the seller's fault → the buyer's signed copy + proof wins |
 | Receipt from an older swap replayed | remark code is per-swap and TTL-bound; amount+time+remark must all match |
 | Both parties collude to fake a trade (wash) | out of scope for a swap; limit as abuse control (§16) |
 
-No step auto-releases on silence. Silence always resolves through the dispute
-path.
+Nothing ever releases on a claim or on silence in the disputed window. Silence
+**before** any payment assertion auto-refunds (nobody asserted payment — the
+ladder's silent-expiry rule); silence **after** a claim auto-enters the dispute
+path, never the refund path.
 
 ---
 
@@ -695,6 +875,17 @@ fields on chain.
   destination address **and amount**).
 - **Payment profile** (method, 户名, account/QR, bank + card):
   encrypted engine store, party-scoped reads, **never anchored**.
+- **Device verdicts** (§12): what a party's own device read in their own rail
+  app. The read happens through the on-phone **Mobile Agent** endpoint the
+  **user paired** — the engine connects to it, it never owns or auto-discovers
+  a device ("no engine-*operated* devices": no engine-owned hardware, pairing is
+  user-held and revocable). The verdict **anchors** as a `payment_verify` event — the
+  small evidence (entry fields, capture sha256 list) is on chain and
+  independently checkable; only large blobs stay off chain as hashes. The
+  counterparty name (PII) and the capture bytes stay in the engine store
+  (`p2p_payment_verifications`), so a rebuild restores the evidence but not
+  the name. A machine confirm anchors its provenance (`verifyEvidence` on the
+  `payment_confirm` record).
 - **Receipts**: durable object storage (MinIO / user Drive — the durability
   rule below), the event carries only the file ref + sha256 + 流水号. The image
   itself never goes on chain and never leaves the party scope except to the
@@ -717,9 +908,11 @@ fields on chain.
 
 | Failure | Handling |
 |---|---|
-| Buyer never pays | timer → engine + seller co-sign refund → `EXPIRED` → `ESCROW_REFUNDED`. No buyer consent needed. |
-| Seller never confirms though buyer claims paid | dispute → arbitration on the evidence pack (§12) → release or refund |
+| Buyer never pays (never claims) | the silent-expiry sweep (`SETTLEMENT_CNY_EXPIRE_AFTER`) auto-expires → the presigned refund lands → `EXPIRED` → `ESCROW_REFUNDED` (no presign: the seller cosigns the refund when back). No buyer consent needed — nobody asserted payment. |
+| Buyer paid but never uploaded proof | the claim deadline is the buyer's **hard obligation** (the UI pushes the claim right after paying); the seller's confirm from `PAYMENT_PENDING` rescues it. Otherwise the row above applies — the stated residual risk of the ladder (§12). |
+| Seller never confirms though buyer claims paid | the confirm-timeout sweep (`SETTLEMENT_CNY_CONFIRM_TIMEOUT`) auto-opens the dispute → arbitration on the evidence pack (§12) → the outcome settles itself |
 | Seller confirmed but wallet offline | Path B presign lets the engine finish the release; otherwise the seller cosigns when back |
+| Arbitration ordered, nobody online | the resolve settles the spend itself from the presign (`dispute/resolve` is self-executing, §12) |
 | L0 node unreachable at confirm time | retry with backoff; while unreachable, **fail closed** |
 | Release broadcast lost | retry the same skeleton; the stored `releaseTxHash` deduplicates |
 | Node down after release | tokens are already at `receiveAddress`; nothing else is pending — there is no fiat payout to fail |
@@ -749,19 +942,31 @@ no payout step.
 
 ---
 
-## 17. Full automation — not built
+## 17. Full automation — the timer half is built
 
 The manual flow (§8) needs no automation to close: the seller's Path B presign
 (§6) already lets the engine finish the release once the state reaches
-`PAYMENT_VERIFIED`. The remaining ideas:
+`PAYMENT_VERIFIED`. With the deterministic timers and the self-executing
+arbitration (§12 ladder) the only human tap left is the **confirm** — and
+there is no machine fiat signal to drop even that for a personal CNY transfer.
 
-- **Presign-based auto-release** — with the timers
-  (`SETTLEMENT_CNY_CONFIRM_TIMEOUT`, auto-`expire`) the confirm becomes the only
-  human tap left. There is no machine fiat signal to drop even that for a
-  personal CNY transfer.
+- **Presign-based auto-release + timers** — *delivered:* the confirm-timeout
+  auto-dispute and silent-expiry auto-refund (`SETTLEMENT_CNY_CONFIRM_TIMEOUT`,
+  `SETTLEMENT_CNY_EXPIRE_AFTER` via `SETTLEMENT_SWEEP_MS`), the escrow hook
+  (§6), and `dispute/resolve` settling its own outcome.
+- **Device-side verification** (§12) — *the worker is delivered:* under
+  `SETTLEMENT_CNY_AUTO_RELEASE_ON` the seller's own ledger read (or a
+  two-sided 交易号 match, or a publicly-verified bank 回单) replaces the confirm
+  **tap**. The read runs over a user-paired on-phone endpoint — the user
+  installs the **Mobile Agent** app, grants accessibility, starts its server and
+  hands the engine the URL + bearer token (revocable at will); the engine
+  connects to verify. It
+  is still attestation, not an oracle — the rails expose no machine payment
+  event to a personal account.
 - **Corporate-seller collection (C4-style)** — 银企直联 / licensed 聚合支付
   商户码 with real callbacks, **only** for seller entities that are merchants,
-  never for personal accounts, and only with a licensed provider.
+  never for personal accounts, and only with a licensed provider. This remains
+  the only path to a true machine payment event.
 
 ---
 
@@ -793,7 +998,9 @@ The manual flow (§8) needs no automation to close: the seller's Path B presign
 | **`../blockchain`** | Java protocol oracle — P2SH multisig, PQ verify, `PayMultiSign`, `getTransactionStatus`, `submitTransaction`, L1-SOCIAL ingestion. Anything the TS port does must be proven against it. |
 | **`../wallet` → `packages/bigtangle-ts`** | the TS protocol port and the client that holds keys — it owns the on-chain half of escrow. Ships `Escrow`, `ScriptBuilder.createRedeemScript` / `createP2SHOutputScript*` / `updateScriptWithSignature`, `RedeemData`, `Wallet.payToScript`, `core/PayMultiSign*`. |
 | **`../wallet` → `services/p2p-engine`** | the settlement engine: orders, swaps, whole-body signed API, seller-confirm MVP, arbitration execution, append-only events, chain anchor. |
-| **`../wallet` → `packages/p2p-protocol`** | the `social.p2p-swap` record contract (build + validate). |
+| **`../wallet` → `services/p2p-verify`** | the device-side verification worker (on-phone app, user-paired): connects to the endpoint the user paired with a DID-signed grant (`connectFromGrant` → `AndroidMcpClient` for the app; `McpHttpGateway`/`McpGateway` for a mobile-mcp host), reads the party's own rail app (the buyer's **sending** ledger or the seller's **receiving** ledger), extracts the entry, checks it against the swap terms and produces the verdict the wallet signs. Ships the `p2p-verify` CLI; the same code path is the mock-rail e2e harness. |
+| **`../android-remote-control-mcp`** | the deployed on-phone agent the worker drives: an Android app that runs an MCP server on the phone itself (AccessibilityService + screenshots, no adb/host), built as **Mobile Agent** (`deploy.apk.sh` → the S3 bucket the dai `#mobile` page links). `AndroidMcpClient` (`packages/mobile-control`) speaks its `android_*` tools. Only ever pointed at a device the **user** paired — never engine-owned (§12). |
+| **`../wallet` → `packages/p2p-protocol`** | the `social.p2p-swap` record contract (build + validate) and the payment-verdict contract (validate, agreement, machine-confirm policy). |
 | **`../wallet` → `expo-app`** | the P2P UI (Binance-P2P style) + co-sign release/refund screens. |
 | **`../wallet` → docs** | this document + the user guide/PDFs. |
 | **dai** | **nothing** — the agent surface was removed. |
@@ -824,9 +1031,13 @@ script is a wallet capability, so it lives in `bigtangle-ts`.
 3. **UI + guide** — *delivered:* Binance-P2P-style order book / order detail /
    match / pay / confirm / dispute screens in the wallet app, for all rails,
    plus the guide and PDFs in all 12 languages.
-4. **AI-assisted arbitration** — the remaining build: evidence-pack viewer,
-   AI review + human confirm loop, push on
-   claim/confirm/dispute, timers (`SETTLEMENT_CNY_CONFIRM_TIMEOUT`), auto-`expire`.
+4. **AI-assisted arbitration** — *the deterministic half is delivered:* the
+   conflict ladder's tier-0/1 rules (§12) — silent-expiry auto-refund,
+   confirm-timeout auto-dispute, cancel/expire barred over a payment assertion
+   or an open dispute, and self-executing `dispute/resolve` outcomes (the
+   timers `SETTLEMENT_CNY_CONFIRM_TIMEOUT` / `SETTLEMENT_CNY_EXPIRE_AFTER` via
+   `SETTLEMENT_SWEEP_MS`). Remaining: evidence-pack viewer, AI review + human
+   confirm loop, push on claim/confirm/dispute.
    Counterparty reputation is *delivered* as derived stats (§25); user-submitted
    star ratings stay out of scope.
 5. **Risk controls** — KYC tiers, caps, velocity checks, name-match on tiers,
@@ -852,8 +1063,12 @@ script is a wallet capability, so it lives in `bigtangle-ts`.
   authored the same way by the seller (`social.p2p-order`): the engine only
   verifies and indexes, and `replay rebuild` regenerates PG from the chain.
 - **PII never reaches the chain** — order records mirror the public book fields
-  only; profiles, receive addresses, accounts and receipts stay store-only, so
-  a rebuild is expected to lose them (that is the design, not a gap).
+  only; names, profiles, receive addresses and accounts stay store-only.
+- **Only large blobs stay off chain, as hashes** — everything small and non-PII
+  anchors (event records, verdict fields, capture and receipt sha256), so a
+  rebuild restores the evidence itself; the bytes (receipts, captures) and the
+  PII stay store-only and a rebuild is expected to lose *them* (that is the
+  design, not a gap).
 - **The seller's own confirmation (or an arbitration outcome) is the only
   trigger for release** — no rail API, no buyer claim alone, no silence.
 - **The engine never touches fiat** — buyer → seller, directly, on every rail.
@@ -879,6 +1094,26 @@ geofencing — is an operator decision to make before shipping to users.
   `PAYMENT_PENDING` and `PAYMENT_CLAIMED`), confirm with open dispute (409),
   lock re-check fails closed, idempotent proof overwrite, PII never in the
   anchored record, CNY claim transitions (`state.test.ts`).
+- **Conflict policy + automatic resolution** (`cny.test.ts`, `state.test.ts`,
+  `escrowSettle.test.ts`): cancel/expire barred over a payment claim or an open
+  dispute (seller cancel only pre-instructions, buyer cancel only pre-claim),
+  the confirm rescue from `PAYMENT_PENDING`, `CANCELLED → ESCROW_REFUNDED`
+  settling through the refund spend, the sweep's silent-expiry refund and
+  confirm-timeout auto-dispute (**never** an auto-refund over a claim), and
+  self-executing `dispute/resolve` outcomes landing the presigned
+  release/refund spends on-chain with the `dispute_resolve → expire → refund`
+  unwind on the event log.
+- **Device-side verification** (`verify.test.ts`,
+  `packages/p2p-protocol/test/verify.test.ts`,
+  `services/p2p-verify/test/extract.test.ts`): the four field checks fail
+  closed, side = the signer's role, claim/observation 流水号 mismatch reported
+  not fatal, policy-gated machine confirm (`off` | `seller_receipt` |
+  `two_sided` | `verified_receipt`, default `off`), a frozen swap never
+  advances, and the WeChat / Alipay / bank entry extraction (amount, 流水号,
+  备注, counterparty, time) with the card-number-not-the-amount and
+  date-not-the-amount guards. The verdict anchors minus PII — fields + capture
+  hashes on the `payment_verify` record (validated by `validateP2pSwapRecord`),
+  the counterparty name never on chain.
 - **Order book + watcher** (`orderRoutes.test.ts`, `replay.test.ts`,
   `packages/p2p-protocol/test/orderRecord.test.ts`): txid-gated intake (409
   until `CONFIRMED`, idempotent re-post, orderId collision), cancel (404/403/

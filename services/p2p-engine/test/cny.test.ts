@@ -44,6 +44,10 @@ function bump() {
   clock += 1;
 }
 
+function sweepTick(a: TestApp): Promise<void> {
+  return (a as unknown as { sweepTick: () => Promise<void> }).sweepTick();
+}
+
 type TestApp = Awaited<ReturnType<typeof buildApp>>;
 
 async function saveProfile(a: TestApp, method = "wechat") {
@@ -547,7 +551,9 @@ describe("CNY rails (docs/p2p.md)", () => {
     const noAuth = await a.inject({ method: "POST", url: `/swaps/${fresh}/dispute/resolve`, payload: { outcome: "release" } });
     expect(noAuth.statusCode).toBe(403);
 
-    // arbiter sides with the buyer → status becomes PAYMENT_VERIFIED and the freeze lifts
+    // arbiter sides with the buyer → the resolve is self-executing (§12): the
+    // freeze lifts AND the release settles in the same call (mem store: the
+    // plain unproved transition, exactly like every settle without a chain).
     bump();
     const resolved = await a.inject({
       method: "POST",
@@ -556,15 +562,13 @@ describe("CNY rails (docs/p2p.md)", () => {
       payload: { outcome: "release" },
     });
     expect(resolved.statusCode).toBe(200);
-    expect(resolved.json()).toMatchObject({ dispute: "RESOLVED", disputeOutcome: "release", status: "PAYMENT_VERIFIED" });
-
-    bump();
-    const release = await a.inject({
-      method: "POST",
-      url: `/swaps/${fresh}/transitions`,
-      payload: signed(engine, engineDid, { action: "release", txHash: "b".repeat(64) }),
+    expect(resolved.json()).toMatchObject({
+      dispute: "RESOLVED",
+      disputeOutcome: "release",
+      status: "ESCROW_RELEASED",
+      settled: true,
     });
-    expect(release.statusCode).toBe(200);
+
     bump();
     const complete = await a.inject({
       method: "POST",
@@ -572,6 +576,7 @@ describe("CNY rails (docs/p2p.md)", () => {
       payload: signed(engine, engineDid, { action: "complete" }),
     });
     expect(complete.statusCode).toBe(200);
+    expect((await store.getSwap(fresh))!.status).toBe("COMPLETED");
 
     // resolving again → 409 (no active dispute)
     const again = await a.inject({
@@ -583,7 +588,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     expect(again.statusCode).toBe(409);
   });
 
-  it("keeps a refund arbitration frozen: confirm blocked, expire → refund reachable", async () => {
+  it("keeps a refund arbitration frozen: confirm blocked, the refund settles in the resolve", async () => {
     const a = await app();
     const swapId = await toEscrowLocked(a);
     bump();
@@ -621,7 +626,19 @@ describe("CNY rails (docs/p2p.md)", () => {
       payload: { outcome: "refund" },
     });
     expect(resolved.statusCode).toBe(200);
-    expect(resolved.json()).toMatchObject({ dispute: "RESOLVED", disputeOutcome: "refund", status: "PAYMENT_CLAIMED" });
+    // Self-executing (§12): the engine-act expire + the refund settle in the
+    // resolve itself — the seller does not have to come back for the tokens.
+    expect(resolved.json()).toMatchObject({
+      dispute: "RESOLVED",
+      disputeOutcome: "refund",
+      status: "ESCROW_REFUNDED",
+      settled: true,
+    });
+    const settled = (await store.getSwap(swapId))!;
+    expect(settled.status).toBe("ESCROW_REFUNDED");
+    // the unwind is on the log: dispute_resolve → expire → refund
+    const tail = (await store.events(swapId)).map((e) => e.eventType).slice(-3);
+    expect(tail).toEqual(["dispute_resolve", "expire", "refund"]);
 
     // the forward path stays frozen for good
     const confirm = await a.inject({
@@ -632,22 +649,14 @@ describe("CNY rails (docs/p2p.md)", () => {
     expect(confirm.statusCode).toBe(422);
     expect(confirm.json().error).toContain("refund ordered");
 
-    // but the tokens can come home: expire → refund (seller-signed)
+    // nothing left to drive: expire over a settled escrow is a 409, not a race
     bump();
     const expire = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
       payload: signed(seller, sellerDid, { action: "expire" }),
     });
-    expect(expire.statusCode).toBe(200);
-    bump();
-    const refund = await a.inject({
-      method: "POST",
-      url: `/swaps/${swapId}/transitions`,
-      payload: signed(seller, sellerDid, { action: "refund", txHash: "c".repeat(64) }),
-    });
-    expect(refund.statusCode).toBe(200);
-    expect((await store.getSwap(swapId))!.status).toBe("ESCROW_REFUNDED");
+    expect(expire.statusCode).toBe(409);
   });
 
   it("stores seller profiles per method and rejects bad input", async () => {
@@ -712,5 +721,239 @@ describe("CNY rails (docs/p2p.md)", () => {
       const gone = await a.inject({ method: "POST", url, payload: signed(engine, engineDid, {}) });
       expect(gone.statusCode, url).toBe(404);
     }
+  });
+
+  it("lets the seller confirm from PAYMENT_PENDING (paid but unclaimed)", async () => {
+    const a = await app();
+    const swapId = await toEscrowLocked(a);
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/payment-instructions`,
+      payload: signed(buyer, buyerDid, {}),
+    });
+    // the seller sees the transfer land before the buyer uploads any proof —
+    // the rescue hatch for a paid-but-unclaimed payment (docs/p2p.md §9)
+    bump();
+    const confirm = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/confirm`,
+      payload: signed(seller, sellerDid, {}),
+    });
+    expect(confirm.statusCode).toBe(200);
+    expect(confirm.json().status).toBe("PAYMENT_VERIFIED");
+  });
+
+  it("cancel policy: the seller walks away only pre-instructions, the buyer only pre-claim", async () => {
+    const a = await app();
+    // pre-instructions the seller may walk away — nothing can have been paid yet
+    const early = await toEscrowLocked(a);
+    bump();
+    const sellerEarly = await a.inject({
+      method: "POST",
+      url: `/swaps/${early}/transitions`,
+      payload: signed(seller, sellerDid, { action: "cancel" }),
+    });
+    expect(sellerEarly.statusCode).toBe(200);
+    expect((await store.getSwap(early))!.status).toBe("CANCELLED");
+
+    // after instructions only the buyer — the party who knows whether they
+    // paid — may cancel
+    const late = await toEscrowLocked(a);
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${late}/payment-instructions`,
+      payload: signed(buyer, buyerDid, {}),
+    });
+    bump();
+    const sellerLate = await a.inject({
+      method: "POST",
+      url: `/swaps/${late}/transitions`,
+      payload: signed(seller, sellerDid, { action: "cancel" }),
+    });
+    expect(sellerLate.statusCode).toBe(409);
+    const buyerCancel = await a.inject({
+      method: "POST",
+      url: `/swaps/${late}/transitions`,
+      payload: signed(buyer, buyerDid, { action: "cancel" }),
+    });
+    expect(buyerCancel.statusCode).toBe(200);
+    expect((await store.getSwap(late))!.status).toBe("CANCELLED");
+  });
+
+  it("a payment claim bars cancel and seller expire (dispute is the only unwind)", async () => {
+    const a = await app();
+    const swapId = await toEscrowLocked(a);
+    bump();
+    const ins = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/payment-instructions`,
+      payload: signed(buyer, buyerDid, {}),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/proof`,
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark }),
+    });
+    // cancel is dead for both parties once the buyer asserted a payment
+    for (const [key, did] of [
+      [seller, sellerDid],
+      [buyer, buyerDid],
+    ] as const) {
+      bump();
+      const r = await a.inject({
+        method: "POST",
+        url: `/swaps/${swapId}/transitions`,
+        payload: signed(key, did, { action: "cancel" }),
+      });
+      expect(r.statusCode, did).toBe(409);
+    }
+    // and the seller cannot refund themselves over a live claim
+    bump();
+    const expire = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/transitions`,
+      payload: signed(seller, sellerDid, { action: "expire" }),
+    });
+    expect(expire.statusCode).toBe(409);
+    expect(expire.json().error).toContain("payment claim in flight");
+
+    // a confirmed payment is even more final: release is the only way out
+    bump();
+    await a.inject({ method: "POST", url: `/swaps/${swapId}/confirm`, payload: signed(seller, sellerDid, {}) });
+    bump();
+    const cancelAfter = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/transitions`,
+      payload: signed(buyer, buyerDid, { action: "cancel" }),
+    });
+    expect(cancelAfter.statusCode).toBe(409);
+  });
+
+  it("an open dispute freezes the unwind paths too (only arbitration moves)", async () => {
+    const a = await app();
+    const swapId = await toEscrowLocked(a);
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/payment-instructions`,
+      payload: signed(buyer, buyerDid, {}),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/dispute`,
+      payload: signed(buyer, buyerDid, { reason: "paid to a wrong account" }),
+    });
+    for (const [key, did, action] of [
+      [seller, sellerDid, "expire"],
+      [buyer, buyerDid, "cancel"],
+    ] as const) {
+      bump();
+      const r = await a.inject({
+        method: "POST",
+        url: `/swaps/${swapId}/transitions`,
+        payload: signed(key, did, { action }),
+      });
+      expect(r.statusCode, action).toBe(422);
+      expect(r.json().error).toContain("dispute OPEN");
+    }
+  });
+
+  it("sweep: a silent pre-payment swap expires and refunds", async () => {
+    const a = await app({ SETTLEMENT_CNY_EXPIRE_AFTER: "60", SETTLEMENT_CNY_CONFIRM_TIMEOUT: "30" });
+    const swapId = await toEscrowLocked(a);
+    clock += 61_000;
+    await sweepTick(a);
+    const stored = (await store.getSwap(swapId))!;
+    expect(stored.status).toBe("ESCROW_REFUNDED");
+    // engine-act unwind on the log: expire → refund
+    const tail = (await store.events(swapId)).map((e) => e.eventType).slice(-2);
+    expect(tail).toEqual(["expire", "refund"]);
+  });
+
+  it("sweep: an unconfirmed claim opens a dispute — never an auto-refund over a claim", async () => {
+    const a = await app({ SETTLEMENT_CNY_CONFIRM_TIMEOUT: "30", SETTLEMENT_CNY_EXPIRE_AFTER: "60" });
+    const swapId = await toEscrowLocked(a);
+    bump();
+    const ins = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/payment-instructions`,
+      payload: signed(buyer, buyerDid, {}),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/proof`,
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark }),
+    });
+    clock += 31_000;
+    await sweepTick(a);
+    // the buyer may really have paid: the claim is never swept away, it goes
+    // to arbitration (docs/p2p.md §12)
+    const stored = (await store.getSwap(swapId))!;
+    expect(stored.status).toBe("PAYMENT_CLAIMED");
+    expect(stored.dispute).toBe("OPEN");
+    expect(stored.disputeReason).toContain("auto:");
+    // and the freeze routes even a late seller confirm to the arbiter
+    bump();
+    const confirm = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/confirm`,
+      payload: signed(seller, sellerDid, {}),
+    });
+    expect(confirm.statusCode).toBe(422);
+    expect(confirm.json().error).toContain("dispute OPEN");
+  });
+
+  it("sweep: leaves disputed swaps to arbitration and verified swaps to the hook", async () => {
+    const a = await app({ SETTLEMENT_CNY_EXPIRE_AFTER: "60", SETTLEMENT_CNY_CONFIRM_TIMEOUT: "30" });
+    // a disputed swap is arbitration's — no timer touches it
+    const disputed = await toEscrowLocked(a);
+    bump();
+    const ins = await a.inject({
+      method: "POST",
+      url: `/swaps/${disputed}/payment-instructions`,
+      payload: signed(buyer, buyerDid, {}),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${disputed}/proof`,
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark }),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${disputed}/dispute`,
+      payload: signed(buyer, buyerDid, { reason: "review" }),
+    });
+    const before = (await store.getSwap(disputed))!;
+
+    // PAYMENT_VERIFIED is the release hook's — the sweep must not expire it
+    const verified = await toEscrowLocked(a);
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${verified}/payment-instructions`,
+      payload: signed(buyer, buyerDid, {}),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${verified}/proof`,
+      payload: signed(buyer, buyerDid, { txId: "TX-2" }),
+    });
+    bump();
+    await a.inject({ method: "POST", url: `/swaps/${verified}/confirm`, payload: signed(seller, sellerDid, {}) });
+
+    clock += 600_000;
+    await sweepTick(a);
+    const after = (await store.getSwap(disputed))!;
+    expect(after.status).toBe(before.status);
+    expect(after.seq).toBe(before.seq);
+    expect((await store.getSwap(verified))!.status).toBe("PAYMENT_VERIFIED");
   });
 });

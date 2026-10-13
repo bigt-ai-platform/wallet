@@ -13,10 +13,12 @@
  */
 import type { BlobStore } from "./blob.js";
 import { MemSettlementStore, type SettlementStore } from "./store.js";
-import type { EscrowSigning, PaymentProfile, PaymentProof, P2pOrder, P2pSwapEvent } from "./types.js";
+import type { EscrowSigning, PaymentProfile, PaymentProof, PaymentVerification, P2pOrder, P2pSwapEvent, StoredPairing } from "./types.js";
 
 const PROFILES = "profiles";
 const PROOFS = "proofs";
+const VERIFICATIONS = "verifications";
+const PAIRINGS = "pairings";
 const ESCROW = "escrow_signings";
 
 export class BlobSettlementStore implements SettlementStore {
@@ -92,6 +94,35 @@ export class BlobSettlementStore implements SettlementStore {
 
   async proofs(swapId: string): Promise<PaymentProof[]> {
     return ((await this.blobs.get(PROOFS, swapId)) as PaymentProof[] | null) ?? [];
+  }
+
+  async addVerification(v: PaymentVerification): Promise<void> {
+    const list = ((await this.blobs.get(VERIFICATIONS, v.swapId)) as PaymentVerification[] | null) ?? [];
+    list.push(v);
+    await this.blobs.put(VERIFICATIONS, v.swapId, list);
+  }
+
+  async verifications(swapId: string): Promise<PaymentVerification[]> {
+    return ((await this.blobs.get(VERIFICATIONS, swapId)) as PaymentVerification[] | null) ?? [];
+  }
+
+  async putPairing(p: StoredPairing): Promise<void> {
+    await this.blobs.put(PAIRINGS, `${p.did}|${p.pairingId}`, p);
+  }
+
+  async getPairing(did: string, pairingId: string): Promise<StoredPairing | null> {
+    return ((await this.blobs.get(PAIRINGS, `${did}|${pairingId}`)) as StoredPairing | null) ?? null;
+  }
+
+  async pairingsForDid(did: string): Promise<StoredPairing[]> {
+    const keys = await this.blobs.list(PAIRINGS);
+    const out: StoredPairing[] = [];
+    for (const key of keys) {
+      if (!key.startsWith(`${did}|`)) continue;
+      const p = (await this.blobs.get(PAIRINGS, key)) as StoredPairing | null;
+      if (p) out.push(p);
+    }
+    return out.sort((a, b) => b.createdAt - a.createdAt);
   }
 
   async putEscrowSigning(s: EscrowSigning): Promise<void> {

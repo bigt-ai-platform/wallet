@@ -1,0 +1,30 @@
+{
+  "name": "p2p-verify",
+  "version": "0.1.0",
+  "description": "Device-side payment verification worker (mobile-mcp) for P2P settlement — docs/p2p.md §12",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "bin": {
+    "p2p-verify": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "p2p-protocol": "*",
+    "mobile-control": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}

@@ -6,9 +6,10 @@
  * event and a replay is deterministic. Amounts are decimal strings so no float
  * rounding can make a settlement check pass or fail by accident.
  */
-import type { P2pSwapStatus } from "p2p-protocol";
+import type { P2pSwapStatus, PairingGrant, PaymentVerdict, VerifyEvidenceKind } from "p2p-protocol";
 
 export type { P2pSwapStatus };
+export type { PairingGrant, PaymentVerdict, VerifyEvidenceKind };
 
 /** Peer-to-peer CNY collection methods (WeChat Pay / Alipay / bank transfer). */
 export type PaymentRail = "wechat" | "alipay" | "bank";
@@ -65,7 +66,9 @@ export type SwapEventType =
   | SwapAction
   | "match"
   | "dispute_open"
-  | "dispute_resolve";
+  | "dispute_resolve"
+  /** Device-side payment verdict (§12) — the anchor-safe evidence snapshot. */
+  | "payment_verify";
 
 /** One append-only swap event; a full snapshot of the swap after the event. */
 export interface P2pSwapEvent {
@@ -95,6 +98,14 @@ export interface P2pSwapEvent {
   disputeReason?: string;
   /** Admin arbitration outcome once RESOLVED: "refund" keeps the forward path frozen. */
   disputeOutcome?: "release" | "refund";
+  /** When a device-verified verdict acted as the confirm (§12): how it was obtained. */
+  verifySource?: VerifyEvidenceKind;
+  /**
+   * The anchored device verdict (§12) on `payment_verify` events — the
+   * anchor-safe subset: fields + capture hashes, never the counterparty name
+   * (PII stays in `p2p_payment_verifications`) and never capture bytes.
+   */
+  verify?: Omit<PaymentVerdict, "counterpartyName">;
   /** CNY rails: per-swap remark code the buyer must include in the transfer. */
   remark?: string;
   /** CNY rails: sha256 of the buyer's uploaded receipt (store + anchor; never the image). */
@@ -138,6 +149,31 @@ export interface PaymentProof {
   receipt?: string;
   paidAt?: number;
   createdAt: number;
+}
+
+/**
+ * A device-side verification verdict (docs/p2p.md §12): a party's agent read
+ * the matching entry in their own rail app and their wallet signed what it saw.
+ * Store-only evidence (§14) — the counterparty name and capture refs never
+ * reach the chain. What a verdict may change is policy-gated (`machineConfirm`).
+ */
+export interface PaymentVerification extends PaymentVerdict {
+  swapId: string;
+  /** Whose key signed the verdict — the owner of the ledger that was read. */
+  did: string;
+  createdAt: number;
+}
+
+/**
+ * A stored device pairing (docs/p2p.md §12): a DID-signed grant letting the
+ * engine drive one mobile-mcp endpoint a user paired. Consent record —
+ * store-only (the endpoint URL is a user's machine address), and the signature
+ * over it is the engine's ordinary whole-body DID auth.
+ */
+export interface StoredPairing extends PairingGrant {
+  createdAt: number;
+  /** Set when the owner revoked the grant; revoked pairings are never used. */
+  revoked?: boolean;
 }
 
 /**

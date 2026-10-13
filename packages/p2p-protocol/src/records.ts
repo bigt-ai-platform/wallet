@@ -11,6 +11,14 @@
  * `to` is the opaque `swapId`. Amounts are decimal strings so no float rounding
  * can change a settlement check.
  */
+import {
+  VERIFY_EVIDENCE_KINDS,
+  VERIFY_OBSERVED,
+  VERIFY_SIDES,
+  type VerifyEvidenceKind,
+  type VerifyObserved,
+  type VerifySide,
+} from "./verify.js";
 
 export const P2P_SWAP_TYPE = "social.p2p-swap";
 
@@ -57,6 +65,23 @@ export interface P2pSwapRecord {
   /** sha256 of the buyer's receipt evidence (docs/p2p.md §14) — a
    *  hash only, so the image itself never reaches the chain. */
   receiptSha256?: string;
+  /**
+   * Device-side payment verdict (docs/p2p.md §12) — anchored evidence on
+   * `payment_verify` events. Small fields and capture **hashes** only: the
+   * chain rule is "only large blobs stay off chain, as hashes" — the capture
+   * bytes and the entry's PII (counterparty name) stay in the engine store.
+   */
+  verifySide?: VerifySide;
+  verifyObserved?: VerifyObserved;
+  verifyTxId?: string;
+  verifyAmount?: string;
+  verifyRemark?: string;
+  verifyPaidAt?: number;
+  verifyEvidence?: VerifyEvidenceKind;
+  /** bank_ereceipt only: the 回单 verification passed on the bank's public page. */
+  verifyReceipt?: boolean;
+  /** Comma-separated sha256 of the captures the agent kept on the device. */
+  verifyCaptures?: string;
 }
 
 export interface P2pSwapRecordInput extends Omit<P2pSwapRecord, "type" | "ts"> {
@@ -86,6 +111,15 @@ export function p2pSwapRecord(a: P2pSwapRecordInput): P2pSwapRecord {
   if (a.releaseTxHash !== undefined) record.releaseTxHash = a.releaseTxHash;
   if (a.refundTxHash !== undefined) record.refundTxHash = a.refundTxHash;
   if (a.receiptSha256 !== undefined) record.receiptSha256 = a.receiptSha256;
+  if (a.verifySide !== undefined) record.verifySide = a.verifySide;
+  if (a.verifyObserved !== undefined) record.verifyObserved = a.verifyObserved;
+  if (a.verifyTxId !== undefined) record.verifyTxId = a.verifyTxId;
+  if (a.verifyAmount !== undefined) record.verifyAmount = a.verifyAmount;
+  if (a.verifyRemark !== undefined) record.verifyRemark = a.verifyRemark;
+  if (a.verifyPaidAt !== undefined) record.verifyPaidAt = a.verifyPaidAt;
+  if (a.verifyEvidence !== undefined) record.verifyEvidence = a.verifyEvidence;
+  if (a.verifyReceipt !== undefined) record.verifyReceipt = a.verifyReceipt;
+  if (a.verifyCaptures !== undefined) record.verifyCaptures = a.verifyCaptures;
   return record;
 }
 
@@ -127,6 +161,40 @@ export function validateP2pSwapRecord(r: Partial<P2pSwapRecord>): { ok: true } |
   }
   if (r.receiptSha256 !== undefined && !/^[0-9a-f]{64}$/.test(r.receiptSha256)) {
     return { ok: false, error: "invalid receiptSha256 (sha256 hex)" };
+  }
+  // Device-verdict evidence (§12): small fields and capture hashes only.
+  if (r.verifySide !== undefined && !(VERIFY_SIDES as readonly string[]).includes(r.verifySide)) {
+    return { ok: false, error: `invalid verifySide (${VERIFY_SIDES.join("|")})` };
+  }
+  if (r.verifyObserved !== undefined && !(VERIFY_OBSERVED as readonly string[]).includes(r.verifyObserved)) {
+    return { ok: false, error: `invalid verifyObserved (${VERIFY_OBSERVED.join("|")})` };
+  }
+  if (r.verifyEvidence !== undefined && !(VERIFY_EVIDENCE_KINDS as readonly string[]).includes(r.verifyEvidence)) {
+    return { ok: false, error: `invalid verifyEvidence (${VERIFY_EVIDENCE_KINDS.join("|")})` };
+  }
+  if (r.verifyTxId !== undefined && !/^[A-Za-z0-9._-]{1,64}$/.test(r.verifyTxId)) {
+    return { ok: false, error: "invalid verifyTxId (1..64: alnum . _ -)" };
+  }
+  if (r.verifyAmount !== undefined && !DECIMAL.test(r.verifyAmount)) {
+    return { ok: false, error: "invalid verifyAmount (decimal string)" };
+  }
+  if (
+    r.verifyRemark !== undefined &&
+    (typeof r.verifyRemark !== "string" || r.verifyRemark.length === 0 || r.verifyRemark.length > 128)
+  ) {
+    return { ok: false, error: "invalid verifyRemark (1..128)" };
+  }
+  if (r.verifyPaidAt !== undefined && (typeof r.verifyPaidAt !== "number" || !Number.isFinite(r.verifyPaidAt) || r.verifyPaidAt <= 0)) {
+    return { ok: false, error: "invalid verifyPaidAt" };
+  }
+  if (r.verifyReceipt !== undefined && typeof r.verifyReceipt !== "boolean") {
+    return { ok: false, error: "invalid verifyReceipt (boolean)" };
+  }
+  if (r.verifyCaptures !== undefined) {
+    const captures = typeof r.verifyCaptures === "string" ? r.verifyCaptures.split(",") : [];
+    if (!captures.length || captures.some((c) => !/^[0-9a-f]{64}$/.test(c))) {
+      return { ok: false, error: "invalid verifyCaptures (comma-separated sha256 hex)" };
+    }
   }
   if (typeof r.ts !== "number" || r.ts <= 0 || r.ts > Date.now() + MAX_SKEW_MS) {
     return { ok: false, error: "invalid ts" };

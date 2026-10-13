@@ -78,6 +78,46 @@ CREATE TABLE IF NOT EXISTS p2p_payment_proofs (
 );
 CREATE INDEX IF NOT EXISTS p2p_payment_proofs_swap_idx ON p2p_payment_proofs (swap_id, seq);
 
+-- Device-side payment verdicts (docs/p2p.md §12): what a party's own device
+-- agent read in their own rail app, signed by their DID key. Store-only
+-- evidence — the counterparty name and capture refs never reach the chain, and
+-- a full rebuild is expected to lose them (§14).
+CREATE TABLE IF NOT EXISTS p2p_payment_verifications (
+  seq               BIGSERIAL PRIMARY KEY,
+  swap_id           TEXT NOT NULL,
+  did               TEXT NOT NULL,
+  side              TEXT NOT NULL,
+  tx_id             TEXT,
+  observed          TEXT NOT NULL,
+  amount            TEXT,
+  counterparty_name TEXT,
+  remark            TEXT,
+  paid_at           BIGINT,
+  evidence_kind     TEXT NOT NULL,
+  receipt_verified  BOOLEAN,
+  captures          TEXT,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS p2p_payment_verifications_swap_idx ON p2p_payment_verifications (swap_id, seq);
+
+-- Device pairing grants (docs/p2p.md §12): the DID-signed consent that lets
+-- the engine drive one mobile-mcp endpoint a user paired. Consent record —
+-- store-only (the endpoint URL is a user's machine address; it never anchors).
+CREATE TABLE IF NOT EXISTS p2p_pairings (
+  did        TEXT NOT NULL,
+  pairing_id TEXT NOT NULL,
+  endpoint   TEXT NOT NULL,
+  device_id  TEXT NOT NULL,
+  token      TEXT,
+  swap_id    TEXT,
+  issued_at  BIGINT NOT NULL,
+  expires_at BIGINT NOT NULL,
+  revoked    BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (did, pairing_id)
+);
+CREATE INDEX IF NOT EXISTS p2p_pairings_swap_idx ON p2p_pairings (swap_id);
+
 -- Escrow spend signatures (docs/p2p.md §6, Path B): the seller's
 -- pre-signatures over the deterministic release/refund skeletons, plus the
 -- transaction hashes the engine submitted for them. Store-only — the
