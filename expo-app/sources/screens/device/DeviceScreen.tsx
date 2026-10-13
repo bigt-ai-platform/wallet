@@ -1,15 +1,21 @@
 import * as React from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, Image, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, Image, ActivityIndicator, Linking } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { AndroidMcpClient, type MobileDevice, type UiElement } from 'mobile-control';
 import { device as deviceStore } from '@/storage';
+import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { useWallet } from '@/state/wallet';
 import WalletUnlock from '@/components/WalletUnlock';
 
 const K_ENDPOINT = ['device', 'mobileEndpoint'];
 const K_TOKEN = ['device', 'mobileToken'];
 const K_DEVICE = ['device', 'mobileDevice'];
+
+/** The deployed on-phone app (android-remote-control-mcp, built as "Mobile
+ *  Agent" by ../android-remote-control-mcp/deploy.apk.sh). Same URL the dai
+ *  #mobile page links. */
+const APK_URL = 'https://s3.bigt.ai/mobile-agent/MobileAgent.apk';
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e)).slice(0, 160);
 
@@ -22,7 +28,7 @@ const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e))
  * never in the loop; this only ever talks to the endpoint the user paired.
  */
 export default function DeviceScreen() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { theme } = useUnistyles();
   const { isUnlocked } = useWallet();
 
@@ -161,7 +167,7 @@ export default function DeviceScreen() {
   }
 
   if (!isUnlocked) {
-    return <WalletUnlock fullScreen={false} subtitle={t('device.unlockFirst')} testID="device-need-unlock" />;
+    return <WalletUnlock fullScreen={false} subtitle={t('transaction.lockedSub')} testID="device-need-unlock" />;
   }
 
   const card = { backgroundColor: theme.colors.card.background, borderColor: theme.colors.card.border };
@@ -179,7 +185,35 @@ export default function DeviceScreen() {
             <Text style={s.btnText}>{t('device.pair')}</Text>
           </TouchableOpacity>
         </View>
+        <TouchableOpacity
+          onPress={() => void Linking.openURL(p2pPdfUrl(i18n.language, tzRegion())).catch(() => {})}
+          testID="device-guide"
+          accessibilityRole="link"
+        >
+          <Text style={[s.hint, { color: theme.colors.text.link }]}>{t('device.guide')}</Text>
+        </TouchableOpacity>
         <Text style={[s.hint, { color: theme.colors.text.secondary }]}>{t('device.notConfigured')}</Text>
+
+        {/* how-to (mirrors the dai #mobile page): install the on-phone app,
+            grant Accessibility, start its server, then pair it here. */}
+        <View style={{ marginTop: 8, gap: 4 }}>
+          <Text style={[s.label, { color: theme.colors.text.primary }]}>{t('device.step1Title')}</Text>
+          <Text style={[s.hint, { color: theme.colors.text.secondary }]}>{t('device.step1Desc')}</Text>
+          <TouchableOpacity
+            style={[s.btn, { backgroundColor: theme.colors.groupped.surface, borderWidth: 1, borderColor: theme.colors.border }]}
+            onPress={() => void Linking.openURL(APK_URL)}
+            testID="device-apk-download"
+          >
+            <Text style={[s.btnText, { color: theme.colors.text.link }]}>⬇ {t('device.downloadApp')}</Text>
+          </TouchableOpacity>
+          <Text style={[s.mono, { color: theme.colors.text.secondary }]}>{APK_URL}</Text>
+
+          <Text style={[s.label, { color: theme.colors.text.primary, marginTop: 6 }]}>{t('device.step2Title')}</Text>
+          <Text style={[s.hint, { color: theme.colors.text.secondary }]}>{t('device.step2Desc')}</Text>
+
+          <Text style={[s.label, { color: theme.colors.text.primary, marginTop: 6 }]}>{t('device.step3Title')}</Text>
+          <Text style={[s.hint, { color: theme.colors.text.secondary }]}>{t('device.step3Desc')}</Text>
+        </View>
 
         <Text style={[s.label, { color: theme.colors.text.secondary }]}>{t('device.endpoint')}</Text>
         <TextInput
@@ -325,6 +359,7 @@ const s = StyleSheet.create({
   hint: { fontSize: 12 },
   label: { fontSize: 12, marginTop: 6 },
   meta: { fontSize: 12 },
+  mono: { fontSize: 11 },
   input: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, fontSize: 13 },
   btn: { borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   btnText: { color: '#fff', fontSize: 13, fontWeight: '600' },

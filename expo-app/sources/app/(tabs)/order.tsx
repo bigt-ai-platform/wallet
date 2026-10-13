@@ -6,6 +6,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
+import WalletUnlock from '@/components/WalletUnlock';
 import { httpService } from '@/services/http';
 import { cancelOrderOnLayer1 } from '@/services/transaction';
 import { listOrders, refreshAllStatuses } from '@/services/tracking';
@@ -123,6 +124,10 @@ export default function OrderScreen() {
           </TouchableOpacity>
         </View>
 
+        {!isUnlocked ? (
+          <WalletUnlock fullScreen={false} subtitle={t('order.unlockFirst')} testID="order-unlock" />
+        ) : null}
+
         {/* Status (multi-select) + date range filters over the user's orders. */}
         <View style={s.filterCard}>
           <Text style={s.filterLabel}>{t('order.filterStatus')}</Text>
@@ -191,7 +196,7 @@ export default function OrderScreen() {
                   <View style={[s.statusBadge, { backgroundColor: statusBadgeColor(o.cancelPending ? 'cancelled' : 'pending', theme) }]}>
                     <Text style={s.statusBadgeText} testID="live-order-status">{o.cancelPending ? 'cancelled' : 'pending'}</Text>
                   </View>
-                  {!o.cancelPending && o.blockHashHex ? (
+                  {isUnlocked && !o.cancelPending && o.blockHashHex ? (
                     <TouchableOpacity
                       style={[s.cancelBtn, cancellingId === o.blockHashHex && { opacity: 0.5 }]}
                       onPress={() => cancelLiveOrder(o)}

@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
+import WalletUnlock from '@/components/WalletUnlock';
 import { httpService } from '@/services/http';
 import {
   predictionService,
@@ -255,7 +256,7 @@ export default function PredictScreen() {
           )}
         </TouchableOpacity>
 
-        {isOpen && (
+        {isOpen && isUnlocked && (
           <View style={s.detail}>
             <View style={s.actionRow}>
               <TouchableOpacity style={s.actionBtn} onPress={openInTrade} testID="predict-trade">
@@ -383,10 +384,14 @@ export default function PredictScreen() {
             <Text style={s.title}>{t('predict.title')}</Text>
             <Text style={s.subtitle}>{t('predict.subtitle')}</Text>
           </View>
-          <TouchableOpacity style={s.createBtn} onPress={() => setShowCreate(true)} testID="predict-create">
+          <TouchableOpacity style={s.createBtn} onPress={() => setShowCreate(true)} disabled={!isUnlocked} testID="predict-create">
             <Text style={s.createBtnText}>{t('predict.create')}</Text>
           </TouchableOpacity>
         </View>
+
+        {!isUnlocked ? (
+          <WalletUnlock fullScreen={false} subtitle={t('predict.unlockFirst')} testID="predict-unlock" />
+        ) : null}
 
         {loading ? (
           <ActivityIndicator size="large" color={theme.colors.primary} style={{ padding: 24 }} testID="predict-loading" />

@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { CloseIcon } from '@/components/Icons';
+import WalletUnlock from '@/components/WalletUnlock';
 import SegmentedTabs from '@/components/SegmentedTabs';
 import { MONO_FONT } from '@/constants/fonts';
 import type { TokenItem } from '@/types/api';
@@ -121,6 +122,10 @@ export default function TokensScreen() {
             )}
           </ScrollView>
         </>
+      ) : !isUnlocked ? (
+        <ScrollView contentContainerStyle={s.formContent}>
+          <WalletUnlock fullScreen={false} subtitle={t('tokens.createSub')} testID="tokens-unlock" />
+        </ScrollView>
       ) : (
         <ScrollView contentContainerStyle={s.formContent}>
           <Text style={s.formTitle}>{t('tokens.createTitle')}</Text>
