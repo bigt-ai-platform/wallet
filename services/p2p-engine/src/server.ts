@@ -2005,7 +2005,14 @@ async function main() {
   if (watchOn) {
     const cursors = pool ? pgCursorStore(pool) : new MemCursorStore();
     const maxWalk = Number(env.SETTLEMENT_WATCH_MAX_WALK ?? 2000);
+    let ticking = false;
     const tick = async () => {
+      // A walk slower than the interval (a cold cursor / a long window) must not
+      // stack: setInterval does not await, so overlapping walks each re-scan from
+      // the head and hammer the L1-SOCIAL endpoint (observed ~69 getBlockByHash/s
+      // per region saturating the link). One in flight at a time.
+      if (ticking) return;
+      ticking = true;
       try {
         const url = socialUrl();
         if (!url) throw new Error("no healthy L1-SOCIAL endpoint");
@@ -2021,6 +2028,7 @@ async function main() {
         watchState.lastError = e instanceof Error ? e.message : String(e);
       } finally {
         watchState.lastRunAt = Date.now();
+        ticking = false;
       }
     };
     void tick(); // boot replay in the background — must never gate listen()
