@@ -17,6 +17,7 @@ import {
   type VerdictCheck,
 } from "p2p-protocol";
 import { parseRailEntry, verdictFromEntry, type ParsedEntry, type VerifySpec } from "./extract.js";
+import { selectReceiptNotification } from "./notifications.js";
 import type { DeviceGateway } from "./gateway.js";
 
 export interface VerifyOptions {
@@ -57,4 +58,25 @@ export async function verifyPayment(
   const verdict = verdictFromEntry(entry, { ...spec, ...(captures.length ? { captures } : {}) });
   const check = validatePaymentVerdict(verdict, spec.expected);
   return { verdict, check, captures, entry };
+}
+
+/**
+ * Read the payee's **receipt notification** instead of the screen (docs/p2p.md
+ * §12). WeChat hides its window from the accessibility tree, but its "收款到账"
+ * push is readable via `notification_list`, so this is the on-device read for
+ * rails that block the screen reader. The notification is the provider's, on
+ * the payee's device — a payee-side signal, checked exactly like a screen read.
+ */
+export async function verifyPaymentViaNotification(
+  gateway: DeviceGateway,
+  spec: VerifySpec,
+): Promise<VerifyResult> {
+  if (!gateway.listNotifications) {
+    throw new Error("device gateway does not support notifications (use the android-remote-control-mcp endpoint)");
+  }
+  const notifications = await gateway.listNotifications();
+  const entry = selectReceiptNotification(notifications, spec);
+  const verdict = verdictFromEntry(entry, spec);
+  const check = validatePaymentVerdict(verdict, spec.expected);
+  return { verdict, check, captures: [], entry };
 }

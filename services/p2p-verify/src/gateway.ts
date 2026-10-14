@@ -24,6 +24,7 @@ import {
   parseDevicesText,
   type DeviceApp,
   type DeviceGateway as SharedDeviceGateway,
+  type DeviceNotification,
   type MobileDevice,
   type UiElement,
 } from "mobile-control";
@@ -38,6 +39,9 @@ import {
 
 export { parseAppsText, parseDevicesText, localMobileMcpEntry };
 export type { PairingEndpoint };
+
+/** A system notification, as the on-phone endpoint reports it. */
+export type { DeviceNotification };
 
 /** A connected device, as mobile-mcp reports it. */
 export type McpDevice = MobileDevice;
