@@ -40,4 +40,19 @@ export {
   parseReceiptNotification,
   selectReceiptNotification,
 } from "./notifications.js";
+export {
+  amountsMatch,
+  createPayout,
+  getCaptureStatus,
+  paypalAccessToken,
+  paypalApiBase,
+  paypalConfig,
+  paypalEnabled,
+  verifyPaypalCapture,
+  verifyWebhookSignature,
+  type CaptureInfo,
+  type PayPalConfig,
+  type PaypalCaptureVerifyResult,
+  type PayoutResult,
+} from "./paypal.js";
 export { parseCliArgs, main as cliMain, type CliOptions } from "./cli.js";
