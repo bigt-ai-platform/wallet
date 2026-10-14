@@ -179,6 +179,22 @@ the other's funds.
 
 ---
 
+## 10. Device-side verification — the seller's own phone
+
+The seller's own statement is the receipt; the engine can read it **automatically**
+through the on-phone app
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp)).
+WeChat hides its UI from accessibility, so for WeChat the app reads the
+“收款到账” push (Alipay/bank expose the screen).
+
+Pairing is a **short single-use code** the app shows on its Server screen: enter
+the endpoint and the code in the wallet's **Device** screen (**Pair with code**)
+or dai's **Mobile** page — the app returns a per-device token
+(`POST /pair/claim`); revoke it in Settings › Access › Paired devices.
+
+Under `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt` the engine can then
+machine-confirm without the manual tap.
+
 ## Comparison: Binance P2P vs this settlement
 
 | Feature | Binance P2P | This settlement |
