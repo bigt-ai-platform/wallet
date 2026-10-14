@@ -55,6 +55,38 @@ export interface ParsedScreenState {
   foreground?: string;
 }
 
+export interface ClaimedPairing {
+  baseUrl: string;
+  token: string;
+  deviceId?: string;
+}
+
+/**
+ * Spend a short single-use pairing code the on-phone app printed (Server screen)
+ * for a **per-device bearer token** — the android-remote-control-mcp analog of
+ * the dsh relay pairing. The client then connects with the returned [token].
+ */
+export async function claimPairing(
+  baseUrl: string,
+  code: string,
+  opts: { name?: string; timeoutMs?: number } = {},
+): Promise<ClaimedPairing> {
+  const base = baseUrl.trim().replace(/\/+$/, "");
+  const res = await fetch(`${base}/pair/claim`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code: code.trim(), ...(opts.name ? { name: opts.name } : {}) }),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 30_000),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`pair/claim: ${res.status}${detail ? ` — ${detail.slice(0, 160)}` : ""}`);
+  }
+  const out = (await res.json()) as { token?: string; device_id?: string; name?: string };
+  if (!out.token) throw new Error("pair/claim: no token in response");
+  return { baseUrl: base, token: out.token, ...(out.device_id ? { deviceId: out.device_id } : {}) };
+}
+
 /**
  * `android_notification_list` answers a caution prelude followed by
  * `{"notifications":[{notification_id,package_name,app_name,title,text,big_text,

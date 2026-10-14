@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, Text, ScrollView, TouchableOpacity, TextInput, Image, ActivityIndicator, Linking } from 'react-native';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { AndroidMcpClient, type MobileDevice, type UiElement } from 'mobile-control';
+import { AndroidMcpClient, claimPairing, type MobileDevice, type UiElement } from 'mobile-control';
 import { device as deviceStore } from '@/storage';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { useWallet } from '@/state/wallet';
@@ -36,6 +36,7 @@ export default function DeviceScreen() {
   const [endpoint, setEndpoint] = React.useState(() => deviceStore.get(K_ENDPOINT) ?? '');
   const [token, setToken] = React.useState(() => deviceStore.get(K_TOKEN) ?? '');
   const [deviceId, setDeviceId] = React.useState(() => deviceStore.get(K_DEVICE) ?? '');
+  const [code, setCode] = React.useState('');
   const [connected, setConnected] = React.useState(false);
   const [devices, setDevices] = React.useState<MobileDevice[]>([]);
   const [foreground, setForeground] = React.useState('');
@@ -95,6 +96,43 @@ export default function DeviceScreen() {
     if (isUnlocked && endpoint.trim() && token.trim()) void connect(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isUnlocked]);
+
+  /**
+   * Pair with the short single-use code the on-phone app shows on its Server
+   * screen (docs/p2p.md §12): spend it at `/pair/claim` for a per-device token,
+   * then connect with that token — no long bearer to copy.
+   */
+  const pairWithCode = React.useCallback(async () => {
+    const base = endpoint.trim();
+    const c = code.trim();
+    if (!base || !c) {
+      flash(false, t('device.needPair'));
+      return;
+    }
+    setBusy(true);
+    try {
+      const claimed = await claimPairing(base, c, { name: 'wallet' });
+      setToken(claimed.token);
+      deviceStore.set(K_ENDPOINT, claimed.baseUrl);
+      deviceStore.set(K_TOKEN, claimed.token);
+      setCode('');
+      const client = await AndroidMcpClient.connect({ device: 'list', baseUrl: claimed.baseUrl, token: claimed.token });
+      const list = await client.listDevices();
+      const chosen = list[0]?.id || 'self';
+      client.close();
+      clientRef.current = await AndroidMcpClient.connect({ device: chosen, baseUrl: claimed.baseUrl, token: claimed.token });
+      setDevices(list);
+      setDeviceId(chosen);
+      setConnected(true);
+      deviceStore.set(K_DEVICE, chosen);
+      flash(true, t('device.pairedCode'));
+    } catch (e) {
+      setConnected(false);
+      flash(false, t('device.pairCodeFailed', { e: msg(e) }));
+    } finally {
+      setBusy(false);
+    }
+  }, [endpoint, code, t, flash]);
 
   async function run(fn: (c: AndroidMcpClient) => Promise<unknown>, ok: string) {
     const c = clientRef.current;
@@ -225,6 +263,27 @@ export default function DeviceScreen() {
           autoCapitalize="none"
           testID="device-endpoint"
         />
+        <Text style={[s.label, { color: theme.colors.text.secondary }]}>{t('device.pairCode')}</Text>
+        <View style={s.rowWrap}>
+          <TextInput
+            style={[inputStyle, s.flex]}
+            value={code}
+            onChangeText={setCode}
+            placeholder={t('device.pairCodeHint')}
+            placeholderTextColor={theme.colors.text.secondary}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            testID="device-pair-code"
+          />
+          <TouchableOpacity
+            style={btn(theme.colors.accent.emerald)}
+            onPress={() => void pairWithCode()}
+            disabled={busy || !code.trim()}
+            testID="device-pair-code-btn"
+          >
+            <Text style={s.btnText}>{t('device.pairWithCode')}</Text>
+          </TouchableOpacity>
+        </View>
         <Text style={[s.label, { color: theme.colors.text.secondary }]}>{t('device.token')}</Text>
         <TextInput
           style={inputStyle}

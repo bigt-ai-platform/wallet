@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AndroidMcpClient,
+  claimPairing,
   parseAndroidApps,
   parseScreenStateTsv,
 } from "../src/android-client.js";
@@ -172,5 +173,40 @@ describe("AndroidMcpClient", () => {
     expect(await client.listDevices()).toEqual([
       { id: "self", platform: "android", type: "real", state: "online" },
     ]);
+  });
+});
+
+describe("claimPairing", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("spends a short code for a per-device token", async () => {
+    const calls: Array<{ url: string; body: any }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        calls.push({ url, body: JSON.parse(init.body) });
+        return new Response(JSON.stringify({ token: "tok", device_id: "pd-1" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }),
+    );
+
+    const claimed = await claimPairing("http://127.0.0.1:8080/", "ABCD1234", { name: "wallet" });
+
+    expect(claimed).toEqual({ baseUrl: "http://127.0.0.1:8080", token: "tok", deviceId: "pd-1" });
+    expect(calls[0].url).toBe("http://127.0.0.1:8080/pair/claim");
+    expect(calls[0].body).toEqual({ code: "ABCD1234", name: "wallet" });
+  });
+
+  it("rejects a non-2xx, and a 200 without a token", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
+    await expect(claimPairing("http://x", "BAD")).rejects.toThrow("pair/claim: 404");
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } })),
+    );
+    await expect(claimPairing("http://x", "ABCD1234")).rejects.toThrow("no token");
   });
 });
