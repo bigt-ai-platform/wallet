@@ -120,6 +120,8 @@ export interface DeviceReadArgs {
   expected: VerdictExpectation;
   evidenceKind?: PaymentVerdict["evidenceKind"];
   receiptVerified?: boolean;
+  /** Read the screen tree (default) or the payee's receipt notification (docs/p2p.md §12). */
+  via?: "screen" | "notification";
 }
 
 export interface DeviceReadResult {
@@ -208,16 +210,21 @@ function escrowKeyFromDid(did: string | undefined): PQKey | null {
  * injecting a fake reader, never loads it.
  */
 async function defaultDeviceRead(args: DeviceReadArgs): Promise<DeviceReadResult> {
-  const { connectFromGrant, verifyPayment } = await import("p2p-verify");
+  const { connectFromGrant, verifyPayment, verifyPaymentViaNotification } = await import("p2p-verify");
   const gateway = await connectFromGrant(args.grant);
+  const spec = {
+    side: args.side,
+    rail: args.rail as "wechat" | "alipay" | "bank",
+    expected: args.expected,
+    ...(args.evidenceKind ? { evidenceKind: args.evidenceKind } : {}),
+    ...(args.receiptVerified !== undefined ? { receiptVerified: args.receiptVerified } : {}),
+  };
   try {
-    return await verifyPayment(gateway, {
-      side: args.side,
-      rail: args.rail as "wechat" | "alipay" | "bank",
-      expected: args.expected,
-      ...(args.evidenceKind ? { evidenceKind: args.evidenceKind } : {}),
-      ...(args.receiptVerified !== undefined ? { receiptVerified: args.receiptVerified } : {}),
-    });
+    // WeChat hides its accessibility tree, so the payee's receipt notification
+    // (`notification_list`) is the readable signal on that rail (docs/p2p.md §12).
+    return args.via === "notification"
+      ? await verifyPaymentViaNotification(gateway, spec)
+      : await verifyPayment(gateway, spec);
   } finally {
     gateway.close?.();
   }
@@ -1549,6 +1556,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       paidTo: now(),
     };
     const evidenceKind = body.evidenceKind === "bank_ereceipt" ? "bank_ereceipt" : "device_read";
+    const via = body.via === "notification" ? "notification" : "screen";
     const read = deps.readDevice ?? defaultDeviceRead;
     let result: DeviceReadResult;
     try {
@@ -1558,6 +1566,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         rail: swap.wantRail,
         expected,
         evidenceKind,
+        via,
         ...(body.receiptVerified !== undefined ? { receiptVerified: !!body.receiptVerified } : {}),
       });
     } catch (e) {
