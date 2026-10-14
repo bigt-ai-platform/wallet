@@ -55,6 +55,22 @@ export interface UiElement {
 /** Produces the Authorization header(s) for one request body (DID auth, Node-side). */
 export type AuthHeaderFn = (body: unknown) => Record<string, string>;
 
+/** One system notification, as `notification_list` reports it (docs/p2p.md §12). */
+export interface DeviceNotification {
+  id?: string;
+  /** Source app package (e.g. `com.tencent.mm`, `com.eg.android.AlipayGphone`). */
+  packageName: string;
+  appName?: string;
+  title?: string;
+  text?: string;
+  bigText?: string;
+  subText?: string;
+  /** When the notification was posted (unix ms), as the device reports it. */
+  timestampMs?: number;
+  isOngoing?: boolean;
+  isClearable?: boolean;
+}
+
 interface JsonRpcResponse {
   jsonrpc: "2.0";
   id?: number | string;
@@ -128,6 +144,12 @@ export interface DeviceGateway {
   screenshot(): Promise<Uint8Array>;
   /** Control-plane extras; test fakes need not implement them. */
   listDevices?(): Promise<MobileDevice[]>;
+  /**
+   * Read the system notification shade (android-remote-control-mcp only). The
+   * payee's "收款到账" push is the one on-device signal WeChat does not hide
+   * from the accessibility tree (docs/p2p.md §12).
+   */
+  listNotifications?(): Promise<DeviceNotification[]>;
   close?(): void;
 }
 

@@ -31,7 +31,13 @@ export {
 } from "./did-auth.js";
 export {
   verifyPayment,
+  verifyPaymentViaNotification,
   type VerifyOptions,
   type VerifyResult,
 } from "./worker.js";
+export {
+  detectRail,
+  parseReceiptNotification,
+  selectReceiptNotification,
+} from "./notifications.js";
 export { parseCliArgs, main as cliMain, type CliOptions } from "./cli.js";

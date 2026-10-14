@@ -18,6 +18,7 @@ import {
   base64ToBytes,
   type DeviceApp,
   type DeviceGateway,
+  type DeviceNotification,
   type HttpMobileClientOptions,
   type MobileDevice,
   type UiElement,
@@ -52,6 +53,34 @@ export interface ParsedScreenState {
   height?: number;
   /** Package of the focused window, when the app reports one. */
   foreground?: string;
+}
+
+/**
+ * `android_notification_list` answers a caution prelude followed by
+ * `{"notifications":[{notification_id,package_name,app_name,title,text,big_text,
+ * sub_text,timestamp,is_ongoing,is_clearable,…}]}`. This extracts and maps it.
+ */
+export function parseNotificationsText(text: string): DeviceNotification[] {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return [];
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1)) as { notifications?: Array<Record<string, unknown>> };
+    return (parsed.notifications ?? []).map((n) => ({
+      ...(typeof n.notification_id === "string" ? { id: n.notification_id } : {}),
+      packageName: String(n.package_name ?? ""),
+      ...(typeof n.app_name === "string" ? { appName: n.app_name } : {}),
+      ...(typeof n.title === "string" ? { title: n.title } : {}),
+      ...(typeof n.text === "string" ? { text: n.text } : {}),
+      ...(typeof n.big_text === "string" ? { bigText: n.big_text } : {}),
+      ...(typeof n.sub_text === "string" ? { subText: n.sub_text } : {}),
+      ...(typeof n.timestamp === "number" ? { timestampMs: n.timestamp } : {}),
+      isOngoing: n.is_ongoing === true,
+      isClearable: n.is_clearable === true,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -178,6 +207,11 @@ export class AndroidMcpClient implements DeviceGateway {
 
   async listApps(): Promise<DeviceApp[]> {
     return parseAndroidApps(await this.call("list_apps", { filter: "user" }, 60_000));
+  }
+
+  /** The system notification shade (the payee's "收款到账" push, docs/p2p.md §12). */
+  async listNotifications(): Promise<DeviceNotification[]> {
+    return parseNotificationsText(await this.call("notification_list", {}, 60_000));
   }
 
   async launchApp(appId: string): Promise<void> {

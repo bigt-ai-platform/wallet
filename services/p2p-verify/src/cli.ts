@@ -23,7 +23,7 @@
 import { RAILS, type Rail } from "./extract.js";
 import { McpGateway, localMobileMcpEntry, type DeviceGateway } from "./gateway.js";
 import { AndroidMcpClient } from "mobile-control";
-import { verifyPayment } from "./worker.js";
+import { verifyPayment, verifyPaymentViaNotification } from "./worker.js";
 import {
   AUTO_RELEASE_POLICIES,
   VERIFY_EVIDENCE_KINDS,
@@ -47,6 +47,8 @@ export interface CliOptions {
   windowToMs?: number;
   httpUrl?: string;
   token?: string;
+  /** Read the screen (accessibility) or the receipt notification (docs/p2p.md §12). */
+  via: "screen" | "notification";
 }
 
 const USAGE = `p2p-verify — device-side payment verification (docs/p2p.md §12)
@@ -63,6 +65,7 @@ const USAGE = `p2p-verify — device-side payment verification (docs/p2p.md §12
   --receipt-verified              the bank 回单 verification passed (bank_ereceipt)
   --window-from-ms N --window-to-ms N    paidAt window (default: now-24h .. now)
   --http URL --token TOKEN        use a mobile-mcp --listen endpoint (Streamable HTTP)
+  --via screen|notification       read the on-screen ledger or the "收款到账" push (default screen)
   --device-env                    print the resolved mobile-mcp entry and exit
 
 The verdict it prints is what the wallet signs and POSTs to
@@ -78,7 +81,7 @@ function num(v: string | undefined): number | undefined {
 /** Pure argument parsing (exported for tests). */
 export function parseCliArgs(argv: readonly string[]): { options: CliOptions; errors: string[] } {
   const errors: string[] = [];
-  const options: CliOptions = { mode: "verify", evidence: "device_read", receiptVerified: false };
+  const options: CliOptions = { mode: "verify", evidence: "device_read", receiptVerified: false, via: "screen" };
   const seen = { side: false, rail: false, amount: false };
   const valueOf = (flag: string, i: number): [string | undefined, number] => {
     const v = argv[i + 1];
@@ -149,6 +152,14 @@ export function parseCliArgs(argv: readonly string[]): { options: CliOptions; er
       case "--token":
         [options.token, i] = valueOf(arg, i);
         break;
+      case "--via":
+        [v, i] = valueOf(arg, i);
+        if (v !== undefined && v !== "screen" && v !== "notification") {
+          errors.push("--via must be screen|notification");
+        } else if (v !== undefined) {
+          options.via = v;
+        }
+        break;
       default:
         errors.push(`unknown argument ${arg}`);
     }
@@ -200,10 +211,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         return 1;
       }
     }
-    if (options.app) await gateway.launchApp(options.app);
+    if (options.via === "screen" && options.app) await gateway.launchApp(options.app);
 
     const now = Date.now();
-    const result = await verifyPayment(gateway, {
+    const spec = {
       side: options.side!,
       rail: options.rail!,
       evidenceKind: options.evidence,
@@ -215,7 +226,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         paidFrom: options.windowFromMs ?? now - 24 * 60 * 60 * 1000,
         paidTo: options.windowToMs ?? now,
       },
-    });
+    };
+    const result =
+      options.via === "notification"
+        ? await verifyPaymentViaNotification(gateway, spec)
+        : await verifyPayment(gateway, spec);
 
     console.log(JSON.stringify({ verdict: result.verdict, check: result.check, entry: result.entry }, null, 2));
     if (result.check.ok) {
