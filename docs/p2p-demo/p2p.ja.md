@@ -146,6 +146,22 @@ await L0.submitTransaction(serialize(tx));
 
 ---
 
+## 10. 端末側の検証 — セラー自身のスマホ
+
+セラー自身の明細が証拠であり、エンジンはスマホアプリ
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
+経由で自動的に読み取れます。WeChat はユーザー補助に UI を公開しないため、
+WeChat ではアプリが「收款到账」通知を読み取ります（Alipay/銀行は画面）。
+
+ペアリングは、アプリのサーバー画面に表示される**短い単回使用コード**です。
+ウォレットの**デバイス**画面（**コードでペアリング**）または dai の
+**Mobile** ページにエンドポイントとコードを入力すると、アプリが端末ごとの
+トークンを返します（`POST /pair/claim`）。取り消しは 設定 › アクセス ›
+ペアリング済みデバイス。
+
+`SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt` の下では、エンジンが手動
+確認なしで自動的に確認できます。
+
 ## 比較: Binance P2P vs このセットルメント
 
 | 機能 | Binance P2P | このセットルメント |

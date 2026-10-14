@@ -146,6 +146,23 @@ El reembolso no requiere consentimiento del comprador ni bloqueo temporal — el
 
 ---
 
+## 10. Verificación en el dispositivo — el propio teléfono del vendedor
+
+El extracto del propio vendedor es el recibo; el motor puede leerlo
+automáticamente a través de la app del teléfono
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp)).
+WeChat oculta su interfaz a la accesibilidad, así que para WeChat la app lee la
+notificación «收款到账» (para Alipay/banco, la pantalla).
+
+El emparejamiento es un **código corto de un solo uso** que la app muestra en su
+pantalla Servidor: introduce el endpoint y el código en la pantalla **Dispositivo**
+de la cartera (**Emparejar con código**) o en la página **Mobile** de dai — la app
+devuelve un token por dispositivo (`POST /pair/claim`); se revoca en Ajustes ›
+Acceso › Dispositivos emparejados.
+
+Con `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt`, el motor puede confirmar
+automáticamente sin el toque manual.
+
 ## Comparativa: Binance P2P vs esta liquidación
 
 | Función | Binance P2P | Esta liquidación |

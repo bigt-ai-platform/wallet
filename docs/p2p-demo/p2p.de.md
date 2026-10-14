@@ -146,6 +146,23 @@ Die Rückerstattung braucht weder Zustimmung des Käufers noch einen Timelock �
 
 ---
 
+## 10. Geräte-Verifizierung — das eigene Telefon des Verkäufers
+
+Der eigene Kontoauszug des Verkäufers ist der Beleg; die Engine kann ihn über die
+App auf dem Telefon ([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
+automatisch lesen. WeChat verbirgt seine Oberfläche vor der Barrierefreiheit,
+daher liest die App für WeChat die „收款到账“-Benachrichtigung (bei Alipay/Bank
+den Bildschirm).
+
+Die Kopplung ist ein **kurzer, einmalig verwendbarer Code**, den die App auf dem
+Server-Bildschirm zeigt: Endpunkt + Code im **Geräte**-Bildschirm der Wallet
+(**Mit Code koppeln**) bzw. auf der **Mobile**-Seite von dai eingeben — die App
+gibt ein Token pro Gerät zurück (`POST /pair/claim`); Widerruf unter Einstellungen
+› Zugriff › Gekoppelte Geräte.
+
+Mit `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt` kann die Engine danach ohne
+manuelles Bestätigen automatisch bestätigen.
+
 ## Vergleich: Binance P2P vs. diese Abwicklung
 
 | Funktion | Binance P2P | Diese Abwicklung |

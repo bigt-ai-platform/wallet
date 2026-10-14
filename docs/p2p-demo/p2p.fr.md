@@ -146,6 +146,22 @@ Le remboursement ne demande ni consentement de l'acheteur ni time-lock — le se
 
 ---
 
+## 10. Vérification côté appareil — le téléphone du vendeur
+
+Le relevé du vendeur est le reçu ; le moteur peut le lire automatiquement via
+l'app du téléphone ([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp)).
+WeChat masque son interface à l'accessibilité, donc pour WeChat l'app lit la
+notification « 收款到账 » (pour Alipay/banque, l'écran).
+
+L'appairage est un **code court à usage unique** affiché par l'app sur son écran
+Serveur : saisissez l'endpoint et le code dans l'écran **Appareil** du
+portefeuille (**Appairer avec le code**) ou la page **Mobile** de dai — l'app
+renvoie un jeton par appareil (`POST /pair/claim`) ; révocation dans Réglages ›
+Accès › Appareils appairés.
+
+Avec `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt`, le moteur peut confirmer
+automatiquement sans le tap manuel.
+
 ## Comparaison : Binance P2P vs ce règlement
 
 | Fonctionnalité | Binance P2P | Ce règlement |

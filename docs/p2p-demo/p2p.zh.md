@@ -146,6 +146,20 @@ await L0.submitTransaction(serialize(tx));
 
 ---
 
+## 10. 设备侧验证 — 卖家自己的手机
+
+卖家自己的对账单就是凭证；引擎可以通过手机上的 App
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
+自动读取。WeChat 对无障碍隐藏界面，因此对 WeChat 由 App 读取“收款到账”通知
+（支付宝/银行为屏幕内容）。
+
+配对是 App 在“服务器”页面显示的**一次性短码**：在钱包的**设备**页面
+（**用码配对**）或 dai 的 **Mobile** 页面输入端点与短码，App 即返回每台设备
+的令牌（`POST /pair/claim`）；在 设置 › 访问 › 已配对设备 中撤销。
+
+在 `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt` 下，引擎即可无需手动确认
+而自动确认。
+
 ## 对比：Binance P2P 与本次结算
 
 | 功能 | Binance P2P | 本次结算 |
