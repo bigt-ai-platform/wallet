@@ -6,6 +6,11 @@ legs were captured by `e2e/capture-p2p-cny.mjs` (a fresh wallet pair per rail).
 The rail is a data field, not a fork (`docs/p2p.md` §7): the same 2-of-3 escrow,
 the same PQ-signed state machine, three different fiat legs.
 
+The seller's receipt can also be **read automatically from their own phone**
+through the on-phone agent — the screen tree for Alipay/bank, or WeChat's own
+“收款到账” push for WeChat (which hides its UI from accessibility). That is
+[§8 Device-side verification](#8-device-side-verification--the-payees-own-phone).
+
 Companion documents: [docs/p2p.md](../p2p.md) (design, protocol & threat
 model), engine source `services/p2p-engine/src/`.
 
@@ -39,6 +44,13 @@ model), engine source `services/p2p-engine/src/`.
    signed by the engine signer (`SETTLEMENT_ENGINE_DID`, an ML-DSA did:key
    ≈3.5 kB); nothing fires them automatically yet, so the capture script stands
    in for that operator job (§6.1).
+6. **The receipt can be machine-read from the payee's own phone (§8).** The
+   seller pairs the on-phone agent once; the engine then reads the seller's own
+   WeChat/Alipay/statement via `POST /swaps/:id/device-read` — the screen tree,
+   or, for WeChat (which hides its UI from accessibility), WeChat's own
+   “收款到账” push — and, under
+   `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt`, machine-confirms without the
+   manual tap.
 
 ---
 
@@ -52,7 +64,7 @@ model), engine source `services/p2p-engine/src/`.
 | 2 | `ESCROW_LOCKED` | `POST /swaps/:id/transitions` `action=escrow_lock` | **seller** | `txHash` (escrow lock proof) |
 | 3 | `PAYMENT_PENDING` | `POST /swaps/:id/payment-instructions` | buyer | `remark` (12 hex chars, per-swap) |
 | 4 | `PAYMENT_CLAIMED` | `POST /swaps/:id/proof` | buyer | `txId` 流水号, optional `receipt` + `receiptSha256` |
-| 5 | `PAYMENT_VERIFIED` | `POST /swaps/:id/confirm` | **seller** | the seller's own statement check |
+| 5 | `PAYMENT_VERIFIED` | `POST /swaps/:id/confirm` · or `POST /swaps/:id/device-read` + `POST /swaps/:id/verify` under policy (§8) | **seller** | the seller's own statement check |
 | 6 | `ESCROW_RELEASED` | `POST /swaps/:id/transitions` `action=release` | **engine** | `txHash` (release proof) |
 | 7 | `COMPLETED` | `POST /swaps/:id/transitions` `action=complete` | **engine** | — (seller already holds the CNY) |
 
@@ -412,7 +424,62 @@ profile + list + match. Full timestamps are in
 
 ---
 
-## 8. HTTP API reference (CNY rails)
+## 8. Device-side verification — the payee's own phone
+
+A CNY transfer has no webhook, so the seller's own account is the receipt. The
+wallet/engine can **read it automatically** through the on-phone agent
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp)),
+so the seller does not have to eyeball the statement by hand. The user pairs the
+phone once (endpoint + capability token, revocable); the pairing **is** the
+consent.
+
+Two reads satisfy the same `DeviceGateway`:
+
+- **Screen read (accessibility).** Alipay and bank apps expose their UI tree;
+  the worker reads the entry as text. WeChat **hides its window from
+  accessibility**, so for WeChat use the notification read.
+- **Receipt-notification read.** The payee's phone receives WeChat Pay's own
+  “收款到账” push; the worker reads the notification shade and parses
+  amount / 备注 / 交易单号 / time from it. This works even though WeChat hides
+  its UI.
+
+![The payee's own WeChat 收款到账 notification](assets/screenshots/p2p-verify-wechat-notification-en.png)
+
+*Device capture. The notification text is illustrative — no real transfer was
+made for this shot; on a live swap it carries the swap's own `remark` and
+交易单号.*
+
+The engine drives it (docs/p2p.md §12):
+
+```
+POST /pairings                       → register the endpoint (DID-signed grant)
+POST /swaps/:id/device-read {via}    → engine reads the caller's own side
+POST /swaps/:id/verify               → the wallet signs the verdict
+```
+
+`device-read` takes `via: "screen" | "notification"` and returns a verdict
+(`observed: sent|received|none`) checked against the swap (exact amount, the
+per-swap `remark`, the time window, the 交易号). Under
+`SETTLEMENT_CNY_AUTO_RELEASE_ON` the engine may then act **without** the manual
+*Confirm* tap:
+
+| Policy | Machine confirmation |
+|---|---|
+| `off` (default) | verdicts are dispute evidence only |
+| `seller_receipt` | the **seller's** own `received` read stands in for the confirm tap |
+| `two_sided` | the buyer's `sent` **and** the seller's `received` must agree on one 交易号 |
+| `verified_receipt` | a bank 电子回单 that passed the bank's public 回单 verification settles it alone |
+
+A **notification** seller read qualifies as `seller_receipt`. Trust is tiered:
+one-sided evidence never machine-confirms under `two_sided`, and only the
+**payee's own** device is the side that counts. This is locked by
+`services/p2p-engine/test/wechat-mcp-verify.e2e.test.ts` — a mock `android_*`
+MCP endpoint serves the WeChat screen **and** the 收款到账 push, and the engine
+runs the full read → verdict → `/verify` → machine-confirm to `PAYMENT_VERIFIED`.
+
+---
+
+## 9. HTTP API reference (CNY rails)
 
 All mutating endpoints take a signed body:
 
@@ -460,7 +527,7 @@ Guard rails the engine enforces on every one of them:
 
 ---
 
-## 9. Review findings (code review of the CNY implementation)
+## 10. Review findings (code review of the CNY implementation)
 
 Verified good: the transition table keeps `PAYMENT_CLAIMED` out of the release
 path; `release`/`complete` are engine-only; the profile is party-scoped; the
@@ -492,7 +559,7 @@ Open gaps, in the order they matter:
 
 ---
 
-## 10. Regenerating this guide
+## 11. Regenerating this guide
 
 ```bash
 ( cd e2e && RAILS=wechat,alipay,bank node capture-p2p-cny.mjs )  # CNY legs (14 shots per rail)
