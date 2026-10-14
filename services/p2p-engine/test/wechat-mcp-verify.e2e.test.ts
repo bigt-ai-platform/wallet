@@ -81,6 +81,9 @@ const SHOT_B64 = Buffer.from("fake-wechat-screenshot-bytes").toString("base64");
 /** When set, the mock endpoint serves this TSV instead of the good bill (test seam). */
 let screenOverride: string | undefined;
 
+/** The 备注 the mock WeChat receipt notification carries (defaults to the good code). */
+let receiptRemark = REMARK;
+
 /** One JSON-RPC answer from the mock android-mcp endpoint. */
 function handleRpc(method: string, id: unknown, params: Record<string, unknown>): unknown {
   if (method === "initialize") {
@@ -108,7 +111,7 @@ function handleRpc(method: string, id: unknown, params: Record<string, unknown>)
         package_name: "com.tencent.mm",
         app_name: "WeChat",
         title: "微信支付",
-        text: `微信支付收款到账 ¥715.00 来自 张三 备注 ${REMARK} 交易单号 ${TX_ID}`,
+        text: `微信支付收款到账 ¥715.00 来自 张三 备注 ${receiptRemark} 交易单号 ${TX_ID}`,
         big_text: null,
         sub_text: null,
         timestamp: new Date(2026, 9, 13, 14, 32, 0).getTime(),
@@ -163,6 +166,7 @@ beforeEach(() => {
   clock = T_ORDER;
   mcpCalls.length = 0;
   screenOverride = undefined;
+  receiptRemark = REMARK;
   store.orders.clear();
   store.swapEvents.clear();
   store.paymentProfiles.clear();
@@ -358,5 +362,72 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
       remark: REMARK,
       counterpartyName: "张三",
     });
+  });
+
+  it("machine-confirms a WeChat notification seller read under SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt", async () => {
+    const a = await app({ SETTLEMENT_CNY_AUTO_RELEASE_ON: "seller_receipt" });
+    const swapId = await toEscrowLocked(a);
+
+    // the seller saved a WeChat collection profile (payment-instructions needs it)
+    const profile = await a.inject({
+      method: "POST",
+      url: "/profiles",
+      payload: signed(seller, sellerDid, { method: "wechat", accountName: "Zhang San", account: "wxid_pay888" }),
+    });
+    expect(profile.statusCode).toBe(200);
+    bump();
+
+    // buyer pulls instructions → PAYMENT_PENDING (sets the per-swap 备注)
+    const ins = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/payment-instructions`,
+      payload: signed(buyer, buyerDid, {}),
+    });
+    expect(ins.statusCode).toBe(201);
+    const remark = ins.json().remark as string;
+    bump();
+
+    // buyer claims the transfer (with the 交易号) → PAYMENT_CLAIMED
+    const receipt = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+    const proof = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/proof`,
+      payload: signed(buyer, buyerDid, { txId: TX_ID, remark, receipt }),
+    });
+    expect(proof.statusCode).toBe(200);
+    expect(proof.json().status).toBe("PAYMENT_CLAIMED");
+    bump();
+
+    // the seller's own WeChat 收款到账 push carries the swap's 备注
+    const pairingId = await pair(a, seller, sellerDid, swapId);
+    receiptRemark = remark;
+    clock = T_READ;
+
+    const read = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/device-read`,
+      payload: signed(seller, sellerDid, { pairingId, via: "notification" }),
+    });
+    expect(read.statusCode).toBe(200);
+    const verdict = read.json().verdict as Record<string, unknown>;
+    expect(verdict).toMatchObject({ side: "seller", observed: "received", txId: TX_ID, remark });
+
+    // the wallet signs the verdict; the engine stores it and machine-confirms
+    const verify = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/verify`,
+      payload: signed(seller, sellerDid, {
+        side: verdict.side,
+        observed: verdict.observed,
+        evidenceKind: verdict.evidenceKind,
+        txId: verdict.txId,
+        amount: verdict.amount,
+        remark: verdict.remark,
+        paidAt: verdict.paidAt,
+      }),
+    });
+    expect(verify.statusCode).toBe(200);
+    expect(verify.json()).toMatchObject({ stored: true, machineConfirmed: true, advanced: true });
+    expect((await store.getSwap(swapId))!.status).toBe("PAYMENT_VERIFIED");
   });
 });
