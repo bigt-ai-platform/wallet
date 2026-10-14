@@ -24,6 +24,7 @@ import { RAILS, type Rail } from "./extract.js";
 import { McpGateway, localMobileMcpEntry, type DeviceGateway } from "./gateway.js";
 import { AndroidMcpClient } from "mobile-control";
 import { verifyPayment, verifyPaymentViaNotification } from "./worker.js";
+import { verifyPaypalCapture } from "./paypal.js";
 import {
   AUTO_RELEASE_POLICIES,
   VERIFY_EVIDENCE_KINDS,
@@ -33,7 +34,7 @@ import {
 } from "p2p-protocol";
 
 export interface CliOptions {
-  mode: "devices" | "verify" | "device-env";
+  mode: "devices" | "verify" | "device-env" | "paypal-verify";
   side?: VerifySide;
   rail?: Rail;
   amount?: string;
@@ -49,6 +50,10 @@ export interface CliOptions {
   token?: string;
   /** Read the screen (accessibility) or the receipt notification (docs/p2p.md §12). */
   via: "screen" | "notification";
+  /** paypal-verify mode: the capture id to check against PayPal's REST API. */
+  paypalCapture?: string;
+  paypalAmount?: string;
+  paypalCurrency?: string;
 }
 
 const USAGE = `p2p-verify — device-side payment verification (docs/p2p.md §12)
@@ -66,6 +71,8 @@ const USAGE = `p2p-verify — device-side payment verification (docs/p2p.md §12
   --window-from-ms N --window-to-ms N    paidAt window (default: now-24h .. now)
   --http URL --token TOKEN        use a mobile-mcp --listen endpoint (Streamable HTTP)
   --via screen|notification       read the on-screen ledger or the "收款到账" push (default screen)
+  --paypal-capture ID             verify a PayPal payment by capture id via the REST API
+  --paypal-amount N --paypal-currency USD   expected capture amount / currency (optional)
   --device-env                    print the resolved mobile-mcp entry and exit
 
 The verdict it prints is what the wallet signs and POSTs to
@@ -160,6 +167,16 @@ export function parseCliArgs(argv: readonly string[]): { options: CliOptions; er
           options.via = v;
         }
         break;
+      case "--paypal-capture":
+        options.mode = "paypal-verify";
+        [options.paypalCapture, i] = valueOf(arg, i);
+        break;
+      case "--paypal-amount":
+        [options.paypalAmount, i] = valueOf(arg, i);
+        break;
+      case "--paypal-currency":
+        [options.paypalCurrency, i] = valueOf(arg, i);
+        break;
       default:
         errors.push(`unknown argument ${arg}`);
     }
@@ -185,6 +202,22 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   if (options.mode === "device-env") {
     console.log(JSON.stringify({ entry: process.env.MOBILE_MCP_ENTRY?.trim() || localMobileMcpEntry() }, null, 2));
     return 0;
+  }
+
+  if (options.mode === "paypal-verify") {
+    const hasExpected = options.paypalAmount !== undefined || options.paypalCurrency !== undefined;
+    const result = await verifyPaypalCapture(options.paypalCapture ?? "", {
+      ...(hasExpected
+        ? {
+            expected: {
+              ...(options.paypalAmount !== undefined ? { amount: options.paypalAmount } : {}),
+              ...(options.paypalCurrency ? { currency: options.paypalCurrency } : {}),
+            },
+          }
+        : {}),
+    });
+    console.log(JSON.stringify(result, null, 2));
+    return result.verified ? 0 : 2;
   }
 
   const gateway: DeviceGateway = options.httpUrl
