@@ -433,6 +433,13 @@ so the seller does not have to eyeball the statement by hand. The user pairs the
 phone once (endpoint + capability token, revocable); the pairing **is** the
 consent.
 
+Pairing is a **short single-use code** the app prints on its Server screen: the
+user enters the endpoint and the code in the wallet's **Device** screen
+(**Pair with code**) or dai's **Mobile** page, and the app hands back a
+per-device token — no long bearer to copy (`POST /pair/claim`). Revoking the
+device in the app (Settings › Access › Paired devices) kills its token
+immediately.
+
 Two reads satisfy the same `DeviceGateway`:
 
 - **Screen read (accessibility).** Alipay and bank apps expose their UI tree;
