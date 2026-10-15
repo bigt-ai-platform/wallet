@@ -297,6 +297,74 @@ export function parseHttpBody(body: string, contentType: string): JsonRpcRespons
   return JSON.parse(body) as JsonRpcResponse;
 }
 
+function ipv4ToInt(ip: string): number | null {
+  const parts = ip.split(".");
+  if (parts.length !== 4) return null;
+  let n = 0;
+  for (const p of parts) {
+    if (!/^\d+$/.test(p)) return null;
+    const v = Number(p);
+    if (v > 255) return null;
+    n = n * 256 + v;
+  }
+  return n >>> 0;
+}
+
+function ipv4InRange(ip: number, net: string, bits: number): boolean {
+  const n = ipv4ToInt(net);
+  if (n === null) return false;
+  const mask = bits === 0 ? 0 : (0xffffffff << (32 - bits)) >>> 0;
+  return (ip & mask) === (n & mask);
+}
+
+/** Loopback / RFC1918 / link-local / unique-local hosts — the user's own phone or its LAN. */
+function isLocalOrPrivateHost(host: string): boolean {
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  const v4 = ipv4ToInt(host);
+  if (v4 !== null) {
+    return (
+      ipv4InRange(v4, "127.0.0.0", 8) ||
+      ipv4InRange(v4, "10.0.0.0", 8) ||
+      ipv4InRange(v4, "172.16.0.0", 12) ||
+      ipv4InRange(v4, "192.168.0.0", 16) ||
+      ipv4InRange(v4, "169.254.0.0", 16)
+    );
+  }
+  if (host.includes(":")) {
+    return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80");
+  }
+  return false;
+}
+
+/**
+ * Validate a mobile endpoint base URL before a credential is sent.
+ *
+ * The paired token drives the whole phone, so cleartext `http` is allowed only for loopback and
+ * private-LAN hosts (the documented `http://127.0.0.1:8080` / `http://192.168.x.x:8787` pairing);
+ * any other host must use `https`. Rejects non-http(s) schemes and embedded credentials.
+ * Returns the trimmed base URL (no trailing slash).
+ */
+export function assertSecureBaseUrl(raw: string): string {
+  const base = String(raw ?? "").trim().replace(/\/+$/, "");
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    throw new Error(`invalid endpoint URL: ${raw}`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error(`endpoint must use http or https: ${raw}`);
+  }
+  if (url.username || url.password) throw new Error("endpoint must not embed credentials");
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (url.protocol === "http:" && !isLocalOrPrivateHost(host)) {
+    throw new Error(
+      `refusing to send the pairing credential over cleartext http to ${host} — use https or a loopback/LAN address`,
+    );
+  }
+  return base;
+}
+
 /**
  * MCP client over mobile-mcp's Streamable HTTP transport (`--listen`).
  *
@@ -319,7 +387,7 @@ export class HttpMobileClient extends BaseMobileClient {
   /** Verify the endpoint answers and the credential is accepted before any device work. */
   static async connect(opts: HttpMobileClientOptions): Promise<HttpMobileClient> {
     const gw = new HttpMobileClient(opts.device, {
-      baseUrl: opts.baseUrl.replace(/\/+$/, ""),
+      baseUrl: assertSecureBaseUrl(opts.baseUrl),
       token: opts.token,
       authHeaders: opts.authHeaders,
       timeoutMs: opts.timeoutMs ?? 60_000,

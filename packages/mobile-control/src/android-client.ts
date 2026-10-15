@@ -15,6 +15,7 @@
  */
 import {
   HttpMobileClient,
+  assertSecureBaseUrl,
   base64ToBytes,
   type DeviceApp,
   type DeviceGateway,
@@ -71,7 +72,7 @@ export async function claimPairing(
   code: string,
   opts: { name?: string; timeoutMs?: number } = {},
 ): Promise<ClaimedPairing> {
-  const base = baseUrl.trim().replace(/\/+$/, "");
+  const base = assertSecureBaseUrl(baseUrl);
   const res = await fetch(`${base}/pair/claim`, {
     method: "POST",
     headers: { "content-type": "application/json" },

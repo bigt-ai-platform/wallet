@@ -33,6 +33,7 @@ export default function DeviceScreen() {
   const { isUnlocked } = useWallet();
 
   const clientRef = React.useRef<AndroidMcpClient | null>(null);
+  const inFlight = React.useRef(false);
   const [endpoint, setEndpoint] = React.useState(() => deviceStore.get(K_ENDPOINT) ?? '');
   const [token, setToken] = React.useState(() => deviceStore.get(K_TOKEN) ?? '');
   const [deviceId, setDeviceId] = React.useState(() => deviceStore.get(K_DEVICE) ?? '');
@@ -57,9 +58,12 @@ export default function DeviceScreen() {
 
   const connect = React.useCallback(
     async (silent = false) => {
+      if (inFlight.current) return;
+      inFlight.current = true;
       const base = endpoint.trim();
       if (!base) {
         if (!silent) flash(false, t('device.needPair'));
+        inFlight.current = false;
         return;
       }
       setBusy(true);
@@ -85,6 +89,7 @@ export default function DeviceScreen() {
         setConnected(false);
         if (!silent) flash(false, t('device.pairFailed', { e: msg(e) }));
       } finally {
+        inFlight.current = false;
         setBusy(false);
       }
     },
@@ -103,27 +108,33 @@ export default function DeviceScreen() {
    * then connect with that token — no long bearer to copy.
    */
   const pairWithCode = React.useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     const base = endpoint.trim();
     const c = code.trim();
     if (!base || !c) {
       flash(false, t('device.needPair'));
+      inFlight.current = false;
       return;
     }
     setBusy(true);
     try {
       const claimed = await claimPairing(base, c, { name: 'wallet' });
-      setToken(claimed.token);
-      deviceStore.set(K_ENDPOINT, claimed.baseUrl);
-      deviceStore.set(K_TOKEN, claimed.token);
-      setCode('');
+      // Verify the new token actually reaches the endpoint BEFORE persisting it: the code is
+      // single-use, so a failed connect must not leave a saved (but working-nowhere) pairing.
       const client = await AndroidMcpClient.connect({ device: 'list', baseUrl: claimed.baseUrl, token: claimed.token });
       const list = await client.listDevices();
       const chosen = list[0]?.id || 'self';
       client.close();
       clientRef.current = await AndroidMcpClient.connect({ device: chosen, baseUrl: claimed.baseUrl, token: claimed.token });
+      setEndpoint(claimed.baseUrl);
+      setToken(claimed.token);
+      setCode('');
       setDevices(list);
       setDeviceId(chosen);
       setConnected(true);
+      deviceStore.set(K_ENDPOINT, claimed.baseUrl);
+      deviceStore.set(K_TOKEN, claimed.token);
       deviceStore.set(K_DEVICE, chosen);
       flash(true, t('device.pairedCode'));
     } catch (e) {
@@ -131,8 +142,27 @@ export default function DeviceScreen() {
       flash(false, t('device.pairCodeFailed', { e: msg(e) }));
     } finally {
       setBusy(false);
+      inFlight.current = false;
     }
   }, [endpoint, code, t, flash]);
+
+  /** Clear the local pairing (token + endpoint). Revoking on the phone is separate. */
+  const unpair = React.useCallback(() => {
+    clientRef.current?.close();
+    clientRef.current = null;
+    deviceStore.remove(K_ENDPOINT);
+    deviceStore.remove(K_TOKEN);
+    deviceStore.remove(K_DEVICE);
+    setEndpoint('');
+    setToken('');
+    setDeviceId('');
+    setDevices([]);
+    setElements([]);
+    setForeground('');
+    setShot(null);
+    setConnected(false);
+    flash(true, t('device.unpaired', { defaultValue: 'Unpaired — revoke it on the phone too if needed.' }));
+  }, [t, flash]);
 
   async function run(fn: (c: AndroidMcpClient) => Promise<unknown>, ok: string) {
     const c = clientRef.current;
@@ -219,9 +249,21 @@ export default function DeviceScreen() {
           <Text style={[s.cardTitle, { color: connected ? theme.colors.positive : theme.colors.text.primary }]}>
             {connected ? t('device.connected') : t('device.setupTitle')}
           </Text>
-          <TouchableOpacity style={btn(theme.colors.accent.blue)} onPress={() => void connect()} disabled={busy} testID="device-pair">
-            <Text style={s.btnText}>{t('device.pair')}</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity style={btn(theme.colors.accent.blue)} onPress={() => void connect()} disabled={busy} testID="device-pair">
+              <Text style={s.btnText}>{t('device.pair')}</Text>
+            </TouchableOpacity>
+            {(!!endpoint.trim() || !!token.trim()) && (
+              <TouchableOpacity
+                style={btn(theme.colors.accent.red)}
+                onPress={unpair}
+                disabled={busy}
+                testID="device-unpair"
+              >
+                <Text style={s.btnText}>{t('device.unpair', { defaultValue: 'Unpair' })}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </View>
         <TouchableOpacity
           onPress={() => void Linking.openURL(p2pPdfUrl(i18n.language, tzRegion())).catch(() => {})}

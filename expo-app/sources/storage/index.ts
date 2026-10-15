@@ -9,9 +9,46 @@
 
 import { Platform } from 'react-native';
 import { MMKV } from 'react-native-mmkv';
-import { secureWebKV, initSecureStorage } from './secureWeb';
+import { secureWebKV, initSecureStorage as initSecureWebStorage } from './secureWeb';
 
-export { initSecureStorage };
+const MMKV_KEY_NAME = 'device.mmkv.key';
+let nativeEncryptionKey: string | null = null;
+
+/** 32 random bytes as hex, or null when no CSPRNG is available. */
+function randomKeyHex(): string | null {
+  const c = (globalThis as { crypto?: { getRandomValues?: (a: Uint8Array) => void } }).crypto;
+  if (!c?.getRandomValues) return null;
+  const bytes = new Uint8Array(32);
+  c.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Load the MMKV encryption key (native only): generated once with a CSPRNG and kept in the OS
+ * keychain via expo-secure-store. On web this is a no-op (already Keystore-backed), and when no
+ * CSPRNG is available the store falls back to the unencrypted instance rather than crashing.
+ */
+async function initNativeEncryptionKey(): Promise<void> {
+  if (Platform.OS === 'web') return;
+  try {
+    const SecureStore = await import('expo-secure-store');
+    let key = await SecureStore.getItemAsync(MMKV_KEY_NAME);
+    if (!key) {
+      key = randomKeyHex();
+      if (!key) return;
+      await SecureStore.setItemAsync(MMKV_KEY_NAME, key);
+    }
+    nativeEncryptionKey = key;
+  } catch {
+    nativeEncryptionKey = null;
+  }
+}
+
+/** Prepare secure storage (web Keystore cache + native MMKV key). Call once at startup. */
+export async function initSecureStorage(): Promise<void> {
+  await initSecureWebStorage();
+  await initNativeEncryptionKey();
+}
 
 interface KV {
   get(key: string): string | undefined;
@@ -41,14 +78,25 @@ function webKV(): KV {
   }
 }
 
+function wrapMMKV(storage: MMKV): KV {
+  return {
+    get: (k) => storage.getString(k),
+    set: (k, v) => void storage.set(k, v),
+    delete: (k) => void storage.delete(k),
+  };
+}
+
 function nativeKV(): KV {
   try {
-    const storage = new MMKV();
-    return {
-      get: (k) => storage.getString(k),
-      set: (k, v) => void storage.set(k, v),
-      delete: (k) => void storage.delete(k),
-    };
+    if (nativeEncryptionKey) {
+      try {
+        // Encrypted instance — the paired bearer token is a full-device credential.
+        return wrapMMKV(new MMKV({ id: 'device-secure', encryptionKey: nativeEncryptionKey }));
+      } catch {
+        /* key rejected (e.g. an existing plaintext instance) — fall back to unencrypted */
+      }
+    }
+    return wrapMMKV(new MMKV());
   } catch {
     return webKV();
   }

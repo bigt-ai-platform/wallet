@@ -201,12 +201,17 @@ describe("claimPairing", () => {
 
   it("rejects a non-2xx, and a 200 without a token", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 404 })));
-    await expect(claimPairing("http://x", "BAD")).rejects.toThrow("pair/claim: 404");
+    await expect(claimPairing("http://127.0.0.1:1", "BAD")).rejects.toThrow("pair/claim: 404");
 
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } })),
     );
-    await expect(claimPairing("http://x", "ABCD1234")).rejects.toThrow("no token");
+    await expect(claimPairing("http://127.0.0.1:1", "ABCD1234")).rejects.toThrow("no token");
+  });
+
+  it("refuses cleartext http to a public host, and non-http schemes", async () => {
+    await expect(claimPairing("http://phone.example.com", "ABCD1234")).rejects.toThrow("cleartext");
+    await expect(claimPairing("ftp://127.0.0.1", "ABCD1234")).rejects.toThrow("http or https");
   });
 });
