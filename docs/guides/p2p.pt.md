@@ -20,7 +20,7 @@ são reais; apenas a difusão na L0 é simulada.
 **A confirmação do vendedor é o sinal do fiat.** Não há API de cobrança para uma
 conta pessoal de WeChat/Alipay/banco, então não há evento de pagamento
 verificável por máquina para aguardar. O vendedor confere **valor + descrição +
-hora + 流水号 no próprio aplicativo** — uma captura de tela nunca conta — e
+hora + número da transação no próprio aplicativo** — uma captura de tela nunca conta — e
 confirma. Os detalhes de projeto estão em `docs/p2p.md`.
 
 ---
@@ -42,7 +42,7 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 | 3 | O comprador dá match (endereço de recebimento) | comprador | `swapId` criado, endereço de depósito derivado |
 | 4 | O vendedor financia o depósito 2-de-3, o motor prova o bloqueio | vendedor + motor | `ESCROW_LOCKED` na L0 |
 | 5 | O comprador obtém as instruções de pagamento | comprador | `PAYMENT_PENDING` (+ descrição por troca) |
-| 6 | O comprador paga no próprio aplicativo e reivindica com o 流水号 | comprador | `PAYMENT_CLAIMED` |
+| 6 | O comprador paga no próprio aplicativo e reivindica com o número da transação | comprador | `PAYMENT_CLAIMED` |
 | 7 | O vendedor confere o próprio extrato e confirma | vendedor | `PAYMENT_VERIFIED` |
 | 8 | O motor libera os tokens, a troca se conclui | motor | `ESCROW_RELEASED` → `COMPLETED` |
 
@@ -55,7 +55,7 @@ os dados de conta de qualquer das partes.
 ## 1. O vendedor guarda um perfil de cobrança
 
 Na aba **My swaps**, o vendedor escolhe um trilho (WeChat, Alipay ou banco) e
-informa o nome de 收款 e a conta. O perfil é guardado no servidor sob o DID do
+informa o nome do beneficiário e a conta. O perfil é guardado no servidor sob o DID do
 vendedor e **não** faz parte do livro de ofertas público — ele é revelado apenas
 ao comprador emparelhado pela chamada de instruções.
 
@@ -116,7 +116,7 @@ o perfil do vendedor e emite um **código de descrição por troca** que a
 transferência *deve* levar, além do valor exato e de um prazo. As instruções
 aparecem em linha no cartão da troca:
 
-![Instruções de pagamento: 户名, conta, 715 CNY, descrição](/demo/p2p/p2p-cny-wechat-08-instructions-pt.png)
+![Instruções de pagamento: titular, conta, 715 CNY, descrição](/demo/p2p/p2p-cny-wechat-08-instructions-pt.png)
 
 A troca fica `PAYMENT_PENDING`, e um cronômetro de timeout começa — se o
 comprador nunca pagar, o vendedor pode expirar e devolver o depósito sem o
@@ -124,14 +124,14 @@ consentimento do comprador.
 
 ---
 
-## 6. O comprador paga e reivindica com o 流水号
+## 6. O comprador paga e reivindica com o número da transação
 
 O comprador transfere o valor exato no próprio aplicativo WeChat/Alipay/banco,
-cola o número da transação (流水号) em **Transaction ID** e pressiona **I have
+cola o número da transação em **Transaction ID** e pressiona **I have
 paid** (Eu paguei). Uma imagem de recibo opcional é guardada no servidor; apenas
 o seu `sha256` é ancorado no evento da troca:
 
-![Transaction ID (流水号) informado](/demo/p2p/p2p-cny-wechat-09-payment-pending-pt.png)
+![Transaction ID (número da transação) informado](/demo/p2p/p2p-cny-wechat-09-payment-pending-pt.png)
 
 O status agora é `PAYMENT_CLAIMED` — **os tokens continuam bloqueados.** Este
 estado existe puramente como a reivindicação do comprador:
@@ -142,11 +142,11 @@ estado existe puramente como a reivindicação do comprador:
 
 ## 7. O vendedor confirma no próprio extrato
 
-O cartão do vendedor mostra o 流水号 do comprador e a descrição. O vendedor
-confere **valor + descrição + hora + 流水号 na própria conta** e só então
+O cartão do vendedor mostra o número da transação do comprador e a descrição. O vendedor
+confere **valor + descrição + hora + número da transação na própria conta** e só então
 pressiona **Confirm received** (Confirmar recebimento):
 
-![O vendedor vê o 流水号 e o aviso de confirmação](/demo/p2p/p2p-cny-wechat-11-seller-confirm-pt.png)
+![O vendedor vê o número da transação e o aviso de confirmação](/demo/p2p/p2p-cny-wechat-11-seller-confirm-pt.png)
 
 A troca fica `PAYMENT_VERIFIED`:
 
@@ -167,6 +167,40 @@ Como o vendedor foi pago diretamente, não há etapa de pagamento fiat — a tro
 conclui:
 
 ![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-pt.png)
+
+---
+
+## Opcional — confirmação automática a partir do seu próprio telefone
+
+O passo 7 é normalmente um toque manual. Para o motor confirmar por você,
+emparelhe o telefone uma vez e deixe-o ler o recibo **do vendedor** — o mesmo
+extrato que o vendedor conferiria à mão, lido automaticamente.
+
+**Emparelhar o telefone (uma vez).** Instale o app **Mobile Agent**
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
+no seu próprio telefone; ele executa um servidor MCP *no telefone* (serviço de
+acessibilidade, sem adb). Conceda acessibilidade, inicie o servidor e anote o
+endpoint e o **código curto de uso único** exibido. No wallet, abra
+**Dispositivo**, pressione **Emparelhar com código** e informe o endpoint e o
+código. Revogue o emparelhamento a qualquer momento em **Configurações › Acesso
+› Dispositivos emparelhados**.
+
+**Verificar uma troca.** No cartão da troca, pressione **Verificar com meu
+telefone** — qualquer das partes pode verificar o próprio dispositivo. O motor
+conecta ao endpoint emparelhado e lê o lançamento correspondente no seu próprio
+app de pagamento (valor, descrição, hora e número da transação); em seguida a
+**wallet assina o veredicto**. Alipay e os bancos expõem a tela à
+acessibilidade; o WeChat oculta a interface, então para o WeChat o app lê a
+notificação «pagamento recebido» do WeChat:
+
+![A notificação de pagamento do WeChat do destinatário](/demo/p2p/p2p-verify-wechat-notification-en.png)
+
+**O que muda.** Por padrão, uma leitura é apenas prova em disputa. Sob a política
+`SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt`, ou as mais estritas
+`two_sided` / `verified_receipt`) uma leitura qualificada **substitui a
+confirmação manual** e libera o depósito. Continua sendo atestação, não um
+oráculo: o emparelhamento é o consentimento, é revogável a qualquer momento, e o
+motor lê apenas o lado que você emparelhou.
 
 ---
 

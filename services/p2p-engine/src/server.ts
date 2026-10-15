@@ -49,6 +49,7 @@ import {
   P2P_ORDER_ID_RE,
   grantAllows,
   machineConfirm,
+  normalizeAutoReleasePolicy,
   validatePairingGrant,
   validatePaymentVerdict,
   validateP2pOrderRecord,
@@ -770,7 +771,12 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     escrow: !!env.SETTLEMENT_ENGINE_PUBKEY?.trim(),
     /** Public escrow key: the wallet rebuilds the 2-of-3 vault with it. */
     escrowPubkey: env.SETTLEMENT_ENGINE_PUBKEY?.trim() || null,
+    /** Chain clients wired: l0 = escrow proof/broadcast, l1 = social anchor,
+     *  orderTxVerify = the engine confirms order/cancel txids before indexing. */
     chain: { l0: !!deps.chain, l1: !!deps.anchor, orderTxVerify: !!(deps.verifyTx || deps.verifyOrderTx) },
+    /** CNY device-verification auto-release policy (`SETTLEMENT_CNY_AUTO_RELEASE_ON`):
+     *  whether a qualifying phone read may act as the confirm. Unknown/absent = off. */
+    autoReleaseOn: normalizeAutoReleasePolicy(env.SETTLEMENT_CNY_AUTO_RELEASE_ON),
     /** Chain-scan projector position (null until the watcher has run). */
     watch: deps.watchState ? { ...deps.watchState } : null,
   }));

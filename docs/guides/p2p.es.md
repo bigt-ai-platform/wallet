@@ -21,7 +21,7 @@ reales; solo se simula la difusión en L0.
 **La confirmación del vendedor es la señal fiat.** No hay API de cobro para una
 cuenta personal de WeChat/Alipay/banco, así que no hay ningún evento de pago
 verificable por máquina que esperar. El vendedor comprueba **importe + concepto
-+ hora + 流水号 en su propia app** — una captura de pantalla nunca cuenta — y
++ hora + número de transacción en su propia app** — una captura de pantalla nunca cuenta — y
 confirma. Los detalles de diseño están en `docs/p2p.md`.
 
 ---
@@ -43,7 +43,7 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 | 3 | El comprador hace match (dirección de recepción) | comprador | se crea `swapId`, se deriva la dirección de depósito |
 | 4 | El vendedor financia el depósito 2-de-3, el motor prueba el bloqueo | vendedor + motor | `ESCROW_LOCKED` en L0 |
 | 5 | El comprador obtiene las instrucciones de pago | comprador | `PAYMENT_PENDING` (+ concepto por intercambio) |
-| 6 | El comprador paga en su propia app y reclama con el 流水号 | comprador | `PAYMENT_CLAIMED` |
+| 6 | El comprador paga en su propia app y reclama con el número de transacción | comprador | `PAYMENT_CLAIMED` |
 | 7 | El vendedor comprueba su propio extracto y confirma | vendedor | `PAYMENT_VERIFIED` |
 | 8 | El motor libera los tokens, el intercambio se completa | motor | `ESCROW_RELEASED` → `COMPLETED` |
 
@@ -56,7 +56,7 @@ exponer los datos de cuenta de ninguna de las partes.
 ## 1. El vendedor guarda un perfil de cobro
 
 En la pestaña **My swaps**, el vendedor elige un riel (WeChat, Alipay o banco) e
-introduce el nombre de 收款 y la cuenta. El perfil se guarda en el servidor bajo
+introduce el nombre de cobro y la cuenta. El perfil se guarda en el servidor bajo
 el DID del vendedor y **no** forma parte del libro de órdenes público — solo se
 revela al comprador emparejado mediante la llamada de instrucciones.
 
@@ -117,7 +117,7 @@ perfil del vendedor y acuña un **código de concepto por intercambio** que la
 transferencia *debe* llevar, más el importe exacto y una fecha límite. Las
 instrucciones se muestran en línea en la tarjeta del intercambio:
 
-![Instrucciones de pago: 户名, cuenta, 715 CNY, concepto](/demo/p2p/p2p-cny-wechat-08-instructions-es.png)
+![Instrucciones de pago: titular, cuenta, 715 CNY, concepto](/demo/p2p/p2p-cny-wechat-08-instructions-es.png)
 
 El intercambio es `PAYMENT_PENDING`, y arranca un temporizador de espera — si el
 comprador nunca paga, el vendedor puede expirar y reembolsar el depósito sin el
@@ -125,14 +125,14 @@ consentimiento del comprador.
 
 ---
 
-## 6. El comprador paga y reclama con el 流水号
+## 6. El comprador paga y reclama con el número de transacción
 
 El comprador transfiere el importe exacto en su propia app de
-WeChat/Alipay/banco, pega el número de transacción (流水号) en **Transaction ID**
+WeChat/Alipay/banco, pega el número de transacción en **Transaction ID**
 y pulsa **I have paid** (He pagado). Una imagen de recibo opcional se guarda en
 el servidor; solo su `sha256` se ancla en el evento del intercambio:
 
-![Transaction ID (流水号) introducido](/demo/p2p/p2p-cny-wechat-09-payment-pending-es.png)
+![Transaction ID (número de transacción) introducido](/demo/p2p/p2p-cny-wechat-09-payment-pending-es.png)
 
 El estado es ahora `PAYMENT_CLAIMED` — **los tokens siguen bloqueados.** Este
 estado existe puramente como la reclamación del comprador:
@@ -143,11 +143,11 @@ estado existe puramente como la reclamación del comprador:
 
 ## 7. El vendedor confirma en su propio extracto
 
-La tarjeta del vendedor muestra el 流水号 del comprador y el concepto. El
-vendedor comprueba **importe + concepto + hora + 流水号 en su propia cuenta** y
+La tarjeta del vendedor muestra el número de transacción del comprador y el concepto. El
+vendedor comprueba **importe + concepto + hora + número de transacción en su propia cuenta** y
 solo entonces pulsa **Confirm received** (Confirmar recepción):
 
-![El vendedor ve el 流水号 y el aviso de confirmación](/demo/p2p/p2p-cny-wechat-11-seller-confirm-es.png)
+![El vendedor ve el número de transacción y el aviso de confirmación](/demo/p2p/p2p-cny-wechat-11-seller-confirm-es.png)
 
 El intercambio es `PAYMENT_VERIFIED`:
 
@@ -168,6 +168,40 @@ Como el vendedor cobró directamente, no hay paso de pago fiat — el intercambi
 completa:
 
 ![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-es.png)
+
+---
+
+## Opcional — confirmación automática desde tu propio teléfono
+
+El paso 7 es normalmente un toque manual. Para que el motor confirme por ti,
+empareja tu teléfono una vez y deja que lea el recibo **del vendedor** — el mismo
+extracto que el vendedor comprobaría a mano, leído automáticamente.
+
+**Emparejar el teléfono (una vez).** Instala la app **Mobile Agent**
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
+en tu propio teléfono; ejecuta un servidor MCP *en el teléfono* (servicio de
+accesibilidad, sin adb). Concédele accesibilidad, inicia su servidor y anota el
+endpoint y el **código corto de un solo uso** que muestra. En el wallet, abre
+**Dispositivo**, pulsa **Emparejar con código** e introduce el endpoint y el
+código. Revoca el emparejamiento cuando quieras en **Ajustes › Acceso ›
+Dispositivos emparejados**.
+
+**Verificar un intercambio.** En la tarjeta del intercambio, pulsa **Verificar
+con mi teléfono** — cualquiera de las partes puede verificar su propio
+dispositivo. El motor se conecta al endpoint emparejado y lee la entrada
+correspondiente de tu propia app de pago (importe, concepto, hora y número de
+transacción); después la **wallet firma el veredicto**. Alipay y los bancos
+exponen su pantalla a la accesibilidad; WeChat oculta su interfaz, así que para
+WeChat la app lee la notificación «pago recibido» de WeChat:
+
+![La notificación de pago de WeChat del receptor](/demo/p2p/p2p-verify-wechat-notification-en.png)
+
+**Qué cambia.** Por defecto, una lectura solo es prueba en caso de disputa. Bajo
+la política `SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt`, o las más
+estrictas `two_sided` / `verified_receipt`) una lectura que cumple **sustituye
+la confirmación manual** y libera el depósito. Sigue siendo atestación, no un
+oráculo: el emparejamiento es el consentimiento, es revocable en cualquier
+momento, y el motor solo lee el lado que emparejaste.
 
 ---
 

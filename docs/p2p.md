@@ -166,11 +166,11 @@ thing that differs is what evidence exists when a conflict goes to arbitration
 
 | | WeChat / Alipay | Bank transfer |
 |---|---|---|
-| Where the seller sees the money | own WeChat / Alipay app 流水 | own bank statement 附言/备注 |
+| Where the seller sees the money | own WeChat / Alipay app statement | own bank statement memo |
 | Machine-verifiable payment event | **none — and none is possible** (no collection API for personal accounts) | **none** |
-| Arbitration evidence pack | 流水号 (transaction id) + receipt sha256 + seller's own ledger + per-swap remark code | 转账流水号 + receipt sha256 + seller's ledger + per-swap remark code |
+| Arbitration evidence pack | transaction id + receipt sha256 + seller's own ledger + per-swap remark code | bank transaction id + receipt sha256 + seller's ledger + per-swap remark code |
 | Clawback by the sender | none — personal transfers are final | none — personal transfers are final |
-| Freeze (冻卡) risk | medium–high for crypto-pattern transfers — runbook in §16 | medium–high; prefer bank for large amounts |
+| Freeze (frozen account) risk | medium–high for crypto-pattern transfers — runbook in §16 | medium–high; prefer bank for large amounts |
 
 Order, match, escrow lock, proof, confirm, release, refund, dispute and anchor
 are one protocol with one state machine (§9), one API (§11), one UI, one engine.
@@ -178,17 +178,17 @@ A swap picks its rail at match time (`wantRail`).
 
 ### CNY rail properties
 
-| | 微信支付 WeChat Pay | 支付宝 Alipay | 银行转账 Bank transfer |
+| | WeChat Pay | Alipay | Bank transfer |
 |---|---|---|---|
-| Speed / hours | instant, 24/7 | instant, 24/7 | instant for small amounts (IBPS/网银) 24/7; large via HVPS on banking hours |
-| Transfer note (备注) | ✅ supported | ✅ supported | ✅ 附言/备注 (length and charset vary by bank) |
-| Receiver identity shown to sender | nickname + 实名 surname | 实名 account name | **full account name** (户名) — best for name-match |
+| Speed / hours | instant, 24/7 | instant, 24/7 | instant for small amounts (IBPS/online banking) 24/7; large via HVPS on banking hours |
+| Transfer note (memo) | ✅ supported | ✅ supported | ✅ memo (length and charset vary by bank) |
+| Receiver identity shown to sender | nickname + real-name surname | real-name account name | **full account name** — best for name-match |
 | Typical use in P2P | small/medium, fast | small/medium, fast | large amounts, preferred when limits or freeze risk bite |
 
 Recommendations: offer **all three** on every order (the seller's profile
 stores which they accept); default to **bank transfer above a configurable
-threshold** — the full 户名 on the transfer screen is the strongest identity
-check, and HVPS/网银 transfers are less likely to trip WeChat/Alipay risk
+threshold** — the full account name on the transfer screen is the strongest identity
+check, and HVPS/online banking transfers are less likely to trip WeChat/Alipay risk
 controls. Never treat a **screenshot** as proof of anything by itself (§12).
 Exact per-rail personal limits change often; keep them as engine config, not
 constants in the app.
@@ -205,8 +205,8 @@ constants in the app.
     │                    2. fund 2-of-3 P2SH escrow on L0 ◀──────│
     │        3. getTransactionStatus → CONFIRMED + address + amount
     │                            │                                │
-    │ 4. signed payment-instructions (rail, 户名, account/QR,      │
-    │    exact amount, remark code) ◀─────────────────────────────│ (profile)
+    │ 4. signed payment-instructions (rail, account name,          │
+    │    account/QR, exact amount, remark code) ◀─────────────────│ (profile)
     │                            │                                │
     │ 5. buyer pays seller DIRECTLY on the rail, remark=code       │
     │───────────────────────────────────────────────────────────▶│
@@ -394,8 +394,8 @@ whole-body signed, party-scoped reads as `POST /swaps/mine` / `/swaps/get`
     │                    2. fund 2-of-3 P2SH escrow on L0 ◀──────│
     │            3. getTransactionStatus → CONFIRMED + address + amount
     │                            │                                │
-    │ 4. signed GET payment-instructions (rail, 户名, exact amount, │
-    │    remark code) ◀───────────────────────────────────────────│ (profile)
+    │ 4. signed GET payment-instructions (rail, account name,       │
+    │    exact amount, remark code) ◀─────────────────────────────│ (profile)
     │                            │                                │
     │ 5. buyer transfers fiat directly to seller, remark=code,      │
     │    uploads receipt → POST /swaps/:id/proof                   │
@@ -420,7 +420,7 @@ Step by step:
 | 2 | Buyer matches: `receiveAddress`, nothing PII-mandatory | buyer | DID signature over sorted-key JSON |
 | 3 | Seller funds the 2-of-3 P2SH escrow | seller | `CONFIRMED` + `address === escrowAddress` + amount |
 | 4 | Engine hands the buyer the seller's **payment instructions** (signed, party-scoped) | engine | — |
-| 5 | Buyer pays the seller's account with remark = per-swap code, uploads receipt → `PAYMENT_CLAIMED` | buyer | receipt file ref + sha256, 流水号, remark, paidAt — the claim never releases anything on its own |
+| 5 | Buyer pays the seller's account with remark = per-swap code, uploads receipt → `PAYMENT_CLAIMED` | buyer | receipt file ref + sha256, transaction id, remark, paidAt — the claim never releases anything on its own |
 | 6 | Seller confirms from their own app → `PAYMENT_VERIFIED` | seller | DID-signed `confirm`: confirmedAt, matched amount/remark |
 | 7 | Seller signs the release skeleton; engine verifies, adds its key, broadcasts | seller + engine | tx reaches `CONFIRMED` at `receiveAddress` |
 | 8 | Audit anchor | engine | `social.p2p-swap` record on L1-SOCIAL, **fail closed** |
@@ -484,7 +484,7 @@ New event types (`services/p2p-engine/src/types.ts` `SwapEventType`):
 | Event | Actor | Payload (store-only, never anchored raw) |
 |---|---|---|
 | `instructions` | engine | which profile fields were revealed |
-| `payment_proof` | buyer | receipt file ref + sha256, claimed tx id (流水号), remark, paidAt |
+| `payment_proof` | buyer | receipt file ref + sha256, claimed transaction id, remark, paidAt |
 | `payment_confirm` | seller | confirmedAt, matched amount/remark |
 | `dispute_open` | buyer or seller | reason code |
 | `dispute_resolve` | engine admin (AI-assisted) | outcome `release` \| `refund`, note |
@@ -533,7 +533,7 @@ from `wantRail` at match time and never touches both.
 | `POST /swaps/:id/payment-instructions` | buyer | matched profile fields + exact amount + remark code; only after `ESCROW_LOCKED` (idempotent while `PAYMENT_PENDING`) |
 | `POST /swaps/:id/proof` | buyer | `payment_proof` → `PAYMENT_CLAIMED`. Body: required `txId` (1..64 alnum `._-`), matching `remark`, optional `receipt` image data URL (the engine decodes the payload and recomputes the sha256 of the **image bytes**, not the data-URL string; receipt bytes stay out of the chain) |
 | `POST /swaps/:id/confirm` | seller | checks: status `PAYMENT_CLAIMED` or `PAYMENT_PENDING`, no open dispute → `PAYMENT_VERIFIED`. The engine-signed `release` follows as a separate step (seller cosign/presign) |
-| `POST /swaps/:id/verify` | buyer or seller | a device-side payment verdict (§12): `side` is the signer's role (a party can never file the other side's story), checked against the four fields — amount exact, remark = the swap code, entry inside the swap window, 流水号 sane. A claim/observation 流水号 mismatch is reported as arbitration evidence, never fatal. Anchored minus PII (§14: the `payment_verify` record carries the small evidence; the name/bytes stay store-only); under `SETTLEMENT_CNY_AUTO_RELEASE_ON` the qualifying verdict acts as the `confirm` (same rules: payment phase, not frozen) with its provenance anchored |
+| `POST /swaps/:id/verify` | buyer or seller | a device-side payment verdict (§12): `side` is the signer's role (a party can never file the other side's story), checked against the four fields — amount exact, remark = the swap code, entry inside the swap window, transaction id sane. A claim/observation transaction id mismatch is reported as arbitration evidence, never fatal. Anchored minus PII (§14: the `payment_verify` record carries the small evidence; the name/bytes stay store-only); under `SETTLEMENT_CNY_AUTO_RELEASE_ON` the qualifying verdict acts as the `confirm` (same rules: payment phase, not frozen) with its provenance anchored |
 | `POST /swaps/:id/dispute` | buyer or seller | sets `dispute`, freezes the swap (from `PAYMENT_PENDING`/`PAYMENT_CLAIMED` only) |
 | `POST /swaps/:id/dispute/resolve` | `SETTLEMENT_ADMIN_TOKEN` | `release` (buyer wins) or `refund` (seller wins). **Self-executing** (§12): the resolve settles the spend itself from the seller's presign — release to the buyer, or an engine-act `expire` + refund to the seller — so neither party has to be online; without a presign the outcome stays armed and the winning party finishes via `/escrow/cosign` (buyer for a forced release, seller for a refund). Responds `settled`/`txHash`/`pending` |
 | `POST /profiles`, `POST /profiles/mine` | seller | payment profile upsert / list (store-only PII, §14) |
@@ -598,9 +598,9 @@ asks for, minus the custody.
    escrow is not a risk: the outcome settles by itself (step 3).
 2. The engine assembles the **evidence pack**: both parties' signed statements,
    the payment instructions as delivered (engine-signed, so a mid-swap account
-   change provably fails), the proof upload (流水号 + receipt sha256 + remark +
+   change provably fails), the proof upload (transaction id + receipt sha256 + remark +
    paidAt), the escrow lock proof, and — per rail — whatever the table in §4
-   offers (CNY 流水号 + the seller's in-app ledger view).
+   offers (CNY transaction id + the seller's in-app ledger view).
 3. **AI arbitration** reviews the pack against the rules below and proposes
    `release` or `refund` with a written rationale. The human operator confirms
    (or overrides, on the record) and the admin route **executes**:
@@ -616,7 +616,7 @@ asks for, minus the custody.
 
 Conflicts are not all human work. The rule: **only signature- or chain-derived
 evidence may resolve automatically; anything whose sole source is a person's
-private app (their bank / WeChat / Alipay 流水) stays with a human.** Every
+private app (their bank / WeChat / Alipay statement) stays with a human.** Every
 automatic action is an ordinary anchored event with the engine as actor and an
 `auto:` reason — auditable, replayable, and the human operator can still open
 the case afterwards.
@@ -629,9 +629,9 @@ the case afterwards.
 | 1 | silent pre-payment idle > `SETTLEMENT_CNY_EXPIRE_AFTER` → auto-`expire` → refund (sweep) | buyer no-show (§15) | no claim ∧ no confirm ∧ no dispute — nobody ever asserted payment |
 | 1 | claim unconfirmed > `SETTLEMENT_CNY_CONFIRM_TIMEOUT` → auto-`dispute_open` | fake-receipt stalling | the buyer may really have paid, so silence after a claim **enters** the dispute path and never auto-refunds |
 | 1 | `dispute/resolve` settles the spend itself | every arbitration outcome | the arbiter's decision needs no party online |
-| 1 | device-side two-sided verification (next section) → acts as the confirm under policy | "buyer paid, seller claims non-receipt" when both ledgers agree | both parties' **own** ledgers describe one 交易号; colluding fakes would need both devices to lie consistently |
+| 1 | device-side two-sided verification (next section) → acts as the confirm under policy | "buyer paid, seller claims non-receipt" when both ledgers agree | both parties' **own** ledgers describe one transaction id; colluding fakes would need both devices to lie consistently |
 | 2 | AI triage proposes, human confirms | seller-claims-non-receipt over a claimed payment **with only one device read**; payer-name mismatch; key-compromise claims | a one-sided device read is spoofable by its owner — evidence, not truth |
-| 3 | human only | colluding pairs, wash, 冻卡 cases | abuse, not per-swap facts (§16) |
+| 3 | human only | colluding pairs, wash, frozen account cases | abuse, not per-swap facts (§16) |
 
 Timers are engine config (`SETTLEMENT_SWEEP_MS` arms the sweep; `0` on either
 timeout disables that rule), and the confirm deadline is a **seller promise** —
@@ -686,15 +686,15 @@ their own side and their own device; the engine never initiates a read.
   reads the SENDING rail app ────────────▶ endpoints, one swap)          reads the RECEIVING rail app
                                           │◀─────────────────────────────│
                                           │  engine reads the SENDING app │  engine reads the RECEIVING app
-                                          │  → {status 成功, amount,       │  → {amount, remark, time,
-                                          │     实名 name, remark, time,   │     交易号, payer name}
-                                          │     交易号}                    │
+                                          │  → {status success, amount,    │  → {amount, remark, time,
+                                          │     real name, remark, time,   │     transaction id, payer name}
+                                          │     transaction id}            │
                                           │  re-checks the four fields    │
                                           │  against the swap terms       │
   wallet signs verdict_B ◀────────────────┤◀───────────── verdict_S ────── wallet signs verdict_S
 ```
 
-- **The 流水号/交易号 is the shared correlation id** — both apps display the
+- **The transaction id is the shared correlation id** — both apps display the
   same id for the same transfer, so two independent reads describing one id is
   verification, not two stories.
 - **Consent is the pairing, and it is revocable.** The engine reaches a device
@@ -704,7 +704,7 @@ their own side and their own device; the engine never initiates a read.
   thing that leaves the phone's control: the entry fields plus sha256 capture
   refs. The verdict **anchors** on L1-SOCIAL like every other event
   (`payment_verify`): the chain rule is *only large blobs stay off chain, as
-  hashes* — so the small evidence (amount, 流水号, remark, time, capture
+  hashes* — so the small evidence (amount, transaction id, remark, time, capture
   hashes) is on chain and survives a rebuild, while the capture bytes and the
   entry's PII (counterparty name) stay in the engine store
   (`p2p_payment_verifications`). The wallet key never leaves the device; the
@@ -712,8 +712,8 @@ their own side and their own device; the engine never initiates a read.
 - **What a verdict may change is policy** (`SETTLEMENT_CNY_AUTO_RELEASE_ON`):
   `off` (default) — evidence only; `seller_receipt` — the seller's own ledger
   saying received stands in for the confirm tap; `two_sided` — stricter, both
-  ledgers must agree on one 交易号 first; `verified_receipt` — a bank 电子回单
-  whose 回单 verification passes on the bank's **public** verification page
+  ledgers must agree on one transaction id first; `verified_receipt` — a bank e-receipt
+  whose receipt verification passes on the bank's **public** verification page
   settles it alone (the one near-oracle signal, bank rail). The qualifying
   verdict's signature is the attestation (`verifySource` records how it was
   obtained); a frozen swap never advances.
@@ -721,7 +721,7 @@ their own side and their own device; the engine never initiates a read.
   one-sided read is evidence (tier 2) and never releases — they could pair an
   endpoint in front of a fake rail app. A *seller's* `received` verdict under
   `seller_receipt` is exactly the confirm tap the seller was trusted for
-  anyway, now machine-read under their own pairing. The bank 回单 path is the
+  anyway, now machine-read under their own pairing. The bank receipt path is the
   only tier that approaches machine truth.
 - **Transports.** The device transports live in the shared
   **`packages/mobile-control`** client — the general device-control surface
@@ -755,7 +755,7 @@ the stored grant (`connectFromGrant` in `../services/p2p-verify/src/gateway.ts`
 ```bash
 node services/p2p-verify/dist/cli.js --devices
 node services/p2p-verify/dist/cli.js --side buyer --rail wechat --amount 715 \
-    --remark <code> --tx-id <流水号> [--app com.tencent.mm] [--device <id>] \
+    --remark <code> --tx-id <transaction id> [--app com.tencent.mm] [--device <id>] \
     --http http://<phone-ip>:8080 --token <bearer-token>
 ```
 
@@ -763,13 +763,13 @@ node services/p2p-verify/dist/cli.js --side buyer --rail wechat --amount 715 \
 seller's **receiving** ledger. The CLI reads, extracts and checks, then prints
 the verdict for the wallet to sign and POST to `/swaps/:id/verify` — it holds no
 keys and never talks to the engine (`--evidence bank_ereceipt --receipt-verified`
-covers the 回单 path).
+covers the receipt path).
 
 ### What the seller must check before confirming (never the screenshot)
 
 | Check | Why |
 |---|---|
-| Money visible in **their own** app's balance/流水 | a screenshot proves nothing; the seller's own ledger is the only receipt |
+| Money visible in **their own** app's balance/statement | a screenshot proves nothing; the seller's own ledger is the only receipt |
 | **Amount** exact to the cent | rules out unrelated transfers |
 | **Remark code** matches the swap | identifies the payer when several buyers pay the same seller |
 | **Time** within the swap window | old transfers must not be replayed |
@@ -780,7 +780,7 @@ covers the 回单 path).
 - Pay **only** to the instructions the engine signed and delivered (§7). Any
   account change communicated outside the app is a scam attempt.
 - Include the remark code and the **exact** amount.
-- Keep the receipt with the **流水号** (transaction id): it is what an arbiter
+- Keep the receipt with the **transaction id**: it is what an arbiter
   asks for, and it is visible in the seller's app too.
 
 ### Fraud cases → handling
@@ -788,7 +788,7 @@ covers the 回单 path).
 | Case | Handling |
 |---|---|
 | Fake receipt, buyer never paid | seller doesn't see it in their app → never confirms → the confirm-timeout sweep auto-opens the dispute → arbitration refund, which **settles itself** (§12 ladder) |
-| Buyer paid, seller claims non-receipt → buyer appeals | **device-side verification first** (§12): both ledgers describing one 交易号 resolves it under policy before any human; one-sided or `none` reads go to arbitration as interactive evidence (the seller's in-app 流水 for the window) — the transfer either exists or it doesn't → release (self-executing; engine + buyer if no presign, seller cannot block) or seller-flag |
+| Buyer paid, seller claims non-receipt → buyer appeals | **device-side verification first** (§12): both ledgers describing one transaction id resolves it under policy before any human; one-sided or `none` reads go to arbitration as interactive evidence (the seller's in-app statement for the window) — the transfer either exists or it doesn't → release (self-executing; engine + buyer if no presign, seller cannot block) or seller-flag |
 | Seller confirmed but then refuses to release | **no arbitration needed** — the confirm is already signed and the presigned release closes itself; without a presign a `release` outcome self-executes with the buyer |
 | Seller changes payment details mid-swap | instructions are engine-signed per swap; a mismatch is the seller's fault → the buyer's signed copy + proof wins |
 | Receipt from an older swap replayed | remark code is per-swap and TTL-bound; amount+time+remark must all match |
@@ -821,7 +821,7 @@ Residual risks, stated rather than hidden:
   rail's own final ledger, and the operator's override being on the record.
 - **Chargeback after release** — keep the verified→released window
   sub-minute; after release treat reversals as disputes.
-- **冻卡 (frozen account, CNY)** — see runbook in §16.
+- **frozen account (CNY)** — see runbook in §16.
 
 ---
 
@@ -873,7 +873,7 @@ fields on chain.
 - **The model never supplies trusted evidence** — signatures are produced by the
   service, and claimed transactions are re-checked against the node (status,
   destination address **and amount**).
-- **Payment profile** (method, 户名, account/QR, bank + card):
+- **Payment profile** (method, account name, account/QR, bank + card):
   encrypted engine store, party-scoped reads, **never anchored**.
 - **Device verdicts** (§12): what a party's own device read in their own rail
   app. The read happens through the on-phone **Mobile Agent** endpoint the
@@ -887,7 +887,7 @@ fields on chain.
   the name. A machine confirm anchors its provenance (`verifyEvidence` on the
   `payment_confirm` record).
 - **Receipts**: durable object storage (MinIO / user Drive — the durability
-  rule below), the event carries only the file ref + sha256 + 流水号. The image
+  rule below), the event carries only the file ref + sha256 + transaction id. The image
   itself never goes on chain and never leaves the party scope except to the
   arbiter. When `SETTLEMENT_BLOB_*` is configured the proof row keeps only
   `receipt_sha256` + a `receipt_ref` and the bytes live in the blob store
@@ -928,11 +928,11 @@ fields on chain.
 | Bank transfer default above a threshold | best identity signal, lowest rail freeze risk |
 | Velocity limits | max open swaps per DID, min seconds between claims — kills structuring and wash patterns |
 | Remark-code uniqueness | one code per swap, high-entropy (not the swapId — it is guessable) |
-| 冻卡 (frozen account) playbook | operator runbook: pause the seller's profile, migrate liquidity to other sellers/banks, never route through the platform's own account (the engine must hold **no fiat**, ever) |
-| Seller onboarding | real-name (实名) matched to the profile's account 户名; small-value test transfer before raising limits |
+| frozen account playbook | operator runbook: pause the seller's profile, migrate liquidity to other sellers/banks, never route through the platform's own account (the engine must hold **no fiat**, ever) |
+| Seller onboarding | real-name matched to the profile's account holder name; small-value test transfer before raising limits |
 | Dispute SLA | arbitration within a fixed window; the escrow keeps both parties honest while it runs |
 
-KYC tiers (illustrative): unverified — view only; tier 1 (phone/实名) — up to a
+KYC tiers (illustrative): unverified — view only; tier 1 (phone/real-name) — up to a
 small per-trade cap; tier 2 (id + name-matched accounts) — full limits.
 
 **The engine must never touch fiat.** No merchant account on the happy path, no
@@ -956,15 +956,15 @@ there is no machine fiat signal to drop even that for a personal CNY transfer.
   (§6), and `dispute/resolve` settling its own outcome.
 - **Device-side verification** (§12) — *the worker is delivered:* under
   `SETTLEMENT_CNY_AUTO_RELEASE_ON` the seller's own ledger read (or a
-  two-sided 交易号 match, or a publicly-verified bank 回单) replaces the confirm
+  two-sided transaction id match, or a publicly-verified bank receipt) replaces the confirm
   **tap**. The read runs over a user-paired on-phone endpoint — the user
   installs the **Mobile Agent** app, grants accessibility, starts its server and
   hands the engine the URL + bearer token (revocable at will); the engine
   connects to verify. It
   is still attestation, not an oracle — the rails expose no machine payment
   event to a personal account.
-- **Corporate-seller collection (C4-style)** — 银企直联 / licensed 聚合支付
-  商户码 with real callbacks, **only** for seller entities that are merchants,
+- **Corporate-seller collection (C4-style)** — bank-enterprise direct connection / licensed aggregated payment
+  merchant code with real callbacks, **only** for seller entities that are merchants,
   never for personal accounts, and only with a licensed provider. This remains
   the only path to a true machine payment event.
 
@@ -1041,7 +1041,7 @@ script is a wallet capability, so it lives in `bigtangle-ts`.
    Counterparty reputation is *delivered* as derived stats (§25); user-submitted
    star ratings stay out of scope.
 5. **Risk controls** — KYC tiers, caps, velocity checks, name-match on tiers,
-   冻卡 runbook, unusual-pattern alerts.
+   frozen account runbook, unusual-pattern alerts.
 6. **Drop the engine key** → 2-of-2 + timelock. **Blocked on protocol work:**
    consensus needs an `isFinal` rule (reject txs whose `locktime` is in the
    future) in both `MempoolService.verifyTransaction` and `ServiceBaseCheck`.
@@ -1106,11 +1106,11 @@ geofencing — is an operator decision to make before shipping to users.
 - **Device-side verification** (`verify.test.ts`,
   `packages/p2p-protocol/test/verify.test.ts`,
   `services/p2p-verify/test/extract.test.ts`): the four field checks fail
-  closed, side = the signer's role, claim/observation 流水号 mismatch reported
+  closed, side = the signer's role, claim/observation transaction id mismatch reported
   not fatal, policy-gated machine confirm (`off` | `seller_receipt` |
   `two_sided` | `verified_receipt`, default `off`), a frozen swap never
-  advances, and the WeChat / Alipay / bank entry extraction (amount, 流水号,
-  备注, counterparty, time) with the card-number-not-the-amount and
+  advances, and the WeChat / Alipay / bank entry extraction (amount, transaction id,
+  memo, counterparty, time) with the card-number-not-the-amount and
   date-not-the-amount guards. The verdict anchors minus PII — fields + capture
   hashes on the `payment_verify` record (validated by `validateP2pSwapRecord`),
   the counterparty name never on chain.

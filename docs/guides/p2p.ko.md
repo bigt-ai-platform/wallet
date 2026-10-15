@@ -6,7 +6,7 @@
 
 **데모와 실서비스.** 스크린샷은 데모 빌드에서 나옵니다. 엔진은 메모리 저장소로 동작하고 체인 검사를 하지 않으므로 lock/release 단계는 합성 트랜잭션 해시를 사용합니다. 상태 기계, 서명, 추가 전용 이벤트 로그, 온체인 감사 앵커는 실제이며, L0 브로드캐스트만 스텁 처리됩니다.
 
-**판매자 확인이 법정화폐 신호입니다.** 개인 WeChat/Alipay/은행 계좌에는 수금 API가 없으므로 기다릴 수 있는 기계 검증 가능한 지불 이벤트가 없습니다. 판매자는 **자신의 앱에서 금액 + 비고 + 시간 + 流水号를 확인하고** — 스크린샷은 결코 인정되지 않습니다 — 확인합니다. 설계 세부 사항은 `docs/p2p.md`에 있습니다.
+**판매자 확인이 법정화폐 신호입니다.** 개인 WeChat/Alipay/은행 계좌에는 수금 API가 없으므로 기다릴 수 있는 기계 검증 가능한 지불 이벤트가 없습니다. 판매자는 **자신의 앱에서 금액 + 비고 + 시간 + 거래 번호를 확인하고** — 스크린샷은 결코 인정되지 않습니다 — 확인합니다. 설계 세부 사항은 `docs/p2p.md`에 있습니다.
 
 ---
 
@@ -27,7 +27,7 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 | 3 | 구매자가 매칭(수령 주소) | 구매자 | `swapId` 생성, 에스크로 주소 도출 |
 | 4 | 판매자가 2-of-3 에스크로에 자금을 넣고, 엔진이 잠금을 증명 | 판매자 + 엔진 | L0에서 `ESCROW_LOCKED` |
 | 5 | 구매자가 지불 지침을 가져옴 | 구매자 | `PAYMENT_PENDING`(+ 스왑별 비고) |
-| 6 | 구매자가 자신의 앱에서 지불하고 流水号로 청구 | 구매자 | `PAYMENT_CLAIMED` |
+| 6 | 구매자가 자신의 앱에서 지불하고 거래 번호로 청구 | 구매자 | `PAYMENT_CLAIMED` |
 | 7 | 판매자가 자신의 명세서를 확인하고 확정 | 판매자 | `PAYMENT_VERIFIED` |
 | 8 | 엔진이 토큰을 해제하고 스왑이 완료됨 | 엔진 | `ESCROW_RELEASED` → `COMPLETED` |
 
@@ -37,7 +37,7 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 
 ## 1. 판매자가 수금 프로필을 저장
 
-**My swaps** 탭에서 판매자는 레일(WeChat, Alipay 또는 은행)을 고르고 收款 이름과 계좌를 입력합니다. 프로필은 판매자의 DID 아래 서버 측에 저장되며 공개 주문서의 일부가 **아닙니다** — 지침 호출을 통해서만 매칭된 구매자에게 공개됩니다.
+**My swaps** 탭에서 판매자는 레일(WeChat, Alipay 또는 은행)을 고르고 수금 이름과 계좌를 입력합니다. 프로필은 판매자의 DID 아래 서버 측에 저장되며 공개 주문서의 일부가 **아닙니다** — 지침 호출을 통해서만 매칭된 구매자에게 공개됩니다.
 
 ![판매자가 WeChat 지불 프로필을 저장](/demo/p2p/p2p-cny-wechat-01-profile-ko.png)
 
@@ -81,17 +81,17 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 
 구매자가 **Payment details**를 누르면, 엔진은 판매자의 프로필을 공개하고 이체가 *반드시* 포함해야 하는 **스왑별 비고 코드**, 그리고 정확한 금액과 마감 시한을 발급합니다. 지침은 스왑 카드에 인라인으로 렌더링됩니다:
 
-![지불 지침: 收款名, 계좌, 715 CNY, 비고](/demo/p2p/p2p-cny-wechat-08-instructions-ko.png)
+![지불 지침: 수금 이름, 계좌, 715 CNY, 비고](/demo/p2p/p2p-cny-wechat-08-instructions-ko.png)
 
 스왑은 `PAYMENT_PENDING`이고 타임아웃 타이머가 시작됩니다 — 구매자가 끝내 지불하지 않으면 판매자는 구매자 동의 없이 만료시키고 에스크로를 환불할 수 있습니다.
 
 ---
 
-## 6. 구매자가 지불하고 流水号로 청구
+## 6. 구매자가 지불하고 거래 번호로 청구
 
-구매자는 자신의 WeChat/Alipay/은행 앱에서 정확한 금액을 이체하고, 거래 번호(流水号)를 **Transaction ID**에 붙여넣고, **I have paid**를 누릅니다. 선택적 영수증 이미지는 서버 측에 저장되며, 그 `sha256`만 스왑 이벤트에 앵커됩니다:
+구매자는 자신의 WeChat/Alipay/은행 앱에서 정확한 금액을 이체하고, 거래 번호를 **Transaction ID**에 붙여넣고, **I have paid**를 누릅니다. 선택적 영수증 이미지는 서버 측에 저장되며, 그 `sha256`만 스왑 이벤트에 앵커됩니다:
 
-![Transaction ID(流水号) 입력됨](/demo/p2p/p2p-cny-wechat-09-payment-pending-ko.png)
+![Transaction ID(거래 번호) 입력됨](/demo/p2p/p2p-cny-wechat-09-payment-pending-ko.png)
 
 상태는 이제 `PAYMENT_CLAIMED`입니다 — **토큰은 여전히 잠겨 있습니다.** 이 상태는 순전히 구매자의 청구로서 존재합니다:
 
@@ -101,9 +101,9 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 
 ## 7. 판매자가 자신의 명세서에서 확인
 
-판매자의 카드는 구매자의 流水号와 비고를 보여줍니다. 판매자는 **자신의 계좌에서 금액 + 비고 + 시간 + 流水号를 확인**하고 나서야 **Confirm received**를 누릅니다:
+판매자의 카드는 구매자의 거래 번호와 비고를 보여줍니다. 판매자는 **자신의 계좌에서 금액 + 비고 + 시간 + 거래 번호를 확인**하고 나서야 **Confirm received**를 누릅니다:
 
-![판매자가 流水号와 확인 경고를 봄](/demo/p2p/p2p-cny-wechat-11-seller-confirm-ko.png)
+![판매자가 거래 번호와 확인 경고를 봄](/demo/p2p/p2p-cny-wechat-11-seller-confirm-ko.png)
 
 스왑은 `PAYMENT_VERIFIED`입니다:
 
@@ -120,6 +120,37 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 판매자가 직접 지불받았으므로 법정화폐 지급 단계가 없습니다 — 스왑이 완료됩니다:
 
 ![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-ko.png)
+
+---
+
+## 선택 사항 — 내 휴대폰에서 자동 확인
+
+7단계는 보통 수동 탭입니다. 엔진이 대신 확인하게 하려면 휴대폰을 한 번
+페어링하고 **판매자 본인**의 영수증을 읽게 하세요. 판매자가 직접 확인할 바로
+그 명세서를 자동으로 읽습니다.
+
+**휴대폰 페어링(1회).** 본인 휴대폰에 **Mobile Agent** 앱
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))을
+설치하세요. 이 앱은 *휴대폰에서* MCP 서버를 실행합니다(접근성 서비스, adb
+불필요). 접근성을 허용하고 서버를 시작한 뒤 표시되는 엔드포인트와 **짧은
+일회용 코드**를 확인하세요. 지갑에서 **Device**를 열고 **Pair with code**를
+눌러 엔드포인트와 코드를 입력합니다. 페어링은 언제든 **Settings › Access ›
+Paired devices**에서 해제할 수 있습니다.
+
+**스왑 확인.** 스왑 카드에서 **Verify with my phone**을 누르세요. 어느 쪽이든
+자기 기기를 확인할 수 있습니다. 엔진은 페어링된 엔드포인트에 연결해 본인의
+결제 앱에서 해당 항목(금액, 비고, 시간, 거래 번호)을 읽고, 그다음 **지갑이
+판정에 서명**합니다. Alipay와 은행 앱은 화면을 접근성에 공개하지만 WeChat은
+UI를 숨기므로, WeChat의 경우 앱이 WeChat 자체의 "결제 수신" 알림을 읽습니다:
+
+![수취인의 WeChat 결제 알림](/demo/p2p/p2p-verify-wechat-notification-en.png)
+
+**무엇이 달라지나요.** 기본적으로 읽기 결과는 분쟁 증거일 뿐입니다.
+`SETTLEMENT_CNY_AUTO_RELEASE_ON` 정책(`seller_receipt`, 또는 더 엄격한
+`two_sided` / `verified_receipt`)에서는 조건을 충족한 읽기가 **수동 확인을
+대신하여** 에스크로를 해제합니다. 이는 여전히 증명(attestation)이며 오라클이
+아닙니다. 페어링이 곧 동의이고 언제든 해제할 수 있으며, 엔진은 당신이
+페어링한 한쪽만 읽습니다.
 
 ---
 

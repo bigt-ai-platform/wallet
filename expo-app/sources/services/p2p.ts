@@ -141,6 +141,18 @@ export function p2pConfigured(): boolean {
   return !!P2P_ENGINE_URL;
 }
 
+/** Device-verification auto-release policy (`SETTLEMENT_CNY_AUTO_RELEASE_ON`). */
+export type P2pAutoReleasePolicy = 'off' | 'seller_receipt' | 'two_sided' | 'verified_receipt';
+
+const AUTO_RELEASE_POLICIES: readonly P2pAutoReleasePolicy[] = ['off', 'seller_receipt', 'two_sided', 'verified_receipt'];
+
+/** Unknown/absent policy → `off` (evidence only) — never enable by typo. */
+export function normalizeAutoReleasePolicy(p: unknown): P2pAutoReleasePolicy {
+  return typeof p === 'string' && (AUTO_RELEASE_POLICIES as readonly string[]).includes(p)
+    ? (p as P2pAutoReleasePolicy)
+    : 'off';
+}
+
 /** What a deployed engine actually serves (GET /capabilities — public). */
 export interface P2pCapabilities {
   /** Enabled rails (CNY collection methods; docs/p2p.md). */
@@ -149,6 +161,9 @@ export interface P2pCapabilities {
   escrow: boolean;
   /** Public engine escrow key: rebuilds the 2-of-3 vault to sign escrow spends. */
   escrowPubkey: string | null;
+  /** CNY device-verification auto-release policy: does a qualifying phone read
+   *  act as the confirm? `off` = evidence only. Absent on older engines. */
+  autoReleaseOn: P2pAutoReleasePolicy;
   /** Chain clients wired: l0 = escrow proof/broadcast, l1 = social anchor,
    *  orderTxVerify = the engine confirms order/cancel txids before indexing. */
   chain: { l0: boolean; l1: boolean; orderTxVerify?: boolean };
@@ -172,6 +187,7 @@ export async function getCapabilities(): Promise<P2pCapabilities | null> {
       rails: data.rails.filter((r): r is string => typeof r === 'string'),
       escrow: !!data.escrow,
       escrowPubkey: typeof data.escrowPubkey === 'string' && data.escrowPubkey ? data.escrowPubkey : null,
+      autoReleaseOn: normalizeAutoReleasePolicy(data.autoReleaseOn),
       chain: {
         l0: !!data.chain?.l0,
         l1: !!data.chain?.l1,

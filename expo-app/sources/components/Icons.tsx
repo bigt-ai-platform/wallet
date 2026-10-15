@@ -37,3 +37,12 @@ export const CopyIcon: React.FC<IconProps> = ({ size = 22, color = 'currentColor
 
 export const ChevronDownIcon = makeIcon('M6 9l6 6 6-6');
 export const ExpandIcon = makeIcon('M9 3H3v6M15 3h6v6M9 21H3v-6M15 21h6v-6');
+
+/** Question-mark in a circle — help / user-guide affordance. */
+export const HelpIcon: React.FC<IconProps> = ({ size = 22, color = 'currentColor', ...props }) => (
+  <Svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...props}>
+    <Circle cx={12} cy={12} r={10} />
+    <Path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+    <Path d="M12 17h.01" />
+  </Svg>
+);

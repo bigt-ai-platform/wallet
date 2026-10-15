@@ -384,6 +384,14 @@ describe("capabilities", () => {
     expect(caps.statusCode).toBe(200);
     expect(caps.json().escrowPubkey).toBe(ENGINE_PUB);
     expect(caps.json().escrow).toBe(true);
+    // Default policy is off (evidence only) — reported so the wallet can hint.
+    expect(caps.json().autoReleaseOn).toBe("off");
+  });
+
+  it("reports the CNY auto-release policy when configured", async () => {
+    const a = await app(makeChain(), { SETTLEMENT_CNY_AUTO_RELEASE_ON: "seller_receipt" });
+    const caps = await a.inject({ method: "GET", url: "/capabilities" });
+    expect(caps.json().autoReleaseOn).toBe("seller_receipt");
   });
 });
 

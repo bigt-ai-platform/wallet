@@ -21,7 +21,7 @@ echt; nur der L0-Broadcast ist gestubbt.
 **Die Verkäuferbestätigung ist das Fiat-Signal.** Für ein persönliches
 WeChat-/Alipay-/Bankkonto gibt es keine Collection-API, also gibt es kein
 maschinell verifizierbares Zahlungsereignis, auf das man warten könnte. Der
-Verkäufer prüft **Betrag + Verwendungszweck + Zeit + 流水号 in seiner eigenen
+Verkäufer prüft **Betrag + Verwendungszweck + Zeit + Transaktionsnummer in seiner eigenen
 App** — ein Screenshot zählt nie — und bestätigt. Designdetails stehen in
 `docs/p2p.md`.
 
@@ -44,7 +44,7 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 | 3 | Käufer matcht (Empfangsadresse) | Käufer | `swapId` erzeugt, Escrow-Adresse abgeleitet |
 | 4 | Verkäufer finanziert den 2-von-3-Escrow, Engine weist den Lock nach | Verkäufer + Engine | `ESCROW_LOCKED` auf L0 |
 | 5 | Käufer ruft die Zahlungsanweisungen ab | Käufer | `PAYMENT_PENDING` (+ Verwendungszweck pro Tausch) |
-| 6 | Käufer zahlt in seiner eigenen App und meldet mit der 流水号 | Käufer | `PAYMENT_CLAIMED` |
+| 6 | Käufer zahlt in seiner eigenen App und meldet mit der Transaktionsnummer | Käufer | `PAYMENT_CLAIMED` |
 | 7 | Verkäufer prüft seinen eigenen Kontoauszug und bestätigt | Verkäufer | `PAYMENT_VERIFIED` |
 | 8 | Engine gibt die Token frei, der Tausch ist abgeschlossen | Engine | `ESCROW_RELEASED` → `COMPLETED` |
 
@@ -57,7 +57,7 @@ Kontodaten einer der beiden Seiten offenzulegen.
 ## 1. Der Verkäufer speichert ein Sammelprofil
 
 Im Tab **My swaps** wählt der Verkäufer einen Weg (WeChat, Alipay oder Bank) und
-gibt den 收款-Namen und das Konto ein. Das Profil wird serverseitig unter der DID
+gibt den Empfänger-Namen und das Konto ein. Das Profil wird serverseitig unter der DID
 des Verkäufers gespeichert und ist **nicht** Teil des öffentlichen Orderbuchs —
 es wird nur dem gematchten Käufer durch den Instructions-Aufruf offengelegt.
 
@@ -119,7 +119,7 @@ Profil des Verkäufers offen und prägt einen **Verwendungszweck-Code pro Tausch
 den die Überweisung *tragen muss*, plus den genauen Betrag und eine Frist. Die
 Anweisungen werden inline in der Tauschkarte angezeigt:
 
-![Zahlungsanweisungen: 户名, Konto, 715 CNY, Verwendungszweck](/demo/p2p/p2p-cny-wechat-08-instructions-de.png)
+![Zahlungsanweisungen: Kontoinhaber, Konto, 715 CNY, Verwendungszweck](/demo/p2p/p2p-cny-wechat-08-instructions-de.png)
 
 Der Tausch ist `PAYMENT_PENDING`, und ein Timeout startet — zahlt der Käufer
 nie, kann der Verkäufer den Escrow ohne Zustimmung des Käufers ablaufen lassen
@@ -127,15 +127,15 @@ und erstatten.
 
 ---
 
-## 6. Der Käufer zahlt und meldet mit der 流水号
+## 6. Der Käufer zahlt und meldet mit der Transaktionsnummer
 
 Der Käufer überweist den genauen Betrag in seiner eigenen
-WeChat-/Alipay-/Bank-App, fügt die Transaktionsnummer (流水号) in
+WeChat-/Alipay-/Bank-App, fügt die Transaktionsnummer in
 **Transaction ID** ein und drückt **I have paid** (Ich habe bezahlt). Ein
 optionales Belegbild wird serverseitig gespeichert; nur sein `sha256` wird im
 Swap-Ereignis verankert:
 
-![Transaction ID (流水号) eingegeben](/demo/p2p/p2p-cny-wechat-09-payment-pending-de.png)
+![Transaction ID (Transaktionsnummer) eingegeben](/demo/p2p/p2p-cny-wechat-09-payment-pending-de.png)
 
 Der Status ist nun `PAYMENT_CLAIMED` — **die Token sind weiterhin gesperrt.**
 Dieser Zustand existiert allein als Behauptung des Käufers:
@@ -146,11 +146,11 @@ Dieser Zustand existiert allein als Behauptung des Käufers:
 
 ## 7. Der Verkäufer bestätigt auf seinem eigenen Kontoauszug
 
-Die Karte des Verkäufers zeigt die 流水号 des Käufers und den Verwendungszweck.
-Der Verkäufer prüft **Betrag + Verwendungszweck + Zeit + 流水号 in seinem
+Die Karte des Verkäufers zeigt die Transaktionsnummer des Käufers und den Verwendungszweck.
+Der Verkäufer prüft **Betrag + Verwendungszweck + Zeit + Transaktionsnummer in seinem
 eigenen Konto** und drückt erst dann **Confirm received** (Eingang bestätigen):
 
-![Der Verkäufer sieht die 流水号 und die Bestätigungswarnung](/demo/p2p/p2p-cny-wechat-11-seller-confirm-de.png)
+![Der Verkäufer sieht die Transaktionsnummer und die Bestätigungswarnung](/demo/p2p/p2p-cny-wechat-11-seller-confirm-de.png)
 
 Der Tausch ist `PAYMENT_VERIFIED`:
 
@@ -171,6 +171,41 @@ Da der Verkäufer direkt bezahlt wurde, gibt es keinen Fiat-Auszahlungsschritt �
 der Tausch ist abgeschlossen:
 
 ![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-de.png)
+
+---
+
+## Optional — automatische Bestätigung vom eigenen Telefon
+
+Schritt 7 ist normalerweise ein manueller Tipp. Damit die Engine für dich
+bestätigt, koppelst du dein Telefon einmal und lässt sie den **eigenen** Beleg
+des Verkäufers lesen — dieselbe Abrechnung, die der Verkäufer von Hand prüfen
+würde, nur automatisch gelesen.
+
+**Das Telefon koppeln (einmalig).** Installiere die **Mobile Agent**-App
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
+auf deinem eigenen Telefon; sie betreibt einen MCP-Server *auf dem Telefon*
+(Barrierefreiheitsdienst, kein adb). Erteile die Barrierefreiheits-Berechtigung,
+starte den Server und notiere den Endpunkt und den **kurzen, einmalig
+verwendbaren Code**. Öffne in der Wallet **Geräte**, drücke **Mit Code koppeln**
+und gib Endpunkt und Code ein. Widerrufe die Kopplung jederzeit unter
+**Einstellungen › Zugriff › Gekoppelte Geräte**.
+
+**Einen Tausch verifizieren.** Drücke in der Tauschkarte **Mit meinem Telefon
+verifizieren** — jede Seite kann ihr eigenes Gerät verifizieren. Die Engine
+verbindet sich mit dem gekoppelten Endpunkt und liest den passenden Eintrag aus
+deiner eigenen Bezahl-App (Betrag, Verwendungszweck, Zeit und
+Transaktionsnummer); danach **signiert die Wallet das Urteil**. Alipay und Bank
+geben ihren Bildschirm an die Barrierefreiheit frei; WeChat verbirgt seine
+Oberfläche, daher liest die App für WeChat die „Zahlungseingang“-Benachrichtigung:
+
+![Die WeChat-Zahlungsbenachrichtigung des Empfängers](/demo/p2p/p2p-verify-wechat-notification-en.png)
+
+**Was sich ändert.** Standardmäßig ist ein Lesevorgang nur ein Streitbeleg.
+Unter der Richtlinie `SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt` oder die
+strengeren `two_sided` / `verified_receipt`) **ersetzt** ein qualifizierter
+Lesevorgang **die manuelle Bestätigung** und gibt die Eskrow frei. Es bleibt eine
+Attestierung, kein Orakel: Die Kopplung ist die Zustimmung, sie ist jederzeit
+widerrufbar, und die Engine liest nur die eine Seite, die du gekoppelt hast.
 
 ---
 

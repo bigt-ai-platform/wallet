@@ -19,7 +19,7 @@ stubbed.
 
 **Seller confirmation is the fiat signal.** There is no collection API for a
 personal WeChat/Alipay/bank account, so there is no machine-verifiable payment
-event to wait on. The seller checks **amount + remark + time + 流水号 in their
+event to wait on. The seller checks **amount + remark + time + transaction number in their
 own app** — a screenshot never counts — and confirms. Design details live in
 `docs/p2p.md`.
 
@@ -42,7 +42,7 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 | 3 | Buyer matches (receive address) | buyer | `swapId` created, escrow address derived |
 | 4 | Seller funds the 2-of-3 escrow, engine proves the lock | seller + engine | `ESCROW_LOCKED` on L0 |
 | 5 | Buyer pulls the payment instructions | buyer | `PAYMENT_PENDING` (+ per-swap remark) |
-| 6 | Buyer pays in their own app, claims with the 流水号 | buyer | `PAYMENT_CLAIMED` |
+| 6 | Buyer pays in their own app, claims with the transaction number | buyer | `PAYMENT_CLAIMED` |
 | 7 | Seller checks their own statement and confirms | seller | `PAYMENT_VERIFIED` |
 | 8 | Engine releases the tokens, swap completes | engine | `ESCROW_RELEASED` → `COMPLETED` |
 
@@ -55,7 +55,7 @@ party's account details.
 ## 1. The seller saves a collection profile
 
 On the **My swaps** tab the seller picks a rail (WeChat, Alipay or bank) and
-enters the 收款 name and account. The profile is stored server-side under the
+enters the collection name and account. The profile is stored server-side under the
 seller's DID and is **not** part of the public order book — it is revealed only
 to the matched buyer by the instructions call.
 
@@ -114,21 +114,21 @@ The buyer presses **Payment details**; the engine reveals the seller's profile
 and mints a **per-swap remark code** the transfer *must* carry, plus the exact
 amount and a deadline. The instructions render inline in the swap card:
 
-![Payment instructions: 户名, account, 715 CNY, remark](/demo/p2p/p2p-cny-wechat-08-instructions-en.png)
+![Payment instructions: account name, account, 715 CNY, remark](/demo/p2p/p2p-cny-wechat-08-instructions-en.png)
 
 The swap is `PAYMENT_PENDING`, and a timeout starts — if the buyer never pays,
 the seller can expire and refund the escrow without the buyer's consent.
 
 ---
 
-## 6. The buyer pays and claims with the 流水号
+## 6. The buyer pays and claims with the transaction number
 
 The buyer transfers the exact amount in their own WeChat/Alipay/bank app, pastes
-the transaction number (流水号) into **Transaction ID**, and presses **I have
+the transaction number into **Transaction ID**, and presses **I have
 paid**. An optional receipt image is stored server-side; only its `sha256` is
 anchored on the swap event:
 
-![Transaction ID (流水号) entered](/demo/p2p/p2p-cny-wechat-09-payment-pending-en.png)
+![Transaction ID entered](/demo/p2p/p2p-cny-wechat-09-payment-pending-en.png)
 
 Status is now `PAYMENT_CLAIMED` — **the tokens are still locked.** This state
 exists purely as the buyer's claim:
@@ -139,11 +139,11 @@ exists purely as the buyer's claim:
 
 ## 7. The seller confirms on their own statement
 
-The seller's card shows the buyer's 流水号 and the remark. The seller checks
-**amount + remark + time + 流水号 in their own account** and only then presses
+The seller's card shows the buyer's transaction number and the remark. The seller checks
+**amount + remark + time + transaction number in their own account** and only then presses
 **Confirm received**:
 
-![Seller sees the 流水号 and the confirm warning](/demo/p2p/p2p-cny-wechat-11-seller-confirm-en.png)
+![Seller sees the transaction number and the confirm warning](/demo/p2p/p2p-cny-wechat-11-seller-confirm-en.png)
 
 The swap is `PAYMENT_VERIFIED`:
 
@@ -163,6 +163,38 @@ Because the seller was paid directly, there is no fiat payout step — the swap
 completes:
 
 ![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-en.png)
+
+---
+
+## Optional — machine confirmation from your own phone
+
+Step 7 is normally a manual tap. To have the engine confirm for you, pair your
+phone once and let it read the **seller's own** receipt — the same statement the
+seller would check by hand, read automatically.
+
+**Pair the phone (once).** Install the **Mobile Agent** app
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
+on your own phone; it runs an MCP server *on the phone* (Accessibility service,
+no adb). Grant it Accessibility, start its server, and note the endpoint and the
+**short single-use code** it shows. In the wallet open **Device**, press **Pair
+with code**, and enter the endpoint and the code. Revoke the pairing any time
+under **Settings › Access › Paired devices**.
+
+**Verify a swap.** In the swap card press **Verify with my phone** — either
+party may verify their own device. The engine connects to the endpoint you
+paired and reads the matching entry from your own rail app (amount, remark, time
+and transaction number), then the **wallet signs the verdict**. Alipay and bank
+apps expose their screen to accessibility; WeChat hides its UI, so for WeChat
+the app reads WeChat's own “payment received” notification:
+
+![The payee's own WeChat payment notification](/demo/p2p/p2p-verify-wechat-notification-en.png)
+
+**What it changes.** By default a read is only dispute evidence. Under the policy
+`SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt`, or the stricter `two_sided` /
+`verified_receipt`) a qualifying read **stands in for the manual confirm** and
+releases the escrow. It is still attestation, not an oracle: the pairing is the
+consent, it can be revoked at any time, and the engine reads only the one side
+you paired.
 
 ---
 

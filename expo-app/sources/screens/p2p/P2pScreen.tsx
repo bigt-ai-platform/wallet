@@ -8,6 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { MONO_FONT } from '@/constants/fonts';
 import WalletUnlock from '@/components/WalletUnlock';
+import { HelpIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
@@ -18,7 +19,7 @@ import {
   cancelOrder, confirmPayment, cosignEscrow, createOrder, escrowContext, fetchInstructions, getCapabilities,
   getMyProfiles, getSwap, listOpenOrders, matchOrder, mySwaps, openDispute, p2pConfigured, presignEscrow,
   saveProfile, submitProof, transition,
-  type P2pCapabilities, type P2pCnyRail, type P2pIdentity, type P2pOrder,
+  type P2pAutoReleasePolicy, type P2pCapabilities, type P2pCnyRail, type P2pIdentity, type P2pOrder,
   type P2pPaymentInstructions, type P2pPaymentProfile, type P2pSwap, type P2pSwapAction,
 } from '@/services/p2p';
 
@@ -485,8 +486,28 @@ export default function P2pScreen() {
     const url = p2pPdfUrl(i18n.language, tzRegion());
     Linking.openURL(url).catch(() => setNotice({ ok: false, text: t('p2p.actionFailed') }));
   };
+  // Header control: a compact "?" help symbol linking to the P2P guide PDF.
   const guideLink = (
-    <TouchableOpacity onPress={openGuide} style={s.linkBtn} testID="p2p-guide" accessibilityRole="link">
+    <TouchableOpacity
+      onPress={openGuide}
+      style={s.linkBtn}
+      testID="p2p-guide"
+      accessibilityRole="link"
+      accessibilityLabel={t('p2p.guide')}
+    >
+      <HelpIcon size={20} color={theme.colors.primary} />
+    </TouchableOpacity>
+  );
+  // First-run / empty state: keep the label beside the icon for discoverability.
+  const guideLinkWithLabel = (
+    <TouchableOpacity
+      onPress={openGuide}
+      style={s.guideRow}
+      testID="p2p-guide"
+      accessibilityRole="link"
+      accessibilityLabel={t('p2p.guide')}
+    >
+      <HelpIcon size={20} color={theme.colors.primary} />
       <Text style={[s.refreshText, { color: theme.colors.primary }]}>{t('p2p.guide')}</Text>
     </TouchableOpacity>
   );
@@ -495,7 +516,7 @@ export default function P2pScreen() {
     return (
       <View style={s.centered}>
         <Text style={s.emptyText} testID="p2p-not-configured">{t('p2p.notConfigured')}</Text>
-        {guideLink}
+        {guideLinkWithLabel}
       </View>
     );
   }
@@ -656,6 +677,7 @@ export default function P2pScreen() {
             <PhoneVerifyCard
               id={identity}
               swap={verifySwap}
+              autoReleaseOn={caps?.autoReleaseOn ?? 'off'}
               onStatus={(text) => setNotice({ ok: true, text })}
               onClose={() => setVerifySwap(null)}
               onDone={() => { setVerifySwap(null); void reload(); }}
@@ -687,6 +709,7 @@ export default function P2pScreen() {
                 onVerify={() => setVerifySwap(sw)}
                 instruction={instructions[sw.swapId]}
                 index={i}
+                autoReleaseOn={caps?.autoReleaseOn ?? 'off'}
               />
             ))}
         </>
@@ -733,14 +756,14 @@ function Field({ label, value, onChange, placeholder, keyboardType, mono, testID
   );
 }
 
-function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, onVerify, instruction, index }: {
+function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, onVerify, instruction, index, autoReleaseOn }: {
   swap: P2pSwap; myDid?: string; busy: boolean; txHash: string; onTxHash: (v: string) => void;
   txId: string; onTxId: (v: string) => void;
   onLock: () => void; onExpire: () => void; onRefund: () => void;
   onRelease: () => void; onPresign: () => void; onCancel: () => void;
   onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void;
   onVerify: () => void;
-  instruction?: P2pPaymentInstructions; index: number;
+  instruction?: P2pPaymentInstructions; index: number; autoReleaseOn: P2pAutoReleasePolicy;
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
@@ -853,9 +876,16 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
       {/* Device-side verification (docs/p2p.md §12): read this party's own rail
           app through the phone they paired, then sign and submit the verdict. */}
       {isParty && cny && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
-        <View style={s.actions}>
-          <Action label={t('p2pdev.title')} color={theme.colors.accent.purple} onPress={onVerify} disabled={busy} testID={`p2p-swap-${index}-verify`} />
-        </View>
+        <>
+          <View style={s.actions}>
+            <Action label={t('p2pdev.title')} color={theme.colors.accent.purple} onPress={onVerify} disabled={busy} testID={`p2p-swap-${index}-verify`} />
+          </View>
+          {/* The auto-release policy decides whether a read confirms or is only
+              evidence — surface the default (`off`) so the tap has no surprise. */}
+          {autoReleaseOn === 'off' ? (
+            <Text style={s.hint} testID={`p2p-swap-${index}-verify-evidence`}>{t('p2pdev.policyOff')}</Text>
+          ) : null}
+        </>
       ) : null}
 
       {isParty && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
@@ -888,12 +918,14 @@ const s = StyleSheet.create((theme) => ({
   tabText: { fontSize: 14, fontWeight: '600' },
   refreshBtn: { marginLeft: 'auto', paddingHorizontal: 8, paddingVertical: 8 },
   linkBtn: { paddingHorizontal: 8, paddingVertical: 8 },
+  guideRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
   refreshText: { fontSize: 13, fontWeight: '600' },
   card: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 16, marginBottom: 12 },
   cardTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   mono: { fontSize: 14, fontFamily: MONO_FONT, color: theme.colors.text.primary },
   sub: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 6 },
+  hint: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 4 },
   subMono: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 4, fontFamily: MONO_FONT },
   badge: { fontSize: 12, fontWeight: '700' },
   buyPanel: { marginTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 12 },

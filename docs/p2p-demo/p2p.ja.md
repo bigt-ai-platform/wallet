@@ -8,9 +8,9 @@
 
 ---
 
-## 1. セラーが收款プロフィールを保存
+## 1. セラーが入金プロフィールを保存
 
-セラーは **P2P → マイスワップ** を開き、レール（`wechat`）を選び、收款名とアカウントを入力します。プロフィールはセラーの DID の下にサーバー側で保存され、公開注文板の一部では**ありません** — マッチした買い手だけに開示されます。
+セラーは **P2P → マイスワップ** を開き、レール（`wechat`）を選び、受取人名とアカウントを入力します。プロフィールはセラーの DID の下にサーバー側で保存され、公開注文板の一部では**ありません** — マッチした買い手だけに開示されます。
 
 ![セラーが WeChat 支払いプロフィールを保存](assets/screenshots/p2p-cny-wechat-01-profile-ja.png)
 
@@ -80,15 +80,15 @@ await L0.transfer(escrowAddress, "10");
 
 ステータス: `PAYMENT_PENDING`。タイムアウトが開始します — 未払いのスワップは買い手の同意なしに失効・返金できます。
 
-![支払い指示: 户名、アカウント、715 CNY、備考](assets/screenshots/p2p-cny-wechat-08-instructions-ja.png)
+![支払い指示: 口座名義、アカウント、715 CNY、備考](assets/screenshots/p2p-cny-wechat-08-instructions-ja.png)
 
 ---
 
-## 6. 買い手が CNY を支払い、流水号で申請
+## 6. 買い手が CNY を支払い、取引番号で申請
 
-買い手は自分の WeChat アプリで `715 CNY` を送金し、取引番号（流水号）を **Transaction ID** に貼り付けて **支払いました** を押します。任意の領収書画像はサーバー側に保存され、その `sha256` のみがスワップイベントにアンカーされます。
+買い手は自分の WeChat アプリで `715 CNY` を送金し、取引番号を **Transaction ID** に貼り付けて **支払いました** を押します。任意の領収書画像はサーバー側に保存され、その `sha256` のみがスワップイベントにアンカーされます。
 
-![取引番号（流水号）を入力](assets/screenshots/p2p-cny-wechat-09-payment-pending-ja.png)
+![取引番号を入力](assets/screenshots/p2p-cny-wechat-09-payment-pending-ja.png)
 
 ステータス: `PAYMENT_CLAIMED` — トークンはまだロックされたままです。この状態は買い手の主張にすぎません。
 
@@ -98,9 +98,9 @@ await L0.transfer(escrowAddress, "10");
 
 ## 7. セラーが自身の明細で確認
 
-セラーのカードには買い手の流水号と備考が表示されます。セラーは**自分の口座で金額 + 備考 + 時刻 + 流水号を確認**し（スクリーンショットは一切根拠になりません）、その後にのみ **受領を確認** を押します:
+セラーのカードには買い手の取引番号と備考が表示されます。セラーは**自分の口座で金額 + 備考 + 時刻 + 取引番号を確認**し（スクリーンショットは一切根拠になりません）、その後にのみ **受領を確認** を押します:
 
-![セラーが流水号 + 確認の警告を表示](assets/screenshots/p2p-cny-wechat-11-seller-confirm-ja.png)
+![セラーが取引番号 + 確認の警告を表示](assets/screenshots/p2p-cny-wechat-11-seller-confirm-ja.png)
 
 ステータス: `PAYMENT_VERIFIED`。
 
@@ -151,7 +151,7 @@ await L0.submitTransaction(serialize(tx));
 セラー自身の明細が証拠であり、エンジンはスマホアプリ
 ([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
 経由で自動的に読み取れます。WeChat はユーザー補助に UI を公開しないため、
-WeChat ではアプリが「收款到账」通知を読み取ります（Alipay/銀行は画面）。
+WeChat ではアプリが「入金通知」を読み取ります（Alipay/銀行は画面）。
 
 ペアリングは、アプリのサーバー画面に表示される**短い単回使用コード**です。
 ウォレットの**デバイス**画面（**コードでペアリング**）または dai の
@@ -180,7 +180,7 @@ WeChat ではアプリが「收款到账」通知を読み取ります（Alipay/
 MATCHED          14:20:00  マッチ時に金額を固定
 ESCROW_LOCKED    14:23:15  L0 トランザクションが 2-of-3 アドレスで CONFIRMED
 PAYMENT_PENDING  14:24:00  指示を発行（アカウント + 備考 f71ade2d23e9）
-PAYMENT_CLAIMED  14:25:10  買い手が流水号 4200001234567890 を貼り付け
+PAYMENT_CLAIMED  14:25:10  買い手が取引番号 4200001234567890 を貼り付け
 PAYMENT_VERIFIED 14:26:40  セラーが自身の WeChat 明細で確認
 ESCROW_RELEASED  14:27:20  セラー + エンジンが receiveAddress への支出に共同署名
 COMPLETED        14:27:21  法定通貨の送金なし — セラーはすでに CNY を保有
@@ -191,12 +191,12 @@ COMPLETED        14:27:21  法定通貨の送金なし — セラーはすでに
 ## 完全なデモフロー
 
 ```typescript
-// 1. セラーが CNY 收款プロフィールを保存        (POST /profiles)
+// 1. セラーが CNY 入金プロフィールを保存        (POST /profiles)
 // 2. セラーが署名済み指値注文を送信             (POST /orders)
 // 3. 買い手が署名済みマッチでマッチング         (POST /orders/:id/match)
 // 4. セラーが L0 の 2-of-3 P2SH エスクローに投入；エンジンが証明（escrow_lock）
 // 5. 買い手が支払い指示を取得                   (POST /swaps/:id/payment-instructions)
-// 6. 買い手が WeChat で支払い流水号を申請       (POST /swaps/:id/proof)
+// 6. 買い手が WeChat で支払い取引番号を申請     (POST /swaps/:id/proof)
 // 7. セラーが自身の明細で確認                   (POST /swaps/:id/confirm)
 // 8. セラー + エンジンが解放に共同署名          (POST /swaps/:id/transitions, action: release)
 // 9. エンジンがスワップを完了                   (…/transitions, action: complete)

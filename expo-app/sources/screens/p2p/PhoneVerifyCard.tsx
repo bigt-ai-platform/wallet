@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   createPairing, listMyPairings, revokePairing, deviceRead, submitVerdict,
-  type P2pIdentity, type P2pPairing, type P2pDeviceReadResult, type P2pSwap,
+  type P2pAutoReleasePolicy, type P2pIdentity, type P2pPairing, type P2pDeviceReadResult, type P2pSwap,
 } from '@/services/p2p';
 
 /**
@@ -15,8 +15,9 @@ import {
  * seller the receiving one; the engine can neither pick the other side nor
  * fabricate the evidence (the wallet signs the verdict).
  */
-export default function PhoneVerifyCard({ id, swap, onStatus, onClose, onDone }: {
-  id: P2pIdentity; swap: P2pSwap; onStatus: (s: string) => void; onClose: () => void; onDone: () => void;
+export default function PhoneVerifyCard({ id, swap, autoReleaseOn, onStatus, onClose, onDone }: {
+  id: P2pIdentity; swap: P2pSwap; autoReleaseOn: P2pAutoReleasePolicy;
+  onStatus: (s: string) => void; onClose: () => void; onDone: () => void;
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
@@ -110,6 +111,13 @@ export default function PhoneVerifyCard({ id, swap, onStatus, onClose, onDone }:
         </TouchableOpacity>
       </View>
       <Text style={[s.sub, { color: theme.colors.text.secondary }]}>{t('p2pdev.desc')}</Text>
+      {/* Auto-release policy (`SETTLEMENT_CNY_AUTO_RELEASE_ON`): is a qualifying
+          read the confirm, or evidence only? Default is `off`. */}
+      <Text style={[s.policy, { color: theme.colors.text.secondary }]} testID="p2p-verify-policy">
+        {autoReleaseOn === 'off'
+          ? t('p2pdev.policyOff')
+          : t('p2pdev.policyOn', { policy: autoReleaseOn })}
+      </Text>
 
       {pairings.filter((p) => !p.revoked).length === 0 ? (
         <View style={{ marginTop: 8, gap: 8 }}>
@@ -171,6 +179,7 @@ const s = StyleSheet.create((theme) => ({
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   title: { fontSize: 15, fontWeight: '700' },
   sub: { fontSize: 12 },
+  policy: { fontSize: 11, marginTop: 2 },
   label: { fontSize: 12, fontWeight: '600' },
   line: { fontSize: 13, color: theme.colors.text.primary },
   mono: { fontSize: 11, flex: 1 },

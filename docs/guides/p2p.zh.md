@@ -123,6 +123,33 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 
 ---
 
+## 可选 — 用自己的手机自动确认
+
+第 7 步通常是手动点击。若想让引擎替你确认，把手机配对一次，让它读取**卖家本人**
+的收款记录——也就是卖家本应手动核对的同一份账单，只是自动读取。
+
+**配对手机（一次）。** 在自己的手机上安装 **Mobile Agent** 应用
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))；
+它在*手机上*运行 MCP 服务器（无障碍服务，无需 adb）。授予无障碍权限、启动其
+服务器，并记下它显示的端点与**短的一次性配对码**。在钱包中打开 **Device（设备）**，
+点击 **Pair with code（用代码配对）**，输入端点与配对码。随时可在 **Settings ›
+Access › Paired devices（设置 › 访问 › 已配对设备）** 中撤销配对。
+
+**验证一笔交易。** 在交易卡片中点击 **Verify with my phone（用我的手机验证）**——
+任一方都可以验证自己的设备。引擎连接到已配对的端点，从你自己的支付应用中读取
+匹配的条目（金额、备注、时间和流水号），随后由**钱包对判定结果签名**。支付宝和
+银行会把界面暴露给无障碍服务；微信则隐藏其界面，因此对微信，应用读取微信自身的
+“收款到账”通知：
+
+![收款人自己的微信收款通知](/demo/p2p/p2p-verify-wechat-notification-en.png)
+
+**带来什么改变。** 默认情况下，读取结果仅作为争议证据。在 `SETTLEMENT_CNY_AUTO_RELEASE_ON`
+策略下（`seller_receipt`，或更严格的 `two_sided` / `verified_receipt`），符合条件
+的读取会**替代手动确认**并释放托管。这仍是证明（attestation），而不是预言机：
+配对即授权，可随时撤销，引擎只读取你配对的那一方。
+
+---
+
 ## 什么在保护你
 
 | 风险 | 缓解措施 |

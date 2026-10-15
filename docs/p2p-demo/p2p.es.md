@@ -10,7 +10,7 @@ Para el recorrido combinado de tres raíles (WeChat / Alipay / banco) véase [p2
 
 ## 1. El vendedor guarda un perfil de cobro
 
-El vendedor abre **P2P → Mis swaps**, elige el raíl (`wechat`) e introduce el nombre y la cuenta de 收款. El perfil se almacena en el servidor bajo el DID del vendedor y **no** forma parte del libro público de órdenes — solo se revela al comprador emparejado.
+El vendedor abre **P2P → Mis swaps**, elige el raíl (`wechat`) e introduce el nombre y la cuenta de cobro. El perfil se almacena en el servidor bajo el DID del vendedor y **no** forma parte del libro público de órdenes — solo se revela al comprador emparejado.
 
 ![El vendedor guarda el perfil de pago de WeChat](assets/screenshots/p2p-cny-wechat-01-profile-es.png)
 
@@ -80,15 +80,15 @@ El comprador pulsa **Detalles de pago**. El motor revela el perfil del vendedor 
 
 Estado: `PAYMENT_PENDING`. Arranca un temporizador — un swap impagado puede expirar y reembolsarse sin el consentimiento del comprador.
 
-![Instrucciones de pago: 户名, cuenta, 715 CNY, concepto](assets/screenshots/p2p-cny-wechat-08-instructions-es.png)
+![Instrucciones de pago: titular, cuenta, 715 CNY, concepto](assets/screenshots/p2p-cny-wechat-08-instructions-es.png)
 
 ---
 
-## 6. El comprador paga CNY y reclama con el 流水号
+## 6. El comprador paga CNY y reclama con el número de transacción
 
-El comprador transfiere `715 CNY` en su propia app de WeChat, pega el número de transacción (流水号) en **Transaction ID** y pulsa **He pagado**. La imagen de recibo opcional se almacena en el servidor; solo su `sha256` se ancla al evento del swap.
+El comprador transfiere `715 CNY` en su propia app de WeChat, pega el número de transacción en **Transaction ID** y pulsa **He pagado**. La imagen de recibo opcional se almacena en el servidor; solo su `sha256` se ancla al evento del swap.
 
-![Número de transacción (流水号) introducido](assets/screenshots/p2p-cny-wechat-09-payment-pending-es.png)
+![Número de transacción introducido](assets/screenshots/p2p-cny-wechat-09-payment-pending-es.png)
 
 Estado: `PAYMENT_CLAIMED` — los tokens siguen bloqueados. Este estado es la reclamación del comprador y nada más.
 
@@ -98,9 +98,9 @@ Estado: `PAYMENT_CLAIMED` — los tokens siguen bloqueados. Este estado es la re
 
 ## 7. El vendedor confirma en su propio extracto
 
-La tarjeta del vendedor muestra el 流水号 del comprador y el concepto. El vendedor comprueba **importe + concepto + hora + 流水号 en su propia cuenta** (las capturas nunca cuentan) y solo entonces pulsa **Confirmar recepción**:
+La tarjeta del vendedor muestra el número de transacción del comprador y el concepto. El vendedor comprueba **importe + concepto + hora + número de transacción en su propia cuenta** (las capturas nunca cuentan) y solo entonces pulsa **Confirmar recepción**:
 
-![El vendedor ve el 流水号 + la advertencia de confirmación](assets/screenshots/p2p-cny-wechat-11-seller-confirm-es.png)
+![El vendedor ve el número de transacción + la advertencia de confirmación](assets/screenshots/p2p-cny-wechat-11-seller-confirm-es.png)
 
 Estado: `PAYMENT_VERIFIED`.
 
@@ -152,7 +152,7 @@ El extracto del propio vendedor es el recibo; el motor puede leerlo
 automáticamente a través de la app del teléfono
 ([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp)).
 WeChat oculta su interfaz a la accesibilidad, así que para WeChat la app lee la
-notificación «收款到账» (para Alipay/banco, la pantalla).
+notificación «pago recibido» (para Alipay/banco, la pantalla).
 
 El emparejamiento es un **código corto de un solo uso** que la app muestra en su
 pantalla Servidor: introduce el endpoint y el código en la pantalla **Dispositivo**
@@ -181,7 +181,7 @@ automáticamente sin el toque manual.
 MATCHED          14:20:00  Importe fijado en el emparejamiento
 ESCROW_LOCKED    14:23:15  Tx L0 CONFIRMED en la dirección de 2-de-3
 PAYMENT_PENDING  14:24:00  instrucciones emitidas (cuenta + concepto f71ade2d23e9)
-PAYMENT_CLAIMED  14:25:10  el comprador pegó el 流水号 4200001234567890
+PAYMENT_CLAIMED  14:25:10  el comprador pegó el número de transacción 4200001234567890
 PAYMENT_VERIFIED 14:26:40  el vendedor confirmó en su propio extracto de WeChat
 ESCROW_RELEASED  14:27:20  vendedor + motor cosignaron el gasto hacia receiveAddress
 COMPLETED        14:27:21  sin pago fiat — el vendedor ya tiene los CNY
@@ -197,7 +197,7 @@ COMPLETED        14:27:21  sin pago fiat — el vendedor ya tiene los CNY
 // 3. El comprador empareja con un match firmado       (POST /orders/:id/match)
 // 4. El vendedor financia el depósito P2SH 2-de-3 en L0; el motor lo demuestra (escrow_lock)
 // 5. El comprador obtiene las instrucciones de pago   (POST /swaps/:id/payment-instructions)
-// 6. El comprador paga en WeChat y reclama el 流水号   (POST /swaps/:id/proof)
+// 6. Comprador paga y reclama número de transacción   (POST /swaps/:id/proof)
 // 7. El vendedor confirma en su propio extracto       (POST /swaps/:id/confirm)
 // 8. Vendedor + motor cosignan la liberación          (POST /swaps/:id/transitions, action: release)
 // 9. El motor completa el swap                        (…/transitions, action: complete)

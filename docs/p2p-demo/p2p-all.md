@@ -8,7 +8,7 @@ the same PQ-signed state machine, three different fiat legs.
 
 The seller's receipt can also be **read automatically from their own phone**
 through the on-phone agent — the screen tree for Alipay/bank, or WeChat's own
-“收款到账” push for WeChat (which hides its UI from accessibility). That is
+“payment received” push for WeChat (which hides its UI from accessibility). That is
 [§8 Device-side verification](#8-device-side-verification--the-payees-own-phone).
 
 Companion documents: [docs/p2p.md](../p2p.md) (design, protocol & threat
@@ -28,11 +28,11 @@ model), engine source `services/p2p-engine/src/`.
    if the transaction is not `CONFIRMED` at the derived escrow address.
 3. **The seller's own confirmation is the fiat signal.** There is no webhook for
    a WeChat/Alipay/bank transfer. `PAYMENT_CLAIMED` is only the buyer's claim
-   (流水号 + optional receipt); tokens stay locked until the seller signs
+   (transaction number + optional receipt); tokens stay locked until the seller signs
    `confirm` after checking their own account — the UI repeats this as a red
    warning above the *Confirm received* button.
 4. **PII never reaches the order book or the chain.** `GET /public/orders`
-   carries only the trade terms. The seller's 收款 account (WeChat ID, Alipay
+   carries only the trade terms. The seller's collection account (WeChat ID, Alipay
    account, or bank card + bank name) is revealed party-scoped by
    `POST /swaps/:id/payment-instructions`; only a per-swap `remark` code plus
    (optionally) a receipt `sha256` are stored on the swap event.
@@ -48,7 +48,7 @@ model), engine source `services/p2p-engine/src/`.
    seller pairs the on-phone agent once; the engine then reads the seller's own
    WeChat/Alipay/statement via `POST /swaps/:id/device-read` — the screen tree,
    or, for WeChat (which hides its UI from accessibility), WeChat's own
-   “收款到账” push — and, under
+   “payment received” push — and, under
    `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt`, machine-confirms without the
    manual tap.
 
@@ -63,7 +63,7 @@ model), engine source `services/p2p-engine/src/`.
 | 1 | `MATCHED` | `POST /orders/:id/match` | buyer | `receiveAddress` (token payout address) |
 | 2 | `ESCROW_LOCKED` | `POST /swaps/:id/transitions` `action=escrow_lock` | **seller** | `txHash` (escrow lock proof) |
 | 3 | `PAYMENT_PENDING` | `POST /swaps/:id/payment-instructions` | buyer | `remark` (12 hex chars, per-swap) |
-| 4 | `PAYMENT_CLAIMED` | `POST /swaps/:id/proof` | buyer | `txId` 流水号, optional `receipt` + `receiptSha256` |
+| 4 | `PAYMENT_CLAIMED` | `POST /swaps/:id/proof` | buyer | `txId` transaction number, optional `receipt` + `receiptSha256` |
 | 5 | `PAYMENT_VERIFIED` | `POST /swaps/:id/confirm` · or `POST /swaps/:id/device-read` + `POST /swaps/:id/verify` under policy (§8) | **seller** | the seller's own statement check |
 | 6 | `ESCROW_RELEASED` | `POST /swaps/:id/transitions` `action=release` | **engine** | `txHash` (release proof) |
 | 7 | `COMPLETED` | `POST /swaps/:id/transitions` `action=complete` | **engine** | — (seller already holds the CNY) |
@@ -79,8 +79,8 @@ release so a failed deal can always return the tokens.
 
 | Rail (`wantRail`) | Buyer pays | Seller verifies | Tokens released by |
 |---|---|---|---|
-| `wechat` | WeChat Pay to seller's WeChat ID | seller's own 流水 + remark | engine `release` + `complete` |
-| `alipay` | Alipay to seller's account | seller's own 流水 + remark | engine `release` + `complete` |
+| `wechat` | WeChat Pay to seller's WeChat ID | seller's own statement + remark | engine `release` + `complete` |
+| `alipay` | Alipay to seller's account | seller's own statement + remark | engine `release` + `complete` |
 | `bank` | bank transfer + remark | bank statement + remark | engine `release` + `complete` |
 
 Engine environment (`services/p2p-engine/src/server.ts`):
@@ -145,7 +145,7 @@ released only after the seller confirmed.
 ### Step 1 — Seller saves a collection profile
 
 The seller opens **P2P → My swaps**, picks the rail (`wechat`), and enters the
-收款 name and account (WeChat ID). The profile is stored server-side under the
+collection name and account (WeChat ID). The profile is stored server-side under the
 seller's DID and is **not** part of the public order book — it is only revealed
 to the matched buyer by the instructions call.
 
@@ -213,16 +213,16 @@ the transfer *must* carry:
 The instructions render **inline in the swap card** (amount, account, remark,
 deadline) — plus an optional QR payload when the profile stores one:
 
-![Payment instructions: 户名, account, 715 CNY, remark, pay-by](assets/screenshots/p2p-cny-wechat-08-instructions-en.png)
+![Payment instructions: account name, account, 715 CNY, remark, pay-by](assets/screenshots/p2p-cny-wechat-08-instructions-en.png)
 
-### Step 6 — Buyer pays in WeChat and claims with the 流水号
+### Step 6 — Buyer pays in WeChat and claims with the transaction number
 
 The buyer transfers `715 CNY` in their own WeChat app, pastes the transaction
-number (流水号, starts `4203`) into **Transaction ID**, and presses **I have
+number (starts `4203`) into **Transaction ID**, and presses **I have
 paid** (`POST /swaps/:id/proof`). The optional receipt image is stored as-is in
 the proof store; only its `sha256` is anchored on the swap event.
 
-![Transaction ID (流水号) entered](assets/screenshots/p2p-cny-wechat-09-payment-pending-en.png)
+![Transaction ID entered](assets/screenshots/p2p-cny-wechat-09-payment-pending-en.png)
 
 Status is now `PAYMENT_CLAIMED` — **the tokens are still locked.** This state
 exists purely as the buyer's claim.
@@ -231,8 +231,8 @@ exists purely as the buyer's claim.
 
 ### Step 7 — Seller verifies on their own statement, then confirms
 
-The seller's card shows the buyer's `流水号` and the remark. The seller checks
-**amount + remark + time + 流水号 in their own WeChat account** (screenshots
+The seller's card shows the buyer's `transaction number` and the remark. The seller checks
+**amount + remark + time + transaction number in their own WeChat account** (screenshots
 never count), and only then presses **Confirm received** — a seller-signed
 `POST /swaps/:id/confirm`. The red warning above the button is the whole safety
 story of the CNY rail:
@@ -240,7 +240,7 @@ story of the CNY rail:
 > Confirm only after the money is visible in your own account — this releases
 > the tokens immediately.
 
-![Seller sees 流水号 + the confirm warning](assets/screenshots/p2p-cny-wechat-11-seller-confirm-en.png)
+![Seller sees transaction number + the confirm warning](assets/screenshots/p2p-cny-wechat-11-seller-confirm-en.png)
 
 `PAYMENT_VERIFIED`:
 
@@ -268,9 +268,9 @@ POST /swaps/swap-…/transitions   # did = engine, action=complete
 ## 5. Walkthrough — Alipay (same shape, different rail)
 
 The Alipay leg is the **same state machine** with `wantRail=alipay`: the seller
-saves an Alipay collection profile (account = 手机号 / Alipay logon), lists
+saves an Alipay collection profile (account = mobile number / Alipay logon), lists
 USDT for CNY on the alipay chip, and the buyer pays in their own Alipay app.
-The 流水号 is Alipay's 28-digit trade number (starts `20`). Fresh wallets are
+The transaction number is Alipay's 28-digit trade number (starts `20`). Fresh wallets are
 used so the screenshots stand alone.
 
 ### Step 1 — Seller saves the Alipay profile
@@ -303,7 +303,7 @@ used so the screenshots stand alone.
 
 ![Payment details button](assets/screenshots/p2p-cny-alipay-07-buy-locked-en.png)
 
-![Payment instructions: 户名, Alipay account, 716 CNY, remark](assets/screenshots/p2p-cny-alipay-08-instructions-en.png)
+![Payment instructions: account name, Alipay account, 716 CNY, remark](assets/screenshots/p2p-cny-alipay-08-instructions-en.png)
 
 ### Step 6 — Buyer pays in Alipay and claims with the trade number
 
@@ -332,7 +332,7 @@ The buyer transfers `716 CNY` in Alipay, pastes the 28-digit trade number
 
 The bank leg is again the **same state machine** with `wantRail=bank`. The
 collection profile carries one extra field — the **bank name** — which the
-instructions panel shows next to the card number. The buyer's 流水号 is the
+instructions panel shows next to the card number. The buyer's transaction number is the
 bank's 16-digit transfer reference (starts `3029` in this run).
 
 ### Step 1 — Seller saves the bank profile (name + card + bank)
@@ -366,12 +366,12 @@ bank's 16-digit transfer reference (starts `3029` in this run).
 
 ![Payment details button](assets/screenshots/p2p-cny-bank-07-buy-locked-en.png)
 
-![Payment instructions: 户名, bank + card, 717 CNY, remark](assets/screenshots/p2p-cny-bank-08-instructions-en.png)
+![Payment instructions: account name, bank + card, 717 CNY, remark](assets/screenshots/p2p-cny-bank-08-instructions-en.png)
 
 ### Step 6 — Buyer transfers 717 CNY and claims with the bank reference
 
 The buyer wires `717 CNY` from their own online banking, pastes the transfer
-reference (流水号, `30291CF907571417` in this run), and presses **I have paid**.
+reference (transaction number, `30291CF907571417` in this run), and presses **I have paid**.
 
 ![Bank transfer reference entered](assets/screenshots/p2p-cny-bank-09-payment-pending-en.png)
 
@@ -401,8 +401,8 @@ reference (流水号, `30291CF907571417` in this run), and presses **I have paid
 | 10:40:35 | buyer matched the order (receive address only) |
 | 10:41:45 | paced 70 s past the rate-limit window |
 | 10:41:47 | escrow lock recorded (`ESCROW_LOCKED`) |
-| 10:41:50 | buyer pulled payment instructions (户名 / account / 715 CNY / remark) |
-| 10:41:51 | buyer claimed payment (流水号 `42034516068EAEC2`) |
+| 10:41:50 | buyer pulled payment instructions (account name / account / 715 CNY / remark) |
+| 10:41:51 | buyer claimed payment (transaction number `42034516068EAEC2`) |
 | 10:41:54 | seller confirmed receipt (`PAYMENT_VERIFIED`) → release → complete |
 | 10:42:19 | **alipay:** both wallets created |
 | 10:42:24 | seller payment profile saved (`13800138000`) |
@@ -446,15 +446,15 @@ Two reads satisfy the same `DeviceGateway`:
   the worker reads the entry as text. WeChat **hides its window from
   accessibility**, so for WeChat use the notification read.
 - **Receipt-notification read.** The payee's phone receives WeChat Pay's own
-  “收款到账” push; the worker reads the notification shade and parses
-  amount / 备注 / 交易单号 / time from it. This works even though WeChat hides
+  “payment received” push; the worker reads the notification shade and parses
+  amount / memo / transaction number / time from it. This works even though WeChat hides
   its UI.
 
-![The payee's own WeChat 收款到账 notification](assets/screenshots/p2p-verify-wechat-notification-en.png)
+![The payee's own WeChat payment received notification](assets/screenshots/p2p-verify-wechat-notification-en.png)
 
 *Device capture. The notification text is illustrative — no real transfer was
 made for this shot; on a live swap it carries the swap's own `remark` and
-交易单号.*
+transaction number.*
 
 The engine drives it (docs/p2p.md §12):
 
@@ -466,7 +466,7 @@ POST /swaps/:id/verify               → the wallet signs the verdict
 
 `device-read` takes `via: "screen" | "notification"` and returns a verdict
 (`observed: sent|received|none`) checked against the swap (exact amount, the
-per-swap `remark`, the time window, the 交易号). Under
+per-swap `remark`, the time window, the transaction number). Under
 `SETTLEMENT_CNY_AUTO_RELEASE_ON` the engine may then act **without** the manual
 *Confirm* tap:
 
@@ -474,14 +474,14 @@ per-swap `remark`, the time window, the 交易号). Under
 |---|---|
 | `off` (default) | verdicts are dispute evidence only |
 | `seller_receipt` | the **seller's** own `received` read stands in for the confirm tap |
-| `two_sided` | the buyer's `sent` **and** the seller's `received` must agree on one 交易号 |
-| `verified_receipt` | a bank 电子回单 that passed the bank's public 回单 verification settles it alone |
+| `two_sided` | the buyer's `sent` **and** the seller's `received` must agree on one transaction number |
+| `verified_receipt` | a bank e-receipt that passed the bank's public receipt verification settles it alone |
 
 A **notification** seller read qualifies as `seller_receipt`. Trust is tiered:
 one-sided evidence never machine-confirms under `two_sided`, and only the
 **payee's own** device is the side that counts. This is locked by
 `services/p2p-engine/test/wechat-mcp-verify.e2e.test.ts` — a mock `android_*`
-MCP endpoint serves the WeChat screen **and** the 收款到账 push, and the engine
+MCP endpoint serves the WeChat screen **and** the payment received push, and the engine
 runs the full read → verdict → `/verify` → machine-confirm to `PAYMENT_VERIFIED`.
 
 ---

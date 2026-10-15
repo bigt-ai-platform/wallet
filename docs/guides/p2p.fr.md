@@ -21,7 +21,7 @@ d'audit on-chain sont réels ; seule la diffusion L0 est simulée.
 **La confirmation du vendeur est le signal fiat.** Il n'existe pas d'API de
 collecte pour un compte personnel WeChat/Alipay/banque, donc il n'y a aucun
 événement de paiement vérifiable par machine à attendre. Le vendeur vérifie
-**montant + motif + heure + 流水号 dans sa propre application** — une capture
+**montant + motif + heure + numéro de transaction dans sa propre application** — une capture
 d'écran ne compte jamais — puis confirme. Les détails de conception se trouvent
 dans `docs/p2p.md`.
 
@@ -44,7 +44,7 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 | 3 | L'acheteur apparie (adresse de réception) | acheteur | `swapId` créé, adresse de séquestre dérivée |
 | 4 | Le vendeur finance le séquestre 2-sur-3, le moteur prouve le verrou | vendeur + moteur | `ESCROW_LOCKED` sur L0 |
 | 5 | L'acheteur récupère les instructions de paiement | acheteur | `PAYMENT_PENDING` (+ motif par échange) |
-| 6 | L'acheteur paie dans sa propre application et réclame avec le 流水号 | acheteur | `PAYMENT_CLAIMED` |
+| 6 | L'acheteur paie dans sa propre application et réclame avec le numéro de transaction | acheteur | `PAYMENT_CLAIMED` |
 | 7 | Le vendeur vérifie son propre relevé et confirme | vendeur | `PAYMENT_VERIFIED` |
 | 8 | Le moteur libère les jetons, l'échange se termine | moteur | `ESCROW_RELEASED` → `COMPLETED` |
 
@@ -57,7 +57,7 @@ sans exposer les coordonnées de compte de l'une ou l'autre partie.
 ## 1. Le vendeur enregistre un profil de collecte
 
 Dans l'onglet **My swaps**, le vendeur choisit un rail (WeChat, Alipay ou
-banque) et saisit le nom de 收款 et le compte. Le profil est stocké côté serveur
+banque) et saisit le nom du bénéficiaire et le compte. Le profil est stocké côté serveur
 sous le DID du vendeur et ne fait **pas** partie du carnet d'ordres public — il
 n'est révélé qu'à l'acheteur apparié par l'appel d'instructions.
 
@@ -118,7 +118,7 @@ révèle le profil du vendeur et génère un **code de motif par échange** que 
 transfert *doit* porter, ainsi que le montant exact et une échéance. Les
 instructions s'affichent en ligne dans la carte d'échange :
 
-![Instructions de paiement : 户名, compte, 715 CNY, motif](/demo/p2p/p2p-cny-wechat-08-instructions-fr.png)
+![Instructions de paiement : nom du titulaire, compte, 715 CNY, motif](/demo/p2p/p2p-cny-wechat-08-instructions-fr.png)
 
 L'échange est `PAYMENT_PENDING`, et un délai démarre — si l'acheteur ne paie
 jamais, le vendeur peut expirer et rembourser le séquestre sans l'accord de
@@ -126,15 +126,15 @@ l'acheteur.
 
 ---
 
-## 6. L'acheteur paie et réclame avec le 流水号
+## 6. L'acheteur paie et réclame avec le numéro de transaction
 
 L'acheteur transfère le montant exact dans sa propre application
-WeChat/Alipay/banque, colle le numéro de transaction (流水号) dans
+WeChat/Alipay/banque, colle le numéro de transaction dans
 **Transaction ID** et appuie sur **I have paid** (J'ai payé). Une image de reçu
 facultative est stockée côté serveur ; seul son `sha256` est ancré sur
 l'événement d'échange :
 
-![Transaction ID (流水号) saisi](/demo/p2p/p2p-cny-wechat-09-payment-pending-fr.png)
+![Transaction ID (numéro de transaction) saisi](/demo/p2p/p2p-cny-wechat-09-payment-pending-fr.png)
 
 Le statut est désormais `PAYMENT_CLAIMED` — **les jetons sont toujours
 verrouillés.** Cet état n'existe que comme déclaration de l'acheteur :
@@ -145,11 +145,11 @@ verrouillés.** Cet état n'existe que comme déclaration de l'acheteur :
 
 ## 7. Le vendeur confirme sur son propre relevé
 
-La carte du vendeur affiche le 流水号 de l'acheteur et le motif. Le vendeur
-vérifie **montant + motif + heure + 流水号 sur son propre compte** et n'appuie
+La carte du vendeur affiche le numéro de transaction de l'acheteur et le motif. Le vendeur
+vérifie **montant + motif + heure + numéro de transaction sur son propre compte** et n'appuie
 qu'ensuite sur **Confirm received** (Confirmer la réception) :
 
-![Le vendeur voit le 流水号 et l'avertissement de confirmation](/demo/p2p/p2p-cny-wechat-11-seller-confirm-fr.png)
+![Le vendeur voit le numéro de transaction et l'avertissement de confirmation](/demo/p2p/p2p-cny-wechat-11-seller-confirm-fr.png)
 
 L'échange est `PAYMENT_VERIFIED` :
 
@@ -170,6 +170,41 @@ Comme le vendeur a été payé directement, il n'y a pas d'étape de versement f
 l'échange se termine :
 
 ![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-fr.png)
+
+---
+
+## Optionnel — confirmation automatique depuis votre téléphone
+
+L'étape 7 est normalement un appui manuel. Pour que le moteur confirme à votre
+place, appairez votre téléphone une fois et laissez-le lire le reçu **du
+vendeur** — le même relevé que le vendeur vérifierait à la main, lu
+automatiquement.
+
+**Appairer le téléphone (une fois).** Installez l'app **Mobile Agent**
+([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
+sur votre propre téléphone ; elle exécute un serveur MCP *sur le téléphone*
+(service d'accessibilité, sans adb). Accordez l'accessibilité, démarrez son
+serveur et notez le point de terminaison et le **code court à usage unique**
+affiché. Dans le wallet, ouvrez **Appareil**, appuyez sur **Appairer avec un
+code** et saisissez le point de terminaison et le code. Révoquez l'appairage à
+tout moment dans **Paramètres › Accès › Appareils appairés**.
+
+**Vérifier un échange.** Dans la carte d'échange, appuyez sur **Vérifier avec
+mon téléphone** — chaque partie peut vérifier son propre appareil. Le moteur se
+connecte au point de terminaison appairé et lit l'entrée correspondante dans
+votre propre app de paiement (montant, libellé, heure et numéro de transaction),
+puis le **wallet signe le verdict**. Alipay et les banques exposent leur écran à
+l'accessibilité ; WeChat masque son interface, donc pour WeChat l'app lit la
+notification « paiement reçu » de WeChat :
+
+![La notification de paiement WeChat du bénéficiaire](/demo/p2p/p2p-verify-wechat-notification-en.png)
+
+**Ce que cela change.** Par défaut, une lecture n'est qu'une preuve en cas de
+litige. Sous la politique `SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt`, ou
+les plus strictes `two_sided` / `verified_receipt`), une lecture qualifiée
+**remplace la confirmation manuelle** et libère le séquestre. Cela reste une
+attestation, pas un oracle : l'appairage est le consentement, il est révocable à
+tout moment, et le moteur ne lit que le côté que vous avez appairé.
 
 ---
 
