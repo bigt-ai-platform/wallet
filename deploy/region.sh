@@ -59,6 +59,10 @@ vm_user() { echo "${REGION_SSH_USER[$1]}"; }
 vm_key()  { echo "${REGION_SSH_KEY[$1]}"; }
 domain()  { echo "${REGION_DOMAIN[$1]}"; }
 
+# The single shared P2P engine runs on P2P_REGION (region.conf); every other
+# region's /p2p/* proxies to its domain. Resolved once here.
+P2P_DOMAIN="${P2P_DOMAIN:-$(domain "$P2P_REGION")}"
+
 # Resolve the VM working dir per SSH user when REMOTE_REPO was left empty:
 # root regions keep the stack at /srv/wallet, ubuntu regions at /home/<user>/wallet.
 default_repo() {
@@ -164,13 +168,22 @@ EOF
 }
 
 # ─── P2P settlement engine (services/p2p-engine) ───
-# Provisioned separately from the static web stack: the engine holds DB + engine
-# identity secrets that a client app must never see. Secrets live on the RELEASE
+# Provisioned separately from the static web stack: the engine holds its
+# store (default: an encrypted blob store, no database) + engine identity
+# secrets that a client app must never see. Secrets live on the RELEASE
 # HOST in the gitignored deploy/env/.env.p2p.<region> (region.sh rsyncs exclude
 # deploy/env, so each run scps them again) and are passed to compose as an
 # --env-file (interpolation only — compose whitelist-maps the container env).
 p2p_up() {
   local r="$1"; require_region "$r"
+  # The engine is a SHARED singleton: one key + one store for every region, so
+  # exactly one VM runs it (region.conf P2P_REGION). A second one would carry a
+  # different SETTLEMENT_ENGINE_KEY and derive different escrow vaults.
+  if [ "$r" != "$P2P_REGION" ]; then
+    echo -e "${RED}P2P is one shared engine (region.conf P2P_REGION=$P2P_REGION); refusing to run a second one on '$r'.${NC}" >&2
+    echo -e "${YELLOW}Run: ./deploy/region.sh p2p $P2P_REGION   (or set P2P_REGION=$r to move the shared engine)${NC}" >&2
+    exit 1
+  fi
   local env_file="${SCRIPT_DIR}/env/.env.p2p.${r}"
   local tar="${SCRIPT_DIR}/.image/wallet-p2p-engine.latest.tar"
   [ -f "$env_file" ] || { echo -e "${RED}secrets missing: $env_file — create it first (scripts/p2p-engine-key.mjs + docs/p2p.md)${NC}"; exit 1; }
@@ -189,10 +202,10 @@ p2p_up() {
   fi
 
   echo -e "${GREEN}--- P2P engine up on $(vm_ip "$r") (:$P2P_PORT) ---${NC}"
-  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_PORT=$P2P_PORT P2P_IMAGE=$P2P_IMAGE P2P_COMPOSE=${P2P_COMPOSE:-deploy/compose.p2p-engine.yml} bash -s" <<'EOF'
+  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_PORT=$P2P_PORT P2P_IMAGE=$P2P_IMAGE P2P_COMPOSE=${P2P_COMPOSE:-deploy/compose.p2p-engine.blob.yml} bash -s" <<'EOF'
 set -e
 cd "$REMOTE_REPO"
-COMPOSE="docker compose --env-file deploy/env/.env.p2p.$REGION -f ${P2P_COMPOSE:-deploy/compose.p2p-engine.yml}"
+COMPOSE="docker compose --env-file deploy/env/.env.p2p.$REGION -f ${P2P_COMPOSE:-deploy/compose.p2p-engine.blob.yml}"
 # image: registry pull, else the docker-save tar tag.sh built — never build on the VM
 if [ -n "$P2P_IMAGE" ] && docker pull "$P2P_IMAGE" >/dev/null 2>&1; then
   echo "image: $P2P_IMAGE (registry pull)"
@@ -225,6 +238,17 @@ config_caddy() {
   local r="$1" dom; dom="$(domain "$r")"
   local sudo; sudo="$(sudo_cmd "$r")"
   local apex="${APEX_DOMAIN:-wallet.bigt.ai}"
+  # ONE shared engine (region.conf P2P_REGION): the host region proxies to its
+  # local container and strips /p2p (the engine serves /orders…, not /p2p/…);
+  # every other region preserves the full /p2p/… path and forwards it to the
+  # host region's vhost, which strips it. Same-origin either way — the bundle
+  # bakes EXPO_PUBLIC_P2P_ENGINE_URL=/p2p (deploy/tag.sh).
+  local p2p_verb p2p_upstream
+  if [ "$r" = "$P2P_REGION" ]; then
+    p2p_verb="handle_path"; p2p_upstream="127.0.0.1:${P2P_PORT}"
+  else
+    p2p_verb="handle"; p2p_upstream="https://${P2P_DOMAIN}"
+  fi
   echo -e "${GREEN}--- Caddy vhosts for $dom on $(vm_ip "$r") ---${NC}"
   ssh ${SSH_OPTS} -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" \
     "${sudo} tee /etc/caddy/Caddyfile.d/wallet-${r}.caddy > /dev/null" <<CADDYEOF
@@ -274,12 +298,15 @@ ${dom}, www.${dom} {
     handle_path /l1/* {
         reverse_proxy ${L1_API}
     }
-    # P2P settlement engine (services/p2p-engine) on this VM — same-origin,
-    # the bundle bakes EXPO_PUBLIC_P2P_ENGINE_URL=/p2p (deploy/tag.sh). The
-    # bare /p2p SPA route falls through to the web container; only /p2p/<api>
-    # is stripped here. Keep in sync with nginx.conf location /p2p/.
-    handle_path /p2p/* {
-        reverse_proxy 127.0.0.1:${P2P_PORT}
+    # P2P settlement engine (services/p2p-engine) — ONE shared engine for every
+    # region (region.conf P2P_REGION). The host region proxies to its local
+    # container and strips /p2p (the engine serves /orders…); other regions
+    # forward the full /p2p/… path to the host region's vhost, which strips it.
+    # Same-origin either way (EXPO_PUBLIC_P2P_ENGINE_URL=/p2p, deploy/tag.sh).
+    # The bare /p2p SPA route falls through to the web container; keep in sync
+    # with nginx.conf location /p2p/.
+    ${p2p_verb} /p2p/* {
+        reverse_proxy ${p2p_upstream}
     }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}
@@ -346,12 +373,15 @@ ${apex}, www.${apex} {
     handle_path /l1/* {
         reverse_proxy ${L1_API}
     }
-    # P2P settlement engine (services/p2p-engine) on this VM — same-origin,
-    # the bundle bakes EXPO_PUBLIC_P2P_ENGINE_URL=/p2p (deploy/tag.sh). The
-    # bare /p2p SPA route falls through to the web container; only /p2p/<api>
-    # is stripped here. Keep in sync with nginx.conf location /p2p/.
-    handle_path /p2p/* {
-        reverse_proxy 127.0.0.1:${P2P_PORT}
+    # P2P settlement engine (services/p2p-engine) — ONE shared engine for every
+    # region (region.conf P2P_REGION). The host region proxies to its local
+    # container and strips /p2p (the engine serves /orders…); other regions
+    # forward the full /p2p/… path to the host region's vhost, which strips it.
+    # Same-origin either way (EXPO_PUBLIC_P2P_ENGINE_URL=/p2p, deploy/tag.sh).
+    # The bare /p2p SPA route falls through to the web container; keep in sync
+    # with nginx.conf location /p2p/.
+    ${p2p_verb} /p2p/* {
+        reverse_proxy ${p2p_upstream}
     }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}
@@ -427,12 +457,12 @@ EOF
 logs_region() {
   local r="$1"; require_region "$r"
   echo -e "\n${GREEN}=== Logs: $r ===${NC}"
-  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r bash -s" <<'EOF'
+  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_COMPOSE=$P2P_COMPOSE bash -s" <<'EOF'
 cd "$REMOTE_REPO"
 docker compose -f deploy/compose.prod.yml logs --tail=80 --no-color 2>/dev/null | tail -120 || true
 if [ -f "deploy/env/.env.p2p.$REGION" ]; then
   echo "--- p2p engine ---"
-  docker compose --env-file "deploy/env/.env.p2p.$REGION" -f deploy/compose.p2p-engine.yml logs --tail=40 --no-color 2>/dev/null | tail -60 || true
+  docker compose --env-file "deploy/env/.env.p2p.$REGION" -f ${P2P_COMPOSE:-deploy/compose.p2p-engine.blob.yml} logs --tail=40 --no-color 2>/dev/null | tail -60 || true
 fi
 EOF
 }
@@ -445,6 +475,7 @@ env_region() {
   echo "  remote repo : $REMOTE_REPO"
   echo "  web port    : $WEB_PORT"
   echo "  p2p port    : $P2P_PORT (engine image: ${P2P_IMAGE:-docker-save tar})"
+  echo "  p2p stack   : ${P2P_COMPOSE:-deploy/compose.p2p-engine.blob.yml}"
   [ -f "${SCRIPT_DIR}/env/.env.p2p.${r}" ] && echo "  p2p secrets : deploy/env/.env.p2p.${r} (present)" \
       || echo "  p2p secrets : deploy/env/.env.p2p.${r} (MISSING — run ./deploy/region.sh p2p $r after creating it)"
   if [ "$r" = "${APEX_REGION:-}" ]; then
@@ -458,11 +489,11 @@ destroy_region() {
   local r="$1"; require_region "$r"
   local sudo; sudo="$(sudo_cmd "$r")"
   echo -e "${RED}=== Destroy wallet on $r ($(vm_ip "$r")) ===${NC}"
-  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r bash -s" <<'EOF'
+  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_COMPOSE=$P2P_COMPOSE bash -s" <<'EOF'
 cd "$REMOTE_REPO" 2>/dev/null || exit 0
 docker compose -f deploy/compose.prod.yml down 2>/dev/null || true
 if [ -f "deploy/env/.env.p2p.$REGION" ]; then
-  docker compose --env-file "deploy/env/.env.p2p.$REGION" -f deploy/compose.p2p-engine.yml down 2>/dev/null || true
+  docker compose --env-file "deploy/env/.env.p2p.$REGION" -f ${P2P_COMPOSE:-deploy/compose.p2p-engine.blob.yml} down 2>/dev/null || true
 fi
 docker rm -f "wallet-p2p-$REGION-engine" "wallet-p2p-$REGION-db" >/dev/null 2>&1 || true
 docker rm -f "bapp-$REGION-web" >/dev/null 2>&1 || true

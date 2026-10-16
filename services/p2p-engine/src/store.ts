@@ -228,6 +228,7 @@ function orderFromRow(row: any): P2pOrder {
     signature: row.signature,
     swapId: row.swap_id ?? undefined,
     txid: row.txid ?? undefined,
+    enginePubkey: row.engine_pubkey ?? undefined,
     createdAt: new Date(row.created_at).getTime(),
   };
 }
@@ -244,8 +245,8 @@ export class PgSettlementStore implements SettlementStore {
   async createOrder(o: P2pOrder): Promise<void> {
     await this.db.query(
       `INSERT INTO p2p_orders (order_id, seller_did, type, give_token, give_amount, give_chain,
-         want_currency, want_amount, want_rail, valid_until, status, signature, swap_id, txid, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         want_currency, want_amount, want_rail, valid_until, status, signature, swap_id, txid, engine_pubkey, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
        ON CONFLICT (order_id) DO NOTHING`,
       [
         o.orderId,
@@ -262,6 +263,7 @@ export class PgSettlementStore implements SettlementStore {
         o.signature,
         o.swapId ?? null,
         o.txid ?? null,
+        o.enginePubkey ?? null,
         new Date(o.createdAt),
       ],
     );

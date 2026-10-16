@@ -59,6 +59,11 @@ export interface TokenItem {
   tokendomain?: string;
   decimals?: number;
   description?: string;
+  /** Emission index of a single `searchTokens` record (one record per issuance). */
+  tokenindex?: number;
+  /** Raw smallest-unit supply. `getTokensItemList` replaces the per-emission
+   *  value with the token's total, summed over every emission. */
+  amount?: string | number;
 }
 
 /**
@@ -178,6 +183,9 @@ export interface GetOutputsResponse {
  */
 export interface GetTokensResponse {
   tokens: TokenItem[];
+  /** `tokenid` → total supply, summed over every emission (BigInteger, so the
+   *  server sends it as a JSON number/string — see `getTokenAmountMap`). */
+  amountMap?: Record<string, string | number>;
 }
 
 /**

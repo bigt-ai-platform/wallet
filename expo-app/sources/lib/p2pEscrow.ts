@@ -10,8 +10,10 @@ import {
   UTXO,
   Utils,
   escrowSpendAmount,
+  type Coin,
   type NetworkParameters,
   type Sha256Hash,
+  type Transaction,
 } from 'bigtangle-ts';
 
 /**
@@ -108,6 +110,19 @@ export interface EscrowSkeleton {
 }
 
 /**
+ * The rebuilt *unsigned* spend plus the digest its signatures cover. Kept
+ * alongside {@link EscrowSkeleton} so a cooperative (engine-free) release can
+ * assemble the finished transaction locally instead of handing the skeleton to
+ * the engine.
+ */
+export interface EscrowSpend {
+  tx: Transaction;
+  sighash: Sha256Hash;
+  /** Value of the escrow output the spend consumes. */
+  value: Coin;
+}
+
+/**
  * The network params a base58 address belongs to. The app can be pointed at
  * testnet (settings.useTestnet) while this module defaults to mainnet, so try
  * each rather than assuming — the wrong one throws in `Address.fromBase58`.
@@ -126,13 +141,13 @@ function paramsForAddress(base58: string): NetworkParameters {
  * signing. Throws only on an unparseable destination; a missing lock output
  * returns null (fail closed — the caller never signs unrelated bytes).
  */
-export function buildEscrowSighash(opts: {
+export function buildEscrowSpend(opts: {
   vault: Escrow;
   outputs: readonly EscrowHistoryOutput[] | undefined;
   escrowAddress: string;
   escrowTxHash: string;
   toBase58: string;
-}): EscrowSkeleton | null {
+}): EscrowSpend | null {
   const raw = findEscrowOutput(opts.outputs, opts.escrowTxHash, opts.escrowAddress);
   if (!raw) return null;
   const utxo = UTXO.fromJSONObject(raw);
@@ -149,10 +164,58 @@ export function buildEscrowSighash(opts: {
     amount: escrowSpendAmount(utxo.getValue()),
   });
   const sighash = tx.hashForSignature(0, opts.vault.redeemScript.getProgram(), SigHash.ALL, false);
-  return { sighash };
+  return { tx, sighash, value: utxo.getValue() };
+}
+
+/** {@link buildEscrowSpend}, reduced to the digest the engine's API expects. */
+export function buildEscrowSighash(opts: {
+  vault: Escrow;
+  outputs: readonly EscrowHistoryOutput[] | undefined;
+  escrowAddress: string;
+  escrowTxHash: string;
+  toBase58: string;
+}): EscrowSkeleton | null {
+  const spend = buildEscrowSpend(opts);
+  return spend ? { sighash: spend.sighash } : null;
 }
 
 /** Hex-encoded SignatureBundle over an escrow sighash (the engine's shape). */
 export function signEscrow(key: PQKey, sighash: Sha256Hash): string {
   return Utils.HEX.encode(key.sign(sighash).serialize());
+}
+
+/**
+ * The escrow participant pubkey to derive a vault with (docs/p2p.md §26/§27).
+ *
+ * A counterparty-supplied `pinned` key (from the order/swap record) is trusted
+ * **only** if it is in `allow` (the operator's engine allowlist) or, when the
+ * list is empty, equals the engine the wallet is already configured with
+ * (`capsPubkey`). That rejects a seller pinning its own key — the fiat-rug
+ * vector (§27.4 #1). With no pin, the configured engine's key is used.
+ */
+export function vaultEnginePubkey(
+  pinned: string | null | undefined,
+  capsPubkey: string | null | undefined,
+  allow: readonly string[] = [],
+): string | null {
+  const p = (pinned ?? '').trim();
+  const c = (capsPubkey ?? '').trim();
+  if (!p) return c || null;
+  const permitted = allow.length ? allow.includes(p) : !!c && p === c;
+  return permitted ? p : null;
+}
+
+/**
+ * True only when the vault derived from (seller, buyer, enginePubkey) hashes to
+ * the recorded escrow address. This is the guard against a *substituted* engine
+ * key: a seller-supplied `enginePubkey` (or a tampered `/capabilities` response)
+ * that does not reproduce the on-chain lock address must never be signed over.
+ * Tries mainnet then testnet, since the app can be pointed at either.
+ */
+export function vaultMatchesAddress(vault: Escrow, escrowAddress: string): boolean {
+  try {
+    return vault.address(paramsForAddress(escrowAddress)).toBase58() === escrowAddress;
+  } catch {
+    return false;
+  }
 }

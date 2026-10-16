@@ -16,6 +16,7 @@ import { utcOffsetLabel } from '@/lib/timeformat';
 import { CopyIcon, ExpandIcon, CloseIcon } from '@/components/Icons';
 import TradingChart, { DEFAULT_INDICATORS, type ChartIndicators } from '@/components/TradingChart';
 import WalletUnlock from '@/components/WalletUnlock';
+import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import {
   PriceChart, VolumeChart, INTERVALS,
   type ChartData, type ChartPoint,
@@ -88,6 +89,7 @@ export default function TradeScreen() {
   const router = useRouter();
   const { theme } = useUnistyles();
   const { isUnlocked, publicInfo, getUnlockedWallet } = useWallet();
+  const confirmImportant = useTransactionConfirm();
   const { width, height } = useWindowDimensions();
   const isWide = width >= 820;
 
@@ -370,6 +372,14 @@ export default function TradeScreen() {
     if (!wallet) { Alert.alert('', t('order.unlockFirst')); return; }
     const l1Url = httpService.getL1Url();
     if (!l1Url) { Alert.alert('', t('order.noL1')); return; }
+
+    // Important transaction: OS device unlock (Android) / wallet password (web).
+    const sideLabel = kind === 'buy' ? t('order.buy') : t('order.sell');
+    const approved = await confirmImportant({
+      subtitle: t('order.placeOrder', { side: sideLabel }),
+      reason: `${sideLabel} ${amountOf(kind)} ${selected.tokenname} @ ${price}`,
+    });
+    if (!approved) { Alert.alert(t('transaction.error'), t('confirm.cancelled')); return; }
 
     setSubmitting(kind);
     try {

@@ -67,7 +67,9 @@ test.describe('Payment', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
 
-    // 4. Unlock Alice
+    // 4. The send form lives at Payment (the landing page is the market Home).
+    await goToPayment(page);
+    // Unlock Alice
     await page.getByPlaceholder('Enter wallet password').fill(PASSWORD);
     await page.getByText('Unlock Wallet').click();
     await page.waitForTimeout(2000);

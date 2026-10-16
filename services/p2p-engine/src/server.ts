@@ -75,6 +75,7 @@ import {
   buildSkeleton,
   destAddress,
   engineSigner,
+  engineSignerFor,
   keyFromDid,
   verifyParticipantSig,
   vaultFor,
@@ -299,10 +300,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     };
   }
 
-  function escrowFor(sellerDid?: string, buyerDid?: string): string | undefined {
+  function escrowFor(sellerDid?: string, buyerDid?: string, engineHexOverride?: string): string | undefined {
     const seller = escrowKeyFromDid(sellerDid);
     const buyer = escrowKeyFromDid(buyerDid);
-    const engineHex = env.SETTLEMENT_ENGINE_PUBKEY?.trim();
+    const engineHex = (engineHexOverride ?? "").trim() || env.SETTLEMENT_ENGINE_PUBKEY?.trim();
     if (!seller || !buyer || !engineHex) return undefined;
     try {
       const engine = PQKey.fromPrefixedPublicKey(hexToBytes(engineHex));
@@ -349,17 +350,31 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * seller funded — anything else is a key/config mismatch, never a spend.
    */
   function escrowContext(swap: P2pSwapEvent): EscrowContext | { code: number; reason: string } {
-    const pubHex = enginePubkeyHex();
-    if (!pubHex || !env.SETTLEMENT_ENGINE_KEY?.trim()) {
+    // Prefer the swap's PINNED engine key (rotation-safe, docs/p2p.md §26/§27);
+    // legacy/unpinned swaps fall back to the current key.
+    const declared = enginePubkeyHex();
+    const pinned = swap.enginePubkey?.trim() || "";
+    const pubHex = pinned || declared;
+    if (!pubHex) {
       return { code: 503, reason: "engine escrow key not configured" };
     }
     const vault = vaultFor(swap.sellerDid, swap.buyerDid, pubHex);
     if (!vault) return { code: 409, reason: "swap has no escrow vault (non-PQ party key)" };
-    let engineKey: PQKey;
-    try {
-      engineKey = engineSigner(env);
-    } catch (e) {
-      return { code: 503, reason: (e as Error).message };
+    let engineKey: PQKey | null;
+    if (!pinned || pinned === declared) {
+      // The current key — engineSigner also validates KEY against PUBKEY so a
+      // misconfigured pair is reported instead of silently failing.
+      try {
+        engineKey = engineSigner(env);
+      } catch (e) {
+        return { code: 503, reason: (e as Error).message };
+      }
+    } else {
+      // A rotated/retained key must be present in the keyring to be used.
+      engineKey = engineSignerFor(env, pinned);
+    }
+    if (!engineKey) {
+      return { code: 503, reason: "engine holds no key for this swap's pinned enginePubkey (a retired key must be in SETTLEMENT_ENGINE_KEYS)" };
     }
     if (vault.indexOf(engineKey) < 0) {
       return { code: 503, reason: "engine key is not an escrow participant" };
@@ -848,6 +863,13 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       return reply.code(200).send({ orderId, status: existing.status, txid: existing.txid ?? txid ?? null });
     }
 
+    // The escrow participant this order is pinned to (docs/p2p.md §26): the
+    // seller's copy when supplied, else the current engine key (legacy intake).
+    const enginePin = body.enginePubkey === undefined ? enginePubkeyHex() : String(body.enginePubkey).trim();
+    if (enginePin && !/^[0-9a-f]{64,6000}$/.test(enginePin)) {
+      return reply.code(400).send({ error: "invalid enginePubkey (prefixed PQ pubkey hex)" });
+    }
+
     const order: P2pOrder = {
       orderId,
       type: "limit_sell",
@@ -862,6 +884,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       status: "ACTIVE",
       signature: String(body.signature),
       ...(txid !== undefined ? { txid } : {}),
+      ...(enginePin ? { enginePubkey: enginePin } : {}),
       createdAt: now(),
     };
     await deps.store.createOrder(order);
@@ -977,6 +1000,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const signed = validateSignedRequest(body, buyerDid, guard);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
 
+    // A PINNED order can only be matched by a deployment that holds its engine
+    // key (docs/p2p.md §26/§27); the escrow address is then derived from the
+    // pin. Unpinned/legacy orders keep the previous behavior (current key).
+    const pinned = order.enginePubkey?.trim() || "";
+    if (pinned && !engineSignerFor(env, pinned)) {
+      return reply.code(409).send({ error: "order is pinned to an engine this deployment does not hold" });
+    }
+    const enginePin = pinned || enginePubkeyHex();
+
     const swapId = `swap-${randomBytes(8).toString("hex")}`;
     const event: P2pSwapEvent = {
       swapId,
@@ -993,7 +1025,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       wantAmount: order.wantAmount,
       wantRail: order.wantRail,
       wantCurrency: order.wantCurrency,
-      escrowAddress: escrowFor(order.sellerDid, buyerDid),
+      escrowAddress: escrowFor(order.sellerDid, buyerDid, pinned || undefined),
+      ...(enginePin ? { enginePubkey: enginePin } : {}),
       receiveAddress: body.receiveAddress,
       at: now(),
     };

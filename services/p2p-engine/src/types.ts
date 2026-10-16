@@ -44,6 +44,13 @@ export interface P2pOrder extends Omit<P2pOrderInput, "validUntil"> {
   swapId?: string;
   /** L1-SOCIAL txid of the seller-anchored `social.p2p-order` record, when on-chain */
   txid?: string;
+  /**
+   * The engine escrow participant the order is pinned to (docs/p2p.md §26):
+   * the match derives the escrow address from this key, so an order can only be
+   * matched by a deployment that holds it. Absent on legacy engine-intake
+   * orders (they fall back to the current key).
+   */
+  enginePubkey?: string;
   createdAt: number;
 }
 
@@ -92,6 +99,13 @@ export interface P2pSwapEvent {
   releaseTxHash?: string;
   /** On-chain refund spend that returned the escrow to the seller. */
   refundTxHash?: string;
+  /**
+   * The engine escrow participant this swap was created against
+   * (docs/p2p.md §26), pinned at match so the wallet derives the 2-of-3 vault
+   * without `GET /capabilities` and a later key rotation cannot silently
+   * re-point an in-flight swap. Public (it is in the on-chain redeem script).
+   */
+  enginePubkey?: string;
   /** CUSTOMER.DISPUTE state (OPEN/UPDATED blocks progress; RESOLVED clears). */
   dispute?: string;
   /** CNY-rail dispute reason (buyer/seller supplied; store-only, never anchored). */

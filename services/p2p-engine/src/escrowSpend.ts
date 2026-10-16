@@ -77,6 +77,49 @@ export function engineSigner(env: NodeJS.ProcessEnv): PQKey {
   return key;
 }
 
+/**
+ * The engine's escrow signing keys, keyed by prefixed-pubkey hex (docs/p2p.md
+ * §27.3). The **current** key is `SETTLEMENT_ENGINE_KEY` (checked against
+ * `SETTLEMENT_ENGINE_PUBKEY`); **retained** keys — kept only to settle swaps
+ * pinned to them — come from `SETTLEMENT_ENGINE_KEYS` (comma-separated seeds).
+ * Rotation is additive: an in-flight swap pinned to an old `enginePubkey` still
+ * settles because its key is still here. A malformed seed is skipped.
+ */
+export function engineKeyring(env: NodeJS.ProcessEnv): Map<string, PQKey> {
+  const ring = new Map<string, PQKey>();
+  const add = (seed: string | undefined) => {
+    const hex = (seed ?? "").trim();
+    if (!hex) return;
+    try {
+      const key = PQKey.fromPrivateKeyHex(hex);
+      ring.set(Utils.HEX.encode(key.getPrefixedPublicKeyBytes()), key);
+    } catch {
+      // ignore a bad retained seed — the current key path still validates
+    }
+  };
+  add(env.SETTLEMENT_ENGINE_KEY);
+  for (const s of (env.SETTLEMENT_ENGINE_KEYS ?? "").split(",")) add(s);
+  return ring;
+}
+
+/**
+ * The key that may co-sign a swap pinned to `pubkeyHex`: the one whose pubkey
+ * matches. Empty `pubkeyHex` (legacy, unpinned swap) uses the primary key.
+ * Returns null when the pinned key is not held — the engine fails closed rather
+ * than sign with the wrong key (docs/p2p.md §27.3).
+ */
+export function engineSignerFor(env: NodeJS.ProcessEnv, pubkeyHex: string | undefined): PQKey | null {
+  const want = (pubkeyHex ?? "").trim();
+  if (!want) {
+    try {
+      return engineSigner(env);
+    } catch {
+      return null;
+    }
+  }
+  return engineKeyring(env).get(want) ?? null;
+}
+
 /** One reconstructed escrow outpoint: the unspent output of the lock tx. */
 export interface EscrowOutpoint {
   utxo: FreeStandingTransactionOutput;

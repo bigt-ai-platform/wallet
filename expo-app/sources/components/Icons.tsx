@@ -26,6 +26,9 @@ export const SendIcon = makeIcon('M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z');
 export const DeviceIcon = makeIcon('M7 2h10a2 2 0 012 2v16a2 2 0 01-2 2H7a2 2 0 01-2-2V4a2 2 0 012-2zm4 18h2');
 export const QrScanIcon = makeIcon('M3 3h6v6H3zM15 3h6v6h-6zM3 15h6v6H3zM13 13h5v5h-5zM19 15h2v2h-2zM15 20h2v2h-2zM13 22h2v2h-2z');
 export const SearchIcon = makeIcon('M11 19a8 8 0 100-16 8 8 0 000 16zM21 21l-4.35-4.35');
+export const PlusIcon = makeIcon('M12 5v14M5 12h14');
+export const MinusIcon = makeIcon('M5 12h14');
+export const SwapIcon = makeIcon('M7 4v12m0 0l-3-3m3 3l3-3M17 20V8m0 0l3 3m-3-3l-3 3');
 export const BlocksIcon = makeIcon('M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5');
 
 export const CopyIcon: React.FC<IconProps> = ({ size = 22, color = 'currentColor', ...props }) => (

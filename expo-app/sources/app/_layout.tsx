@@ -7,11 +7,13 @@ import { Stack } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
 import { View, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { WalletProvider } from '@/state/wallet';
-import { initSecureStorage } from '@/storage';
+import { initSecureStorage, type BootPhase } from '@/storage';
 import { checkForUpdate, confirmUpdate, installFailureText, installUpdate, notify } from '@/services/updater';
 import i18n from '@/lib/i18n';
 import { startAutoSelection, stopAutoSelection } from '@/services/discovery';
 import Sidebar from '@/components/Sidebar';
+import BootScreen from '@/components/BootScreen';
+import { TransactionConfirmProvider } from '@/components/TransactionConfirm';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
 import { MenuIcon } from '@/components/Icons';
 import { useTranslation } from 'react-i18next';
@@ -56,6 +58,7 @@ function AppShell() {
                             headerTintColor: theme.colors.text.primary,
                         }}
                     >
+                        <Stack.Screen name="index" options={{ title: t('sidebar.home') }} />
                         <Stack.Screen name="home/payment" options={{ title: t('sidebar.payment') }} />
                         <Stack.Screen name="home/keys" options={{ title: t('sidebar.keys') }} />
                         <Stack.Screen name="receive" options={{ headerShown: false }} />
@@ -83,6 +86,7 @@ function MobileSidebar() {
 export default function RootLayout() {
     const { theme } = useUnistyles();
     const [isReady, setIsReady] = React.useState(false);
+    const [bootPhase, setBootPhase] = React.useState<BootPhase>('platform');
 
     const navigationTheme = React.useMemo(() => {
         if (theme.dark) {
@@ -104,26 +108,27 @@ export default function RootLayout() {
     }, [theme.dark]);
 
     React.useEffect(() => {
+        // Hide the native splash as soon as React has mounted (the boot screen
+        // below paints in the same commit) so the startup steps are visible
+        // instead of a blank frame while the Keystore cache loads.
+        SplashScreen.hideAsync().catch(() => {});
         (async () => {
             try {
                 // In the Capacitor app, load key material from Keystore-backed
-                // storage before anything reads the wallet.
-                await initSecureStorage();
-                setIsReady(true);
+                // storage before anything reads the wallet. Each phase is
+                // reported to the boot screen (and the log) so a slow start is
+                // traceable instead of a hang on a blank frame.
+                await initSecureStorage((phase, detail) => {
+                    setBootPhase(phase);
+                    console.info('[boot]', phase, detail ?? '');
+                });
             } catch (error) {
                 console.error('Error initializing:', error);
+            } finally {
                 setIsReady(true);
             }
         })();
     }, []);
-
-    React.useEffect(() => {
-        if (isReady) {
-            setTimeout(() => {
-                SplashScreen.hideAsync();
-            }, 100);
-        }
-    }, [isReady]);
 
     // OTA check (native Android only): a newer tagged APK in the release bucket
     // offers an in-place upgrade. Delayed after first paint so it never blocks
@@ -160,7 +165,7 @@ export default function RootLayout() {
     }, [isReady]);
 
     if (!isReady) {
-        return null;
+        return <BootScreen phase={bootPhase} />;
     }
 
     return (
@@ -168,10 +173,12 @@ export default function RootLayout() {
             <GestureHandlerRootView style={{ flex: 1 }}>
                 <ThemeProvider value={navigationTheme}>
                     <WalletProvider>
-                        <SidebarProvider>
-                            <AppShell />
-                            <MobileSidebar />
-                        </SidebarProvider>
+                        <TransactionConfirmProvider>
+                            <SidebarProvider>
+                                <AppShell />
+                                <MobileSidebar />
+                            </SidebarProvider>
+                        </TransactionConfirmProvider>
                     </WalletProvider>
                 </ThemeProvider>
             </GestureHandlerRootView>

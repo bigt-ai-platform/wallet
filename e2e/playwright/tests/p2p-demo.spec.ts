@@ -1,7 +1,7 @@
 import { test, expect, Page, Browser } from '@playwright/test';
 import * as fs from 'fs';
 import * as path from 'path';
-import { waitForApp, configureServerUrl, goToKeys, clickTab } from '../helpers';
+import { waitForApp, configureServerUrl, goToKeys, goToPayment, clickTab } from '../helpers';
 
 /**
  * P2P demo guide — a REAL e2e test that both asserts the flow and renders the
@@ -61,6 +61,7 @@ async function importKeyAndUnlock(page: Page, privKeyHex: string) {
   await page.waitForTimeout(1500);
   await page.goto('/');
   await page.waitForLoadState('networkidle');
+  await goToPayment(page);
   await page.getByPlaceholder('Enter wallet password').fill(PASSWORD);
   await page.getByText('Unlock Wallet').click();
   await page.waitForTimeout(2000);

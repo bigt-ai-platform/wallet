@@ -36,6 +36,15 @@ export interface P2pOrderRecord {
   wantRail?: string;
   /** unix seconds after which the order can no longer be matched */
   validUntil?: number;
+  /**
+   * The engine's escrow participant pubkey this order was created against
+   * (prefixed ML-DSA public key hex — docs/p2p.md §26.6). Pinned per order so
+   * the buyer derives the *same* 2-of-3 vault from the chain, without fetching
+   * `GET /capabilities` and without being tied to one global engine. Optional
+   * for backward compatibility; when present it is authoritative over the
+   * engine a wallet happens to be configured with.
+   */
+  enginePubkey?: string;
 }
 
 export interface P2pOrderRecordInput extends Omit<P2pOrderRecord, "type" | "ts" | "status" | "orderSeq"> {
@@ -60,6 +69,7 @@ export function p2pOrderRecord(a: P2pOrderRecordInput): P2pOrderRecord {
   if (a.wantAmount !== undefined) record.wantAmount = a.wantAmount;
   if (a.wantRail !== undefined) record.wantRail = a.wantRail;
   if (a.validUntil !== undefined) record.validUntil = a.validUntil;
+  if (a.enginePubkey !== undefined) record.enginePubkey = a.enginePubkey;
   return record;
 }
 
@@ -93,9 +103,12 @@ export function validateP2pOrderRecord(r: Partial<P2pOrderRecord>): { ok: true }
     if (typeof r.validUntil !== "number" || !Number.isInteger(r.validUntil) || r.validUntil <= 0) {
       return { ok: false, error: "invalid validUntil (unix seconds)" };
     }
+    if (r.enginePubkey !== undefined && !/^[0-9a-f]{64,6000}$/.test(r.enginePubkey)) {
+      return { ok: false, error: "invalid enginePubkey (prefixed PQ pubkey hex)" };
+    }
   } else {
     // A cancel references the order only — it must not carry (or mutate) terms.
-    for (const field of [...ORDER_FIELDS, "validUntil"] as const) {
+    for (const field of [...ORDER_FIELDS, "validUntil", "enginePubkey"] as const) {
       if (r[field] !== undefined) return { ok: false, error: `${field} not allowed on CANCELLED` };
     }
   }

@@ -55,17 +55,52 @@ The launcher icon and splash use dai's logo
 ## Keys on device (Keystore)
 
 The wallet's storage abstraction (`expo-app/sources/storage/index.ts`) uses MMKV
-on native and, on web, a KV that `storage/secureWeb.ts` routes into Android
-**EncryptedSharedPreferences** (Keystore-backed) via
-`capacitor-secure-storage-plugin`:
+on native and, on web, a KV wrapper (`storage/secureWeb.ts`). Large non-secret
+data (the encrypted wallet file, address, settings, discovery cache) lives in the
+WebView's **localStorage**; Android **EncryptedSharedPreferences**
+(Keystore-backed via `capacitor-secure-storage-plugin`) is reserved for genuine
+key material — `isSecureKey()` in `secureWeb.ts`, empty today (see **Keystore
+scope** below):
 
-- `initSecureStorage()` (awaited in `app/_layout.tsx` before `isReady`) preloads
-  every plugin key into an in-memory cache.
-- Reads are sync from the cache; writes/deletes update the cache and write
-  through to the plugin asynchronously. Values left in localStorage are
-  lazily migrated on first read (and removed from localStorage).
+- `initSecureStorage()` (awaited in `app/_layout.tsx` before `isReady`) drains
+  any legacy Keystore entries back to localStorage, then preloads key material
+  into an in-memory cache.
+- Reads are sync; writes/deletes update the cache and write through to the plugin
+  asynchronously for key material, and go straight to localStorage otherwise.
 - In a plain browser (`window.Capacitor` absent) it is a localStorage
   pass-through, so the web deployment is unchanged.
+
+### Boot steps (diagnosing a slow / hanging start)
+
+`initSecureStorage(onPhase)` reports three phases — `platform` → `storage` →
+`ready` — and `app/_layout.tsx` renders `components/BootScreen.tsx` while it
+loads (mirrors `../dai`'s `BootstrapGate`). The steps replace the blank frame
+the app used to show, and the reporter logs each one (`[boot] <phase> <detail>`
+— visible in `adb logcat` on a debug build; `transform-remove-console` strips it
+from release).
+
+Measured on an Honor LLY-NX1 (production 1.0.62), the `storage` step was the
+hang: the RSA-2048 plugin (one private-key op per 245-byte block) held the whole
+46 KB `device.walletEncryptedContent` blob — ~135 RSA ops on *every* cold start,
+before anything rendered (the other 10 entries were ~370 B each).
+
+### Keystore scope: only key material
+
+As `../dai` does with its chat replica, large non-secret data no longer goes in
+the RSA plugin. The wallet's only secret is the **scrypt-encrypted wallet file**,
+which is self-protecting, so it is not Keystore key material either — the plugin
+now holds nothing (`SECURE_PREFIXES` in `secureWeb.ts` is empty and exists for
+future key material). Boot drops from ~9 s to sub-second: the `storage` step just
+lists the plugin (empty after the first launch) and reads localStorage.
+
+`initSecureStorage()` performs a one-time **drain**: on the first launch after
+the update it reads each remaining legacy plugin entry and writes it back to
+localStorage, deleting it from the plugin only once the localStorage copy is
+safe. So an existing install keeps its wallet, address, settings and discovery
+cache — the wallet file simply moves from `EncryptedSharedPreferences`
+(`cap_sec.xml`) into the `http://localhost` localStorage. Trade-off: the
+ciphertext is no longer device-bound, but it is still scrypt-encrypted, and the
+per-block RSA cost was the entire startup delay.
 
 ## Dev workflow
 

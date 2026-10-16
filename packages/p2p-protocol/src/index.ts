@@ -18,6 +18,15 @@ export {
   type P2pOrderRecordInput,
 } from "./orderRecord.js";
 export {
+  P2P_RELEASE_TYPE,
+  P2P_RELEASE_KINDS,
+  p2pReleaseRecord,
+  validateP2pReleaseRecord,
+  type P2pReleaseKind,
+  type P2pReleaseRecord,
+  type P2pReleaseRecordInput,
+} from "./releaseRecord.js";
+export {
   verifySettlement,
   type SettlementOutput,
   type SettlementExpectation,

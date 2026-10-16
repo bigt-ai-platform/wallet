@@ -62,6 +62,13 @@ export interface P2pSwapRecord {
   escrowTxHash?: string;
   releaseTxHash?: string;
   refundTxHash?: string;
+  /**
+   * The engine escrow participant this swap was created against (docs/p2p.md
+   * §26), pinned at match: the wallet derives the 2-of-3 vault and rebuilds
+   * the spend from this, so a later engine-key rotation cannot silently
+   * re-point an in-flight swap. Public — it is in the on-chain redeem script.
+   */
+  enginePubkey?: string;
   /** sha256 of the buyer's receipt evidence (docs/p2p.md §14) — a
    *  hash only, so the image itself never reaches the chain. */
   receiptSha256?: string;
@@ -110,6 +117,7 @@ export function p2pSwapRecord(a: P2pSwapRecordInput): P2pSwapRecord {
   if (a.escrowTxHash !== undefined) record.escrowTxHash = a.escrowTxHash;
   if (a.releaseTxHash !== undefined) record.releaseTxHash = a.releaseTxHash;
   if (a.refundTxHash !== undefined) record.refundTxHash = a.refundTxHash;
+  if (a.enginePubkey !== undefined) record.enginePubkey = a.enginePubkey;
   if (a.receiptSha256 !== undefined) record.receiptSha256 = a.receiptSha256;
   if (a.verifySide !== undefined) record.verifySide = a.verifySide;
   if (a.verifyObserved !== undefined) record.verifyObserved = a.verifyObserved;
@@ -152,6 +160,10 @@ export function validateP2pSwapRecord(r: Partial<P2pSwapRecord>): { ok: true } |
     if (v !== undefined && (typeof v !== "string" || v.length === 0 || v.length > 256)) {
       return { ok: false, error: `invalid ${field} (1..256)` };
     }
+  }
+  // The pinned escrow participant is a prefixed PQ pubkey (~5.2k hex chars).
+  if (r.enginePubkey !== undefined && !/^[0-9a-f]{64,6000}$/.test(r.enginePubkey)) {
+    return { ok: false, error: "invalid enginePubkey (prefixed PQ pubkey hex)" };
   }
   for (const field of ["giveAmount", "wantAmount"] as const) {
     const v = r[field];

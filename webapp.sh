@@ -10,13 +10,25 @@
 #   ./webapp.sh --release          # assembleRelease (needs webapp/keystore.properties, pinned in signing.sha256)
 #   ./webapp.sh --aab              # signed App Bundle
 #   ./webapp.sh --env=production   # OTA release channel baked into the app
+#   ./webapp.sh --with-p2p         # run the P2P engine on the host, bake its URL, reverse its port
+#   ./webapp.sh --stop-p2p         # stop the engine started by --with-p2p
 #
 # Dev: the wallet's default node is http://localhost:8088 — reverse it (plus any
 # extra ports in REVERSE_PORTS) so the device reaches a local node. For prod,
 # the app's built-in https node URLs are used.
 #
+# P2P: the P2P settlement engine is a host-side service (services/p2p-engine),
+# never started by the app. The WebView's 127.0.0.1 is the *phone*, so the
+# engine is unreachable unless it is both running on this host and reversed via
+# `adb reverse`. --with-p2p does all three: bakes EXPO_PUBLIC_P2P_ENGINE_URL
+# into the web export (the static export has IS_DEV=false, so without this the
+# P2P screen shows "not configured"), starts the engine (mem store, no chain),
+# and reverses P2P_PORT. The engine outlives this script — stop it with
+# --stop-p2p. Build a real-L0 engine or the pg stack for anything but the UI.
+#
 # Env: ADB, DEVICE, JAVA_HOME (JDK 21), ANDROID_HOME, REVERSE_PORTS, OUT_DIR,
-#      APP_ENV (OTA channel), APP_VERSION/APP_VERSION_NAME/APP_VERSION_CODE.
+#      APP_ENV (OTA channel), APP_VERSION/APP_VERSION_NAME/APP_VERSION_CODE,
+#      P2P_PORT, P2P_ENGINE_URL, P2P_REBUILD=1 (force the engine bundle build).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -33,6 +45,17 @@ FORCE_REINSTALL=0
 DEVICE="${DEVICE:-}"
 APP_ENV="${APP_ENV:-preview}"
 
+# P2P settlement engine (dev, --with-p2p): host-side service the device reaches
+# through adb reverse. The app's compiled-in dev default is the same loopback
+# URL, so the bake and the reverse must agree on P2P_PORT.
+WITH_P2P=0
+STOP_P2P=0
+P2P_PORT="${P2P_PORT:-8108}"
+P2P_ENGINE_URL="${P2P_ENGINE_URL:-http://127.0.0.1:${P2P_PORT}}"
+P2P_PID=""
+P2P_PIDFILE="$OUT_DIR/p2p-engine.pid"
+P2P_LOG="$OUT_DIR/p2p-engine.log"
+
 # Wallet node (dev) + anything extra; space/comma separated.
 REVERSE_PORTS=(${REVERSE_PORTS:-8088})
 PKG="ai.bigt.wallet"
@@ -48,7 +71,9 @@ for a in "$@"; do
     --no-install) DO_INSTALL=0 ;;
     --no-launch) DO_LAUNCH=0 ;;
     --force-reinstall) FORCE_REINSTALL=1 ;;
-    --help|-h) sed -n '2,19p' "$0"; exit 0 ;;
+    --with-p2p) WITH_P2P=1 ;;
+    --stop-p2p) STOP_P2P=1 ;;
+    --help|-h) sed -n '2,31p' "$0"; exit 0 ;;
     *) echo "unknown arg: $a" >&2; exit 1 ;;
   esac
 done
@@ -209,13 +234,106 @@ install_and_run() {
   fi
 }
 
+# ── P2P settlement engine (dev; see the header) ─────────────────────────────
+# The device only reaches the engine through the adb reverse of P2P_PORT: the
+# export bakes http://127.0.0.1:${P2P_PORT}, which without a reverse is the
+# phone's own loopback. The script does both (reverse in install_and_run).
+build_p2p_engine() {
+  local bundle="$ROOT/services/p2p-engine/dist/server.bundle.mjs"
+  if [ -f "$bundle" ] && [ "${P2P_REBUILD:-0}" != "1" ]; then return 0; fi
+  info "Building the p2p engine bundle (P2P_REBUILD=1 forces this)…"
+  for pkg in bigtangle-ts chain-discovery did p2p-protocol record-sig; do
+    ( cd "$ROOT/packages/$pkg" && npm run build >/dev/null 2>&1 ) || die "build $pkg failed"
+  done
+  ( cd "$ROOT/services/p2p-engine" && npm run build >/dev/null 2>&1 && npm run bundle >/dev/null 2>&1 ) \
+    || die "build/bundle p2p-engine failed"
+}
+
+start_p2p_engine() {
+  if curl -sf "http://127.0.0.1:${P2P_PORT}/healthz" >/dev/null 2>&1; then
+    pass "p2p engine already up on $P2P_ENGINE_URL"
+    return 0
+  fi
+  build_p2p_engine
+  mkdir -p "$OUT_DIR"
+  info "Starting the p2p engine on $P2P_ENGINE_URL (mem store, no chain)…"
+  # mem store + insecure PayPal + no chain: the P2P UI (order book, profiles,
+  # swaps) needs no L0/L1 — the same recipe as e2e/e2etest.sh start_p2p_engine.
+  # CORS_ORIGIN covers the Capacitor WebView origin (http://localhost).
+  PORT="$P2P_PORT" HOST=127.0.0.1 \
+    SETTLEMENT_STORE=mem \
+    SETTLEMENT_PAYPAL_INSECURE=1 \
+    SETTLEMENT_ADMIN_TOKEN=adm \
+    CORS_ORIGIN="http://localhost,http://127.0.0.1" \
+    nohup node "$ROOT/services/p2p-engine/dist/server.bundle.mjs" >"$P2P_LOG" 2>&1 &
+  P2P_PID=$!
+  echo "$P2P_PID" >"$P2P_PIDFILE"
+  disown "$P2P_PID" 2>/dev/null || true
+  local i
+  for i in $(seq 1 60); do
+    curl -sf "http://127.0.0.1:${P2P_PORT}/healthz" >/dev/null 2>&1 && break
+    if ! kill -0 "$P2P_PID" 2>/dev/null; then
+      tail -n 20 "$P2P_LOG" 2>/dev/null >&2 || true
+      die "p2p engine exited at startup — see $P2P_LOG"
+    fi
+    sleep 0.5
+  done
+  curl -sf "http://127.0.0.1:${P2P_PORT}/healthz" >/dev/null 2>&1 \
+    || die "p2p engine not ready on $P2P_ENGINE_URL — see $P2P_LOG"
+  pass "p2p engine up (pid $P2P_PID, log $P2P_LOG)"
+  info "The engine keeps running after this script. Stop it with: ./webapp.sh --stop-p2p"
+}
+
+stop_p2p_engine() {
+  local pid=""
+  [ -f "$P2P_PIDFILE" ] && pid="$(cat "$P2P_PIDFILE" 2>/dev/null || true)"
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    rm -f "$P2P_PIDFILE"
+    pass "stopped the p2p engine (pid $pid)"
+    return 0
+  fi
+  rm -f "$P2P_PIDFILE"
+  if curl -sf "http://127.0.0.1:${P2P_PORT}/healthz" >/dev/null 2>&1; then
+    warn "something is listening on :${P2P_PORT} but there is no pidfile — stop it manually (e.g. e2e or p2pdemo.sh)"
+  else
+    info "no p2p engine on :${P2P_PORT}"
+  fi
+}
+
+if [ "$STOP_P2P" -eq 1 ]; then
+  stop_p2p_engine
+  exit 0
+fi
+
 resolve_device
+if [ "$WITH_P2P" -eq 1 ]; then
+  # Bake the engine URL into the export (a static export has IS_DEV=false, so
+  # the app has no engine URL otherwise) and reverse its port for the device.
+  export EXPO_PUBLIC_P2P_ENGINE_URL="$P2P_ENGINE_URL"
+  p2p_reversed=0
+  for p in "${REVERSE_PORTS[@]}"; do
+    if [ "$p" = "$P2P_PORT" ]; then p2p_reversed=1; fi
+  done
+  [ "$p2p_reversed" -eq 1 ] || REVERSE_PORTS+=("$P2P_PORT")
+  info "P2P engine baked into the export: $P2P_ENGINE_URL (port $P2P_PORT reversed)"
+fi
 if [ "$SKIP_BUILD" -eq 0 ]; then
   build_web_export
   build_apk
 else
   [ -f "$APK" ] || die "--skip-build: no APK at $APK"
   warn "reusing existing $APK"
+  if [ "$WITH_P2P" -eq 1 ]; then
+    warn "--skip-build: the reused APK keeps the P2P engine URL baked at its build — rerun without --skip-build to bake $P2P_ENGINE_URL"
+  fi
+fi
+if [ "$WITH_P2P" -eq 1 ]; then
+  if [ "$DO_INSTALL" -eq 1 ]; then
+    start_p2p_engine
+  else
+    warn "--no-install/--aab: skipping the engine and the adb reverse (nothing to reach it from)"
+  fi
 fi
 # Last gate before the artifact reaches a device or an upload: a non-production
 # signing key makes every upgrade of the installed app fail as incompatible.

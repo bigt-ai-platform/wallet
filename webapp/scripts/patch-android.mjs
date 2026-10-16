@@ -171,13 +171,29 @@ if (mx !== fs.readFileSync(manifest, "utf8")) {
   console.log("patch-android: OTA UpdateReceiver added");
 }
 
+// ── 1d-tmp. biometric / device-credential library ───────────────────────────
+// DeviceAuthPlugin uses androidx.biometric (BiometricPrompt + the pre-API-30
+// device-credential fallback). `android/` is regenerated on `cap add`, so the
+// dependency is re-applied on every sync like the other patches.
+{
+  let g = fs.readFileSync(buildGradle, "utf8");
+  const dep = 'implementation "androidx.biometric:biometric:1.1.0"';
+  if (!g.includes("androidx.biometric:biometric")) {
+    g = /dependencies\s*\{/.test(g)
+      ? g.replace(/dependencies\s*\{/, `dependencies {\n    ${dep}`)
+      : `${g}\ndependencies {\n    ${dep}\n}\n`;
+    fs.writeFileSync(buildGradle, g);
+    console.log("patch-android: androidx.biometric added (device unlock)");
+  }
+}
+
 // ── 1e. native plugin sources ───────────────────────────────────────────────
 // `android/` is generated+gitignored, so native plugins live in tracked
 // templates under native/<name> and are copied in on every sync. The updater
 // template also carries MainActivity with the plugin-registering override.
 const javaDest = path.join(app, "java", pkgDir);
 fs.mkdirSync(javaDest, { recursive: true });
-for (const name of ["updater"]) {
+for (const name of ["updater", "deviceauth"]) {
   const javaSrc = path.join(root, "native", name, pkgDir);
   if (!fs.existsSync(javaSrc)) {
     console.warn(`patch-android: native/${name} template missing — skipped`);

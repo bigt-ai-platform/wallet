@@ -1,8 +1,9 @@
 import { P2P_ENGINE_URL, P2P_SOCIAL_URL } from '@/constants/app';
 import type { PQKey } from 'bigtangle-ts';
-import { p2pOrderRecord } from 'p2p-protocol';
+import { p2pOrderRecord, type P2pReleaseRecord } from 'p2p-protocol';
 import { newOrderId, signP2pRecord, signedBody } from '@/lib/p2pIdentity';
 import { anchorSocialRecord } from '@/services/transaction';
+import { chainBookEnabled, orderBookFromChain } from '@/services/p2pChain';
 
 /**
  * Thin client for the P2P settlement engine (services/p2p-engine). Reads that
@@ -51,6 +52,13 @@ export interface P2pOrder {
   /** L1-SOCIAL txid of the seller-anchored social.p2p-order record. */
   txid?: string;
   createdAt: number;
+  /**
+   * The engine escrow participant this order was pinned to
+   * (`P2pOrderRecord.enginePubkey`, docs/p2p.md §26) — the buyer derives the
+   * 2-of-3 vault from this when present, instead of `GET /capabilities`.
+   * Absent on legacy engine-intake orders.
+   */
+  enginePubkey?: string;
   /** Derived seller reputation (docs/p2p.md §25) — computed from the anchored
    *  swap log; PII-free counts, rates and tier. */
   sellerReputation?: {
@@ -79,6 +87,12 @@ export interface P2pSwap {
   escrowAddress?: string;
   escrowTxHash?: string;
   releaseTxHash?: string;
+  /**
+   * The engine escrow participant the swap was created against, when known
+   * (docs/p2p.md §26). Preferred over `GET /capabilities` for deriving the
+   * 2-of-3 vault, so the wallet does not depend on the engine for the key.
+   */
+  enginePubkey?: string;
   dispute?: string;
   disputeOutcome?: 'release' | 'refund';
   /** CNY rails: per-swap remark code the transfer must carry. */
@@ -104,6 +118,12 @@ export interface CreateOrderInput {
   wantAmount: string;
   wantRail: string;
   validUntil: number;
+  /**
+   * The engine escrow participant to pin this order to (docs/p2p.md §26) —
+   * the engine's `escrowPubkey`. Anchored in the record so the buyer derives
+   * the vault from the chain instead of `/capabilities`.
+   */
+  enginePubkey?: string;
 }
 
 export interface MatchOrderInput {
@@ -240,8 +260,19 @@ async function request<T>(path: string, body?: Record<string, unknown>): Promise
   return data as T;
 }
 
-/** Public order book (ACTIVE sell orders, no signatures, no PII). */
+/** Public order book (ACTIVE sell orders, no signatures, no PII).
+ *
+ *  With `EXPO_PUBLIC_P2P_CHAIN_BOOK=1` and a social node configured, the book
+ *  is derived straight from L1-SOCIAL (docs/p2p.md §26) so no engine is needed
+ *  to browse; any failure falls back to the engine's `/public/orders`. */
 export async function listOpenOrders(): Promise<P2pOrder[]> {
+  if (chainBookEnabled()) {
+    try {
+      return await orderBookFromChain();
+    } catch {
+      // social node unreachable / not indexed — fall back to the engine
+    }
+  }
   const data = await request<{ orders: P2pOrder[] }>('/public/orders?status=ACTIVE');
   return data.orders ?? [];
 }
@@ -270,6 +301,24 @@ export async function createOrder(
   });
   const body = signedBody(id.key, id.did, { orderId, txid, ...input, sellerDid: id.did });
   return request<{ orderId: string; status: string; txid?: string | null }>('/orders', body);
+}
+
+/**
+ * The engine-free release channel (docs/p2p.md §6 "Engine as dispute-only
+ * attestor"): author-sign and anchor a `social.p2p-release` record on
+ * L1-SOCIAL, handing this party's escrow signature to the counterparty so it
+ * can assemble and broadcast the cooperative spend without any engine.
+ * Returns the anchor txid; the counterparty reads the record from the chain.
+ * Requires P2P_SOCIAL_URL (no social node → fall back to the engine path).
+ */
+export async function publishCoopRelease(
+  id: P2pIdentity,
+  record: P2pReleaseRecord,
+): Promise<string> {
+  if (!P2P_SOCIAL_URL) throw new Error('p2p social chain not configured');
+  if (record.from !== id.did) throw new Error('release record from != wallet did');
+  const signed = { ...record, ...signP2pRecord(id.key, record) };
+  return anchorSocialRecord({ key: id.key, l1Url: P2P_SOCIAL_URL, record: signed });
 }
 
 /** Seller withdraws an ACTIVE order: anchor a CANCELLED `social.p2p-order`

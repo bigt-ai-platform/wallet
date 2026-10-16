@@ -520,6 +520,10 @@ describe("Path A — party cosign", () => {
 
     // Config drift after the lock: a rebuilt vault no longer pays the funded
     // address — the engine must refuse rather than spend to a different script.
+    // Unpin the swap first so the drifted engine falls back to its own key
+    // (a pinned swap the engine no longer holds fails closed even earlier).
+    const driftEvents = store.swapEvents.get(swapId)!;
+    driftEvents[driftEvents.length - 1] = { ...driftEvents[driftEvents.length - 1], enginePubkey: undefined };
     const drifted = await app(chain, {
       SETTLEMENT_ENGINE_DID: didFromPQKey(wrongEngineKey),
       SETTLEMENT_ENGINE_KEY: WRONG_ENGINE_SEED,

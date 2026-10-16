@@ -11,6 +11,7 @@ import { orderOnLayer1 } from '@/services/transaction';
 import { decimalsFor } from '@/lib/tokenformat';
 import { listOrders, recordOrder } from '@/services/tracking';
 import WalletUnlock from '@/components/WalletUnlock';
+import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import type { MarketPrice } from '@/types/api';
 import { MONO_FONT } from '@/constants/fonts';
 
@@ -26,6 +27,7 @@ export default function TokenOrderScreen({ side }: Props) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { publicInfo, isUnlocked, getUnlockedWallet } = useWallet();
+  const confirmImportant = useTransactionConfirm();
 
   const [prices, setPrices] = React.useState<MarketPrice[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -102,6 +104,14 @@ export default function TokenOrderScreen({ side }: Props) {
     if (!wallet) { Alert.alert('', t('order.unlockFirst')); return; }
     const l1Url = httpService.l1Bases()[0];
     if (!l1Url) { Alert.alert('', t('order.noL1')); return; }
+
+    // Important transaction: OS device unlock (Android) / wallet password (web).
+    const sideLabel = side === 'buy' ? t('order.buy') : t('order.sell');
+    const approved = await confirmImportant({
+      subtitle: t('order.placeOrder', { side: sideLabel }),
+      reason: `${sideLabel} ${orderAmount} ${selectedToken.tokenname} @ ${orderPrice}`,
+    });
+    if (!approved) { Alert.alert(t('transaction.error'), t('confirm.cancelled')); return; }
 
     setSubmitting(true);
     try {

@@ -173,3 +173,26 @@ export const P2P_ENGINE_URL =
  */
 export const P2P_SOCIAL_URL =
   process.env.EXPO_PUBLIC_P2P_SOCIAL_URL || (IS_DEV ? 'http://127.0.0.1:24091/' : '');
+
+/**
+ * Read the P2P order book straight from L1-SOCIAL instead of the engine's
+ * `/public/orders` (docs/p2p.md §26 — the first step of engine independence).
+ * Off by default so existing engine-backed flows are unchanged; needs
+ * `P2P_SOCIAL_URL` and falls back to the engine on any error. Set
+ * `EXPO_PUBLIC_P2P_CHAIN_BOOK=1` to opt in. The chain book carries no
+ * seller reputation (that lives in the engine's swap log).
+ */
+export const P2P_CHAIN_BOOK = process.env.EXPO_PUBLIC_P2P_CHAIN_BOOK === '1';
+
+/**
+ * Trusted engine escrow pubkeys (prefixed ML-DSA pubkey hex, comma-separated,
+ * `EXPO_PUBLIC_P2P_ENGINE_PUBKEYS`). A counterparty-supplied `enginePubkey` is
+ * accepted **only** if it is one of these (or, when the list is empty, matches
+ * the engine the wallet is configured with). This is the buyer-side defence
+ * against a seller pinning its own key and rugging the fiat leg (docs/p2p.md
+ * §27.4 #1). Set it to every engine an operator runs.
+ */
+export const P2P_ENGINE_PUBKEYS: string[] = (process.env.EXPO_PUBLIC_P2P_ENGINE_PUBKEYS ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);

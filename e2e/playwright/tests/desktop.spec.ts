@@ -7,8 +7,8 @@ test.describe('Desktop layout', () => {
 
     // Persistent sidebar is docked on the left with navigation sections.
     // (Section titles are rendered via CSS uppercase, so match the DOM text.)
-    await expect(page.getByText('bigT', { exact: true })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('Home', { exact: true })).toBeVisible();
+    await expect(page.getByText('bigT', { exact: true }).first()).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Home', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Trade', { exact: true })).toBeVisible();
     await expect(page.getByText('Keys', { exact: true }).first()).toBeVisible();
     await expect(page.getByText('Payment', { exact: true }).first()).toBeVisible();

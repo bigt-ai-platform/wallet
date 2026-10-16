@@ -2,6 +2,11 @@
 # P2P feature. Separate from the static web stack (compose.prod.yml): the engine
 # holds the engine signing key and a database, which a client app must not.
 #
+# OPT-IN Postgres stack. The deployed default is the NO-DATABASE stack
+# (deploy/compose.p2p-engine.blob.yml, SETTLEMENT_STORE=blob); use this one only
+# for a busy chain / heavy read traffic where the in-memory chain projection is
+# not enough. Select it with P2P_COMPOSE=deploy/compose.p2p-engine.yml.
+#
 #   REGION=europa P2P_PORT=8108 POSTGRES_PASSWORD=… \
 #     docker compose -f deploy/compose.p2p-engine.yml up -d
 #
@@ -90,6 +95,9 @@ services:
       SETTLEMENT_TESTNET: ${SETTLEMENT_TESTNET:-}
       # engine identity: ML-DSA-87 seed hex (signs records + funds the anchor tx)
       SETTLEMENT_ENGINE_KEY: ${SETTLEMENT_ENGINE_KEY:-}
+      # Retained engine keys (comma-separated seeds) — only to settle swaps
+      # pinned to a rotated key; rotation is additive (docs/p2p.md §27.3).
+      SETTLEMENT_ENGINE_KEYS: ${SETTLEMENT_ENGINE_KEYS:-}
       SETTLEMENT_ENGINE_DID: ${SETTLEMENT_ENGINE_DID:-}
       # escrow key: 2-of-3 P2SH participant (0x05-prefixed PQ pubkey hex)
       SETTLEMENT_ENGINE_PUBKEY: ${SETTLEMENT_ENGINE_PUBKEY:-}

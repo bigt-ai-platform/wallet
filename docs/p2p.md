@@ -276,6 +276,35 @@ and the seller can never move escrowed funds alone — which is exactly why a
 hostile seller cannot both take the fiat and keep the tokens: arbitration
 reaches release with engine + buyer.
 
+### Any two keys — the cooperative path needs no engine
+
+`OP_2 … OP_3` is symmetric: the script cannot tell the engine from a party, and
+**any** two of the three keys spend it. The table above lists the pairs the
+*implementation* drives, but `seller + buyer` is an equally valid set — a
+`correctlySpends` case in
+`packages/bigtangle-ts/test/wallet/EscrowTest.test.ts` ("every release/refund
+pair shares the engine, but any two keys sign"). Consequences:
+
+- A cooperative release/refund can settle with **no engine signature and no
+  engine server in the loop**: both parties rebuild the identical deterministic
+  skeleton (§6 Release, Path B), each signs the sighash with their own key, and
+  one of them orders the two signatures by redeem-script position and
+  broadcasts (`expo-app/sources/lib/p2pEscrowCoop.ts` — draft). Only the
+  signature blobs cross the wire, never the tx bytes.
+- The engine key is then required only when the parties do **not** agree, or
+  cannot both be online: `engine + buyer` forces a release after arbitration and
+  `engine + seller` refunds on timeout/failure, and neither party reaches either
+  outcome alone. That — not the happy path — is why the third key exists without
+  the consensus `isFinal` rule (§3).
+- Cooperation is not a theft path: the vault holds the **seller's** tokens, so
+  seller + buyer spending together only moves the seller's own funds. The
+  residual risk runs the other way — an engine colluding with one party against
+  the other (§13).
+- The engine's escrow key (`SETTLEMENT_ENGINE_KEY`, a vault participant that
+  signs spends) and the arbitration token (`SETTLEMENT_ADMIN_TOKEN`, which only
+  gates the operator endpoints) are distinct roles, even when one operator holds
+  both.
+
 ### Lock — step 2
 
 The seller sends `giveAmount` of `giveToken` to `escrowAddress` with an ordinary
@@ -811,6 +840,14 @@ path, never the refund path.
 | Arbitration (operator + AI) | admin token | review evidence packs, order release/refund | move tokens directly — still needs the engine key + a party key |
 | The fiat rail | its own ledger | hold/transfer/reverse its own money per its rules | move tokens |
 
+Because the vault is *any* two of three (§6), the seller and buyer together can
+spend it **without the engine** — cooperation needs no attestor, and since the
+vault holds the seller's tokens, their agreeing moves nothing but the seller's
+own funds. The engine's key matters only when they disagree or one is offline:
+it is what turns a dispute into a reachable outcome (forced release to the
+buyer, or refund to the seller). So the operator's real trust burden is the
+mirror case below — not being needed, but being *neutral* when it is.
+
 Residual risks, stated rather than hidden:
 
 - **Engine collusion** — engine + one party can move funds against the other.
@@ -827,8 +864,9 @@ Residual risks, stated rather than hidden:
 
 ## 14. Data, evidence & PII
 
-**Store backends** (`SETTLEMENT_STORE`). Postgres is the default and holds the
-whole store. `blob` runs the engine with **no Postgres**: the rebuildable half
+**Store backends** (`SETTLEMENT_STORE`). Postgres is the default *engine* mode
+when `POSTGRES_URL` is set and holds the whole store; the deployed stack defaults
+to **no database** (`blob`). `blob` runs the engine with **no Postgres**: the rebuildable half
 (`p2p_orders` + `p2p_swap_events`) becomes an in-memory projection rebuilt from
 L1-SOCIAL at boot (the projector is forced on — see `services/p2p-engine/src/storeBlob.ts`),
 while the store-only half (payment profiles, payment proofs, escrow signings)
@@ -1229,3 +1267,206 @@ The wallet badges order cards with tier stars plus
 
 Reputation is **advisory**: it informs a counterparty's choice and never gates
 a transition — no state-machine rule and no escrow path depends on it.
+
+---
+
+## 26. Target: the engine as a dispute-only attestor
+
+Today the engine is in *every* swap: it authors the `social.p2p-swap` log,
+relays payment instructions, and co-signs every release. Because the vault is
+*any two of three* (§6), that is not required for the happy path — the seller
+and buyer can settle cooperatively, and the engine is only needed when they
+disagree or one goes offline. This section is the target shape: **the engine
+becomes an attestor that is only active in a dispute.**
+
+### 26.1 Cooperative happy path (no engine)
+
+Both parties rebuild the identical deterministic spend skeleton (§6 Release,
+Path B) and each signs the same sighash. To settle they must exchange the two
+signature blobs. The channel is a party-authored record:
+
+`social.p2p-release` (`packages/p2p-protocol/src/releaseRecord.ts`) — carries
+`from` (the author), `to` (the swapId), `kind` (`release` | `refund`),
+`escrowTxHash`, `toAddress` and `escrowSig` (a `SignatureBundle` hex over the
+skeleton sighash). It is author-signed (`record-sig`) and anchored on
+L1-SOCIAL, so the signature is public, self-contained and verifiable and no
+server is in the path. Because the skeleton is deterministic, only the
+signature crosses the wire — never the transaction bytes.
+
+Wallet side (`expo-app/sources/lib/p2pEscrowCoop.ts`):
+`buildCoopReleaseRecord` → `publishCoopRelease` (anchors it) on one side;
+`acceptCoopRelease` verifies the counterparty's record against the locally
+rebuilt skeleton (kind, destination, lock, valid signature) and
+`combineCoopRelease` assembles and returns the raw tx. Fails closed on any
+mismatch.
+
+### 26.2 The engine must be able to *find* the swap to arbitrate it
+
+If the happy path never touches the engine, the engine can only adjudicate a
+swap it can reconstruct from the chain. So the parties must anchor the swap
+terms and the lock tx hash (the seller already anchors `social.p2p-order`;
+extend the same party-authored path to the swap terms + lock), and the engine's
+projector (`replay.ts`) rebuilds the swap from L1-SOCIAL. The L0 release/refund
+spend is itself the durable proof of settlement. **Status: not built** — the
+swap log is still engine-authored.
+
+### 26.3 Liveness: the engine still watches, and presign is the backstop
+
+The engine must keep a read-only projection of its vaults running even when it
+is not "asked", so it can run the deterministic sweeps (§12) — silent-expiry →
+refund, confirm-timeout → auto-dispute — otherwise two silent parties strand
+funds. For the "buyer paid, then both offline" case, the seller's Path B presign
+(both release *and* refund, over the fresh outpoint) lets the closure finish with
+nobody online; that is a small, optional re-introduction of the engine at lock
+time purely for liveness.
+
+### 26.4 Dispute
+
+The aggrieved party asks the engine. The engine device-verifies the payer
+(§12 — the paired `p2p-verify` / Mobile Agent read of the party's own rail
+ledger) and, per the auto-release policy, completes the settlement:
+
+- buyer paid, seller silent → `engine + buyer` forced release to the buyer's
+  `receiveAddress`;
+- buyer never paid, seller wants out → `engine + seller` refund.
+
+The engine can never act alone and only ever pays the destination fixed at
+match — it cannot redirect funds.
+
+### 26.5 What stays invariant
+
+- The engine is never a unilateral spender (always `engine + one party`).
+- It holds no fiat and never touches it.
+- Durable output is anchored first (release/refund spend on L0, records on
+  L1-SOCIAL); the projection is rebuildable.
+- The engine's escrow key is a vault participant regardless of whether it is
+  asked to sign, so the dispute fallback always exists.
+
+### 26.6 Open items
+
+**Delivered (foundations of engine independence):**
+
+- **`enginePubkey` pinned in the order record** (`P2pOrderRecord.enginePubkey`,
+  `packages/p2p-protocol`) — the seller stamps the escrow participant it created
+  the order against, so the buyer derives the *same* 2-of-3 vault from the chain
+  without `GET /capabilities` and without being tied to one global engine.
+- **Wallet-side L1-SOCIAL reader** (`expo-app/sources/lib/socialReader.ts`) — the
+  app-side port of the engine's projector walk (`getTips` →
+  `getBlockByHash` by prev-hash), extracting, verifying and classifying every
+  `social.p2p-order` / `social.p2p-swap` / `social.p2p-release` record.
+- **Chain-backed order book** (`expo-app/sources/lib/orderBook.ts`,
+  `services/p2pChain.ts`) — `listOpenOrders()` folds the chain's order records
+  (`foldOrderBook`: OPEN→ACTIVE, latest `orderSeq` wins, drops withdrawn /
+  matched / expired / unverified) when `EXPO_PUBLIC_P2P_CHAIN_BOOK=1` and a
+  social node is set, falling back to the engine. Vault derivation prefers the
+  pinned key (`vaultEnginePubkey`) over `/capabilities`.
+
+**Remaining:**
+
+1. **Finish the swap path** — match and the swap view still call the engine;
+   the swap record must carry `orderId` + `enginePubkey` (or the wallet reads
+   the swap from the chain) so settlement uses the pinned key end to end.
+2. **Party-authored swap/lock records** so the engine can arbitrate a swap it
+   did not author (§26.2).
+3. **Engine read-only watcher + sweeps** running even when no request arrives
+   (§26.3).
+
+---
+
+## 27. Engine key: protection, rotation, attack surface
+
+The engine identity is one ML-DSA-87 keypair. Its **public** half is now pinned
+in the order and swap records (`enginePubkey`, §26); its **private** half
+(`SETTLEMENT_ENGINE_KEY`) is the single most sensitive secret in the system.
+
+### 27.1 What is secret, and what is not
+
+| Value | On chain | Must stay secret |
+|---|---|---|
+| `enginePubkey` (prefixed pubkey) | yes (pinned in records; in the redeem script) | no |
+| `SETTLEMENT_ENGINE_KEY` (seed) | no | **yes — compromise = the arbiter** |
+| `SETTLEMENT_ADMIN_TOKEN` | no | yes (orders arbitration outcomes) |
+
+`enginePubkey` is *not* a secret: it appears in every escrow redeem script the
+moment a spend is broadcast. Publishing it in a record leaks nothing. Guard the
+seed.
+
+### 27.2 Protecting the key
+
+- **Never on chain, never in the image, never in logs.** It lives only in
+  `deploy/env/.env.p2p.<region>` (chmod 600, gitignored) and is passed to
+  compose as `--env-file` (interpolation only). The engine binds `127.0.0.1`;
+  no endpoint echoes the seed.
+- **Prefer a dedicated private host** (§26, option B): the key should not sit on
+  a shared, public, multi-tenant web VM.
+- **Ideally an HSM/KMS** rather than a process env: a sign-only API the engine
+  calls, so a disk/`ps`/log leak is not a key leak. Not built — env today.
+- **Bounded power is the real defence of last resort.** The key cannot spend
+  alone (2-of-3) and cannot touch fiat. A leaked seed means an attacker can
+  *co-sign with one colluding party* and *forge anchor records/dids* — trust is
+  gone, but funds are not instantly drainable without a party key.
+
+### 27.3 Rotation
+
+The vault is `f(seller, buyer, enginePub)`; a new engine key changes every
+escrow address. Rotation is therefore **additive, never in-place**:
+
+1. **Pin, don't re-read.** Because records now carry the `enginePubkey` they
+   were created against (§26), a wallet derives the vault from the *pinned* key,
+   not `/capabilities`. A rotation no longer silently re-points an in-flight
+   swap. (Before this change it would have.)
+2. **Retain old keys.** The engine must keep every key that still has an
+   open swap or an unsettled dispute, and co-sign with the key matching that
+   swap's pinned pubkey. **Delivered:** the engine now builds a keyring
+   (`engineKeyring`) from `SETTLEMENT_ENGINE_KEY` (current) plus
+   `SETTLEMENT_ENGINE_KEYS` (retained seeds) and co-signs with
+   `engineSignerFor(swap.enginePubkey)` — failing closed when the pinned key is
+   not held.
+3. **Overlap and announce.** New orders pin the new key; old swaps finish on the
+   old one; retire a key only when no swap references it.
+4. **Anchors are per-record.** `social.p2p-swap` records verify against the
+   author DID they carry, so old records stay valid after a rotation; only new
+   records must be signed by a current key. The escrow key and the anchor/DID
+   key being the same pair is a coupling to be aware of — rotating for one
+   rotates the other.
+
+### 27.4 Attack vectors
+
+| # | Vector | Effect | Control |
+|---|---|---|---|
+| 1 | **Seller pins its own key** as `enginePubkey` | seller controls 2 of 3 → after the buyer pays fiat, the seller refunds/releases to itself → buyer loses fiat | **Delivered:** buyer validates `enginePubkey` against the trusted set (`P2P_ENGINE_PUBKEYS`) or its configured engine (`vaultEnginePubkey`, rejects a rogue pin) and the derived address against `escrowAddress` (`vaultMatchesAddress`) |
+| 2 | **Substituted key via `/capabilities`/MITM** | wallet derives a vault that does not match the lock → signatures invalid, or a vault the attacker controls | `vaultMatchesAddress` (implemented): refuse to sign unless the vault hashes to `escrowAddress`; prefer the pinned record key over `/capabilities` |
+| 3 | **Seed compromise** (env leak, VM breach, HSM absent) | attacker co-signs forced release/refund with a colluding party; forges anchors | HSM/KMS, private host, no logs; on-chain audit makes every co-sign visible |
+| 4 | **Engine collusion with one party** | `engine + buyer` steals the seller's escrow (or `engine + seller` strands the buyer) | Residual, stated (§13). Mitigation: the escrow address is public, the spend is observable, reputation/anchor trails |
+| 5 | **Pinned-key replay** of a `social.p2p-release` | none — the signature covers the specific skeleton (vault, outpoint, destination) | `acceptCoopRelease` checks kind/destination/lock; a different swap has a different sighash |
+| 6 | **Destination swap in the skeleton** | counterparty signs a spend to an attacker address | `acceptCoopRelease` rejects a record whose `toAddress` ≠ the expected destination; the vault must match `escrowAddress` |
+| 7 | **Downgrade to `/capabilities`** (pinned key absent) | reintroduces the MITM/live-key surface | Require the pinned key for new swaps; `/capabilities` only as a legacy fallback, still behind `vaultMatchesAddress` |
+| 8 | **Record bloat / DoS** (~5.2 KB `enginePubkey` per record) | chain/store growth | Length-bounded (≤6000 hex chars) in both record validators |
+| 9 | **Non-existent engine pin** | order the buyer can never settle (grief) | Same as #1 — a trusted-set check rejects unknown keys |
+| 10 | **Key retention window** | old keys linger as attack surface | Retain only keys with open swaps; retire after settlement |
+
+**The critical one is #1.** Pinning the key in a *seller-authored* record turns
+the key from a server-provided fact into an attacker-influenceable one, so the
+buyer **must** constrain it (allowlist / signed engine registry) — an arbitrary
+`enginePubkey` is not trustworthy just because it is signed by the seller.
+Everything else fails closed once `vaultMatchesAddress` is enforced.
+
+### 27.5 Invariants to preserve
+
+- A wallet signs **only** over a vault that reproduces the recorded
+  `escrowAddress` (implemented as `vaultMatchesAddress`).
+- The engine co-signs **only** with the key pinned in the swap it is settling,
+  and only under protocol conditions.
+- No secret (`*_KEY`, admin token) ever reaches a record, a log, or a client.
+
+### 27.6 Status
+
+- **Delivered:** `enginePubkey` pinned on `social.p2p-order` and
+  `social.p2p-swap`; the wallet pins the order to its engine's key
+  (`createOrder`) and derives the vault from the pin; wallet-side reader + chain
+  order book; `vaultMatchesAddress` guard; `vaultEnginePubkey` trusted-set check
+  (`P2P_ENGINE_PUBKEYS`); engine keyring + `engineSignerFor` (multi-key
+  rotation) with `SETTLEMENT_ENGINE_KEYS`; the engine now **carries the pin on
+  its stored order** (`p2p_orders.engine_pubkey`, schema + migration + replay),
+  **derives the match address from the pinned key**, and **rejects a match for
+  an order pinned to a key the deployment does not hold** (409).

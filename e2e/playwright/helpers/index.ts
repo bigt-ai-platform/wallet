@@ -10,8 +10,7 @@ export async function getElement(page: Page, testId: string) {
 }
 
 export async function clickTab(page: Page, label: string) {
-  // The bottom tab bar is only visible on tab screens, and several screens are
-  // no longer tabs at all — so navigate through the sidebar, which works on
+  // Navigation is the sidebar only (the bottom tab bar was removed): works on
   // both mobile (drawer) and desktop (persistent) and preserves in-memory
   // state (e.g. an unlocked wallet).
   const menu = page.getByRole('button', { name: 'Open navigation menu' });

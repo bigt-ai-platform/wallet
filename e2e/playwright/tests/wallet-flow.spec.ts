@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp, getElement, goToKeys } from '../helpers';
+import { waitForApp, getElement, goToKeys, goToPayment } from '../helpers';
 
 /** Lightweight wallet creation — creates a new wallet in the keys screen.
  *  Does NOT save with password (that step is tested once separately). */
@@ -72,6 +72,8 @@ test.describe('Wallet Flow', () => {
 
   test('transaction screen shows no wallet prompt', async ({ page }) => {
     await waitForApp(page);
+    // The landing page is the market Home; the send form lives at Payment.
+    await goToPayment(page);
     const screen = await getElement(page, 'transaction-screen');
     await expect(screen).toBeAttached({ timeout: 10000 });
     await expect(screen.getByText('No Wallet Found')).toBeAttached({ timeout: 5000 });

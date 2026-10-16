@@ -87,4 +87,10 @@ describe("validateP2pSwapRecord", () => {
   it("rejects a bad type", () => {
     expect(validateP2pSwapRecord({ ...base(), type: "social.other" as never }).ok).toBe(false);
   });
+
+  it("accepts a pinned enginePubkey and rejects a malformed one", () => {
+    const pub = "05" + "ab".repeat(2600);
+    expect(validateP2pSwapRecord({ ...base(), enginePubkey: pub })).toEqual({ ok: true });
+    expect(validateP2pSwapRecord({ ...base(), enginePubkey: "xyz" }).ok).toBe(false);
+  });
 });

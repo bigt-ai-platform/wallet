@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
+import { PQKey, Utils } from "bigtangle-ts";
 import { Ed25519Key, didFromEd25519Key } from "did";
 import { buildApp } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
@@ -15,6 +16,11 @@ const otherDid = didFromEd25519Key(other);
 const buyerDid = didFromEd25519Key(buyer);
 const engineDid = didFromEd25519Key(engine);
 
+// A PQ engine identity (the escrow participant) for the pinned-order tests.
+const enginePq = PQKey.createNew();
+const enginePqPub = Utils.HEX.encode(enginePq.getPrefixedPublicKeyBytes());
+const rogueEnginePub = Utils.HEX.encode(PQKey.createNew().getPrefixedPublicKeyBytes());
+
 let clock = 1_700_000_000_000;
 let store = new MemSettlementStore();
 let txidOk = true;
@@ -26,12 +32,13 @@ function signed(key: Ed25519Key, did: string, fields: Record<string, unknown>) {
   return { ...payload, signature: signPayload(payload, key.getPrivHex()!) };
 }
 
-async function app() {
+async function app(extraEnv: NodeJS.ProcessEnv = {}) {
   return buildApp({
     store,
     env: {
       SETTLEMENT_ENGINE_DID: engineDid,
       SETTLEMENT_ADMIN_TOKEN: "adm",
+      ...extraEnv,
     } as NodeJS.ProcessEnv,
     guard: new ReplayGuard(() => clock),
     chain: null,
@@ -290,5 +297,51 @@ describe("capabilities", () => {
     const caps = r.json();
     expect(caps.chain).toMatchObject({ l0: false, l1: true, orderTxVerify: true });
     expect(caps.watch).toEqual({ height: null, hash: null, lastRunAt: null, lastError: null });
+  });
+});
+
+describe("pinned-order match (enginePubkey, docs/p2p.md §26)", () => {
+  const pinnedEnv = {
+    SETTLEMENT_ENGINE_KEY: enginePq.getPrivateKeySeedAsHex()!,
+    SETTLEMENT_ENGINE_PUBKEY: enginePqPub,
+  };
+
+  async function createPinned(enginePubkey: string): Promise<string> {
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    const r = await app(pinnedEnv);
+    const created = await r.inject({
+      method: "POST",
+      url: "/orders",
+      payload: orderPayload({ orderId, enginePubkey }),
+    });
+    expect(created.statusCode).toBe(201);
+    return orderId;
+  }
+
+  it("matches an order pinned to the key we hold and pins the swap", async () => {
+    const a = await app(pinnedEnv);
+    const orderId = await createPinned(enginePqPub);
+    clock += 1;
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+    });
+    expect(m.statusCode).toBe(201);
+    const swap = (await store.getSwap(m.json().swapId as string))!;
+    expect(swap.enginePubkey).toBe(enginePqPub);
+  });
+
+  it("409s a match for an order pinned to an engine the deployment does not hold", async () => {
+    const a = await app(pinnedEnv);
+    const orderId = await createPinned(rogueEnginePub);
+    clock += 1;
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+    });
+    expect(m.statusCode).toBe(409);
+    expect(m.json().error).toMatch(/pinned to an engine/);
   });
 });

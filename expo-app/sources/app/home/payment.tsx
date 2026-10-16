@@ -17,6 +17,7 @@ import WalletUnlock from "@/components/WalletUnlock";
 import ChainBadge from "@/components/ChainBadge";
 import SegmentedTabs from "@/components/SegmentedTabs";
 import QrScannerModal from "@/components/QrScannerModal";
+import { useTransactionConfirm } from "@/components/TransactionConfirm";
 import { statusBadgeColor } from "@/utils/status";
 import { showAlert } from "@/utils/alert";
 import { parseQrContent } from "@/lib/qr";
@@ -118,6 +119,7 @@ export default function TransactionScreen() {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { publicInfo, isUnlocked, getUnlockedWallet, getPassword } = useWallet();
+  const confirmImportant = useTransactionConfirm();
   const [selectedToken, setSelectedToken] = React.useState<LayerToken | null>(null);
   const [tokens, setTokens] = React.useState<LayerToken[]>([]);
   const [toAddress, setToAddress] = React.useState("");
@@ -336,6 +338,11 @@ export default function TransactionScreen() {
       }
     });
     if (!confirmed) return;
+
+    // Important transaction: require the OS device unlock (Android) or the
+    // wallet password (web) before the key in memory signs anything.
+    const approved = await confirmImportant({ subtitle: t('transaction.send'), reason: confirmBody });
+    if (!approved) { showAlert(t('transaction.error'), t('confirm.cancelled')); return; }
 
     setLoading(true);
     try {

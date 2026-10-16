@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp, getElement, clickTab, goToKeys, fundFromGenesisWallet, waitForConfirmedBc } from '../helpers';
+import { waitForApp, getElement, clickTab, goToKeys, goToPayment, fundFromGenesisWallet, waitForConfirmedBc } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
@@ -203,6 +203,8 @@ test.describe('Order Screen', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
+    // The landing page is the market Home; unlock on the Payment screen.
+    await goToPayment(page);
     await page.getByPlaceholder('Enter wallet password').fill(PASSWORD);
     await page.getByText('Unlock Wallet').click();
     await page.waitForTimeout(2000);

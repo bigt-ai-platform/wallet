@@ -118,7 +118,9 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
   const renderContent = () => (
     <>
       <View style={[s.sidebarHeader, { borderBottomColor: theme.colors.border }]}>
-        <Text style={[s.logoText, { color: theme.colors.text.primary }]}>{t(isTestnet ? 'sidebar.bigtTest' : 'sidebar.bigt')}</Text>
+        <TouchableOpacity onPress={() => navigate('/')} accessibilityRole="button" accessibilityLabel={t('sidebar.home')} testID="sidebar-brand">
+          <Text style={[s.logoText, { color: theme.colors.text.primary }]}>{t(isTestnet ? 'sidebar.bigtTest' : 'sidebar.bigt')}</Text>
+        </TouchableOpacity>
         {!persistent && (
           <TouchableOpacity onPress={onClose} style={s.closeBtn} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             accessibilityRole="button" accessibilityLabel={t('common.cancel')}>

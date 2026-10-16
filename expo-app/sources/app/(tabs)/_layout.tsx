@@ -1,18 +1,22 @@
 import * as React from 'react';
-import { TouchableOpacity, useWindowDimensions, Platform } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { TouchableOpacity, useWindowDimensions } from 'react-native';
 import { Tabs } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
-import { MenuIcon, MarketIcon, TokensIcon, SettingsIcon } from '@/components/Icons';
+import { MenuIcon } from '@/components/Icons';
 import { useSidebar } from '@/components/SidebarProvider';
 import { useTranslation } from 'react-i18next';
 
 const DESKTOP_BREAKPOINT = 768;
 
+/**
+ * The tab screens (order / predict / tokens / settings) are all reached from the
+ * sidebar, so the bottom tab bar is hidden everywhere — navigation is uniform
+ * (header hamburger → drawer on mobile, persistent sidebar on desktop). This
+ * navigator still supplies the header for those routes.
+ */
 export default function TabsLayout() {
   const { theme } = useUnistyles();
   const { width } = useWindowDimensions();
-  const insets = useSafeAreaInsets();
   const isDesktop = width >= DESKTOP_BREAKPOINT;
   const { setOpen } = useSidebar();
   const { t } = useTranslation();
@@ -27,31 +31,18 @@ export default function TabsLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: theme.colors.primary,
-        tabBarInactiveTintColor: theme.colors.text.secondary,
-        tabBarStyle: {
-          backgroundColor: theme.colors.groupped.surface,
-          borderTopColor: theme.colors.border,
-          height: 56 + insets.bottom,
-          paddingBottom: Math.max(insets.bottom, 6),
-          paddingTop: 6,
-          display: isDesktop ? 'none' : undefined,
-        },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          marginBottom: Platform.OS === 'android' ? 4 : 0,
-        },
+        tabBarStyle: { display: 'none' },
         headerStyle: { backgroundColor: theme.colors.groupped.background },
         headerTintColor: theme.colors.text.primary,
         headerLeft: isDesktop ? undefined : headerLeft,
       }}
     >
-      <Tabs.Screen name="buy" options={{ href: null, title: t('order.buy'), tabBarLabel: t('order.buy') }} />
-      <Tabs.Screen name="sell" options={{ href: null, title: t('order.sell'), tabBarLabel: t('order.sell') }} />
-      <Tabs.Screen name="order" options={{ title: t('order.myOrders'), tabBarLabel: t('order.myOrders'), tabBarIcon: ({ color, size }) => <MarketIcon size={size} color={color} /> }} />
-      <Tabs.Screen name="predict" options={{ title: t('predict.title'), tabBarLabel: t('predict.title'), tabBarIcon: ({ color, size }) => <MarketIcon size={size} color={color} /> }} />
-      <Tabs.Screen name="tokens" options={{ title: t('nav.tokens'), tabBarLabel: t('nav.tokens'), tabBarIcon: ({ color, size }) => <TokensIcon size={size} color={color} /> }} />
-      <Tabs.Screen name="settings" options={{ title: t('nav.settings'), tabBarLabel: t('nav.settings'), tabBarIcon: ({ color, size }) => <SettingsIcon size={size} color={color} /> }} />
+      <Tabs.Screen name="buy" options={{ href: null, title: t('order.buy') }} />
+      <Tabs.Screen name="sell" options={{ href: null, title: t('order.sell') }} />
+      <Tabs.Screen name="order" options={{ title: t('order.myOrders') }} />
+      <Tabs.Screen name="predict" options={{ title: t('predict.title') }} />
+      <Tabs.Screen name="tokens" options={{ title: t('nav.tokens') }} />
+      <Tabs.Screen name="settings" options={{ title: t('nav.settings') }} />
     </Tabs>
   );
 }

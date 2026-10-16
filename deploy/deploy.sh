@@ -141,16 +141,20 @@ for x in "${APEX_REGION:-}" "${DEPLOY_REGIONS_ARR[@]}"; do
     [ "$skip" = 0 ] && ordered+=("$r")
   done
 done
+
+# 2a. The ONE shared P2P settlement engine (region.conf P2P_REGION): one
+#     SETTLEMENT_ENGINE_KEY + one store for every user, and every region's
+#     /p2p/* proxies to it — so it must be live before any region's bundle that
+#     calls it. Deployed once, regardless of which web regions are in this run.
+if [ -f "$SCRIPT_DIR/env/.env.p2p.$P2P_REGION" ]; then
+  echo -e "\n${GREEN}=== p2p engine → $P2P_REGION (shared by all regions) ===${NC}"
+  P2P_IMAGE="$P2P_TAGGED" ./deploy/region.sh p2p "$P2P_REGION"
+else
+  echo -e "${YELLOW}skip shared p2p engine ($P2P_REGION): $SCRIPT_DIR/env/.env.p2p.$P2P_REGION missing (create it, then ./deploy/region.sh p2p $P2P_REGION)${NC}"
+fi
+
 for r in "${ordered[@]}"; do
   echo -e "\n${GREEN}=== deploy → $r ($TAGGED) ===${NC}"
-  # P2P engine first: the release bakes EXPO_PUBLIC_P2P_ENGINE_URL=/p2p, so the
-  # upstream must be live before (or with) the bundle that calls it. Skipped
-  # with a warning while the region's secrets file does not exist yet.
-  if [ -f "$SCRIPT_DIR/env/.env.p2p.$r" ]; then
-    P2P_IMAGE="$P2P_TAGGED" ./deploy/region.sh p2p "$r"
-  else
-    echo -e "${YELLOW}skip p2p engine for $r: $SCRIPT_DIR/env/.env.p2p.$r missing (create it, then ./deploy/region.sh p2p $r)${NC}"
-  fi
   # region.sh resolves the per-user working dir (/srv/wallet for root,
   # /home/<user>/wallet for ubuntu) from REMOTE_REPO being empty.
   APP_IMAGE="$TAGGED" ./deploy/region.sh deploy "$r"

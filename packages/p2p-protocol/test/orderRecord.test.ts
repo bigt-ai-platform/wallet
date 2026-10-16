@@ -77,4 +77,17 @@ describe("validateP2pOrderRecord", () => {
     expect(validateP2pOrderRecord({ ...open(), ts: Date.now() + 10 * 60 * 1000 }).ok).toBe(false);
     expect(validateP2pOrderRecord({ ...open(), orderSeq: -1 }).ok).toBe(false);
   });
+
+  it("pins an optional enginePubkey on OPEN and rejects it on CANCELLED", () => {
+    const pub = "05" + "ab".repeat(2600); // prefixed PQ pubkey hex length class
+    expect(validateP2pOrderRecord({ ...open(), enginePubkey: pub })).toEqual({ ok: true });
+    expect(validateP2pOrderRecord({ ...open(), enginePubkey: "not-hex" }).ok).toBe(false);
+    const cancel = p2pOrderRecord({
+      from: "did:key:zSeller",
+      to: "ord-0123456789abcdef",
+      status: "CANCELLED",
+      orderSeq: 1,
+    });
+    expect(validateP2pOrderRecord({ ...cancel, enginePubkey: pub }).ok).toBe(false);
+  });
 });

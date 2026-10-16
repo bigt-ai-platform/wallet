@@ -60,14 +60,26 @@ const block = `# P2P settlement engine secrets — deploy/env/.env.p2p.${region 
 # --env-file. chmod 600. Rotating the engine key invalidates anchored-record
 # verification AND changes the 2-of-3 escrow address (in-flight swaps strand).
 
-# ── store (engine projection; rebuildable from the L0/L1 seeds) ──
-POSTGRES_PASSWORD=${randomBytes(18).toString('hex')}
-SETTLEMENT_STORE=pg
+# ── store: NO database by default (docs/p2p.md §14). Orders + swap events are a
+#    projection of L1-SOCIAL rebuilt in memory at boot; the store-only half
+#    (profiles, proofs, escrow signings, receipt bytes) persists to an encrypted
+#    blob store. Set SETTLEMENT_BLOB_DIR (a mounted volume) OR SETTLEMENT_BLOB_URL
+#    (S3/MinIO). Rotating SETTLEMENT_BLOB_KEY makes existing blobs unreadable.
+SETTLEMENT_STORE=blob
+SETTLEMENT_BLOB_KEY=${randomBytes(32).toString('hex')}
+# Blob target: a directory in the container (compose mounts the p2p-blobs volume
+# at /data/blobs). For S3/MinIO instead, drop this and set SETTLEMENT_BLOB_URL /
+# _BUCKET / _REGION / _ACCESS_KEY / _SECRET_KEY.
+SETTLEMENT_BLOB_DIR=/data/blobs
 
 # ── engine identity: one ML-DSA-87 key, three views of it ──
 SETTLEMENT_ENGINE_KEY=${engineKeySeed}
 SETTLEMENT_ENGINE_DID=${engineDid}
 SETTLEMENT_ENGINE_PUBKEY=${enginePubHex}
+# Retained keys (comma-separated seeds) so swaps pinned to a ROTATED key still
+# settle (docs/p2p.md §27.3). Append a new seed here when rotating; never
+# replace SETTLEMENT_ENGINE_KEY in place. Empty = current key only.
+# SETTLEMENT_ENGINE_KEYS=
 SETTLEMENT_ADMIN_TOKEN=${randomBytes(20).toString('hex')}
 
 # ── chains (external). NEVER leave SETTLEMENT_L0_URL empty in prod: with no

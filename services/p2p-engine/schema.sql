@@ -22,6 +22,9 @@ CREATE TABLE IF NOT EXISTS p2p_orders (
   -- L1-SOCIAL txid of the seller-anchored social.p2p-order record (NULL for
   -- legacy engine-intake orders). Additive: main() ALTERs it in on boot.
   txid          TEXT,
+  -- The engine escrow participant the order is pinned to (docs/p2p.md §26);
+  -- NULL on legacy orders. Additive: ALTERed in on boot.
+  engine_pubkey TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS p2p_orders_open_idx ON p2p_orders (status, created_at DESC);

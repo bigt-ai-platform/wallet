@@ -20,7 +20,7 @@ const HEADLESS = process.env.HEADLESS !== "false";
 const DIR = "demo-output/screenshots";
 
 const SHOTS = [
-  { topic: "wallet", name: "transaction-locked", tab: null, verify: "transaction-screen", desc: "Transaction screen (locked)" },
+  { topic: "wallet", name: "home", tab: null, verify: "home-screen", desc: "Market home (landing)" },
   { topic: "wallet", name: "wallet-locked", tab: "Wallet", verify: "wallet-screen", desc: "Wallet screen (locked)" },
   { topic: "wallet", name: "my-orders", tab: "My Orders", verify: "order-screen", desc: "My orders" },
   { topic: "wallet", name: "tokens", tab: "Tokens", verify: "tokens-screen", desc: "Token browser" },

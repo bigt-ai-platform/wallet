@@ -32,6 +32,7 @@ import {
 } from '@/types/api';
 import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
 import { decimalsFor, formatTokenAmount } from '@/lib/tokenformat';
+import { collapseTokenEmissions } from '@/lib/tokenlist';
 import { withSlash } from 'chain-discovery';
 import { orderedBases, markDown, rememberPeer } from '@/services/discovery';
 import {
@@ -759,7 +760,13 @@ export class HttpService {
   }
 
   /**
-   * Get all available tokens
+   * Get all available tokens.
+   *
+   * `searchTokens` returns one record per *emission* (the same `tokenid` again
+   * with an incremented `tokenindex`) plus an `amountMap` holding the total
+   * supply per `tokenid` (Java `getTokenAmountMap` sums the emission amounts).
+   * Collapse the records to one row per token carrying that sum, so the UI never
+   * lists the same token several times.
    */
   async getTokensItemList(): Promise<ApiResponse<TokenItem[]>> {
     // The L0 server exposes the confirmed-token list via `searchTokens` (empty
@@ -770,18 +777,16 @@ export class HttpService {
       { name: '' },
     );
 
-    if (response.success && response.data) {
+    if (!response.success || !response.data) {
       return {
-        success: true,
-        data: response.data.tokens,
-      };
+        success: false,
+        error: response.error || 'Failed to get tokens list',
+      } as ApiResponse<TokenItem[]>;
     }
 
-    // Return a properly typed failure response
-    return {
-      success: false,
-      error: response.error || 'Failed to get tokens list',
-    } as ApiResponse<TokenItem[]>;
+    const { tokens = [], amountMap = {} } = response.data;
+    // One row per token, supply summed over its emissions (see the helper).
+    return { success: true, data: collapseTokenEmissions(tokens, amountMap) };
   }
 
   /**
@@ -993,9 +998,11 @@ export class HttpService {
     );
 
     if (response.success && response.data) {
+      // Collapse per-emission records to one row per token (the L1 does not
+      // send an amountMap, so the supply is summed client-side).
       return {
         success: true,
-        data: response.data.tokens,
+        data: collapseTokenEmissions(response.data.tokens ?? [], response.data.amountMap),
       };
     }
 

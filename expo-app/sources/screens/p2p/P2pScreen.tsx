@@ -7,12 +7,14 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { MONO_FONT } from '@/constants/fonts';
+import { P2P_ENGINE_PUBKEYS } from '@/constants/app';
 import WalletUnlock from '@/components/WalletUnlock';
+import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import { HelpIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
-import { buildEscrowSighash, escrowVault, signEscrow, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
+import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
 import type { TokenItem } from '@/types/api';
 import {
@@ -47,6 +49,7 @@ export default function P2pScreen() {
   const { t, i18n } = useTranslation();
   const { theme } = useUnistyles();
   const { publicInfo, isUnlocked, getUnlockedWallet } = useWallet();
+  const confirmImportant = useTransactionConfirm();
 
   const [tab, setTab] = React.useState<Tab>('open');
   const [loading, setLoading] = React.useState(true);
@@ -212,6 +215,12 @@ export default function P2pScreen() {
       setNotice({ ok: false, text: t('p2p.createFailed') });
       return;
     }
+    // Important transaction (signs with the wallet key): device unlock first.
+    const approved = await confirmImportant({
+      subtitle: t('p2p.createTitle'),
+      reason: `${giveAmount} ${giveToken} → ${wantAmount} ${wantCurrency}`,
+    });
+    if (!approved) { setNotice({ ok: false, text: t('confirm.cancelled') }); return; }
     setBusy(true);
     try {
       await createOrder(id, {
@@ -222,6 +231,10 @@ export default function P2pScreen() {
         wantAmount: wantAmount.trim(),
         wantRail,
         validUntil: Math.floor(Date.now() / 1000) + Math.floor(hours * 3600),
+        // pin the order to the escrow key we will settle against (§26)
+        ...((caps?.escrowPubkey || P2P_ENGINE_PUBKEYS[0])
+          ? { enginePubkey: caps?.escrowPubkey || P2P_ENGINE_PUBKEYS[0] }
+          : {}),
       });
       setGiveToken('USDT'); setGiveAmount(''); setWantAmount('');
       setNotice({ ok: true, text: t('p2p.created') });
@@ -239,6 +252,12 @@ export default function P2pScreen() {
     if (!id) return;
     const cny = isCnyRail(order.wantRail);
     if (!cny || !buyRecv.trim()) { setNotice({ ok: false, text: t('p2p.buyFailed') }); return; }
+    // Important transaction (signs with the wallet key): device unlock first.
+    const approved = await confirmImportant({
+      subtitle: t('p2p.buyTitle'),
+      reason: `${order.giveAmount} ${order.giveToken} → ${order.wantAmount} ${order.wantCurrency}`,
+    });
+    if (!approved) { setNotice({ ok: false, text: t('confirm.cancelled') }); return; }
     setBusy(true);
     try {
       const res = await matchOrder(id, order.orderId, { receiveAddress: buyRecv.trim() });
@@ -350,11 +369,19 @@ export default function P2pScreen() {
   // hook), then either party co-signs a live release/refund.
 
   const escrowSighashFor = async (swap: P2pSwap, toBase58: string) => {
-    const pubkey = caps?.escrowPubkey ?? null;
-    if (!pubkey) throw new Error('engine escrow key missing (capabilities.escrowPubkey)');
+    // Prefer the pinned key (docs/p2p.md §26) so settlement does not depend on
+    // the engine's /capabilities report; reject a pin not in the trusted engine
+    // set (docs/p2p.md §27.4 #1). Falls back to the configured engine's key.
+    const pubkey = vaultEnginePubkey(swap.enginePubkey, caps?.escrowPubkey, P2P_ENGINE_PUBKEYS);
+    if (!pubkey) throw new Error('escrow key rejected (not a trusted enginePubkey) or missing');
     if (!swap.escrowAddress || !swap.escrowTxHash) throw new Error('swap has no locked escrow');
     const vault = escrowVault(swap.sellerDid, swap.buyerDid, pubkey);
     if (!vault) throw new Error('escrow vault unavailable (non-PQ party key)');
+    // Guard against a substituted engine key: the vault we derive must hash to
+    // the recorded escrow address, or we refuse to sign (docs/p2p.md §26.7).
+    if (!vaultMatchesAddress(vault, swap.escrowAddress)) {
+      throw new Error('escrow address does not match the vault key (enginePubkey mismatch)');
+    }
     const res = await httpService.getOutputsHistory({ toAddress: swap.escrowAddress });
     if (!res.success || !res.data) throw new Error(res.error || 'could not read the escrow output');
     const skel = buildEscrowSighash({

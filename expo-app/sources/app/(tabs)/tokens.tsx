@@ -8,7 +8,22 @@ import { CloseIcon } from '@/components/Icons';
 import WalletUnlock from '@/components/WalletUnlock';
 import SegmentedTabs from '@/components/SegmentedTabs';
 import { MONO_FONT } from '@/constants/fonts';
+import { decimalsFor, formatTokenAmount } from '@/lib/tokenformat';
 import type { TokenItem } from '@/types/api';
+
+/**
+ * Total supply of a token as a display string: `getTokensItemList` replaces the
+ * per-emission `amount` with the sum over every emission, so the browser shows
+ * one value per token rather than one per issuance.
+ */
+function totalSupply(tk: TokenItem): string | null {
+  if (tk.amount == null) return null;
+  try {
+    return formatTokenAmount(BigInt(String(tk.amount)), decimalsFor(tk.tokenid, tk.decimals));
+  } catch {
+    return null;
+  }
+}
 
 export default function TokensScreen() {
   const { t } = useTranslation();
@@ -110,15 +125,22 @@ export default function TokensScreen() {
                 <Text style={s.emptyTitle}>{search ? t('tokens.noMatches') : t('tokens.noTokens')}</Text>
               </View>
             ) : (
-              filtered.map((token, i) => (
-                <View key={`${token.tokenid ?? ''}-${i}`} style={s.tokenCard} testID={`token-card-${i}`}>
-                  <View style={s.tokenDot} />
-                  <View style={s.tokenInfo}>
-                    <Text style={s.tokenName}>{token.tokenname || t('tokens.unknown')}</Text>
-                    <Text style={s.tokenId}>{token.tokenid ? token.tokenid.slice(0, 16) + '...' : ''}</Text>                    {token.description ? <Text style={s.tokenDesc} numberOfLines={1}>{token.description}</Text> : null}
+              filtered.map((token, i) => {
+                const supply = totalSupply(token);
+                return (
+                  <View key={`${token.tokenid ?? ''}-${i}`} style={s.tokenCard} testID={`token-card-${i}`}>
+                    <View style={s.tokenDot} />
+                    <View style={s.tokenInfo}>
+                      <Text style={s.tokenName}>{token.tokenname || t('tokens.unknown')}</Text>
+                      <Text style={s.tokenId}>{token.tokenid ? token.tokenid.slice(0, 16) + '...' : ''}</Text>
+                      {token.description ? <Text style={s.tokenDesc} numberOfLines={1}>{token.description}</Text> : null}
+                    </View>
+                    {supply ? (
+                      <Text style={s.tokenAmount} testID={`token-amount-${i}`} numberOfLines={1}>{supply}</Text>
+                    ) : null}
                   </View>
-                </View>
-              ))
+                );
+              })
             )}
           </ScrollView>
         </>
@@ -190,6 +212,7 @@ const s = StyleSheet.create((theme) => ({
   tokenName: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
   tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: MONO_FONT, marginBottom: 2 },
   tokenDesc: { fontSize: 12, color: theme.colors.text.secondary },
+  tokenAmount: { marginLeft: 8, fontSize: 13, fontWeight: '700', color: theme.colors.text.primary, fontFamily: MONO_FONT },
   formContent: { padding: 16, paddingBottom: 40 },
   formTitle: { fontSize: 22, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 6 },
   formSub: { fontSize: 13, color: theme.colors.text.secondary, lineHeight: 18, marginBottom: 20 },

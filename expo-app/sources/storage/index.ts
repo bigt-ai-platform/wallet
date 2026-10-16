@@ -1,15 +1,22 @@
 /**
  * Simple storage abstraction.
  *
- * Native: MMKV. Web/SSR fallback: localStorage (in-memory when unavailable) —
- * this module is imported by app-wide code (e.g. i18n language persistence),
- * so it must never crash the web bundle. MMKV is only constructed on native,
- * inside try/catch.
+ * Native: MMKV. Web/SSR: localStorage (in-memory when unavailable), with the
+ * Android Keystore plugin reserved for key material (see `./secureWeb`) — this
+ * module is imported by app-wide code (e.g. i18n language persistence), so it
+ * must never crash the web bundle. MMKV is only constructed on native, inside
+ * try/catch.
  */
 
 import { Platform } from 'react-native';
 import { MMKV } from 'react-native-mmkv';
-import { secureWebKV, initSecureStorage as initSecureWebStorage } from './secureWeb';
+import {
+  secureWebKV,
+  initSecureStorage as initSecureWebStorage,
+  type BootReporter,
+} from './secureWeb';
+
+export type { BootPhase, BootReporter } from './secureWeb';
 
 const MMKV_KEY_NAME = 'device.mmkv.key';
 let nativeEncryptionKey: string | null = null;
@@ -44,9 +51,11 @@ async function initNativeEncryptionKey(): Promise<void> {
   }
 }
 
-/** Prepare secure storage (web Keystore cache + native MMKV key). Call once at startup. */
-export async function initSecureStorage(): Promise<void> {
-  await initSecureWebStorage();
+/** Prepare storage (web: drain legacy Keystore → localStorage + load key
+ *  material; native: MMKV key). Call once at startup. `onPhase` reports each
+ *  boot step for the startup screen. */
+export async function initSecureStorage(onPhase?: BootReporter): Promise<void> {
+  await initSecureWebStorage(onPhase);
   await initNativeEncryptionKey();
 }
 
