@@ -155,7 +155,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
 
   if (persistent) {
     return (
-      <View style={[s.persistent, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border, paddingTop: insets.top }]}>
+      <View testID="sidebar" style={[s.persistent, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border, paddingTop: insets.top }]}>
         {renderContent()}
       </View>
     );
@@ -168,7 +168,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       <View style={s.overlay}>
         <TouchableOpacity style={StyleSheet.absoluteFill} onPress={onClose} activeOpacity={1} />
       </View>
-      <View style={[s.overlaySidebar, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border, paddingTop: insets.top }]}>
+      <View testID="sidebar" style={[s.overlaySidebar, { backgroundColor: theme.colors.groupped.surface, borderRightColor: theme.colors.border, paddingTop: insets.top }]}>
         {renderContent()}
       </View>
     </>

@@ -10,15 +10,19 @@ export async function getElement(page: Page, testId: string) {
 }
 
 export async function clickTab(page: Page, label: string) {
-  // Navigation is the sidebar only (the bottom tab bar was removed): works on
-  // both mobile (drawer) and desktop (persistent) and preserves in-memory
-  // state (e.g. an unlocked wallet).
+  // Navigation is the sidebar (the bottom bar only carries Menu/Pay/Spot/Home
+  // shortcuts): works on both mobile (drawer) and desktop (persistent) and
+  // preserves in-memory state (e.g. an unlocked wallet). Scope the click to the
+  // sidebar: the mobile bottom bar repeats some labels (Payment/Spot/Home) and
+  // sits behind the open drawer, so an unscoped `.first()` would hit the bar.
   const menu = page.getByRole('button', { name: 'Open navigation menu' });
   if (await menu.isVisible().catch(() => false)) {
     await menu.click();
     await page.waitForTimeout(400);
   }
-  await page.getByRole('button', { name: label, exact: true }).first().click();
+  const sidebar = page.getByTestId('sidebar');
+  const scope = (await sidebar.count()) > 0 ? sidebar : page;
+  await scope.getByRole('button', { name: label, exact: true }).first().click();
   await page.waitForTimeout(1500);
 }
 

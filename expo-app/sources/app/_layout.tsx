@@ -13,6 +13,7 @@ import i18n from '@/lib/i18n';
 import { startAutoSelection, stopAutoSelection } from '@/services/discovery';
 import Sidebar from '@/components/Sidebar';
 import BootScreen from '@/components/BootScreen';
+import BottomNav from '@/components/BottomNav';
 import { TransactionConfirmProvider } from '@/components/TransactionConfirm';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
 import { MenuIcon } from '@/components/Icons';
@@ -73,6 +74,7 @@ function AppShell() {
                         <Stack.Screen name="device" options={{ title: t('device.title') }} />
                     </Stack>
                 </View>
+                {!isDesktop && <BottomNav />}
             </View>
         </View>
     );

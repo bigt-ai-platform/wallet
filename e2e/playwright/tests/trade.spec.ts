@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { waitForApp } from '../helpers';
+import { waitForApp, clickTab } from '../helpers';
 
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
@@ -196,8 +196,8 @@ async function setupMarket(quote: 'bc' | 'CNY' = 'bc'): Promise<{ tokenid: strin
 test.describe('Trade Screen', () => {
   test('trade screen is reachable from the sidebar', async ({ page }) => {
     await waitForApp(page);
-    await page.getByRole('button', { name: 'Open navigation menu' }).click();
-    await page.getByRole('button', { name: 'Spot', exact: true }).click();
+    // Sidebar-scoped: the mobile bottom bar also has a "Spot" shortcut.
+    await clickTab(page, 'Spot');
     await expect(page.getByTestId('trade-screen')).toBeAttached({ timeout: 10000 });
     // The three Binance panels are mounted (order book, chart, recent trades).
     await expect(page.getByTestId('trade-orderbook')).toBeAttached();
@@ -216,8 +216,8 @@ test.describe('Trade Screen', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1500);
 
-    await page.getByRole('button', { name: 'Open navigation menu' }).click();
-    await page.getByRole('button', { name: 'Spot', exact: true }).click();
+    // Sidebar-scoped: the mobile bottom bar also has a "Spot" shortcut.
+    await clickTab(page, 'Spot');
     await expect(page.getByTestId('trade-screen')).toBeAttached({ timeout: 10000 });
 
     // Search the L1 exchange tokens and select the market.
@@ -254,8 +254,8 @@ test.describe('Trade Screen', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1500);
 
-    await page.getByRole('button', { name: 'Open navigation menu' }).click();
-    await page.getByRole('button', { name: 'Spot', exact: true }).click();
+    // Sidebar-scoped: the mobile bottom bar also has a "Spot" shortcut.
+    await clickTab(page, 'Spot');
     await expect(page.getByTestId('trade-screen')).toBeAttached({ timeout: 10000 });
 
     await page.getByTestId('trade-token-search').fill(ctx.tokenName);
