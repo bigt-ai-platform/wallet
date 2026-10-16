@@ -219,3 +219,60 @@ describe("replayVerify (docs/p2p.md §14 drift check)", () => {
     expect(report).toMatchObject({ ok: true, missing: [], extra: [] });
   });
 });
+
+/**
+ * The chainlength-scan path (HttpSocialSource): social records are sealed in
+ * BRANCH (BLOCKTYPE_TRANSFER) blocks whose prevBlockHash is the previous
+ * beacon, so the prev-hash walk from the head never reaches them. A source
+ * that reports head.height and implements blocksFromChainLength uses the scan.
+ */
+describe("syncOnce — chainlength scan (branch blocks)", () => {
+  /**
+   * Chainlength-keyed fake, like the node's blocksFromChainLength(start, end):
+   * it returns blocks whose CHAINLENGTH is in the window. A BRANCH block's
+   * chainlength can equal a height an earlier tick already reached, so the scan
+   * must not start strictly above the cursor.
+   */
+  function scanSource(cl: Map<number, ChainBlockView[]>, headHeight: number): SocialSource {
+    return {
+      async head() {
+        return { hash: "head", height: headHeight };
+      },
+      async blockByHash() {
+        return null; // the scan must not need the prev-walk
+      },
+      async blocksFromChainLength(start: number, end: number) {
+        const out: ChainBlockView[] = [];
+        for (const [c, blocks] of cl) if (c >= start && c <= end) out.push(...blocks);
+        return out;
+      },
+    };
+  }
+
+  it("indexes a record sealed in a branch block the prev-walk cannot reach", async () => {
+    const branch = block("br1", 1, "h0", [rec(orderRec())]);
+    const src = scanSource(new Map([[1, [branch]]]), 1);
+    const store = new MemSettlementStore();
+    const r = await syncOnce(src, store, new MemCursorStore());
+    expect(r.ordersOpened).toBe(1);
+    expect(await store.getOrder("ord-0123456789abcdef")).toMatchObject({ status: "ACTIVE" });
+  });
+
+  it("indexes a branch block anchored at a chainlength the cursor already reached", async () => {
+    // Tick 1: head at height 5, nothing anchored yet — the cursor moves to 5.
+    const cl = new Map<number, ChainBlockView[]>();
+    const src = scanSource(cl, 5);
+    const store = new MemSettlementStore();
+    const cursors = new MemCursorStore();
+    await syncOnce(src, store, cursors);
+    expect((await cursors.get())?.height).toBe(5);
+
+    // Tick 2: the record lands in a branch block at chainlength 5 (anchor slot
+    // = the height the previous tick already saw), while the head is at 6.
+    cl.set(5, [block("br5", 5, "h4", [rec(orderRec())])]);
+    src.head = async () => ({ hash: "head", height: 6 });
+    const r2 = await syncOnce(src, store, cursors);
+    expect(r2.ordersOpened).toBe(1);
+    expect(await store.getOrder("ord-0123456789abcdef")).toMatchObject({ status: "ACTIVE" });
+  });
+});

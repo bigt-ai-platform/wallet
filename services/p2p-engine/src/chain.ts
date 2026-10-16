@@ -5,7 +5,6 @@
  * a wrong destination, or an insufficient amount.
  */
 import { verifySettlement, type SettlementOutput } from "p2p-protocol";
-import { addressHash160 } from "./escrow.js";
 
 export interface ChainStatus {
   status?: string;
@@ -168,7 +167,14 @@ export async function verifyChainLock(
       return { ok: false, reason: `transaction pays ${st.address}, expected ${opts.escrowAddress}` };
     }
     if (opts.token && opts.amount) {
-      const outputs = await chain.balances(Buffer.from(addressHash160(opts.escrowAddress)).toString("hex"));
+      // getBalances cannot prove this lock: it rebuilds the query address with
+      // Address.fromHash160 (always the P2PKH header), so a P2SH escrow never
+      // matches, and it filters the denormalized `outputs.confirmed` column,
+      // which stays false for outputs sealed in a TRANSFER block. The node's
+      // getOutputsHistory matches on `toaddress` and uses the computed
+      // OUTPUTS_CONFIRMED, so it is the only path that can see a P2SH escrow
+      // output (Java-first: DatabaseFullBlockStoreBase.getOutputsHistory).
+      const outputs = normalizeOutputs(await chain.outputsHistory(opts.escrowAddress));
       const check = verifySettlement(outputs, {
         toAddress: opts.escrowAddress,
         token: opts.token,

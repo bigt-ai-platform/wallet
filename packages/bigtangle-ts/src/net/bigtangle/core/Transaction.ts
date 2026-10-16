@@ -1531,24 +1531,16 @@ export class Transaction extends ChildMessage {
       }
     }
 
-    // PQ witness data (included in tx hash, excluded from sighash).
-    if (this.version >= PQConstants.TX_PQ_VERSION) {
-      if (this.pqKeyBundle == null) {
-        Utils.uint32ToByteStreamLE(0, stream);
-      } else {
-        Utils.uint32ToByteStreamLE(this.pqKeyBundle.length, stream);
-        stream.write(this.pqKeyBundle);
-      }
-      if (this.pqSignatureBundle == null) {
-        Utils.uint32ToByteStreamLE(0, stream);
-      } else {
-        Utils.uint32ToByteStreamLE(this.pqSignatureBundle.length, stream);
-        stream.write(this.pqSignatureBundle);
-      }
-    }
-
-    // Note: memo and dataSignature are intentionally excluded entirely (not even lengths written)
-    // This matches the Java implementation's positive counting approach
+    // Note: memo, dataSignature AND the PQ witness bundles (pqKeyBundle /
+    // pqSignatureBundle) are all excluded entirely — not even their lengths are
+    // written. Java's Transaction.bitcoinSerializeWithoutMemoAndDataSignature()
+    // stops at toAddressInSubtangle; the PQ bundles are only written by the
+    // full serialization (bitcoinSerializeToStream). Appending them here made
+    // every TS-computed txid differ from the node's, so polling
+    // getTransactionStatus(tx.getHash()) always returned UNKNOWN even though
+    // the transaction had confirmed on-chain.
+    //
+    // This matches the Java implementation's positive counting approach.
 
     return stream.toByteArray();
   }

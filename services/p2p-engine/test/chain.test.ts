@@ -10,6 +10,19 @@ function client(status: string, address: string, balances: { token: string; amou
     transactionStatus: async () => ({ status, address }),
     balances: async () =>
       balances.map((b) => ({ address, token: b.token, amount: b.amount, confirmed: true, spent: false })),
+    // verifyChainLock proves the lock from getOutputsHistory (getBalances cannot
+    // see a P2SH escrow output), so the fake must expose the locked balance in
+    // the raw UTXO shape — token on `tokenId`, amount on `value.value`.
+    outputsHistory: async (addr: string) =>
+      addr === address
+        ? balances.map((b) => ({
+            address,
+            tokenId: b.token,
+            value: { value: b.amount, tokenHex: b.token },
+            spent: false,
+            confirmed: true,
+          }))
+        : [],
   };
 }
 
@@ -45,6 +58,7 @@ describe("chain evidence", () => {
         throw new Error("ECONNREFUSED");
       },
       balances: async () => [],
+      outputsHistory: async () => [],
     };
     const res = await verifyChainLock(broken, { txHash: "tx", escrowAddress: escrow });
     expect(res.ok).toBe(false);

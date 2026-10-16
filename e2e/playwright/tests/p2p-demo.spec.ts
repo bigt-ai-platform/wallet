@@ -43,6 +43,11 @@ const HANDOFF = path.join(process.cwd(), 'test-results', 'p2p-demo.json');
 const el = (page: Page, id: string) => page.locator(`[data-testid="${id}"]`);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+// Step timing: the real-L0 flow is minutes long, so the log must show where the
+// time went when a run dies on the test budget.
+const T0 = Date.now();
+const step = (label: string) => console.log(`  [${Math.round((Date.now() - T0) / 1000)}s] ${label}`);
+
 async function importKeyAndUnlock(page: Page, privKeyHex: string) {
   await goToKeys(page);
   await page.getByText('Import Private Key').click();
@@ -137,7 +142,11 @@ test.describe('P2P Demo (real L0)', () => {
     fs.mkdirSync(path.dirname(HANDOFF), { recursive: true });
 
     // ── 1. fund the escrow P2SH directly from the L0 genesis wallet ─────────
-    const genesisKey = sdk.PQKey.fromMLDSA(new Uint8Array(32).fill(0x01));
+    // Seed 0x03 (the yuan genesis row, 8 outputs) — NOT 0x01: every other spec
+    // funds from 0x01, and while one of its change outputs is still
+    // spendPending the single-validator L0 drops the escrow spend. 0x03 is
+    // untouched by the harness, so the escrow funding never contends with them.
+    const genesisKey = sdk.PQKey.fromMLDSA(new Uint8Array(32).fill(0x03));
     const genesisWallet = sdk.Wallet.fromKeysURL(params, [genesisKey], E2E_SERVER_URL);
     genesisWallet.setServerURL(E2E_SERVER_URL);
     // The single-validator L0 reorgs, so the genesis change output flips
@@ -163,8 +172,10 @@ test.describe('P2P Demo (real L0)', () => {
     const giveToken = await resolveToken(request, escrowTxHash, escrowAddress);
 
     // ── 2. seller lists, buyer matches (UI) ─────────────────────────────────
+    step('escrow funded + token resolved');
     const seller = await newWallet(browser, sellerKey, request);
     const buyer = await newWallet(browser, buyerKey, request);
+    step('two wallets imported');
     try {
       await clickTab(seller.page, 'P2P');
       await el(seller.page, 'p2p-give-token').fill(giveToken);
@@ -197,6 +208,7 @@ test.describe('P2P Demo (real L0)', () => {
       await el(seller.page, 'p2p-swap-0-lock').click();
       // ESCROW_LOCKED is only reachable when verifyChainLock passed on L0.
       await waitStatus(seller.page, 'ESCROW_LOCKED');
+      step('ESCROW_LOCKED (engine verifyChainLock passed)');
       await shot(seller.page, 'p2p-real-05-escrow-locked-en.png');
 
       // ── 4. seller saves a CNY profile, buyer pulls instructions + claims ──
@@ -210,16 +222,20 @@ test.describe('P2P Demo (real L0)', () => {
       await shot(buyer.page, 'p2p-real-06-buyer-locked-en.png');
       await el(buyer.page, 'p2p-swap-0-instructions').click();
       await waitStatus(buyer.page, 'PAYMENT_PENDING');
+      step('buyer PAYMENT_PENDING');
       await shot(buyer.page, 'p2p-real-07-payment-pending-en.png');
       await el(buyer.page, 'p2p-swap-0-txid').fill('4200001234567890');
       await el(buyer.page, 'p2p-swap-0-proof').click();
       await waitStatus(buyer.page, 'PAYMENT_CLAIMED');
+      step('buyer PAYMENT_CLAIMED');
 
       // ── 5. seller confirms receipt on their own 流水 ──────────────────────
       await refresh(seller.page);
       await waitStatus(seller.page, 'PAYMENT_CLAIMED');
       await el(seller.page, 'p2p-swap-0-confirm').click();
+      step('seller confirm clicked');
       await waitStatus(seller.page, 'PAYMENT_VERIFIED');
+      step('seller PAYMENT_VERIFIED');
       await refresh(buyer.page);
       await waitStatus(buyer.page, 'PAYMENT_VERIFIED');
       await shot(buyer.page, 'p2p-real-08-payment-verified-en.png');
@@ -230,6 +246,7 @@ test.describe('P2P Demo (real L0)', () => {
       await assertEvidence(request, releaseTx.txHash, receiveAddress);
       await refresh(buyer.page);
       await waitStatus(buyer.page, 'ESCROW_RELEASED');
+      step('ESCROW_RELEASED on L0');
       await shot(buyer.page, 'p2p-real-09-escrow-released-en.png');
       console.log('escrow released:', releaseTx.txHash, '→', receiveAddress);
 
@@ -264,18 +281,27 @@ async function newWallet(browser: Browser, key: any, _request: any) {
   return { context, page };
 }
 
-/** token string the engine normalizes for the funded escrow UTXO (tokensymbol||tokenname||tokenid). */
+/**
+ * The token string the engine normalizes for the funded escrow UTXO.
+ *
+ * Uses getOutputsHistory, not getBalances: the escrow is a 2-of-3 P2SH output,
+ * and getBalances rebuilds the query address with the P2PKH header
+ * (Address.fromHash160) and filters the denormalized outputs.confirmed column —
+ * so it never returns a P2SH output sealed in a TRANSFER block.
+ * getOutputsHistory matches on `toaddress` and uses the computed
+ * OUTPUTS_CONFIRMED (the same lookup the engine's verifyChainLock uses).
+ */
 async function resolveToken(request: any, txHash: string, escrowAddress: string): Promise<string> {
-  const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
-  const hashHex = Buffer.from(sdk.Address.fromBase58(sdk.TestParams.get(), escrowAddress).getHash160()).toString('hex');
   for (let i = 0; i < 90; i++) {
-    const res = await request.post(`${E2E_SERVER_URL}getBalances`, { data: [hashHex] });
+    const res = await request.post(`${E2E_SERVER_URL}getOutputsHistory`, {
+      data: { fromaddress: '', toaddress: escrowAddress, starttime: null, endtime: null },
+    });
     const data = await res.json().catch(() => ({}));
-    const out = (data.outputs || []).find((o: any) => String(o.hashHex ?? '') === txHash) || (data.outputs || [])[0];
+    const outputs: any[] = data.outputs || [];
+    const out = outputs.find((o) => String(o.hashHex ?? '') === txHash) || outputs[0];
     if (out) {
-      const id = String(out.tokenid ?? out.tokenId ?? '');
-      const meta = (data.tokennames || {})[id] || {};
-      return meta.tokensymbol || meta.tokenname || id;
+      const id = String(out.tokenId ?? out.tokenHex ?? out.tokenid ?? '');
+      return id || String(out.value?.tokenHex ?? '');
     }
     await sleep(2000);
   }

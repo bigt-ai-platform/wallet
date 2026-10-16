@@ -105,7 +105,12 @@ class MockChain implements ChainClient {
   }
 
   async outputsHistory(address: string): Promise<RawUtxo[]> {
-    return !this.hideUtxo && address === this.lockAddress ? [utxoJson] : [];
+    if (this.hideUtxo || address !== this.lockAddress) return [];
+    // verifyChainLock proves the lock from getOutputsHistory (a P2SH escrow
+    // output is invisible to getBalances), so the fake exposes the locked token
+    // on `tokenId` (what normalizeOutputs reads). The raw Coin (`value`, i.e.
+    // tokenHex "bc") stays untouched so escrowSpendAmount keeps its BIG fee rule.
+    return [{ ...utxoJson, tokenId: this.lockBalances[0]?.token ?? utxoJson.tokenId }];
   }
 
   async submitTransaction(rawTxHex: string): Promise<void> {

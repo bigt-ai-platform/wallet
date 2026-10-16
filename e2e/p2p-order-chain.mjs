@@ -30,7 +30,7 @@ import { canonicalJson } from '../services/p2p-engine/dist/sign.js';
 import { HttpChainClient } from '../services/p2p-engine/dist/chain.js';
 
 const SOCIAL_URL = (process.env.E2E_L1_SOCIAL_URL || 'http://127.0.0.1:24091/').replace(/\/+$/, '');
-const FUNDER_SEED = new Uint8Array(32).fill(0x04); // Test genesis row (e2e/l1social.sh SOCIAL_VALIDATOR_KEY)
+const FUNDER_SEED = new Uint8Array(32).fill(0x01); // Test genesis row: funded on L1-SOCIAL and NOT staked (0x04 is the staked validator → its coin is locked)
 const DEFAULT_UNITS = 5000000n; // 5 BIG (1 BIG = 10^6 units) — plenty for fee-bearing spends
 
 function arg(name, fallback) {

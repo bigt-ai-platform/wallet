@@ -97,8 +97,20 @@ export interface ChainBlockView {
 }
 
 export interface SocialSource {
-  head(): Promise<{ hash: string }>;
+  /** Chain head. When `height` is reported the chainlength-scan path is used. */
+  head(): Promise<{ hash: string; height?: number }>;
   blockByHash(hash: string): Promise<ChainBlockView | null>;
+  /**
+   * Every block (trunk AND branch) with chainlength in [start, end], ascending.
+   *
+   * Social records are sealed in BRANCH blocks (BLOCKTYPE_TRANSFER) whose
+   * prevBlockHash is the previous BEACON — so they are unreachable from the
+   * head by following prevBlockHash, and a prev-walk watcher indexes nothing.
+   * The chainlength scan is the only way to see them (Java-first:
+   * DatabaseFullBlockStoreBase.blocksFromChainLength, which also returns
+   * non-beacon blocks). Optional: a source without it keeps the prev-walk.
+   */
+  blocksFromChainLength?(start: number, end: number): Promise<ChainBlockView[]>;
 }
 
 /** L1-SOCIAL read path: getTips + getBlockByHash (dataHex blocks). */
@@ -125,32 +137,35 @@ export class HttpSocialSource implements SocialSource {
     return (await res.json()) as T;
   }
 
-  async head(): Promise<{ hash: string }> {
+  async head(): Promise<{ hash: string; height?: number }> {
     // getTips answers GetStringResponse: { text: "<tips json>" }.
     const res = await this.post<{ text?: string; message?: string }>("getTips", {});
     const raw = res.text ?? res.message;
     if (!raw) throw new Error("getTips: empty payload");
-    const tips = JSON.parse(raw) as { prevBlockHash?: string };
+    const tips = JSON.parse(raw) as { prevBlockHash?: string; height?: number };
     if (!tips.prevBlockHash) throw new Error("getTips: no prevBlockHash");
     // The rolling prototype's prev IS the current head block.
-    return { hash: tips.prevBlockHash };
+    return {
+      hash: tips.prevBlockHash,
+      ...(typeof tips.height === "number" ? { height: tips.height } : {}),
+    };
   }
 
-  async blockByHash(hash: string): Promise<ChainBlockView | null> {
-    const res = await this.post<{ dataHex?: string }>("getBlockByHash", { hashHex: hash });
-    if (!res.dataHex) return null;
-    const block = this.params.getDefaultSerializer().makeBlock(Uint8Array.from(Buffer.from(res.dataHex, "hex")));
+  /** Social-record payloads carried by a block, in tx order. */
+  private view(block: any): ChainBlockView {
     const records: ChainRecord[] = [];
     for (const tx of block.getTransactions() ?? []) {
       if (tx.getDataClassName() !== "SocialRecord") continue;
       const data = tx.getData();
       if (!data || !data.length) continue;
+      let record: Record<string, unknown>;
       try {
-        records.push({ txid: tx.getHash().toString(), record: JSON.parse(new TextDecoder().decode(data)) });
+        record = JSON.parse(new TextDecoder().decode(data));
       } catch {
         // malformed JSON: applyBlock counts it as skipped
-        records.push({ txid: tx.getHash().toString(), record: { type: "__garbage__" } });
+        record = { type: "__garbage__" };
       }
+      records.push({ txid: tx.getHash().toString(), record });
     }
     return {
       hash: block.getHash().toString(),
@@ -158,6 +173,29 @@ export class HttpSocialSource implements SocialSource {
       prevHash: block.getPrevBlockHash().toString(),
       records,
     };
+  }
+
+  async blockByHash(hash: string): Promise<ChainBlockView | null> {
+    const res = await this.post<{ dataHex?: string }>("getBlockByHash", { hashHex: hash });
+    if (!res.dataHex) return null;
+    return this.view(this.params.getDefaultSerializer().makeBlock(Uint8Array.from(Buffer.from(res.dataHex, "hex"))));
+  }
+
+  async blocksFromChainLength(start: number, end: number): Promise<ChainBlockView[]> {
+    const res = await this.post<{ blockbytelist?: string[] }>("blocksFromChainLength", {
+      start: String(start),
+      end: String(end),
+    });
+    const views: ChainBlockView[] = [];
+    // GetBlockListResponse.blockbytelist is List<byte[]> — Jackson base64s it.
+    for (const b64 of res.blockbytelist ?? []) {
+      try {
+        views.push(this.view(this.params.getDefaultSerializer().makeBlock(Uint8Array.from(Buffer.from(b64, "base64")))));
+      } catch {
+        // unparsable block: skip, the other blocks still apply
+      }
+    }
+    return views;
   }
 }
 
@@ -328,6 +366,54 @@ async function applyRecord(
 }
 
 /**
+ * Chainlength-scan pass: fetch every block with chainlength in
+ * (cursor.height, head.height] — trunk AND branch — apply their records
+ * oldest-first, and advance the cursor to the head. Paged by chainlength so a
+ * cold catch-up never asks the node for the whole chain in one response.
+ */
+async function syncByChainLength(
+  src: SocialSource,
+  store: OrderStore,
+  cursors: CursorStore,
+  head: { hash: string; height: number },
+  cursor: WatchCursor | null,
+  maxWalk: number,
+): Promise<SyncResult> {
+  const pageSize = Math.max(1, Math.min(maxWalk, 200));
+  const result = emptyResult();
+  const seen = new Set<string>();
+  // Start a little BELOW the cursor height: a branch (TRANSFER) block carries
+  // the chainlength of the slot it was anchored in, which can be equal to — or
+  // even below — a head height that was already scanned. Branch blocks land
+  // after the beacons of their slot, so a strict cursor+1 start silently skips
+  // records anchored right after the previous tick. applyRecord is idempotent,
+  // so the overlap is free.
+  const from = Math.max(1, (cursor?.height ?? 1) - 2);
+  const to = head.height + 1;
+  for (let start = from; start <= to; start += pageSize) {
+    const end = Math.min(start + pageSize - 1, to);
+    const blocks = (await src.blocksFromChainLength!(start, end)) ?? [];
+    // The SQL returns every block whose HEIGHT falls inside the chainlength
+    // window — a superset — so dedupe by hash within the pass. Do NOT filter on
+    // b.height <= cursor.height: a BRANCH block carries the chainlength of the
+    // slot it was anchored in but the height of the beacon it branched from, so
+    // a record anchored just after the cursor can have height <= cursor.height
+    // while its chainlength is still in the window. applyRecord is idempotent
+    // (an already-indexed OPEN/event is a no-op), so the superset is safe.
+    blocks.sort((a, b) => a.height - b.height);
+    for (const b of blocks) {
+      if (seen.has(b.hash)) continue;
+      seen.add(b.hash);
+      for (const raw of b.records) await applyRecord(raw, store, result);
+      result.scannedBlocks++;
+    }
+  }
+  const next: WatchCursor = { hash: head.hash, height: head.height };
+  await cursors.set(next);
+  return { ...result, cursor: next };
+}
+
+/**
  * One incremental pass: walk back from the head to the cursor (or genesis on a
  * fresh store), apply blocks oldest-first, advance the cursor. Fails closed —
  * an unservable head never advances the cursor, and a truncated walk applies
@@ -342,6 +428,17 @@ export async function syncOnce(
   const maxWalk = opts.maxWalk ?? 2000;
   const cursor = await cursors.get();
   const head = await src.head();
+
+  // Preferred path: enumerate by chainlength. Social records are sealed in
+  // BRANCH (non-beacon) blocks whose prevBlockHash is the previous beacon, so
+  // no prevBlockHash walk from the head can reach them — a walk-based watcher
+  // indexes nothing once records move into transfer blocks (see
+  // SocialSource.blocksFromChainLength). Fall back to the walk when the source
+  // cannot enumerate (unit-test fakes, older nodes).
+  if (src.blocksFromChainLength && typeof head.height === "number") {
+    return syncByChainLength(src, store, cursors, { hash: head.hash, height: head.height }, cursor, maxWalk);
+  }
+
   const collected: ChainBlockView[] = [];
   let hash = head.hash;
   let reachedAnchor = false;

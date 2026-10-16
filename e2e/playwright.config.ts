@@ -13,6 +13,10 @@ export default defineConfig({
   timeout: 60000,
   use: {
     baseURL: process.env.APP_URL || 'http://localhost:8081',
+    // Fail a stuck action fast instead of hanging until the (per-test, often
+    // minutes-long) test timeout — a locator that never resolves otherwise
+    // looks like "the test timed out" with no clue which step stalled.
+    actionTimeout: 30_000,
     headless: process.env.HEADED !== '1',
     // HEADED=1: slow each action down so the flow is watchable in the
     // browser window (default is far too fast to follow). Position the
