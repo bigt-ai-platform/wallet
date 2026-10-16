@@ -158,6 +158,18 @@ export function findKeytool() {
   return found;
 }
 
+/**
+ * Env that puts a JDK on `PATH` (and sets `JAVA_HOME`) for child tools that
+ * exec a bare `java` — the Android SDK's `apksigner` is a shell wrapper with
+ * `exec java …`, so it fails with `java: not found` on a host where the JDK we
+ * sign with is not on `PATH`. Derived from the `keytool` we would run, so a
+ * checkout that can sign can also verify. Exported for the unit test.
+ */
+export function jdkPathEnv(keytool, basePath = process.env.PATH ?? "") {
+  const bin = path.dirname(keytool);
+  return { JAVA_HOME: path.dirname(bin), PATH: `${bin}${path.delimiter}${basePath}` };
+}
+
 export function findApksigner() {
   const home = process.env.HOME ?? "";
   const direct = which("apksigner");
@@ -227,7 +239,7 @@ export function artifactFingerprint(file) {
     return fps;
   };
   if (path.extname(file).toLowerCase() === ".aab") return keytool();
-  const out = run(findApksigner(), ["verify", "--print-certs", file]);
+  const out = run(findApksigner(), ["verify", "--print-certs", file], jdkPathEnv(findKeytool()));
   const fps = parseApksignerFingerprints(out);
   if (fps.length) return fps;
   return keytool();

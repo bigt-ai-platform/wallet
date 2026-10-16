@@ -9,6 +9,7 @@ import {
   assertProdFingerprint,
   expectedFingerprint,
   findBlockEnd,
+  jdkPathEnv,
   normalizeFingerprint,
   parseApksignerFingerprints,
   parseKeytoolFingerprints,
@@ -95,6 +96,14 @@ Signer #2 certificate DN: CN=wallet.bigt.ai, OU=bigt.ai, O=bigT.ai, L=Frankfurt,
 Signer #2 certificate SHA-256 digest: ${DEV}
 `;
     expect(parseApksignerFingerprints(out)).toEqual([PROD, DEV]);
+  });
+});
+
+describe("jdkPathEnv", () => {
+  it("puts the JDK bin on PATH and sets JAVA_HOME so apksigner can exec java", () => {
+    const env = jdkPathEnv(path.join("/opt", "jdk21", "bin", "keytool"), "/usr/bin");
+    expect(env.JAVA_HOME).toBe(path.join("/opt", "jdk21"));
+    expect(env.PATH).toBe(`${path.join("/opt", "jdk21", "bin")}${path.delimiter}/usr/bin`);
   });
 });
 
