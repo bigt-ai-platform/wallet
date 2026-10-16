@@ -13,6 +13,14 @@ export const APP_VERSION = process.env.EXPO_PUBLIC_APP_VERSION || '1.0.0';
 export const IS_DEV = typeof __DEV__ !== 'undefined' && __DEV__;
 
 /**
+ * e2e-only: `e2e/e2etest.sh` builds the web export with
+ * `EXPO_PUBLIC_E2E_AUTOCONFIRM=1` so the Playwright specs can approve an
+ * important transaction (pay/order/p2p) without a device-unlock or password
+ * prompt. Never set by a shipped build (APK/OTA), where the gate always runs.
+ */
+export const E2E_AUTOCONFIRM = process.env.EXPO_PUBLIC_E2E_AUTOCONFIRM === '1';
+
+/**
  * True only in a genuine browser running the static web export. Browsers
  * cannot call the public chain nodes directly (their API has CORS disabled),
  * so web production builds use the same-origin /l0/ + /l1/ paths

@@ -5,6 +5,7 @@ import { useTranslation } from 'react-i18next';
 import { useWallet } from '@/state/wallet';
 import { confirmWithDeviceUnlock, isDeviceUnlockSupported } from '@/services/deviceAuth';
 import { confirmWithPlatformAuthenticator } from '@/services/webAuthn';
+import { E2E_AUTOCONFIRM } from '@/constants/app';
 
 /**
  * Confirmation gate for important transactions (pay / buy / sell).
@@ -56,6 +57,8 @@ export function TransactionConfirmProvider({ children }: { children: React.React
   const confirm = React.useCallback<ConfirmFn>(
     async (opts) => {
       const title = opts?.title ?? t('transaction.confirmTitle');
+      // e2e builds auto-approve so the specs can drive the transaction flows.
+      if (E2E_AUTOCONFIRM) return true;
       if (isDeviceUnlockSupported()) {
         // Android app: the OS unlock (fingerprint/face or device PIN).
         const res = await confirmWithDeviceUnlock({ title, subtitle: opts?.subtitle, reason: opts?.reason });

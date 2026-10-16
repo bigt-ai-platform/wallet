@@ -357,14 +357,17 @@ fi
 #    it the bundle keeps the engine URL baked the first time and the P2P screen
 #    renders "engine not configured".
 export EXPO_PUBLIC_P2P_ENGINE_URL="$P2P_ENGINE_URL"
+# e2e-only: auto-approve the important-transaction gate (DeviceAuth/WebAuthn/
+# password) so the specs can drive pay/order/p2p flows. Absent in shipped builds.
+export EXPO_PUBLIC_E2E_AUTOCONFIRM=1
 NEED_BUILD=0
 [[ -d "$WEB_BUILD" ]] || NEED_BUILD=1
-if [[ -d "$WEB_BUILD" && "$(cat "$WEB_BUILD/.p2p-url" 2>/dev/null)" != "$P2P_ENGINE_URL" ]]; then NEED_BUILD=1; fi
+if [[ -d "$WEB_BUILD" && "$(cat "$WEB_BUILD/.p2p-url" 2>/dev/null)" != "$P2P_ENGINE_URL|e2e" ]]; then NEED_BUILD=1; fi
 if [[ "$NEED_BUILD" == "1" ]]; then
   info "Building web app (P2P engine: $P2P_ENGINE_URL)..."
   cd "$ROOT/expo-app"
   npm run web:build 2>&1 | tail -3
-  echo "$P2P_ENGINE_URL" > "$WEB_BUILD/.p2p-url"
+  echo "$P2P_ENGINE_URL|e2e" > "$WEB_BUILD/.p2p-url"
   log "Web app built."
 else
   info "Web build already exists, skipping build."
