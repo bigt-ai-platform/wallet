@@ -27,7 +27,11 @@ function helperJSON(cmd: string, args: string[]): any {
   const stdout = execFileSync(process.execPath, [HELPER, cmd, ...args, '--out', file], {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: 240_000,
+    // The `fund` command legitimately polls up to ~240s for the genesis
+    // spend candidates on a cold chain (see the helper), then pays + waits for
+    // CONFIRMED — 240s was exactly the helper's own poll budget, so it always
+    // tripped. Keep this well above the helper's internal waits.
+    timeout: 600_000,
     env: process.env,
   });
   if (!fs.existsSync(file)) throw new Error(`helper ${cmd} produced no output: ${stdout}`);
@@ -40,7 +44,7 @@ test.describe('P2P Orders (chain)', () => {
   test.skip(!READY, 'p2p-orders part not running (e2e/e2etest.sh p2p-orders)');
 
   test('seller-anchored book, cancel/match conflicts, cold replay', async ({ request }) => {
-    test.setTimeout(420_000);
+    test.setTimeout(900_000);
 
     const post = async (base: string, route: string, data: unknown) => {
       const res = await request.post(`${base}${route}`, { data, timeout: 60_000 });

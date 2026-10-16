@@ -268,7 +268,7 @@ async function newWallet(browser: Browser, key: any, _request: any) {
 async function resolveToken(request: any, txHash: string, escrowAddress: string): Promise<string> {
   const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
   const hashHex = Buffer.from(sdk.Address.fromBase58(sdk.TestParams.get(), escrowAddress).getHash160()).toString('hex');
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 90; i++) {
     const res = await request.post(`${E2E_SERVER_URL}getBalances`, { data: [hashHex] });
     const data = await res.json().catch(() => ({}));
     const out = (data.outputs || []).find((o: any) => String(o.hashHex ?? '') === txHash) || (data.outputs || [])[0];
