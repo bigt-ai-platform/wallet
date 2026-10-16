@@ -1,6 +1,19 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import { waitForApp, configureServerUrl, clickTab } from '../helpers';
 import path from 'node:path';
+
+/** True when the L0 server answers, so the test can skip without the chain. */
+async function l0Up(request: APIRequestContext, base: string): Promise<boolean> {
+  try {
+    const res = await request.post(`${base.replace(/\/+$/, '')}/getChainNumber`, {
+      data: {},
+      timeout: 4000,
+    });
+    return res.ok();
+  } catch {
+    return false;
+  }
+}
 
 // e2e test for the test-net genesis wallet:
 //   loads helper/test/wallet/genesis-wallet.json (seed 01, unencrypted) in the
@@ -15,7 +28,8 @@ const L1_URL = process.env.E2E_L1_URL || 'http://127.0.0.1:24086';
 const GENESIS_ADDRESS = 'mnvGDASDFGpHXycAadQC4STYFNwfhfTGsf';
 
 test.describe('Genesis wallet balance (helper/test/wallet/genesis-wallet.json)', () => {
-  test('loads the wallet and shows a non-empty bc balance', async ({ page }) => {
+  test('loads the wallet and shows a non-empty bc balance', async ({ page, request }) => {
+    test.skip(!(await l0Up(request, L0_URL)), `L0 not reachable at ${L0_URL} — run ./e2e/infra.sh`);
     page.on('dialog', (d) => d.accept().catch(() => {}));
     // showSaveFilePicker is desktop-only and blocks the anchor-download
     // fallback; not used here, but keep the app deterministic.

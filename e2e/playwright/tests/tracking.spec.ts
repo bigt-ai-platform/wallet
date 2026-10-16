@@ -41,6 +41,9 @@ async function setupUnlockedWallet(page: Page) {
   await page.goto('/');
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1500);
+  // The landing page is the market Home; the wallet-unlock input lives on the
+  // Payment screen, so navigate there before unlocking.
+  await goToPayment(page);
   const unlockPwd = page.getByPlaceholder('Enter wallet password');
   if (await unlockPwd.isVisible().catch(() => false)) {
     await unlockPwd.fill(PASSWORD);
@@ -237,6 +240,7 @@ test.describe('Payment Tracking', () => {
   });
 
   test('tracked payment renders and live status comes from L0 getTransactionStatus', async ({ page }) => {
+    test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set (needs the local L0 chain)');
     test.setTimeout(360000);
     const confirmedTxHash = await getConfirmedTxHash();
     await seedTracking(page, [paymentRecord(confirmedTxHash)]);
@@ -289,6 +293,7 @@ test.describe('Order Tracking', () => {
   });
 
   test('tracked order status refreshes via L1 getOrders', async ({ page }) => {
+    test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set (needs the local L0/L1 chain)');
     await seedTracking(page, [orderRecord('sell')]);
 
     await clickTab(page, 'My Orders');

@@ -384,7 +384,7 @@ export default function PredictScreen() {
             <Text style={s.title}>{t('predict.title')}</Text>
             <Text style={s.subtitle}>{t('predict.subtitle')}</Text>
           </View>
-          <TouchableOpacity style={s.createBtn} onPress={() => setShowCreate(true)} disabled={!isUnlocked} testID="predict-create">
+          <TouchableOpacity style={s.createBtn} onPress={() => setShowCreate(true)} testID="predict-create">
             <Text style={s.createBtnText}>{t('predict.create')}</Text>
           </TouchableOpacity>
         </View>

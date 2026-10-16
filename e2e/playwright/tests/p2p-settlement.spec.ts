@@ -119,6 +119,8 @@ test.describe('P2P Settlement', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000);
+    // The landing page is the market Home; unlock on the Payment screen.
+    await goToPayment(page);
     await page.getByPlaceholder('Enter wallet password').fill(PASSWORD);
     await page.getByText('Unlock Wallet').click();
     await page.waitForTimeout(2000);

@@ -1,6 +1,19 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type APIRequestContext } from '@playwright/test';
 import { waitForApp, configureServerUrl, clickTab, fundFromGenesisWallet, waitForConfirmedBc } from '../helpers';
 import path from 'node:path';
+
+/** True when the L0 server answers, so the test can skip without the chain. */
+async function l0Up(request: APIRequestContext, base: string): Promise<boolean> {
+  try {
+    const res = await request.post(`${base.replace(/\/+$/, '')}/getChainNumber`, {
+      data: {},
+      timeout: 4000,
+    });
+    return res.ok();
+  } catch {
+    return false;
+  }
+}
 
 // e2e test for the legacy .wallet import -> balance fix:
 //   imports the old Java protobuf wallet (packages/bigtangle-ts/test/oldwallet/
@@ -21,8 +34,9 @@ const EC_ADDRESS = 'mkzY5JpvC9hMb59rh4hHDjx3JvnFqWFBC7';
 const EC_PRIVATE_KEY = '02e0fbb15c9d7ea9012ff4b79857f1d171f36c70bf69a78c74d1b69f524aec9a';
 
 test.describe('Old .wallet import shows balance (java-encrypted.wallet)', () => {
-  test('imports the legacy wallet and shows its funded balance', async ({ page }) => {
+  test('imports the legacy wallet and shows its funded balance', async ({ page, request }) => {
     test.setTimeout(240000);
+    test.skip(!(await l0Up(request, L0_URL)), `L0 not reachable at ${L0_URL} — run ./e2e/infra.sh`);
     page.on('dialog', (d) => d.accept().catch(() => {}));
     await page.addInitScript(() => {
       try {
