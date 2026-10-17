@@ -11,10 +11,13 @@
  * The engine signs the record with its own PQ (ML-DSA-87) did:key
  * (`SETTLEMENT_ENGINE_KEY` seed, `SETTLEMENT_ENGINE_DID` = didFromPQKey) and
  * funds/signs the submit transaction with the same key. Anchoring runs *before*
- * the event is appended to the engine store: if the chain path is down the
- * transition fails and the caller retries, so the rebuildable store never holds
- * a state the durable chain seed lacks (AGENTS.md invariant #1). No key / no
- * URL → no hook, which is the mock mode.
+ * the event is appended to the engine store, so the durable chain seed and the
+ * store agree. What a failed anchor does is the caller's policy
+ * (`SETTLEMENT_ANCHOR_MODE`, server.ts): `best-effort` (default) logs it and
+ * stores the event without a chain record — L1-SOCIAL is the evidence log and
+ * the value leg is L0 — while `required` fails the transition so the caller
+ * retries (store never holds a state the chain seed lacks). No key / no URL →
+ * no hook, which is the mock mode.
  */
 import { Coin, NetworkParameters, Transaction, Wallet } from "bigtangle-ts";
 import { Utils } from "bigtangle-ts";

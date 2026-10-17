@@ -143,6 +143,14 @@ export interface SettlementDeps {
   /** Anchor a swap event on chain (returns the txid). Default: no-op. */
   anchor?: (event: P2pSwapEvent) => Promise<{ txid?: string } | void>;
   /**
+   * Treat an anchor failure as non-fatal (`SETTLEMENT_ANCHOR_MODE=best-effort`):
+   * L1-SOCIAL is the evidence log, while the money leg is L0, so a down or
+   * unfunded anchor must not block the settlement. The event is then stored
+   * without a chain record (docs/p2p.md §8/§14). Default (false): fail-closed —
+   * the store never holds a state the durable chain seed lacks.
+   */
+  anchorBestEffort?: boolean;
+  /**
    * Confirm a seller-anchored order/cancel txid on L1-SOCIAL. When present,
    * POST /orders and /orders/:id/cancel require the txid to land before the
    * index advances (docs/p2p.md §11). Default: no check (mock mode).
@@ -169,6 +177,25 @@ export interface SettlementDeps {
 const ORDER_ID_RE = P2P_ORDER_ID_RE;
 const SWAP_ID_RE = /^swap-[0-9a-f]{16}$/;
 const TXID_RE = /^[0-9a-f]{64}$/i;
+
+/**
+ * `SETTLEMENT_ANCHOR_MODE` — how a failed L1-SOCIAL swap anchor is treated
+ * (docs/p2p.md §8/§14):
+ *  - `best-effort` (default): log and store the event without a chain record —
+ *    L1-SOCIAL is the evidence/attestation log, the value leg is L0, so an
+ *    unfunded/down anchor node must not block a settlement;
+ *  - `required`: fail closed (the store never holds a state the chain seed
+ *    lacks — the old behavior);
+ *  - `off`: never anchor (L0-only deploy).
+ * Unknown/absent → `best-effort`.
+ */
+export type AnchorMode = "required" | "best-effort" | "off";
+
+export function normalizeAnchorMode(v: string | undefined): AnchorMode {
+  const m = (v ?? "").trim().toLowerCase();
+  return m === "required" || m === "off" ? m : "best-effort";
+}
+
 /** Receipt/QR cap as data-URL characters (≈512 KiB binary image). */
 const MAX_RECEIPT_CHARS = 700_000;
 
@@ -316,8 +343,20 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   async function persist(event: P2pSwapEvent): Promise<P2pSwapEvent> {
     let txid: string | undefined;
     if (deps.anchor) {
-      const res = await deps.anchor(event);
-      txid = res?.txid;
+      try {
+        const res = await deps.anchor(event);
+        txid = res?.txid;
+      } catch (e) {
+        // L1-SOCIAL carries the *evidence/attestation* log; the value leg is
+        // L0 (escrow + fiat). In best-effort mode an anchor failure (node down,
+        // anchor key unfunded) is logged and the event is stored without a
+        // chain record, so the L0 settlement still advances. `required` keeps
+        // the fail-closed default (docs/p2p.md §8/§14).
+        if (!deps.anchorBestEffort) throw e;
+        console.warn(
+          `p2p-engine: anchor failed (best-effort — storing without chain record): ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
     const stored = txid ? { ...event, txid } : event;
     await deps.store.appendEvent(stored);
@@ -1962,9 +2001,14 @@ async function main() {
   const l0Pool = poolFromEnv(env, "l0");
   const socialPool = poolFromEnv(env, "social");
   await Promise.all([l0Pool?.start(), socialPool?.start()]);
-  const anchor = anchorCfg
-    ? l1Anchor(socialPool ? { ...anchorCfg, resolveUrl: () => socialPool.best() } : anchorCfg)
-    : undefined;
+  const anchorMode = normalizeAnchorMode(env.SETTLEMENT_ANCHOR_MODE);
+  const anchor =
+    anchorMode !== "off" && anchorCfg
+      ? l1Anchor(socialPool ? { ...anchorCfg, resolveUrl: () => socialPool.best() } : anchorCfg)
+      : undefined;
+  if (anchorMode === "off") {
+    console.log("p2p-engine: SETTLEMENT_ANCHOR_MODE=off — swap events are not anchored on L1-SOCIAL");
+  }
   // Seller-anchored orders land on L1-SOCIAL before the index sees them: prove
   // the confirmed block carries the exact `social.p2p-order` record the request
   // claims (docs/p2p.md §11). No social endpoint configured → no check
@@ -2032,7 +2076,7 @@ async function main() {
   const app = await buildApp({
     store,
     chain: l0Pool ? new PooledChainClient(l0Pool) : null,
-    ...(anchor ? { anchor } : {}),
+    ...(anchor ? { anchor, anchorBestEffort: anchorMode === "best-effort" } : {}),
     ...(verifyOrderTx ? { verifyOrderTx, orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4) } : {}),
     ...(watchOn ? { watchState } : {}),
   });

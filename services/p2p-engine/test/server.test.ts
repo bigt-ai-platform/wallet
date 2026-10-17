@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { Ed25519Key, didFromEd25519Key } from "did";
-import { buildApp } from "../src/server.js";
+import { buildApp, normalizeAnchorMode } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
 import type { P2pSwapEvent } from "../src/types.js";
@@ -170,6 +170,82 @@ describe("settlement server", () => {
     ]);
   });
 
+  it("fails closed when the anchor is required (default)", async () => {
+    const a = await buildApp({
+      store,
+      env: { SETTLEMENT_ENGINE_DID: engineDid, SETTLEMENT_ADMIN_TOKEN: "adm" } as NodeJS.ProcessEnv,
+      guard: new ReplayGuard(() => clock),
+      chain: null,
+      now: () => clock,
+      anchor: async () => {
+        throw new Error("insufficient spendable outputs for social tx");
+      },
+    });
+    const o = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, {
+        type: "limit_sell",
+        sellerDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "CNY",
+        wantAmount: "715",
+        wantRail: "wechat",
+        validUntil: Math.floor(clock / 1000) + 3600,
+      }),
+    });
+    expect(o.statusCode).toBe(201);
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${o.json().orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+    });
+    expect(m.statusCode).toBe(500);
+  });
+
+  it("stores the swap without a chain record when the anchor is best-effort", async () => {
+    const a = await buildApp({
+      store,
+      env: { SETTLEMENT_ENGINE_DID: engineDid, SETTLEMENT_ADMIN_TOKEN: "adm" } as NodeJS.ProcessEnv,
+      guard: new ReplayGuard(() => clock),
+      chain: null,
+      now: () => clock,
+      anchor: async () => {
+        throw new Error("insufficient spendable outputs for social tx");
+      },
+      anchorBestEffort: true,
+    });
+    const o = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, {
+        type: "limit_sell",
+        sellerDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "CNY",
+        wantAmount: "715",
+        wantRail: "wechat",
+        validUntil: Math.floor(clock / 1000) + 3600,
+      }),
+    });
+    expect(o.statusCode).toBe(201);
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${o.json().orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+    });
+    expect(m.statusCode).toBe(201);
+    const swapId = m.json().swapId as string;
+    // Stored (L0-settleable) but with no L1-SOCIAL chain record.
+    const swap = await store.getSwap(swapId);
+    expect(swap?.status).toBe("MATCHED");
+    expect(swap?.txid).toBeFalsy();
+  });
+
   it("rejects an unsigned order", async () => {
     const a = await app();
     const r = await a.inject({
@@ -244,5 +320,17 @@ describe("settlement server", () => {
       const gone = await a.inject({ method: "POST", url, payload: signed(engine, engineDid, {}) });
       expect(gone.statusCode, url).toBe(404);
     }
+  });
+});
+
+describe("normalizeAnchorMode", () => {
+  it("defaults to best-effort so L1 never blocks the L0 settlement", () => {
+    expect(normalizeAnchorMode(undefined)).toBe("best-effort");
+    expect(normalizeAnchorMode("")).toBe("best-effort");
+    expect(normalizeAnchorMode("nonsense")).toBe("best-effort");
+  });
+  it("accepts required and off (case/space-insensitive)", () => {
+    expect(normalizeAnchorMode("required")).toBe("required");
+    expect(normalizeAnchorMode(" OFF ")).toBe("off");
   });
 });

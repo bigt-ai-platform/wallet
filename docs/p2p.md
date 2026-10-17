@@ -588,6 +588,7 @@ SETTLEMENT_SWEEP_MS=0                     # conflict-sweep tick (the two timers 
 SETTLEMENT_ESCROW_HOOK_MS=0               # presign settlement hook tick (release at PAYMENT_VERIFIED, refund at EXPIRED/CANCELLED); 0 = off
 SETTLEMENT_ESCROW_POLL_MS=25000           # per-spend CONFIRMED wait before reporting pending
 SETTLEMENT_L1_SOCIAL_URL / _URLS          # social node(s): order txid confirmation + anchor + watcher
+SETTLEMENT_ANCHOR_MODE=best-effort        # L1-SOCIAL swap-anchor policy: best-effort (default) | required | off
 SETTLEMENT_ORDER_TX_VERIFY=0              # disable the txid check (default: on when a social URL exists)
 SETTLEMENT_ORDER_TX_TRIES=4               # bounded verifyTx polls per order/cancel (500ms apart)
 SETTLEMENT_WATCH=1                        # run the chain-scan projector loop in-process
@@ -603,6 +604,25 @@ transaction that spends the key's own outputs for fee + change (the engine's
 fails closed with `insufficient spendable outputs for social tx` when the key is
 unfunded. That is the engine key for `social.p2p-swap`, and the **seller's own
 wallet key** for seller-anchored `social.p2p-order` records.
+
+That BIG is not the same as BIG on L0: L1-SOCIAL is a separate chain, so it has
+to **peg in** through the L0 bridge (`getBridgeInfo` vault + `processPegIn`;
+the app-side `pegInToL1`), exactly like any other L1 collateral.
+
+**But the L1-SOCIAL log is evidence, not the money leg** — the value moves on
+L0 (escrow) and on the rail (fiat). So `SETTLEMENT_ANCHOR_MODE` decides what a
+failed anchor does:
+
+| Mode | Behavior |
+|---|---|
+| `best-effort` (**default**) | Log the failure and store the event **without** a chain record; the L0 settlement still advances. A down or unfunded anchor node degrades the audit log, never the trade. |
+| `required` | Fail closed (the event is not stored unless its chain record landed); the store can never hold state the chain seed lacks, so a wiped store always rebuilds exactly. |
+| `off` | Never anchor (L0-only deploy; `deps.anchor` is unset). |
+
+With `best-effort`/`off`, the chain-scan projector can only rebuild the
+**anchored** subset, so `replay verify` may report the un-anchored events as
+drift — the accepted trade for not letting L1 gate L0.
+
 
 Replay CLI (docs §14): `yarn workspace p2p-engine replay <sync|verify|rebuild>`
 — `sync` runs one incremental pass from `p2p_watch_cursor`, `verify` replays the
