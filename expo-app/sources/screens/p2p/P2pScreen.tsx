@@ -62,6 +62,8 @@ export default function P2pScreen() {
   // The swap whose device-side verification ("Verify with my phone") is open.
   const [verifySwap, setVerifySwap] = React.useState<P2pSwap | null>(null);
   const [buyRecv, setBuyRecv] = React.useState('');
+  // Taker's fill amount (crypto) — ≤ the order's remaining; empty = take all.
+  const [buyFill, setBuyFill] = React.useState('');
   const [txHashes, setTxHashes] = React.useState<Record<string, string>>({});
   const [txIds, setTxIds] = React.useState<Record<string, string>>({});
   // Inline feedback: react-native-web's Alert.alert is a no-op, so every P2P
@@ -345,8 +347,11 @@ export default function P2pScreen() {
     if (!approved) { setNotice({ ok: false, text: t('confirm.cancelled') }); return; }
     setBusy(true);
     try {
-      const res = await matchOrder(id, order.orderId, { receiveAddress: isBid ? '' : buyRecv.trim() });
-      setSelected(null); setBuyRecv('');
+      const res = await matchOrder(id, order.orderId, {
+        receiveAddress: isBid ? '' : buyRecv.trim(),
+        ...(buyFill.trim() ? { fillAmount: buyFill.trim() } : {}),
+      });
+      setSelected(null); setBuyRecv(''); setBuyFill('');
       setNotice({ ok: true, text: `${t('p2p.buyTitle')}: ${res.swapId}` });
       setTab('mine');
       await loadSwaps();
@@ -819,6 +824,7 @@ export default function P2pScreen() {
                 ) : null}
                 {selected?.orderId === o.orderId ? (
                   <View style={s.buyPanel}>
+                    <Field label={t('p2p.giveAmount')} value={buyFill} onChange={setBuyFill} placeholder={o.remainingGive ?? o.giveAmount} keyboardType="decimal-pad" mono testID="p2p-buy-fill" />
                     {o.type !== 'limit_buy' ? (
                       <Field label={t('p2p.receiveAddress')} value={buyRecv} onChange={setBuyRecv} testID="p2p-buy-recv" />
                     ) : null}
@@ -827,7 +833,7 @@ export default function P2pScreen() {
                     </TouchableOpacity>
                   </View>
                 ) : (
-                  <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => { setSelected(o); setBuyRecv(''); }} testID={`p2p-buy-${i}`}>
+                  <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => { setSelected(o); setBuyRecv(''); setBuyFill(o.remainingGive ?? o.giveAmount); }} testID={`p2p-buy-${i}`}>
                     <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
                   </TouchableOpacity>
                 )}

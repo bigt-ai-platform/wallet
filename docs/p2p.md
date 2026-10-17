@@ -22,6 +22,11 @@ maps roles by side — a `limit_sell` is taken by a buyer (`sellerDid = poster`,
 `buyerDid = taker`); a `limit_buy` is taken by a seller (`sellerDid = taker`,
 `buyerDid = poster`, and `receiveAddress` comes from the order). The order type
 is carried in the `social.p2p-order` record as `side` + `buyerReceiveAddress`.
+A taker may fill **part** of an order within the ad's fiat **order limit**
+(`minOrder`..`maxOrder`); the order stays open with a reduced `remainingGive`
+until it is fully taken, and the projector rebuilds that from the anchored match
+amounts. An ad's `timeLimit` (minutes) sets the buyer's `payBy` on the swap
+(`payWindowSec`), overriding the engine's `SETTLEMENT_CNY_REMARK_TTL`.
 
 The reference engine lives in `services/p2p-engine` (moved here from dai's
 `services/settlement`): state machine, whole-body signed API, the CNY/manual

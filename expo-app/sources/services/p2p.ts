@@ -60,6 +60,8 @@ export interface P2pOrder {
   timeLimit?: number;
   /** Free-text ad terms shown to the counterparty. */
   remarks?: string;
+  /** Crypto remaining after partial fills (absent → the full `giveAmount`). */
+  remainingGive?: string;
   createdAt: number;
   /**
    * The engine escrow participant this order was pinned to
@@ -148,6 +150,8 @@ export interface CreateOrderInput {
 
 export interface MatchOrderInput {
   receiveAddress: string;
+  /** Crypto to take from the order (≤ remaining); omitted = the whole order. */
+  fillAmount?: string;
 }
 
 /** Seller's payment instructions for one swap (docs/p2p.md §11). */
