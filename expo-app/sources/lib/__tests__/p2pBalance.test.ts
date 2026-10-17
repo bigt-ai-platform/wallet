@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findBalance, amountToRaw, exceedsBalance, perUnitPrice } from '../p2pBalance';
+import { findBalance, amountToRaw, exceedsBalance, perUnitPrice, totalAmount } from '../p2pBalance';
 import type { WalletAccountItem } from '@/types/api';
 
 function bal(partial: Partial<WalletAccountItem>): WalletAccountItem {
@@ -74,5 +74,18 @@ describe('perUnitPrice', () => {
     expect(perUnitPrice('1', '0')).toBeNull();
     expect(perUnitPrice('abc', '10')).toBeNull();
     expect(perUnitPrice('1', 'x')).toBeNull();
+  });
+});
+
+describe('totalAmount', () => {
+  it('multiplies the unit price by the amount (Binance Total)', () => {
+    expect(totalAmount('7.15', '100')).toBe('715');
+    expect(totalAmount('0.01', '100')).toBe('1');
+    expect(totalAmount('2.5', '4')).toBe('10');
+  });
+  it('is null when the inputs are unusable', () => {
+    expect(totalAmount('', '100')).toBeNull();
+    expect(totalAmount('1', '0')).toBeNull();
+    expect(totalAmount('x', '1')).toBeNull();
   });
 });

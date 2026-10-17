@@ -44,6 +44,18 @@ export function perUnitPrice(total: string, give: string, decimals = 8): string 
   return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
 }
 
+/** `price × amount` as a trimmed decimal string (Binance's Total from a unit
+ *  price + crypto amount), or null when the inputs are unusable. Display-grade. */
+export function totalAmount(price: string, amount: string, decimals = 12): string | null {
+  const p = Number(String(price ?? '').trim());
+  const a = Number(String(amount ?? '').trim());
+  if (!Number.isFinite(p) || !Number.isFinite(a) || p <= 0 || a <= 0) return null;
+  const v = p * a;
+  if (!Number.isFinite(v) || v <= 0) return null;
+  const fixed = v.toFixed(Math.max(0, decimals));
+  return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
+}
+
 export function amountToRaw(amount: string, decimals: number): bigint | null {
   const s = String(amount ?? '').trim();
   if (!/^\d+(\.\d+)?$/.test(s)) return null;

@@ -53,6 +53,13 @@ export interface P2pOrder {
   swapId?: string;
   /** L1-SOCIAL txid of the seller-anchored social.p2p-order record. */
   txid?: string;
+  /** Binance-style per-order fiat limit (bounded by the total). */
+  minOrder?: string;
+  maxOrder?: string;
+  /** Payment window in minutes the buyer is given. */
+  timeLimit?: number;
+  /** Free-text ad terms shown to the counterparty. */
+  remarks?: string;
   createdAt: number;
   /**
    * The engine escrow participant this order was pinned to
@@ -124,6 +131,13 @@ export interface CreateOrderInput {
   validUntil: number;
   /** A `limit_buy` bid: where the poster wants the tokens delivered. */
   receiveAddress?: string;
+  /** Binance-style per-order fiat limit (bounded by the total). */
+  minOrder?: string;
+  maxOrder?: string;
+  /** Payment window in minutes the buyer is given (Binance: 15..180). */
+  timeLimit?: number;
+  /** Free-text ad terms shown to the counterparty. */
+  remarks?: string;
   /**
    * The engine escrow participant to pin this order to (docs/p2p.md §26) —
    * the engine's `escrowPubkey`. Anchored in the record so the buyer derives

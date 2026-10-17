@@ -68,6 +68,10 @@ export function foldOrderBook(
       txid,
       createdAt: r.ts,
       ...(r.enginePubkey ? { enginePubkey: r.enginePubkey } : {}),
+      ...(r.minOrder ? { minOrder: r.minOrder } : {}),
+      ...(r.maxOrder ? { maxOrder: r.maxOrder } : {}),
+      ...(r.timeLimit !== undefined ? { timeLimit: r.timeLimit } : {}),
+      ...(r.remarks ? { remarks: r.remarks } : {}),
     });
   }
   // Newest orders first (the engine's book is newest-first too).

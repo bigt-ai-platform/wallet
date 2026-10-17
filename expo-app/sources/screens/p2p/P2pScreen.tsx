@@ -15,7 +15,7 @@ import { HelpIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex, shortDid } from '@/lib/p2pIdentity';
-import { exceedsBalance, findBalance, perUnitPrice } from '@/lib/p2pBalance';
+import { exceedsBalance, findBalance, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
 import type { TokenItem, WalletAccountItem } from '@/types/api';
@@ -99,6 +99,16 @@ export default function P2pScreen() {
   const [buyReceive, setBuyReceive] = React.useState('');
   const [wantCurrency, setWantCurrency] = React.useState('CNY');
   const [wantAmount, setWantAmount] = React.useState('');
+  // Binance-style ad fields: unit price (the Total is derived), per-order fiat
+  // limit, payment window and free-text terms.
+  const [wantPrice, setWantPrice] = React.useState('');
+  const [minOrder, setMinOrder] = React.useState('');
+  const [maxOrder, setMaxOrder] = React.useState('');
+  const [timeLimit, setTimeLimit] = React.useState('15');
+  const [remarks, setRemarks] = React.useState('');
+  // Book side filter (Binance's Buy/Sell tabs): the Buy tab lists sell ads you
+  // can take; the Sell tab lists buy ads (bids) you can fill.
+  const [bookSide, setBookSide] = React.useState<'buy' | 'sell'>('buy');
   const [validHours, setValidHours] = React.useState('24');
   const [wantRail, setWantRail] = React.useState('wechat');
   // What this engine actually serves (GET /capabilities): the enabled CNY
@@ -115,10 +125,9 @@ export default function P2pScreen() {
   const availText = availItem ? `${availItem.balance} ${availItem.tokenname}` : '';
   // A seller must hold the token; a buyer pays fiat (an unfunded buyer is fine).
   const overBalance = orderSide === 'sell' && exceedsBalance(giveAmount, availItem);
-  // `wantAmount` is the TOTAL fiat for the whole `giveAmount` (the seller types
-  // the total; the instructions amount is `wantAmount`), so show the implied
-  // per-unit price alongside it.
-  const wantUnitPrice = perUnitPrice(wantAmount, giveAmount);
+  // `wantAmount` (the TOTAL fiat, what the instructions charge) is derived from
+  // the Binance-style unit **price** × the crypto amount.
+  const formTotal = totalAmount(wantPrice, giveAmount);
 
   // seller's CNY collection profile (mine tab)
   const [profiles, setProfiles] = React.useState<P2pPaymentProfile[]>([]);
@@ -263,7 +272,7 @@ export default function P2pScreen() {
     const id = requireIdentity();
     if (!id) return;
     const hours = parseFloat(validHours);
-    if (!giveToken.trim() || !giveAmount.trim() || !wantAmount.trim() || !hours || hours <= 0) {
+    if (!giveToken.trim() || !giveAmount.trim() || !wantPrice.trim() || !formTotal || !hours || hours <= 0) {
       setNotice({ ok: false, text: t('p2p.createFailed') });
       return;
     }
@@ -294,16 +303,21 @@ export default function P2pScreen() {
         giveAmount: giveAmount.trim(),
         giveChain: giveChain.trim() || 'L0',
         wantCurrency: wantCurrency.trim() || 'CNY',
-        wantAmount: wantAmount.trim(),
+        wantAmount: formTotal ?? '',
         wantRail,
         validUntil: Math.floor(Date.now() / 1000) + Math.floor(hours * 3600),
         ...(isBuy ? { receiveAddress: recv } : {}),
+        ...(minOrder.trim() ? { minOrder: minOrder.trim() } : {}),
+        ...(maxOrder.trim() ? { maxOrder: maxOrder.trim() } : {}),
+        ...(Number(timeLimit) > 0 ? { timeLimit: Math.floor(Number(timeLimit)) } : {}),
+        ...(remarks.trim() ? { remarks: remarks.trim() } : {}),
         // pin the order to the escrow key we will settle against (§26)
         ...((caps?.escrowPubkey || P2P_ENGINE_PUBKEYS[0])
           ? { enginePubkey: caps?.escrowPubkey || P2P_ENGINE_PUBKEYS[0] }
           : {}),
       });
-      setGiveToken('USDT'); setGiveAmount(''); setWantAmount('');
+      setGiveToken('USDT'); setGiveAmount(''); setWantAmount(''); setWantPrice('');
+      setMinOrder(''); setMaxOrder(''); setRemarks('');
       setGiveTokenId(null);
       setNotice({ ok: true, text: t('p2p.created') });
       setTab('mine');
@@ -633,7 +647,8 @@ export default function P2pScreen() {
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
       <View style={s.tabs}>
-        <TabButton label={t('p2p.tabOpen')} active={tab === 'open'} onPress={() => { setNotice(null); setTab('open'); }} testID="p2p-tab-open" />
+        <TabButton label={t('order.buy')} active={tab === 'open' && bookSide === 'buy'} onPress={() => { setNotice(null); setTab('open'); setBookSide('buy'); }} testID="p2p-tab-open" />
+        <TabButton label={t('order.sell')} active={tab === 'open' && bookSide === 'sell'} onPress={() => { setNotice(null); setTab('open'); setBookSide('sell'); }} testID="p2p-tab-sell" />
         <TabButton label={t('p2p.tabMine')} active={tab === 'mine'} onPress={() => { setNotice(null); setTab('mine'); }} testID="p2p-tab-mine" />
         <TouchableOpacity onPress={refresh} style={s.refreshBtn} testID="p2p-refresh" accessibilityRole="button">
           <Text style={[s.refreshText, { color: theme.colors.primary }]}>{t('p2p.refresh')}</Text>
@@ -709,10 +724,10 @@ export default function P2pScreen() {
                   : t('p2p.available', { amount: availText })}
               </Text>
             ) : null}
-            <Field label={t('p2p.total')} value={wantAmount} onChange={setWantAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
-            {wantUnitPrice ? (
-              <Text style={s.hint} testID="p2p-unit-price">
-                {t('p2p.unitPrice', { price: wantUnitPrice, currency: wantCurrency.trim() || 'CNY', token: giveToken.trim() })}
+            <Field label={t('p2p.price')} value={wantPrice} onChange={setWantPrice} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
+            {formTotal ? (
+              <Text style={s.hint} testID="p2p-total">
+                {t('p2p.total')}: {formTotal} {wantCurrency.trim() || 'CNY'}
               </Text>
             ) : null}
             <Field label={t('p2p.wantCurrency')} value={wantCurrency} onChange={setWantCurrency} placeholder="CNY" testID="p2p-want-currency" />
@@ -735,6 +750,10 @@ export default function P2pScreen() {
                 ))}
               </View>
             </View>
+            <Field label={t('p2p.minOrder')} value={minOrder} onChange={setMinOrder} placeholder="0" keyboardType="decimal-pad" mono testID="p2p-min-order" />
+            <Field label={t('p2p.maxOrder')} value={maxOrder} onChange={setMaxOrder} placeholder={formTotal ?? '0'} keyboardType="decimal-pad" mono testID="p2p-max-order" />
+            <Field label={t('p2p.timeLimit')} value={timeLimit} onChange={setTimeLimit} placeholder="15" keyboardType="decimal-pad" mono testID="p2p-time-limit" />
+            <Field label={t('p2p.remarks')} value={remarks} onChange={setRemarks} placeholder="" testID="p2p-remarks" />
             {orderSide === 'buy' ? (
               <Field
                 label={t('p2p.receiveAddress')}
@@ -750,8 +769,8 @@ export default function P2pScreen() {
           </View>
 
           {loading ? <ActivityIndicator color={theme.colors.primary} style={s.loader} />
-            : orders.length === 0 ? <Text style={s.emptyText}>{t('p2p.emptyOpen')}</Text>
-            : orders.map((o, i) => {
+            : orders.filter((o) => (bookSide === 'buy' ? o.type === 'limit_sell' : o.type === 'limit_buy')).length === 0 ? <Text style={s.emptyText}>{t('p2p.emptyOpen')}</Text>
+            : orders.filter((o) => (bookSide === 'buy' ? o.type === 'limit_sell' : o.type === 'limit_buy')).map((o, i) => {
               const unit = perUnitPrice(o.wantAmount, o.giveAmount);
               return (
               <View key={o.orderId} style={s.card} testID={`p2p-order-${i}`}>
@@ -759,14 +778,17 @@ export default function P2pScreen() {
                   <Text style={s.cardTitle} testID={`p2p-order-${i}-side`}>
                     {o.type === 'limit_buy' ? `${t('order.buy')} ` : `${t('order.sell')} `}{o.giveAmount} {o.giveToken}
                   </Text>
-                  <Text style={s.mono} testID={`p2p-order-${i}-total`}>{t('p2p.total')}: {o.wantAmount} {o.wantCurrency}</Text>
+                  {unit ? (
+                    <Text style={s.mono} testID={`p2p-order-${i}-unit`}>{unit} {o.wantCurrency}</Text>
+                  ) : null}
                 </View>
-                <Text style={s.sub}>{t('p2p.giveChain')}: {o.giveChain} · {o.wantRail}</Text>
-                {unit ? (
-                  <Text style={s.sub} testID={`p2p-order-${i}-unit`}>
-                    {t('p2p.unitPrice', { price: unit, currency: o.wantCurrency, token: o.giveToken })}
-                  </Text>
-                ) : null}
+                <Text style={s.sub} testID={`p2p-order-${i}-limit`}>
+                  {t('p2p.available', { amount: `${o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {o.wantRail}
+                </Text>
+                <Text style={s.sub} testID={`p2p-order-${i}-total`}>
+                  {t('p2p.total')}: {o.wantAmount} {o.wantCurrency} · {t('p2p.giveChain')}: {o.giveChain}{o.timeLimit ? ` · ${o.timeLimit} min` : ''}
+                </Text>
+                {o.remarks ? <Text style={s.subMono} testID={`p2p-order-${i}-remarks`}>{o.remarks}</Text> : null}
                 <View style={s.didRow}>
                   <Text style={[s.subMono, s.didText]} testID={`p2p-order-${i}-did`}>{shortDid(o.sellerDid)}</Text>
                   <TouchableOpacity
