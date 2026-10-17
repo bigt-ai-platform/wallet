@@ -29,7 +29,21 @@ export function findBalance(
   return matches.length === 1 ? matches[0] : null;
 }
 
-/** `amount` as raw smallest units at `decimals`, or null when unparseable. */
+/**
+ * Implied per-unit price (`total / give`), display-only: the listing stores the
+ * **total** fiat (`wantAmount`), so this is shown as a convenience next to it.
+ * Returns null when the inputs are not usable numbers.
+ */
+export function perUnitPrice(total: string, give: string, decimals = 8): string | null {
+  const t = Number(String(total ?? '').trim());
+  const g = Number(String(give ?? '').trim());
+  if (!Number.isFinite(t) || !Number.isFinite(g) || g <= 0 || t <= 0) return null;
+  const v = t / g;
+  if (!Number.isFinite(v) || v <= 0) return null;
+  const fixed = v.toFixed(Math.max(0, decimals));
+  return fixed.includes('.') ? fixed.replace(/0+$/, '').replace(/\.$/, '') : fixed;
+}
+
 export function amountToRaw(amount: string, decimals: number): bigint | null {
   const s = String(amount ?? '').trim();
   if (!/^\d+(\.\d+)?$/.test(s)) return null;

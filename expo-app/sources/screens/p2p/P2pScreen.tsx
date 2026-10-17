@@ -14,7 +14,7 @@ import { HelpIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
-import { exceedsBalance, findBalance } from '@/lib/p2pBalance';
+import { exceedsBalance, findBalance, perUnitPrice } from '@/lib/p2pBalance';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
 import type { TokenItem, WalletAccountItem } from '@/types/api';
@@ -109,6 +109,10 @@ export default function P2pScreen() {
   const availItem = findBalance(availOnL0 ? l0Balances : l1Balances, { tokenId: giveTokenId, tokenName: giveToken });
   const availText = availItem ? `${availItem.balance} ${availItem.tokenname}` : '';
   const overBalance = exceedsBalance(giveAmount, availItem);
+  // `wantAmount` is the TOTAL fiat for the whole `giveAmount` (the seller types
+  // the total; the instructions amount is `wantAmount`), so show the implied
+  // per-unit price alongside it.
+  const wantUnitPrice = perUnitPrice(wantAmount, giveAmount);
 
   // seller's CNY collection profile (mine tab)
   const [profiles, setProfiles] = React.useState<P2pPaymentProfile[]>([]);
@@ -656,7 +660,12 @@ export default function P2pScreen() {
                   : t('p2p.available', { amount: availText })}
               </Text>
             ) : null}
-            <Field label={t('p2p.wantAmount')} value={wantAmount} onChange={setWantAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
+            <Field label={t('p2p.total')} value={wantAmount} onChange={setWantAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
+            {wantUnitPrice ? (
+              <Text style={s.hint} testID="p2p-unit-price">
+                {t('p2p.unitPrice', { price: wantUnitPrice, currency: wantCurrency.trim() || 'CNY', token: giveToken.trim() })}
+              </Text>
+            ) : null}
             <Field label={t('p2p.wantCurrency')} value={wantCurrency} onChange={setWantCurrency} placeholder="CNY" testID="p2p-want-currency" />
             <Field label={t('p2p.giveChain')} value={giveChain} onChange={setGiveChain} placeholder="L0" testID="p2p-give-chain" />
             <View style={s.field}>
@@ -684,13 +693,20 @@ export default function P2pScreen() {
 
           {loading ? <ActivityIndicator color={theme.colors.primary} style={s.loader} />
             : orders.length === 0 ? <Text style={s.emptyText}>{t('p2p.emptyOpen')}</Text>
-            : orders.map((o, i) => (
+            : orders.map((o, i) => {
+              const unit = perUnitPrice(o.wantAmount, o.giveAmount);
+              return (
               <View key={o.orderId} style={s.card} testID={`p2p-order-${i}`}>
                 <View style={s.rowBetween}>
                   <Text style={s.cardTitle}>{o.giveAmount} {o.giveToken}</Text>
-                  <Text style={s.mono}>{o.wantAmount} {o.wantCurrency}</Text>
+                  <Text style={s.mono} testID={`p2p-order-${i}-total`}>{t('p2p.total')}: {o.wantAmount} {o.wantCurrency}</Text>
                 </View>
                 <Text style={s.sub}>{t('p2p.giveChain')}: {o.giveChain} · {o.wantRail}</Text>
+                {unit ? (
+                  <Text style={s.sub} testID={`p2p-order-${i}-unit`}>
+                    {t('p2p.unitPrice', { price: unit, currency: o.wantCurrency, token: o.giveToken })}
+                  </Text>
+                ) : null}
                 <Text style={s.subMono}>{o.sellerDid}</Text>
                 {o.sellerReputation ? (
                   <Text style={s.sub} testID={`p2p-order-${i}-rep`}>
@@ -721,7 +737,8 @@ export default function P2pScreen() {
                   </TouchableOpacity>
                 )}
               </View>
-            ))}
+              );
+            })}
         </>
       ) : !isUnlocked ? (
         <WalletUnlock fullScreen={false} subtitle={t('p2p.unlockFirst')} testID="p2p-need-unlock" />
