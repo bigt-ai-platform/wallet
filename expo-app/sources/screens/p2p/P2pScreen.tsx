@@ -63,7 +63,10 @@ export default function P2pScreen() {
   const [verifySwap, setVerifySwap] = React.useState<P2pSwap | null>(null);
   const [buyRecv, setBuyRecv] = React.useState('');
   // Taker's fill amount (crypto) — ≤ the order's remaining; empty = take all.
+  // The fiat total is kept in sync via the order's unit price (Binance lets you
+  // type either).
   const [buyFill, setBuyFill] = React.useState('');
+  const [buyFillFiat, setBuyFillFiat] = React.useState('');
   const [txHashes, setTxHashes] = React.useState<Record<string, string>>({});
   const [txIds, setTxIds] = React.useState<Record<string, string>>({});
   // Inline feedback: react-native-web's Alert.alert is a no-op, so every P2P
@@ -113,6 +116,10 @@ export default function P2pScreen() {
   const [bookSide, setBookSide] = React.useState<'buy' | 'sell'>('buy');
   const [validHours, setValidHours] = React.useState('24');
   const [wantRail, setWantRail] = React.useState('wechat');
+  // Enabled payment methods (Binance multi-rail); `wantRail` stays the primary.
+  const [rails, setRails] = React.useState<string[]>(['wechat']);
+  // The taker's chosen method for the selected order (defaults to the ad's first).
+  const [chosenRail, setChosenRail] = React.useState('');
   // What this engine actually serves (GET /capabilities): the enabled CNY
   // rails (empty → DEFAULT_RAILS, older engine, see p2p.ts).
   const [caps, setCaps] = React.useState<P2pCapabilities | null>(null);
@@ -216,7 +223,13 @@ export default function P2pScreen() {
     [enabledRails],
   );
   React.useEffect(() => {
-    if (caps && caps.rails.length > 0 && !caps.rails.includes(wantRail)) setWantRail(caps.rails[0]);
+    if (caps && caps.rails.length > 0) {
+      if (!caps.rails.includes(wantRail)) setWantRail(caps.rails[0]);
+      setRails((cur) => {
+        const filtered = cur.filter((r) => caps.rails.includes(r));
+        return filtered.length ? filtered : [caps.rails[0]];
+      });
+    }
     if (caps && enabledProfileMethods.length > 0 && !enabledProfileMethods.includes(profileMethod)) {
       setProfileMethod(enabledProfileMethods[0]);
     }
@@ -237,7 +250,12 @@ export default function P2pScreen() {
   }, [tab, identity, loadProfiles]);
 
   const pickRail = (rail: string) => {
-    setWantRail(rail);
+    // Multi-select: toggle the method; never allow an empty set.
+    setRails((cur) => {
+      const next = cur.includes(rail) ? (cur.length > 1 ? cur.filter((r) => r !== rail) : cur) : [...cur, rail];
+      setWantRail(next[0] ?? rail);
+      return next;
+    });
     // sensible currency default: the CNY rails quote CNY
     if (wantCurrency.trim().toUpperCase() === 'USD') setWantCurrency('CNY');
   };
@@ -306,7 +324,8 @@ export default function P2pScreen() {
         giveChain: giveChain.trim() || 'L0',
         wantCurrency: wantCurrency.trim() || 'CNY',
         wantAmount: formTotal ?? '',
-        wantRail,
+        wantRail: rails[0] ?? 'wechat',
+        wantRails: rails,
         validUntil: Math.floor(Date.now() / 1000) + Math.floor(hours * 3600),
         ...(isBuy ? { receiveAddress: recv } : {}),
         ...(minOrder.trim() ? { minOrder: minOrder.trim() } : {}),
@@ -350,8 +369,9 @@ export default function P2pScreen() {
       const res = await matchOrder(id, order.orderId, {
         receiveAddress: isBid ? '' : buyRecv.trim(),
         ...(buyFill.trim() ? { fillAmount: buyFill.trim() } : {}),
+        ...(chosenRail ? { rail: chosenRail } : {}),
       });
-      setSelected(null); setBuyRecv(''); setBuyFill('');
+      setSelected(null); setBuyRecv(''); setBuyFill(''); setBuyFillFiat(''); setChosenRail('');
       setNotice({ ok: true, text: `${t('p2p.buyTitle')}: ${res.swapId}` });
       setTab('mine');
       await loadSwaps();
@@ -743,14 +763,14 @@ export default function P2pScreen() {
                 {enabledRails.map((rail) => (
                   <TouchableOpacity
                     key={rail}
-                    style={[s.chip, wantRail === rail && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
+                    style={[s.chip, rails.includes(rail) && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
                     onPress={() => pickRail(rail)}
                     disabled={busy}
                     testID={`p2p-rail-${rail}`}
                     accessibilityRole="button"
-                    accessibilityState={{ selected: wantRail === rail }}
+                    accessibilityState={{ selected: rails.includes(rail) }}
                   >
-                    <Text style={[s.chipText, { color: wantRail === rail ? theme.colors.primary : theme.colors.text.secondary }]}>{rail}</Text>
+                    <Text style={[s.chipText, { color: rails.includes(rail) ? theme.colors.primary : theme.colors.text.secondary }]}>{rail}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -788,7 +808,7 @@ export default function P2pScreen() {
                   ) : null}
                 </View>
                 <Text style={s.sub} testID={`p2p-order-${i}-limit`}>
-                  {t('p2p.available', { amount: `${o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {o.wantRail}
+                  {t('p2p.available', { amount: `${o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).join(', ')}
                 </Text>
                 <Text style={s.sub} testID={`p2p-order-${i}-total`}>
                   {t('p2p.total')}: {o.wantAmount} {o.wantCurrency} · {t('p2p.giveChain')}: {o.giveChain}{o.timeLimit ? ` · ${o.timeLimit} min` : ''}
@@ -824,16 +844,63 @@ export default function P2pScreen() {
                 ) : null}
                 {selected?.orderId === o.orderId ? (
                   <View style={s.buyPanel}>
-                    <Field label={t('p2p.giveAmount')} value={buyFill} onChange={setBuyFill} placeholder={o.remainingGive ?? o.giveAmount} keyboardType="decimal-pad" mono testID="p2p-buy-fill" />
+                    <Field
+                      label={t('p2p.giveAmount')}
+                      value={buyFill}
+                      onChange={(v) => {
+                        setBuyFill(v);
+                        const unit = Number(o.wantAmount) / Number(o.giveAmount);
+                        setBuyFillFiat(unit > 0 && Number(v) > 0 ? String(Number((Number(v) * unit).toFixed(8))) : '');
+                      }}
+                      placeholder={o.remainingGive ?? o.giveAmount}
+                      keyboardType="decimal-pad" mono testID="p2p-buy-fill"
+                    />
+                    <Field
+                      label={t('p2p.total')}
+                      value={buyFillFiat}
+                      onChange={(v) => {
+                        setBuyFillFiat(v);
+                        const unit = Number(o.wantAmount) / Number(o.giveAmount);
+                        setBuyFill(unit > 0 && Number(v) > 0 ? String(Number((Number(v) / unit).toFixed(8))) : '');
+                      }}
+                      placeholder={o.wantAmount}
+                      keyboardType="decimal-pad" mono testID="p2p-buy-fill-fiat"
+                    />
                     {o.type !== 'limit_buy' ? (
                       <Field label={t('p2p.receiveAddress')} value={buyRecv} onChange={setBuyRecv} testID="p2p-buy-recv" />
+                    ) : null}
+                    {(o.wantRails?.length ?? 0) > 1 ? (
+                      <View style={s.field}>
+                        <Text style={s.fieldLabel}>{t('p2p.rail')}</Text>
+                        <View style={s.chips}>
+                          {(o.wantRails ?? [o.wantRail]).map((rail) => (
+                            <TouchableOpacity
+                              key={rail}
+                              style={[s.chip, chosenRail === rail && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
+                              onPress={() => setChosenRail(rail)}
+                              testID={`p2p-buy-rail-${rail}`}
+                              accessibilityRole="button"
+                              accessibilityState={{ selected: chosenRail === rail }}
+                            >
+                              <Text style={[s.chipText, { color: chosenRail === rail ? theme.colors.primary : theme.colors.text.secondary }]}>{rail}</Text>
+                            </TouchableOpacity>
+                          ))}
+                        </View>
+                      </View>
                     ) : null}
                     <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => submitBuy(o)} disabled={busy} testID="p2p-buy-confirm">
                       <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
-                  <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => { setSelected(o); setBuyRecv(''); setBuyFill(o.remainingGive ?? o.giveAmount); }} testID={`p2p-buy-${i}`}>
+                  <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => {
+                    setSelected(o); setBuyRecv('');
+                    setChosenRail(o.wantRails?.[0] ?? o.wantRail);
+                    const rem = o.remainingGive ?? o.giveAmount;
+                    setBuyFill(rem);
+                    const unit = Number(o.wantAmount) / Number(o.giveAmount);
+                    setBuyFillFiat(unit > 0 ? String(Number((Number(rem) * unit).toFixed(8))) : '');
+                  }} testID={`p2p-buy-${i}`}>
                     <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
                   </TouchableOpacity>
                 )}

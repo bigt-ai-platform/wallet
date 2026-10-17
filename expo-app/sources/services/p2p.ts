@@ -62,6 +62,8 @@ export interface P2pOrder {
   remarks?: string;
   /** Crypto remaining after partial fills (absent → the full `giveAmount`). */
   remainingGive?: string;
+  /** Enabled payment methods (Binance allows several; the taker picks one). */
+  wantRails?: string[];
   createdAt: number;
   /**
    * The engine escrow participant this order was pinned to
@@ -140,6 +142,8 @@ export interface CreateOrderInput {
   timeLimit?: number;
   /** Free-text ad terms shown to the counterparty. */
   remarks?: string;
+  /** Enabled payment methods (Binance allows several). */
+  wantRails?: string[];
   /**
    * The engine escrow participant to pin this order to (docs/p2p.md §26) —
    * the engine's `escrowPubkey`. Anchored in the record so the buyer derives
@@ -152,6 +156,8 @@ export interface MatchOrderInput {
   receiveAddress: string;
   /** Crypto to take from the order (≤ remaining); omitted = the whole order. */
   fillAmount?: string;
+  /** Which of the ad's payment methods to pay with; omitted = the first. */
+  rail?: string;
 }
 
 /** Seller's payment instructions for one swap (docs/p2p.md §11). */

@@ -72,6 +72,7 @@ export function foldOrderBook(
       ...(r.maxOrder ? { maxOrder: r.maxOrder } : {}),
       ...(r.timeLimit !== undefined ? { timeLimit: r.timeLimit } : {}),
       ...(r.remarks ? { remarks: r.remarks } : {}),
+      ...(r.wantRails ? { wantRails: r.wantRails } : {}),
     });
   }
   // Newest orders first (the engine's book is newest-first too).
