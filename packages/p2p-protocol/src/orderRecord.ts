@@ -57,6 +57,14 @@ export interface P2pOrderRecord {
    * release there — the engine derives the release destination from it.
    */
   buyerReceiveAddress?: string;
+  /** Per-order fiat limit (Binance-style): a taker's order must be at least
+   *  `minOrder` and at most `maxOrder` fiat, bounded by the total. */
+  minOrder?: string;
+  maxOrder?: string;
+  /** Payment window in minutes (Binance: 15..180) the buyer is given to pay. */
+  timeLimit?: number;
+  /** Free-text ad terms/instructions shown to the counterparty. */
+  remarks?: string;
 }
 
 export interface P2pOrderRecordInput extends Omit<P2pOrderRecord, "type" | "ts" | "status" | "orderSeq"> {
@@ -84,6 +92,10 @@ export function p2pOrderRecord(a: P2pOrderRecordInput): P2pOrderRecord {
   if (a.enginePubkey !== undefined) record.enginePubkey = a.enginePubkey;
   if (a.side !== undefined) record.side = a.side;
   if (a.buyerReceiveAddress !== undefined) record.buyerReceiveAddress = a.buyerReceiveAddress;
+  if (a.minOrder !== undefined) record.minOrder = a.minOrder;
+  if (a.maxOrder !== undefined) record.maxOrder = a.maxOrder;
+  if (a.timeLimit !== undefined) record.timeLimit = a.timeLimit;
+  if (a.remarks !== undefined) record.remarks = a.remarks;
   return record;
 }
 
@@ -130,9 +142,19 @@ export function validateP2pOrderRecord(r: Partial<P2pOrderRecord>): { ok: true }
     } else if (r.buyerReceiveAddress !== undefined) {
       return { ok: false, error: "buyerReceiveAddress only on a buy order" };
     }
+    for (const field of ["minOrder", "maxOrder"] as const) {
+      const v = r[field];
+      if (v !== undefined && !DECIMAL.test(String(v))) return { ok: false, error: `invalid ${field} (decimal string)` };
+    }
+    if (r.timeLimit !== undefined && (!Number.isInteger(r.timeLimit) || r.timeLimit < 5 || r.timeLimit > 1440)) {
+      return { ok: false, error: "invalid timeLimit (minutes 5..1440)" };
+    }
+    if (r.remarks !== undefined && (typeof r.remarks !== "string" || r.remarks.length > 256)) {
+      return { ok: false, error: "invalid remarks (<=256)" };
+    }
   } else {
     // A cancel references the order only — it must not carry (or mutate) terms.
-    for (const field of [...ORDER_FIELDS, "validUntil", "enginePubkey", "side", "buyerReceiveAddress"] as const) {
+    for (const field of [...ORDER_FIELDS, "validUntil", "enginePubkey", "side", "buyerReceiveAddress", "minOrder", "maxOrder", "timeLimit", "remarks"] as const) {
       if (r[field] !== undefined) return { ok: false, error: `${field} not allowed on CANCELLED` };
     }
   }

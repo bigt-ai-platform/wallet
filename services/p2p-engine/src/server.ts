@@ -987,6 +987,17 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (type === "limit_buy" && (!buyerReceiveAddress || buyerReceiveAddress.length > 128)) {
       return reply.code(400).send({ error: "buy order requires receiveAddress (1..128)" });
     }
+    // Binance-style ad fields: per-order fiat min/max, payment window, terms.
+    const dec = (v: unknown) => (typeof v === "string" && /^\d+(\.\d+)?$/.test(v) ? v : undefined);
+    const minOrder = dec(body.minOrder);
+    const maxOrder = dec(body.maxOrder);
+    if (body.minOrder !== undefined && !minOrder) return reply.code(400).send({ error: "invalid minOrder (decimal string)" });
+    if (body.maxOrder !== undefined && !maxOrder) return reply.code(400).send({ error: "invalid maxOrder (decimal string)" });
+    const timeLimit = body.timeLimit === undefined ? undefined : Math.floor(Number(body.timeLimit));
+    if (timeLimit !== undefined && (!Number.isFinite(timeLimit) || timeLimit < 5 || timeLimit > 1440)) {
+      return reply.code(400).send({ error: "invalid timeLimit (minutes 5..1440)" });
+    }
+    const remarks = typeof body.remarks === "string" && body.remarks.trim() ? body.remarks.trim().slice(0, 256) : undefined;
     // Seller-anchored orders carry the orderId the record already committed to
     // and the L1-SOCIAL txid that landed it; both are optional so the legacy
     // engine-intake path (mock / no chain) keeps working.
@@ -1037,6 +1048,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       ...(txid !== undefined ? { txid } : {}),
       ...(enginePin ? { enginePubkey: enginePin } : {}),
       ...(buyerReceiveAddress ? { buyerReceiveAddress } : {}),
+      ...(minOrder ? { minOrder } : {}),
+      ...(maxOrder ? { maxOrder } : {}),
+      ...(timeLimit !== undefined ? { timeLimit } : {}),
+      ...(remarks ? { remarks } : {}),
       createdAt: now(),
     };
     await deps.store.createOrder(order);

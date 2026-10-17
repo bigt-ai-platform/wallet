@@ -42,6 +42,13 @@ export interface P2pOrderInput {
   validUntil: number;
   /** A `limit_buy` bid carries where the poster (buyer) wants the tokens sent. */
   buyerReceiveAddress?: string;
+  /** Per-order fiat limit (Binance-style), bounded by the total. */
+  minOrder?: string;
+  maxOrder?: string;
+  /** Payment window in minutes the buyer is given (Binance: 15..180). */
+  timeLimit?: number;
+  /** Free-text ad terms shown to the counterparty. */
+  remarks?: string;
 }
 
 export interface P2pOrder extends Omit<P2pOrderInput, "validUntil"> {

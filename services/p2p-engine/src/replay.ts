@@ -327,6 +327,10 @@ async function applyRecord(
         txid: raw.txid,
         ...(rec.enginePubkey ? { enginePubkey: rec.enginePubkey } : {}),
         ...(rec.buyerReceiveAddress ? { buyerReceiveAddress: rec.buyerReceiveAddress } : {}),
+        ...(rec.minOrder ? { minOrder: rec.minOrder } : {}),
+        ...(rec.maxOrder ? { maxOrder: rec.maxOrder } : {}),
+        ...(rec.timeLimit !== undefined ? { timeLimit: rec.timeLimit } : {}),
+        ...(rec.remarks ? { remarks: rec.remarks } : {}),
         createdAt: rec.ts,
       });
       result.ordersOpened++;
