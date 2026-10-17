@@ -16,8 +16,20 @@ import { isValidPQDid, verifyChallengeWithPQDid } from "did/pq";
 
 export const NONCE_MAX_SKEW_MS = 5 * 60 * 1000;
 export const NONCE_TTL_MS = 6 * 60 * 1000;
+/** State-changing signed requests per DID per window (writes). */
 export const RATE_LIMIT = 10;
+/** Party-scoped signed *reads* per DID per window — cheap, and the client polls
+ *  them (mine/get/context), so a write-sized cap 429'd honest flows. */
+export const RATE_LIMIT_READ = 120;
 export const RATE_WINDOW_MS = 60 * 1000;
+
+/** Signed requests are throttled in two classes: mutating vs party-scoped reads. */
+export type SignedRequestKind = "read" | "write";
+
+export interface RateLimits {
+  read: number;
+  write: number;
+}
 
 /** Sorted top-level keys, matching bigtai's `canonicalJson`. */
 export function canonicalJson(payload: Record<string, unknown>): string {
@@ -76,12 +88,14 @@ export interface SignedRequestResult {
 /** Nonce replay + rate-limit guard (process-local; inject a clock in tests). */
 export class ReplayGuard {
   private readonly used = new Map<string, number>();
+  /** key: `${kind}:${did}` → recent request timestamps. */
   private readonly hits = new Map<string, number[]>();
 
   constructor(
     private readonly now: () => number = Date.now,
-    /** Signed requests allowed per DID per RATE_WINDOW_MS (`SETTLEMENT_RATE_LIMIT`). */
-    private readonly rateLimit: number = RATE_LIMIT,
+    /** Signed requests allowed per DID per RATE_WINDOW_MS, per class
+     *  (`SETTLEMENT_RATE_LIMIT` / `SETTLEMENT_RATE_LIMIT_READ`). */
+    private readonly limits: RateLimits = { read: RATE_LIMIT_READ, write: RATE_LIMIT },
   ) {}
 
   /** Returns an error string when the nonce is invalid/replayed, else records it. */
@@ -98,13 +112,15 @@ export class ReplayGuard {
     return null;
   }
 
-  /** Sliding-window rate limit per DID. Returns an error string when exceeded. */
-  checkRate(did: string): string | null {
+  /** Sliding-window rate limit per DID, per class. Error string when exceeded. */
+  checkRate(did: string, kind: SignedRequestKind = "write"): string | null {
+    const limit = kind === "read" ? this.limits.read : this.limits.write;
+    const key = `${kind}:${did}`;
     const now = this.now();
-    const hits = (this.hits.get(did) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
-    if (hits.length >= this.rateLimit) return "rate limit exceeded";
+    const hits = (this.hits.get(key) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+    if (hits.length >= limit) return "rate limit exceeded";
     hits.push(now);
-    this.hits.set(did, hits);
+    this.hits.set(key, hits);
     return null;
   }
 
@@ -118,18 +134,23 @@ export class ReplayGuard {
  * have produced the signature (seller on order create, buyer on match, the
  * acting party on a transition). The signed payload is the body minus
  * `signature`; `nonce`/`timestamp` are part of it and must be present.
+ *
+ * `kind` picks the rate-limit class: pass `"read"` for party-scoped reads
+ * (mine/get/context) so they are not throttled at the write cap. Defaults to
+ * `"write"` — the safe choice for any route that mutates.
  */
 export function validateSignedRequest(
   body: Record<string, unknown>,
   expectedDid: string,
   guard: ReplayGuard,
+  kind: SignedRequestKind = "write",
 ): SignedRequestResult {
   const { signature, ...payload } = body;
   if (typeof signature !== "string" || !signature) return { ok: false, error: "signature required", status: 400 };
   if (!verifySignature(payload, expectedDid, signature)) return { ok: false, error: "invalid signature", status: 400 };
   const nonceError = guard.checkNonce(body.nonce, body.timestamp);
   if (nonceError) return { ok: false, error: nonceError, status: 400 };
-  const rateError = guard.checkRate(expectedDid);
+  const rateError = guard.checkRate(expectedDid, kind);
   if (rateError) return { ok: false, error: rateError, status: 429 };
   return { ok: true };
 }

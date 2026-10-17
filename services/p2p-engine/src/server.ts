@@ -66,7 +66,7 @@ import {
   reputationFromEvents,
   type ReputationReport,
 } from "./reputation.js";
-import { RATE_LIMIT, ReplayGuard, validateSignedRequest } from "./sign.js";
+import { RATE_LIMIT, RATE_LIMIT_READ, ReplayGuard, validateSignedRequest, type RateLimits } from "./sign.js";
 import { escrowAddress, settlementParams } from "./escrow.js";
 import {
   assembleSpend,
@@ -197,14 +197,22 @@ export function normalizeAnchorMode(v: string | undefined): AnchorMode {
 }
 
 /**
- * `SETTLEMENT_RATE_LIMIT` — signed requests allowed per DID per 60s window
- * (`RATE_LIMIT` = 10 by default). The guard is process-local (docs/p2p.md
- * §18.1); the e2e raises it so a full multi-step lifecycle never trips the
- * default cap. Unknown/invalid → the built-in default.
+ * `SETTLEMENT_RATE_LIMIT` / `SETTLEMENT_RATE_LIMIT_READ` — signed requests
+ * allowed per DID per 60s window, split by class (writes default `RATE_LIMIT` =
+ * 10; reads default `RATE_LIMIT_READ` = 120). The guard is process-local
+ * (docs/p2p.md §18.1); per-DID caps are a throttle, not a sybil defence (a DID
+ * is a free key), so the write cap stays low while the reads the honest client
+ * polls are generous. Unknown/invalid → the built-in defaults.
  */
-export function rateLimitFromEnv(env: NodeJS.ProcessEnv): number {
-  const n = Number((env.SETTLEMENT_RATE_LIMIT ?? "").trim());
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : RATE_LIMIT;
+export function rateLimitsFromEnv(env: NodeJS.ProcessEnv): RateLimits {
+  const num = (v: string | undefined, d: number) => {
+    const n = Number((v ?? "").trim());
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : d;
+  };
+  return {
+    write: num(env.SETTLEMENT_RATE_LIMIT, RATE_LIMIT),
+    read: num(env.SETTLEMENT_RATE_LIMIT_READ, RATE_LIMIT_READ),
+  };
 }
 
 /** Receipt/QR cap as data-URL characters (≈512 KiB binary image). */
@@ -273,7 +281,7 @@ async function defaultDeviceRead(args: DeviceReadArgs): Promise<DeviceReadResult
 export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   const env = deps.env ?? process.env;
   const now = deps.now ?? Date.now;
-  const guard = deps.guard ?? new ReplayGuard(now, rateLimitFromEnv(env));
+  const guard = deps.guard ?? new ReplayGuard(now, rateLimitsFromEnv(env));
   const app = Fastify({ logger: deps.log ?? env.SETTLEMENT_LOG === "1" });
 
   app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
@@ -1234,7 +1242,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "read");
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const swaps = await deps.store.listSwapsForDid(did);
     return { swaps: await Promise.all(swaps.map(walletView)) };
@@ -1246,7 +1254,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const swapId = typeof body.swapId === "string" ? body.swapId : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "read");
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const swap = await deps.store.getSwap(swapId);
     if (!swap) return reply.code(404).send({ error: "unknown swap" });
@@ -1794,7 +1802,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (did !== swap.sellerDid && did !== swap.buyerDid) return reply.code(403).send({ error: "not a swap party" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "read");
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (!swap.escrowAddress || !swap.escrowTxHash) return reply.code(409).send({ error: "swap has no locked escrow" });
     const row = await deps.store.getEscrowSigning(swapId);
@@ -1965,7 +1973,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "read");
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     return { profiles: await deps.store.listProfiles(did) };
   });

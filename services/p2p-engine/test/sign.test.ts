@@ -69,13 +69,14 @@ describe("p2p signed requests", () => {
     expect(last.status).toBe(429);
   });
 
-  it("honours a custom rate limit (SETTLEMENT_RATE_LIMIT)", () => {
-    const guard = new ReplayGuard(() => 1_000_000, 3);
-    for (let i = 0; i < 3; i++) {
-      expect(validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + i.toString(16).padStart(4, "0")), did, guard).ok).toBe(true);
-    }
-    const over = validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + "ffff"), did, guard);
-    expect(over.ok).toBe(false);
-    expect(over.status).toBe(429);
+  it("honours custom write/read limits and keeps the buckets independent", () => {
+    const guard = new ReplayGuard(() => 1_000_000, { read: 2, write: 1 });
+    // The single write slot is consumed by the first write...
+    expect(validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + "0001"), did, guard).ok).toBe(true);
+    expect(validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + "0002"), did, guard).status).toBe(429);
+    // ...and the reads have their own bucket, untouched by the write cap.
+    expect(validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + "0003"), did, guard, "read").ok).toBe(true);
+    expect(validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + "0004"), did, guard, "read").ok).toBe(true);
+    expect(validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + "0005"), did, guard, "read").status).toBe(429);
   });
 });

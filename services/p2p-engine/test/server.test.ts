@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { Ed25519Key, didFromEd25519Key } from "did";
-import { buildApp, normalizeAnchorMode, rateLimitFromEnv } from "../src/server.js";
+import { buildApp, normalizeAnchorMode, rateLimitsFromEnv } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
 import type { P2pSwapEvent } from "../src/types.js";
@@ -335,13 +335,15 @@ describe("normalizeAnchorMode", () => {
   });
 });
 
-describe("rateLimitFromEnv", () => {
-  it("defaults to the built-in limit when unset or invalid", () => {
-    expect(rateLimitFromEnv({} as NodeJS.ProcessEnv)).toBe(10);
-    expect(rateLimitFromEnv({ SETTLEMENT_RATE_LIMIT: "abc" } as NodeJS.ProcessEnv)).toBe(10);
-    expect(rateLimitFromEnv({ SETTLEMENT_RATE_LIMIT: "0" } as NodeJS.ProcessEnv)).toBe(10);
+describe("rateLimitsFromEnv", () => {
+  it("defaults to write=10 / read=120 when unset or invalid", () => {
+    expect(rateLimitsFromEnv({} as NodeJS.ProcessEnv)).toEqual({ write: 10, read: 120 });
+    expect(rateLimitsFromEnv({ SETTLEMENT_RATE_LIMIT: "abc" } as NodeJS.ProcessEnv)).toEqual({ write: 10, read: 120 });
+    expect(rateLimitsFromEnv({ SETTLEMENT_RATE_LIMIT: "0" } as NodeJS.ProcessEnv)).toEqual({ write: 10, read: 120 });
   });
-  it("reads a positive override", () => {
-    expect(rateLimitFromEnv({ SETTLEMENT_RATE_LIMIT: "200" } as NodeJS.ProcessEnv)).toBe(200);
+  it("reads positive overrides for both classes", () => {
+    expect(
+      rateLimitsFromEnv({ SETTLEMENT_RATE_LIMIT: "200", SETTLEMENT_RATE_LIMIT_READ: "500" } as NodeJS.ProcessEnv),
+    ).toEqual({ write: 200, read: 500 });
   });
 });
