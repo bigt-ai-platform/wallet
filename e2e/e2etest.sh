@@ -202,7 +202,11 @@ start_window_raiser
 # load under Node's ESM resolver).
 build_p2p_engine() {
   info "Building p2p engine..."
-  for pkg in chain-discovery did p2p-protocol record-sig; do
+  # `bigtangle-ts` FIRST: the engine (and the app's web export) bundle its dist,
+  # and a stale dist bakes in old protocol behaviour — e.g. the pre-c352c40
+  # `getHash()` that never matched the node's txid, so an escrow release
+  # confirmed on chain but the engine's proof polled a hash the node never knew.
+  for pkg in bigtangle-ts chain-discovery did p2p-protocol record-sig; do
     ( cd "$ROOT/packages/$pkg" && npm run build >/dev/null 2>&1 ) || fail "build $pkg failed"
   done
   ( cd "$ROOT/services/p2p-engine" && npm run build >/dev/null 2>&1 && npm run bundle >/dev/null 2>&1 ) || fail "build/bundle p2p-engine failed"

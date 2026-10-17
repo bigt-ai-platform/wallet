@@ -90,6 +90,22 @@ async function waitStatus(page: Page, expected: string, id = 'p2p-swap-0-status'
   }
 }
 
+/** Wait for any of `expected` — a CNY swap auto-advances PAYMENT_VERIFIED →
+ *  ESCROW_RELEASED → COMPLETED in one settle, so the intermediate states are
+ *  transient and a strict equality poll can miss them. */
+async function waitStatusAny(page: Page, expected: string[], id = 'p2p-swap-0-status', ms = 90000): Promise<string> {
+  const t0 = Date.now();
+  for (;;) {
+    const txt = (await el(page, id).first().textContent().catch(() => null)) ?? '';
+    if (expected.includes(txt)) return txt;
+    if (Date.now() - t0 > ms) {
+      const notice = await el(page, 'p2p-notice').first().textContent().catch(() => null);
+      throw new Error(`timeout: want one of ${expected.join('|')}, got ${txt} | notice: ${notice}`);
+    }
+    await page.waitForTimeout(400);
+  }
+}
+
 async function refresh(page: Page) {
   await el(page, 'p2p-refresh').click().catch(() => {});
   await page.waitForTimeout(1200);
@@ -234,10 +250,10 @@ test.describe('P2P Demo (real L0)', () => {
       await waitStatus(seller.page, 'PAYMENT_CLAIMED');
       await el(seller.page, 'p2p-swap-0-confirm').click();
       step('seller confirm clicked');
-      await waitStatus(seller.page, 'PAYMENT_VERIFIED');
+      await waitStatusAny(seller.page, ['PAYMENT_VERIFIED', 'ESCROW_RELEASED', 'COMPLETED']);
       step('seller PAYMENT_VERIFIED');
       await refresh(buyer.page);
-      await waitStatus(buyer.page, 'PAYMENT_VERIFIED');
+      await waitStatusAny(buyer.page, ['PAYMENT_VERIFIED', 'ESCROW_RELEASED', 'COMPLETED']);
       await shot(buyer.page, 'p2p-real-08-payment-verified-en.png');
 
       // ── 6. the escrow hook releases with a real spend to the buyer ────────
@@ -245,7 +261,9 @@ test.describe('P2P Demo (real L0)', () => {
       expect(releaseTx, 'escrow release did not confirm on L0').not.toBeNull();
       await assertEvidence(request, releaseTx.txHash, receiveAddress);
       await refresh(buyer.page);
-      await waitStatus(buyer.page, 'ESCROW_RELEASED');
+      // CNY has no fiat payout step, so the engine closes the loop to COMPLETED
+      // in the same settle as the on-chain release.
+      await waitStatusAny(buyer.page, ['ESCROW_RELEASED', 'COMPLETED']);
       step('ESCROW_RELEASED on L0');
       await shot(buyer.page, 'p2p-real-09-escrow-released-en.png');
       console.log('escrow released:', releaseTx.txHash, '→', receiveAddress);
