@@ -106,7 +106,9 @@ test.describe('P2P Orders (chain)', () => {
     ]);
     expect(open1.txid).toMatch(/^[0-9a-f]{64}$/i);
     const created = await post(ENGINE, '/orders', signBody(seller.key, open1.fields));
-    expect(created.status).toBe(201);
+    // 201 = intake created it; 200 = the chain projector already indexed the
+    // anchored record (idempotent re-register). Both leave the same ACTIVE order.
+    expect([200, 201]).toContain(created.status);
     expect(created.body).toMatchObject({ orderId: orderId1, status: 'ACTIVE', txid: open1.txid });
 
     const repost = await post(ENGINE, '/orders', signBody(seller.key, open1.fields));
@@ -128,7 +130,7 @@ test.describe('P2P Orders (chain)', () => {
       '--key', seller.key, '--orderId', orderId2, '--terms', JSON.stringify(TERMS),
     ]);
     const created2 = await post(ENGINE, '/orders', signBody(seller.key, open2.fields));
-    expect(created2.status).toBe(201);
+    expect([200, 201]).toContain(created2.status);
 
     const matched = await post(ENGINE, `/orders/${orderId2}/match`, signBody(buyer.key, {
       buyerDid: buyer.did, receiveAddress: buyer.address,
