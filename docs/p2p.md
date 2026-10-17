@@ -589,6 +589,7 @@ SETTLEMENT_ESCROW_HOOK_MS=0               # presign settlement hook tick (releas
 SETTLEMENT_ESCROW_POLL_MS=25000           # per-spend CONFIRMED wait before reporting pending
 SETTLEMENT_L1_SOCIAL_URL / _URLS          # social node(s): order txid confirmation + anchor + watcher
 SETTLEMENT_ANCHOR_MODE=best-effort        # L1-SOCIAL swap-anchor policy: best-effort (default) | required | off
+SETTLEMENT_RATE_LIMIT=10                  # signed requests per DID per 60s window (process-local, §18.1)
 SETTLEMENT_ORDER_TX_VERIFY=0              # disable the txid check (default: on when a social URL exists)
 SETTLEMENT_ORDER_TX_TRIES=4               # bounded verifyTx polls per order/cancel (500ms apart)
 SETTLEMENT_WATCH=1                        # run the chain-scan projector loop in-process

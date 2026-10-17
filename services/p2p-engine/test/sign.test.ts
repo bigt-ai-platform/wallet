@@ -68,4 +68,14 @@ describe("p2p signed requests", () => {
     expect(last.ok).toBe(false);
     expect(last.status).toBe(429);
   });
+
+  it("honours a custom rate limit (SETTLEMENT_RATE_LIMIT)", () => {
+    const guard = new ReplayGuard(() => 1_000_000, 3);
+    for (let i = 0; i < 3; i++) {
+      expect(validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + i.toString(16).padStart(4, "0")), did, guard).ok).toBe(true);
+    }
+    const over = validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + "ffff"), did, guard);
+    expect(over.ok).toBe(false);
+    expect(over.status).toBe(429);
+  });
 });

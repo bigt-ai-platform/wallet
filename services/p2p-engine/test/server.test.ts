@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { Ed25519Key, didFromEd25519Key } from "did";
-import { buildApp, normalizeAnchorMode } from "../src/server.js";
+import { buildApp, normalizeAnchorMode, rateLimitFromEnv } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
 import type { P2pSwapEvent } from "../src/types.js";
@@ -332,5 +332,16 @@ describe("normalizeAnchorMode", () => {
   it("accepts required and off (case/space-insensitive)", () => {
     expect(normalizeAnchorMode("required")).toBe("required");
     expect(normalizeAnchorMode(" OFF ")).toBe("off");
+  });
+});
+
+describe("rateLimitFromEnv", () => {
+  it("defaults to the built-in limit when unset or invalid", () => {
+    expect(rateLimitFromEnv({} as NodeJS.ProcessEnv)).toBe(10);
+    expect(rateLimitFromEnv({ SETTLEMENT_RATE_LIMIT: "abc" } as NodeJS.ProcessEnv)).toBe(10);
+    expect(rateLimitFromEnv({ SETTLEMENT_RATE_LIMIT: "0" } as NodeJS.ProcessEnv)).toBe(10);
+  });
+  it("reads a positive override", () => {
+    expect(rateLimitFromEnv({ SETTLEMENT_RATE_LIMIT: "200" } as NodeJS.ProcessEnv)).toBe(200);
   });
 });

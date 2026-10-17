@@ -66,7 +66,7 @@ import {
   reputationFromEvents,
   type ReputationReport,
 } from "./reputation.js";
-import { ReplayGuard, validateSignedRequest } from "./sign.js";
+import { RATE_LIMIT, ReplayGuard, validateSignedRequest } from "./sign.js";
 import { escrowAddress, settlementParams } from "./escrow.js";
 import {
   assembleSpend,
@@ -196,6 +196,17 @@ export function normalizeAnchorMode(v: string | undefined): AnchorMode {
   return m === "required" || m === "off" ? m : "best-effort";
 }
 
+/**
+ * `SETTLEMENT_RATE_LIMIT` — signed requests allowed per DID per 60s window
+ * (`RATE_LIMIT` = 10 by default). The guard is process-local (docs/p2p.md
+ * §18.1); the e2e raises it so a full multi-step lifecycle never trips the
+ * default cap. Unknown/invalid → the built-in default.
+ */
+export function rateLimitFromEnv(env: NodeJS.ProcessEnv): number {
+  const n = Number((env.SETTLEMENT_RATE_LIMIT ?? "").trim());
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : RATE_LIMIT;
+}
+
 /** Receipt/QR cap as data-URL characters (≈512 KiB binary image). */
 const MAX_RECEIPT_CHARS = 700_000;
 
@@ -262,7 +273,7 @@ async function defaultDeviceRead(args: DeviceReadArgs): Promise<DeviceReadResult
 export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   const env = deps.env ?? process.env;
   const now = deps.now ?? Date.now;
-  const guard = deps.guard ?? new ReplayGuard(now);
+  const guard = deps.guard ?? new ReplayGuard(now, rateLimitFromEnv(env));
   const app = Fastify({ logger: deps.log ?? env.SETTLEMENT_LOG === "1" });
 
   app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {

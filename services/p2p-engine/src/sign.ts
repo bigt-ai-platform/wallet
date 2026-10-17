@@ -78,7 +78,11 @@ export class ReplayGuard {
   private readonly used = new Map<string, number>();
   private readonly hits = new Map<string, number[]>();
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly now: () => number = Date.now,
+    /** Signed requests allowed per DID per RATE_WINDOW_MS (`SETTLEMENT_RATE_LIMIT`). */
+    private readonly rateLimit: number = RATE_LIMIT,
+  ) {}
 
   /** Returns an error string when the nonce is invalid/replayed, else records it. */
   checkNonce(nonce: unknown, timestamp: unknown): string | null {
@@ -98,7 +102,7 @@ export class ReplayGuard {
   checkRate(did: string): string | null {
     const now = this.now();
     const hits = (this.hits.get(did) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
-    if (hits.length >= RATE_LIMIT) return "rate limit exceeded";
+    if (hits.length >= this.rateLimit) return "rate limit exceeded";
     hits.push(now);
     this.hits.set(did, hits);
     return null;
