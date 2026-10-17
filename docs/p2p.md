@@ -1501,3 +1501,72 @@ Everything else fails closed once `vaultMatchesAddress` is enforced.
   its stored order** (`p2p_orders.engine_pubkey`, schema + migration + replay),
   **derives the match address from the pinned key**, and **rejects a match for
   an order pinned to a key the deployment does not hold** (409).
+
+---
+
+## 28. Flow diagrams (Mermaid)
+
+GitHub renders these in place; they are the canonical picture of the protocol and
+mirror the state machine in `services/p2p-engine/src/state.ts` (`VALID_TRANSITIONS`).
+
+### 28.1 Happy path — list → match → 2-of-3 L0 escrow → WeChat pay → release
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor S as Seller (wallet)
+    actor B as Buyer (wallet)
+    participant E as P2P engine
+    participant L0 as L0 (escrow chain)
+    participant L1 as L1-SOCIAL (evidence log)
+    participant W as WeChat (fiat rail)
+
+    S->>E: POST /orders (DID-signed) — list the sell
+    B->>E: GET /public/orders — browse the book
+    B->>E: POST /orders/:id/match (DID-signed, receiveAddress)
+    Note over E,L1: anchor social.p2p-swap MATCHED (best-effort)
+    S->>L0: fund the 2-of-3 P2SH escrow (seller pays the fee)
+    S->>E: transitions {escrow_lock, txHash}
+    E->>L0: verifyChainLock (CONFIRMED + escrow addr + token + amount)
+    Note over E,L1: anchor ESCROW_LOCKED
+    B->>E: payment-instructions
+    E-->>B: owner name, account, amount = wantAmount, remark, payBy
+    B->>W: transfer `amount` with `remark` (offline pay)
+    B->>E: proof {txId}
+    Note over E,L1: anchor PAYMENT_CLAIMED
+    S->>E: confirm (seller checks their own ledger)
+    Note over E,L1: anchor PAYMENT_VERIFIED
+    E->>L0: release spend (2-of-3: engine + one party) → buyer address
+    L0-->>E: CONFIRMED
+    Note over E,L1: anchor ESCROW_RELEASED → COMPLETED
+```
+
+### 28.2 Swap state machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> MATCHED: buyer match
+    MATCHED --> ESCROW_LOCKED: seller escrow_lock (L0 verified)
+    MATCHED --> CANCELLED: cancel (seller / buyer)
+    MATCHED --> EXPIRED: expire
+    ESCROW_LOCKED --> PAYMENT_PENDING: buyer payment-instructions
+    ESCROW_LOCKED --> CANCELLED: cancel
+    ESCROW_LOCKED --> EXPIRED: expire
+    PAYMENT_PENDING --> PAYMENT_CLAIMED: buyer proof
+    PAYMENT_PENDING --> PAYMENT_VERIFIED: seller confirm (auto-release policy)
+    PAYMENT_PENDING --> CANCELLED: buyer cancel ("I never paid")
+    PAYMENT_PENDING --> EXPIRED: silent-expiry sweep
+    PAYMENT_CLAIMED --> PAYMENT_VERIFIED: seller confirm
+    PAYMENT_CLAIMED --> EXPIRED: dispute → refund arbitration
+    PAYMENT_VERIFIED --> ESCROW_RELEASED: release spend (2-of-3)
+    ESCROW_RELEASED --> COMPLETED: complete
+    EXPIRED --> ESCROW_REFUNDED: refund spend
+    CANCELLED --> ESCROW_REFUNDED: refund spend
+    COMPLETED --> COMPLETED
+    ESCROW_REFUNDED --> [*]
+```
+
+An **open dispute** (`dispute: OPEN`) freezes the swap: nothing advances
+(`release`/`complete`) and nothing unwinds (`cancel`/`expire`) until
+`POST /swaps/:id/dispute/resolve` sets the outcome, which then self-executes the
+release or the refund (`docs/p2p.md` §12).
