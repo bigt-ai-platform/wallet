@@ -3,6 +3,7 @@ import {
   View, Text, ScrollView, ActivityIndicator, TouchableOpacity,
   TextInput, Image, Linking,
 } from 'react-native';
+import * as Clipboard from 'expo-clipboard';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
@@ -13,7 +14,7 @@ import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import { HelpIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
-import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
+import { pqDidFromKey, pqKeyFromPrivateHex, shortDid } from '@/lib/p2pIdentity';
 import { exceedsBalance, findBalance, perUnitPrice } from '@/lib/p2pBalance';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
@@ -566,6 +567,15 @@ export default function P2pScreen() {
     const url = p2pPdfUrl(i18n.language, tzRegion());
     Linking.openURL(url).catch(() => setNotice({ ok: false, text: t('p2p.actionFailed') }));
   };
+  /** Copy a full value (a PQ did is ~2.6 KB; the cards show a short form). */
+  const copyValue = async (v: string) => {
+    try {
+      await Clipboard.setStringAsync(v);
+      setNotice({ ok: true, text: t('receive.copiedAddress') });
+    } catch {
+      setNotice({ ok: false, text: t('p2p.actionFailed') });
+    }
+  };
   // Header control: a compact "?" help symbol linking to the P2P guide PDF.
   const guideLink = (
     <TouchableOpacity
@@ -709,7 +719,18 @@ export default function P2pScreen() {
                     {t('p2p.unitPrice', { price: unit, currency: o.wantCurrency, token: o.giveToken })}
                   </Text>
                 ) : null}
-                <Text style={s.subMono}>{o.sellerDid}</Text>
+                <View style={s.didRow}>
+                  <Text style={[s.subMono, s.didText]} testID={`p2p-order-${i}-did`}>{shortDid(o.sellerDid)}</Text>
+                  <TouchableOpacity
+                    onPress={() => copyValue(o.sellerDid)}
+                    style={s.copyBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('receive.copy')}
+                    testID={`p2p-order-${i}-copy-did`}
+                  >
+                    <Text style={s.copyText}>{t('receive.copy')}</Text>
+                  </TouchableOpacity>
+                </View>
                 {o.sellerReputation ? (
                   <Text style={s.sub} testID={`p2p-order-${i}-rep`}>
                     {'★'.repeat(tierStars(o.sellerReputation.tier))}
@@ -1027,6 +1048,10 @@ const s = StyleSheet.create((theme) => ({
   sub: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 6 },
   hint: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 4 },
   subMono: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 4, fontFamily: MONO_FONT },
+  didRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 },
+  didText: { flexShrink: 1, marginTop: 0, fontFamily: MONO_FONT, fontSize: 11, color: theme.colors.text.secondary },
+  copyBtn: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.primary },
+  copyText: { fontSize: 11, color: theme.colors.primary, fontWeight: '600' },
   badge: { fontSize: 12, fontWeight: '700' },
   buyPanel: { marginTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 12 },
   field: { marginTop: 10 },

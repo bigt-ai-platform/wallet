@@ -82,6 +82,17 @@ export function newOrderId(): string {
   return `ord-${randomHex(8)}`;
 }
 
+/**
+ * Short display form of a did:key (`head…tail`). A full PQ did is ~2.6 KB, so the
+ * order/swap cards show this and pair it with a copy action that carries the
+ * exact full value.
+ */
+export function shortDid(did: string, head = 22, tail = 6): string {
+  const d = (did ?? '').trim();
+  if (!d) return '';
+  return d.length <= head + tail + 1 ? d : `${d.slice(0, head)}…${d.slice(-tail)}`;
+}
+
 /** Sign the sha256 digest of the canonical payload, hex-encoded SignatureBundle. */
 export function signP2pPayload(key: PQKey, payload: Record<string, unknown>): string {
   const digest = Sha256Hash.hash(new TextEncoder().encode(canonicalJson(payload)));
