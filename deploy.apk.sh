@@ -35,6 +35,11 @@ BUILD_TYPE="${BUILD_TYPE:-debug}"
 S3_ENDPOINT="${S3_ENDPOINT:-https://minio-s1002.bigt.ai}"
 S3_BUCKET="${S3_BUCKET:-apps}"
 S3_PREFIX="${S3_PREFIX:-wallet/apk}"
+# Legacy OTA base baked into installs built before the move to the shared `apps`
+# bucket (they fetch wallet-<env>-release-latest.json from here). The manifest is
+# mirrored there on every publish so those installs still upgrade; set empty to
+# disable (e.g. once a 30x redirect covers the old path instead).
+LEGACY_OTA_BASE="${LEGACY_OTA_BASE-https://minio-s1001.bigt.ai/aifeeds-content/releases}"
 OUT_DIR="${OUT_DIR:-$ROOT/out}"
 IMAGE="${IMAGE:-wallet-android}"
 SKIP_BUILD=0; LATEST=1
@@ -126,6 +131,15 @@ mc_cp() {
      mc cp "$MC_SRC" "$MC_DST"'
 }
 
+# Copy to an arbitrary host (the legacy OTA base during the migration), same
+# creds. $1 = host url, $2 = source, $3 = destination (under the `h` alias).
+mc_cp_host() {
+  docker run --rm -e EP="$1" -e S3_ACCESS_KEY="$S3_ACCESS_KEY" -e S3_SECRET_KEY="$S3_SECRET_KEY" \
+    -v "$OUT_DIR:/out" -e MC_SRC="$2" -e MC_DST="$3" \
+    --entrypoint /bin/sh "$MC_IMAGE" -c \
+    'mc alias set h "$EP" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && mc cp "$MC_SRC" "$MC_DST"'
+}
+
 # Key check: what is live right now. A release published under a different
 # certificate leaves every installed copy unable to upgrade in place
 # (INSTALL_FAILED_UPDATE_INCOMPATIBLE), so say so before overwriting the object
@@ -186,6 +200,14 @@ if [ "$LATEST" -eq 1 ] && [ "$BUILD_TYPE" = "release" ]; then
   mc_cp "/out/$MANIFEST" "up/$S3_BUCKET/$S3_PREFIX/$MANIFEST" \
     || { echo "manifest upload failed" >&2; exit 1; }
   echo "uploaded: $PUBLIC_BASE_URL/$S3_PREFIX/$MANIFEST ($VERSION / code $VERSION_CODE)"
+  # Migration cutover: installs built before the move to `apps` have the legacy
+  # base baked, but the manifest's `url` already points at the new apps/… object,
+  # so mirroring only the manifest keeps them upgrading. Non-fatal.
+  if [ -n "$LEGACY_OTA_BASE" ]; then
+    LEGACY_KEY="${LEGACY_OTA_BASE#*://}"; LEGACY_KEY="${LEGACY_KEY#*/}" # bucket/prefix
+    mc_cp_host "$LEGACY_OTA_BASE" "/out/$MANIFEST" "h/$LEGACY_KEY/$MANIFEST" \
+      || echo "warning: could not mirror $MANIFEST to the legacy base $LEGACY_OTA_BASE" >&2
+  fi
 fi
 
 # Verify what we actually published: the OTA manifest points devices at this
