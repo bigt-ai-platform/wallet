@@ -13,6 +13,16 @@ guide ships in 12 languages (`docs/guides/p2p*.md`) with published PDFs
 (`docs/p2p-demo/assets/p2p*.pdf`), and step-by-step demos live under
 `docs/p2p-demo/`.
 
+The book is **two-sided** (Binance parity): an order has a `side` — `sell`
+(default; the poster gives tokens) or `buy` (the poster pays fiat and wants
+tokens, a *bid* it fills by giving the taker a `buyerReceiveAddress`). The
+invariants do not move: **the token giver always funds the escrow** (impossible
+to be the buyer), and **fiat always flows buyer → seller**. At match the engine
+maps roles by side — a `limit_sell` is taken by a buyer (`sellerDid = poster`,
+`buyerDid = taker`); a `limit_buy` is taken by a seller (`sellerDid = taker`,
+`buyerDid = poster`, and `receiveAddress` comes from the order). The order type
+is carried in the `social.p2p-order` record as `side` + `buyerReceiveAddress`.
+
 The reference engine lives in `services/p2p-engine` (moved here from dai's
 `services/settlement`): state machine, whole-body signed API, the CNY/manual
 MVP routes (`instructions → proof → confirm → dispute`), payment profiles,

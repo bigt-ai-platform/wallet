@@ -45,6 +45,18 @@ export interface P2pOrderRecord {
    * engine a wallet happens to be configured with.
    */
   enginePubkey?: string;
+  /**
+   * Order side (docs/p2p.md): `sell` (default) — the author gives tokens; `buy`
+   * — the author pays fiat and wants tokens (a bid the taker fills by selling).
+   * The token giver always funds the escrow; fiat always moves buyer → seller.
+   */
+  side?: "sell" | "buy";
+  /**
+   * For a `buy` bid: where the author (the buyer) wants the tokens delivered.
+   * It is the buyer's own public address, and the taker needs the escrow to
+   * release there — the engine derives the release destination from it.
+   */
+  buyerReceiveAddress?: string;
 }
 
 export interface P2pOrderRecordInput extends Omit<P2pOrderRecord, "type" | "ts" | "status" | "orderSeq"> {
@@ -70,6 +82,8 @@ export function p2pOrderRecord(a: P2pOrderRecordInput): P2pOrderRecord {
   if (a.wantRail !== undefined) record.wantRail = a.wantRail;
   if (a.validUntil !== undefined) record.validUntil = a.validUntil;
   if (a.enginePubkey !== undefined) record.enginePubkey = a.enginePubkey;
+  if (a.side !== undefined) record.side = a.side;
+  if (a.buyerReceiveAddress !== undefined) record.buyerReceiveAddress = a.buyerReceiveAddress;
   return record;
 }
 
@@ -106,9 +120,19 @@ export function validateP2pOrderRecord(r: Partial<P2pOrderRecord>): { ok: true }
     if (r.enginePubkey !== undefined && !/^[0-9a-f]{64,6000}$/.test(r.enginePubkey)) {
       return { ok: false, error: "invalid enginePubkey (prefixed PQ pubkey hex)" };
     }
+    if (r.side !== undefined && r.side !== "sell" && r.side !== "buy") {
+      return { ok: false, error: "invalid side (buy|sell)" };
+    }
+    if (r.side === "buy") {
+      if (typeof r.buyerReceiveAddress !== "string" || !r.buyerReceiveAddress || r.buyerReceiveAddress.length > 128) {
+        return { ok: false, error: "buy order requires buyerReceiveAddress (1..128)" };
+      }
+    } else if (r.buyerReceiveAddress !== undefined) {
+      return { ok: false, error: "buyerReceiveAddress only on a buy order" };
+    }
   } else {
     // A cancel references the order only — it must not carry (or mutate) terms.
-    for (const field of [...ORDER_FIELDS, "validUntil", "enginePubkey"] as const) {
+    for (const field of [...ORDER_FIELDS, "validUntil", "enginePubkey", "side", "buyerReceiveAddress"] as const) {
       if (r[field] !== undefined) return { ok: false, error: `${field} not allowed on CANCELLED` };
     }
   }

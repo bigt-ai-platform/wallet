@@ -22,8 +22,15 @@ export function isCnyRail(rail: string | undefined): rail is CnyRail {
   return (CNY_RAILS as readonly string[]).includes(rail ?? "");
 }
 
+export type P2pOrderType = "limit_sell" | "limit_buy";
+
 export interface P2pOrderInput {
-  type: "limit_sell";
+  type: P2pOrderType;
+  /**
+   * The order's **poster** (author). For a `limit_sell` this is the seller (the
+   * token giver); for a `limit_buy` it is the buyer (the fiat payer) — the
+   * engine maps roles onto the swap at match time.
+   */
   sellerDid: string;
   giveToken: string;
   giveAmount: string;
@@ -33,13 +40,15 @@ export interface P2pOrderInput {
   wantRail: string;
   /** unix seconds after which the order can no longer be matched */
   validUntil: number;
+  /** A `limit_buy` bid carries where the poster (buyer) wants the tokens sent. */
+  buyerReceiveAddress?: string;
 }
 
 export interface P2pOrder extends Omit<P2pOrderInput, "validUntil"> {
   orderId: string;
   validUntil: number;
   status: "ACTIVE" | "MATCHED" | "CANCELLED";
-  /** seller's Ed25519 signature over the canonical order payload */
+  /** poster's Ed25519 signature over the canonical order payload */
   signature: string;
   swapId?: string;
   /** L1-SOCIAL txid of the seller-anchored `social.p2p-order` record, when on-chain */

@@ -348,6 +348,89 @@ describe("rateLimitsFromEnv", () => {
   });
 });
 
+describe("buy orders (limit_buy)", () => {
+  it("maps the taker to the seller and the poster to the buyer", async () => {
+    const a = await app();
+    const o = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(buyer, buyerDid, {
+        type: "limit_buy",
+        sellerDid: buyerDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "CNY",
+        wantAmount: "715",
+        wantRail: "wechat",
+        validUntil: Math.floor(clock / 1000) + 3600,
+        receiveAddress: "1BuyerRecvAddr",
+      }),
+    });
+    expect(o.statusCode).toBe(201);
+    bump();
+    // The seller (token giver) takes the bid; it does not send a receive
+    // address — the engine uses the poster's.
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${o.json().orderId}/match`,
+      payload: signed(seller, sellerDid, { buyerDid: sellerDid }),
+    });
+    expect(m.statusCode).toBe(201);
+    const swap = await store.getSwap(m.json().swapId as string);
+    expect(swap?.sellerDid).toBe(sellerDid); // taker funds the escrow
+    expect(swap?.buyerDid).toBe(buyerDid); // poster pays the fiat
+    expect(swap?.receiveAddress).toBe("1BuyerRecvAddr");
+  });
+
+  it("requires a receive address on a buy order", async () => {
+    const a = await app();
+    const r = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(buyer, buyerDid, {
+        type: "limit_buy",
+        sellerDid: buyerDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "CNY",
+        wantAmount: "715",
+        wantRail: "wechat",
+        validUntil: Math.floor(clock / 1000) + 3600,
+      }),
+    });
+    expect(r.statusCode).toBe(400);
+  });
+
+  it("rejects matching your own order", async () => {
+    const a = await app();
+    const o = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, {
+        type: "limit_sell",
+        sellerDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "CNY",
+        wantAmount: "715",
+        wantRail: "wechat",
+        validUntil: Math.floor(clock / 1000) + 3600,
+      }),
+    });
+    expect(o.statusCode).toBe(201);
+    bump();
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${o.json().orderId}/match`,
+      payload: signed(seller, sellerDid, { buyerDid: sellerDid, receiveAddress: "1Self" }),
+    });
+    expect(m.statusCode).toBe(409);
+  });
+});
+
 describe("per-IP rate limit", () => {
   async function limitedApp() {
     return buildApp({

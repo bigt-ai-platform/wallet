@@ -313,7 +313,7 @@ async function applyRecord(
       }
       await store.createOrder({
         orderId: rec.to,
-        type: "limit_sell",
+        type: rec.side === "buy" ? "limit_buy" : "limit_sell",
         sellerDid: rec.from,
         giveToken: rec.giveToken ?? "",
         giveAmount: rec.giveAmount ?? "",
@@ -326,6 +326,7 @@ async function applyRecord(
         signature: rec.sig ?? "",
         txid: raw.txid,
         ...(rec.enginePubkey ? { enginePubkey: rec.enginePubkey } : {}),
+        ...(rec.buyerReceiveAddress ? { buyerReceiveAddress: rec.buyerReceiveAddress } : {}),
         createdAt: rec.ts,
       });
       result.ordersOpened++;

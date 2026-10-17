@@ -980,6 +980,13 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (typeof validUntil !== "number" || validUntil * 1000 <= now()) {
       return reply.code(400).send({ error: "validUntil must be in the future (unix seconds)" });
     }
+    // Order side (docs/p2p.md): `limit_buy` is a bid — the poster (buyer) pays
+    // fiat and must say where the tokens go; the taker (seller) funds the escrow.
+    const type = body.type === "limit_buy" ? "limit_buy" : "limit_sell";
+    const buyerReceiveAddress = type === "limit_buy" ? String(body.receiveAddress ?? "").trim() : "";
+    if (type === "limit_buy" && (!buyerReceiveAddress || buyerReceiveAddress.length > 128)) {
+      return reply.code(400).send({ error: "buy order requires receiveAddress (1..128)" });
+    }
     // Seller-anchored orders carry the orderId the record already committed to
     // and the L1-SOCIAL txid that landed it; both are optional so the legacy
     // engine-intake path (mock / no chain) keeps working.
@@ -1016,7 +1023,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 
     const order: P2pOrder = {
       orderId,
-      type: "limit_sell",
+      type,
       sellerDid,
       giveToken,
       giveAmount,
@@ -1029,6 +1036,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       signature: String(body.signature),
       ...(txid !== undefined ? { txid } : {}),
       ...(enginePin ? { enginePubkey: enginePin } : {}),
+      ...(buyerReceiveAddress ? { buyerReceiveAddress } : {}),
       createdAt: now(),
     };
     await deps.store.createOrder(order);
@@ -1101,7 +1109,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const orders = await deps.store.listOrders(status);
     const map = await reputationMap();
     return {
-      orders: orders.map(({ signature: _s, ...o }) => ({
+      orders: orders.map(({ signature: _s, buyerReceiveAddress: _b, ...o }) => ({
+        // `buyerReceiveAddress` stays engine-side: the taker does not need it
+        // (the engine uses it as the release destination at match).
         ...o,
         sellerReputation: compactReputation(reputationForDid(o.sellerDid, map)),
       })),
@@ -1132,16 +1142,26 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const { orderId } = request.params;
     if (!ORDER_ID_RE.test(orderId)) return reply.code(400).send({ error: "invalid orderId" });
     const body = (request.body ?? {}) as Record<string, unknown>;
-    const buyerDid = body.buyerDid;
-    if (typeof buyerDid !== "string" || !buyerDid) return reply.code(400).send({ error: "buyerDid required" });
-    if (typeof body.receiveAddress !== "string" || !body.receiveAddress) {
-      return reply.code(400).send({ error: "receiveAddress required" });
-    }
+    const signerDid = body.buyerDid;
+    if (typeof signerDid !== "string" || !signerDid) return reply.code(400).send({ error: "buyerDid required" });
     const order = await deps.store.getOrder(orderId);
     if (!order) return reply.code(404).send({ error: "unknown order" });
     if (order.status !== "ACTIVE") return reply.code(409).send({ error: `order is ${order.status}` });
     if (order.validUntil * 1000 <= now()) return reply.code(410).send({ error: "order expired" });
-    const signed = validateSignedRequest(body, buyerDid, guard);
+    if (order.sellerDid === signerDid) return reply.code(409).send({ error: "cannot match your own order" });
+
+    // Roles (docs/p2p.md): the token giver funds the escrow and is `sellerDid` on
+    // the swap; the buyer pays fiat and is `buyerDid`. A `limit_sell` order has
+    // the poster as the giver and the taker as the buyer; a `limit_buy` bid is
+    // the reverse — the poster (buyer) pays and the taker (seller) funds.
+    const isBuy = order.type === "limit_buy";
+    const sellerDid = isBuy ? signerDid : order.sellerDid;
+    const buyerDid = isBuy ? order.sellerDid : signerDid;
+    const receiveAddress = isBuy ? order.buyerReceiveAddress ?? "" : String(body.receiveAddress ?? "");
+    if (!receiveAddress) {
+      return reply.code(400).send({ error: isBuy ? "order has no buyer receive address" : "receiveAddress required" });
+    }
+    const signed = validateSignedRequest(body, signerDid, guard);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
 
     // A PINNED order can only be matched by a deployment that holds its engine
@@ -1159,9 +1179,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       seq: 0,
       status: "MATCHED",
       eventType: "match",
-      actorDid: buyerDid,
+      actorDid: signerDid,
       orderId,
-      sellerDid: order.sellerDid,
+      sellerDid,
       buyerDid,
       giveChain: order.giveChain,
       giveToken: order.giveToken,
@@ -1169,9 +1189,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       wantAmount: order.wantAmount,
       wantRail: order.wantRail,
       wantCurrency: order.wantCurrency,
-      escrowAddress: escrowFor(order.sellerDid, buyerDid, pinned || undefined),
+      escrowAddress: escrowFor(sellerDid, buyerDid, pinned || undefined),
       ...(enginePin ? { enginePubkey: enginePin } : {}),
-      receiveAddress: body.receiveAddress,
+      receiveAddress,
       at: now(),
     };
     // Conditional ACTIVE→MATCHED: two concurrent matches race here and the
