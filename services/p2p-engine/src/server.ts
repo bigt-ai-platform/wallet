@@ -66,7 +66,8 @@ import {
   reputationFromEvents,
   type ReputationReport,
 } from "./reputation.js";
-import { RATE_LIMIT, RATE_LIMIT_READ, ReplayGuard, validateSignedRequest, type RateLimits } from "./sign.js";
+import { RATE_LIMIT, RATE_LIMIT_READ, RATE_WINDOW_MS, ReplayGuard, validateSignedRequest, type RateLimits } from "./sign.js";
+import { PgNonceStore, type NonceStore } from "./nonceStore.js";
 import { escrowAddress, settlementParams } from "./escrow.js";
 import {
   assembleSpend,
@@ -137,6 +138,8 @@ export interface SettlementDeps {
   store: SettlementStore;
   env?: NodeJS.ProcessEnv;
   guard?: ReplayGuard;
+  /** Persisted nonce set so a restart cannot replay a signed request (§18.1). */
+  nonceStore?: NonceStore;
   chain?: ChainClient | null;
   now?: () => number;
   log?: boolean;
@@ -278,11 +281,51 @@ async function defaultDeviceRead(args: DeviceReadArgs): Promise<DeviceReadResult
   }
 }
 
+/**
+ * Per-IP sliding-window cap. The per-DID caps are a throttle, not a sybil
+ * defence (a DID is a free key), so bound the actual resource (HTTP + the PQ
+ * verify) by client IP; `0` disables it. The IP comes from `request.ip` (Fastify
+ * reads `X-Forwarded-For` when `trustProxy` is on — the deploy is behind Caddy,
+ * the engine binds loopback).
+ */
+function makeIpLimiter(limit: number, windowMs: number, now: () => number) {
+  const hits = new Map<string, number[]>();
+  return (ip: string): boolean => {
+    if (limit <= 0) return true;
+    const t = now();
+    const arr = (hits.get(ip) ?? []).filter((x) => t - x < windowMs);
+    if (arr.length >= limit) {
+      hits.set(ip, arr);
+      return false;
+    }
+    arr.push(t);
+    hits.set(ip, arr);
+    return true;
+  };
+}
+
 export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   const env = deps.env ?? process.env;
   const now = deps.now ?? Date.now;
-  const guard = deps.guard ?? new ReplayGuard(now, rateLimitsFromEnv(env));
-  const app = Fastify({ logger: deps.log ?? env.SETTLEMENT_LOG === "1" });
+  const guard = deps.guard ?? new ReplayGuard(now, rateLimitsFromEnv(env), deps.nonceStore);
+  // Hydrate the nonce set before serving, so a nonce accepted before a restart
+  // is still rejected (docs/p2p.md §18.1).
+  if (!deps.guard && deps.nonceStore) {
+    guard.hydrate(await deps.nonceStore.load());
+  }
+  // Trust the deploy's reverse proxy (Caddy) for the client IP; the engine binds
+  // loopback. SETTLEMENT_TRUST_PROXY=0 when exposed directly.
+  const app = Fastify({ logger: deps.log ?? env.SETTLEMENT_LOG === "1", trustProxy: env.SETTLEMENT_TRUST_PROXY !== "0" });
+
+  // Per-IP cap (docs/p2p.md §27.4): bounds floods the per-DID throttle cannot.
+  const ipLimit = Number(env.SETTLEMENT_IP_RATE_LIMIT ?? 600);
+  if (Number.isFinite(ipLimit) && ipLimit > 0) {
+    const allowIp = makeIpLimiter(ipLimit, RATE_WINDOW_MS, now);
+    app.addHook("onRequest", async (request, reply) => {
+      if (request.url === "/healthz") return;
+      if (!allowIp(request.ip)) return reply.code(429).send({ error: "rate limit exceeded (ip)" });
+    });
+  }
 
   app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
     (req as { rawBody?: string }).rawBody = body as string;
@@ -2007,6 +2050,13 @@ async function main() {
         ? new BlobSettlementStore(blobStoreFromEnv(env))
         : new MemSettlementStore();
   if (pool) await ensureWatchSchema(pool);
+  // Persist signed-request nonces in pg so a restart cannot replay one (§18.1);
+  // mem/blob have no database and keep the in-memory set only.
+  const nonceStore = pool ? new PgNonceStore(pool) : undefined;
+  if (nonceStore) {
+    await nonceStore.ensureSchema();
+    await nonceStore.prune(Date.now()).catch(() => {});
+  }
   console.log(`p2p-engine: store=${storeMode}`);
   const anchorCfg = anchorFromEnv(env);
   if ((env.SETTLEMENT_L1_URL || env.SETTLEMENT_L1_SOCIAL_URL || env.SETTLEMENT_L1_SOCIAL_URLS) && !anchorCfg) {
@@ -2095,6 +2145,7 @@ async function main() {
   const app = await buildApp({
     store,
     chain: l0Pool ? new PooledChainClient(l0Pool) : null,
+    ...(nonceStore ? { nonceStore } : {}),
     ...(anchor ? { anchor, anchorBestEffort: anchorMode === "best-effort" } : {}),
     ...(verifyOrderTx ? { verifyOrderTx, orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4) } : {}),
     ...(watchOn ? { watchState } : {}),

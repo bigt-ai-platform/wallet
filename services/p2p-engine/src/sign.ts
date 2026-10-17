@@ -13,6 +13,7 @@
 import { createHash } from "node:crypto";
 import { Ed25519Key, ECKey, pubFromDid, hexToBytes, bytesToHex } from "did";
 import { isValidPQDid, verifyChallengeWithPQDid } from "did/pq";
+import type { NonceStore, StoredNonce } from "./nonceStore.js";
 
 export const NONCE_MAX_SKEW_MS = 5 * 60 * 1000;
 export const NONCE_TTL_MS = 6 * 60 * 1000;
@@ -96,7 +97,18 @@ export class ReplayGuard {
     /** Signed requests allowed per DID per RATE_WINDOW_MS, per class
      *  (`SETTLEMENT_RATE_LIMIT` / `SETTLEMENT_RATE_LIMIT_READ`). */
     private readonly limits: RateLimits = { read: RATE_LIMIT_READ, write: RATE_LIMIT },
+    /** Optional persistence so the nonce set survives a restart (docs §18.1). */
+    private readonly nonceStore?: NonceStore,
   ) {}
+
+  /** Load persisted (unexpired) nonces at boot — a restarted guard then still
+   *  rejects a replay of a request accepted before the restart. */
+  hydrate(entries: StoredNonce[]): void {
+    const now = this.now();
+    for (const { nonce, exp } of entries) {
+      if (exp > now) this.used.set(nonce, exp);
+    }
+  }
 
   /** Returns an error string when the nonce is invalid/replayed, else records it. */
   checkNonce(nonce: unknown, timestamp: unknown): string | null {
@@ -108,7 +120,10 @@ export class ReplayGuard {
     const now = this.now();
     this.prune(now);
     if (this.used.has(nonce)) return "nonce already used (replay detected)";
-    this.used.set(nonce, now + NONCE_TTL_MS);
+    const exp = now + NONCE_TTL_MS;
+    this.used.set(nonce, exp);
+    // Write through so a restart can re-hydrate; the in-memory set is truth.
+    void this.nonceStore?.add(nonce, exp).catch(() => {});
     return null;
   }
 

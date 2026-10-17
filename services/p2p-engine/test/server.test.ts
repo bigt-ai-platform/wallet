@@ -347,3 +347,28 @@ describe("rateLimitsFromEnv", () => {
     ).toEqual({ write: 200, read: 500 });
   });
 });
+
+describe("per-IP rate limit", () => {
+  async function limitedApp() {
+    return buildApp({
+      store,
+      env: { SETTLEMENT_ENGINE_DID: engineDid, SETTLEMENT_ADMIN_TOKEN: "adm", SETTLEMENT_IP_RATE_LIMIT: "3" } as NodeJS.ProcessEnv,
+      guard: new ReplayGuard(() => clock),
+      chain: null,
+      now: () => clock,
+      log: false,
+    });
+  }
+
+  it("caps one IP and leaves other IPs alone", async () => {
+    const a = await limitedApp();
+    const hit = (remoteAddress: string) => a.inject({ method: "GET", url: "/capabilities", remoteAddress });
+    expect((await hit("10.0.0.1")).statusCode).toBe(200);
+    expect((await hit("10.0.0.1")).statusCode).toBe(200);
+    expect((await hit("10.0.0.1")).statusCode).toBe(200);
+    expect((await hit("10.0.0.1")).statusCode).toBe(429);
+    // A different client is unaffected, and /healthz is never limited.
+    expect((await hit("10.0.0.2")).statusCode).toBe(200);
+    expect((await a.inject({ method: "GET", url: "/healthz", remoteAddress: "10.0.0.1" })).statusCode).toBe(200);
+  });
+});

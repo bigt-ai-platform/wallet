@@ -79,4 +79,24 @@ describe("p2p signed requests", () => {
     expect(validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + "0004"), did, guard, "read").ok).toBe(true);
     expect(validateSignedRequest(signed({ sellerDid: did }, "m".repeat(12) + "0005"), did, guard, "read").status).toBe(429);
   });
+
+  it("persists accepted nonces and rejects a replay after a restart", async () => {
+    const persisted: Array<{ nonce: string; exp: number }> = [];
+    const store = {
+      load: async () => persisted.slice(),
+      add: async (nonce: string, exp: number) => {
+        persisted.push({ nonce, exp });
+      },
+      prune: async () => {},
+    };
+    const req = signed({ sellerDid: did }, "r".repeat(16), 1_000_000);
+    const first = new ReplayGuard(() => 1_000_000, { read: 5, write: 5 }, store);
+    expect(validateSignedRequest(req, did, first).ok).toBe(true);
+    expect(persisted).toHaveLength(1);
+
+    // A fresh guard (a restart) hydrates from the store and rejects the replay.
+    const restarted = new ReplayGuard(() => 1_000_000, { read: 5, write: 5 }, store);
+    restarted.hydrate(await store.load());
+    expect(validateSignedRequest(req, did, restarted).status).toBe(400);
+  });
 });
