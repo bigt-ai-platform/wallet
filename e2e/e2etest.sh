@@ -216,6 +216,7 @@ start_p2p_engine() {
     SETTLEMENT_STORE=mem \
     SETTLEMENT_PAYPAL_INSECURE=1 \
     SETTLEMENT_ADMIN_TOKEN=adm \
+    SETTLEMENT_RATE_LIMIT=200 \
     CORS_ORIGIN="http://localhost:${WEB_PORT},http://127.0.0.1:${WEB_PORT}" \
     node "$ROOT/services/p2p-engine/dist/server.bundle.mjs" >/tmp/p2p-engine.log 2>&1 &
   P2P_PID=$!
