@@ -204,8 +204,10 @@ if [ "$LATEST" -eq 1 ] && [ "$BUILD_TYPE" = "release" ]; then
   # base baked, but the manifest's `url` already points at the new apps/… object,
   # so mirroring only the manifest keeps them upgrading. Non-fatal.
   if [ -n "$LEGACY_OTA_BASE" ]; then
-    LEGACY_KEY="${LEGACY_OTA_BASE#*://}"; LEGACY_KEY="${LEGACY_KEY#*/}" # bucket/prefix
-    mc_cp_host "$LEGACY_OTA_BASE" "/out/$MANIFEST" "h/$LEGACY_KEY/$MANIFEST" \
+    LEGACY_REST="${LEGACY_OTA_BASE#*://}"
+    LEGACY_HOST="https://${LEGACY_REST%%/*}"        # scheme://host (mc alias rejects a path)
+    LEGACY_KEY="${LEGACY_REST#*/}"                  # bucket/prefix
+    mc_cp_host "$LEGACY_HOST" "/out/$MANIFEST" "h/$LEGACY_KEY/$MANIFEST" \
       || echo "warning: could not mirror $MANIFEST to the legacy base $LEGACY_OTA_BASE" >&2
   fi
 fi
