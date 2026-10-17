@@ -55,7 +55,7 @@ export function foldOrderBook(
     if (typeof r.validUntil !== 'number' || r.validUntil <= nowSec) continue;
     out.push({
       orderId,
-      type: r.type,
+      type: r.side === 'buy' ? 'limit_buy' : 'limit_sell',
       sellerDid: r.from,
       giveToken: r.giveToken as string,
       giveAmount: r.giveAmount as string,

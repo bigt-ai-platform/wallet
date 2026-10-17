@@ -39,7 +39,8 @@ export type P2pCnyRail = 'wechat' | 'alipay' | 'bank';
 
 export interface P2pOrder {
   orderId: string;
-  type: string;
+  /** `limit_sell` = the poster sells tokens; `limit_buy` = the poster buys (a bid). */
+  type: 'limit_sell' | 'limit_buy';
   sellerDid: string;
   giveToken: string;
   giveAmount: string;
@@ -112,6 +113,8 @@ export interface P2pIdentity {
 }
 
 export interface CreateOrderInput {
+  /** Default `limit_sell`. `limit_buy` posts a bid the taker fills. */
+  type?: 'limit_sell' | 'limit_buy';
   giveToken: string;
   giveAmount: string;
   giveChain: string;
@@ -119,6 +122,8 @@ export interface CreateOrderInput {
   wantAmount: string;
   wantRail: string;
   validUntil: number;
+  /** A `limit_buy` bid: where the poster wants the tokens delivered. */
+  receiveAddress?: string;
   /**
    * The engine escrow participant to pin this order to (docs/p2p.md §26) —
    * the engine's `escrowPubkey`. Anchored in the record so the buyer derives
@@ -288,18 +293,39 @@ export async function createOrder(
   id: P2pIdentity,
   input: CreateOrderInput,
 ): Promise<{ orderId: string; status: string; txid?: string | null }> {
+  const { type = 'limit_sell', receiveAddress, ...terms } = input;
+  const side = type === 'limit_buy' ? 'buy' : 'sell';
   if (!P2P_SOCIAL_URL) {
-    const body = signedBody(id.key, id.did, { ...input, sellerDid: id.did });
+    const body = signedBody(id.key, id.did, {
+      ...terms,
+      type,
+      ...(receiveAddress ? { receiveAddress } : {}),
+      sellerDid: id.did,
+    });
     return request<{ orderId: string; status: string; txid?: string | null }>('/orders', body);
   }
   const orderId = newOrderId();
-  const record = p2pOrderRecord({ from: id.did, to: orderId, ...input, ts: Date.now() });
+  const record = p2pOrderRecord({
+    from: id.did,
+    to: orderId,
+    ...terms,
+    ts: Date.now(),
+    side,
+    ...(receiveAddress ? { buyerReceiveAddress: receiveAddress } : {}),
+  });
   const txid = await anchorSocialRecord({
     key: id.key,
     l1Url: P2P_SOCIAL_URL,
     record: { ...record, ...signP2pRecord(id.key, record) },
   });
-  const body = signedBody(id.key, id.did, { orderId, txid, ...input, sellerDid: id.did });
+  const body = signedBody(id.key, id.did, {
+    orderId,
+    txid,
+    ...terms,
+    type,
+    ...(receiveAddress ? { receiveAddress } : {}),
+    sellerDid: id.did,
+  });
   return request<{ orderId: string; status: string; txid?: string | null }>('/orders', body);
 }
 

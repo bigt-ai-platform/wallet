@@ -93,6 +93,10 @@ export default function P2pScreen() {
   const [l1Balances, setL1Balances] = React.useState<WalletAccountItem[]>([]);
   const [giveAmount, setGiveAmount] = React.useState('');
   const [giveChain, setGiveChain] = React.useState('L0');
+  // Order side: `sell` (default) or `buy` (a bid the taker fills). A buy bid
+  // carries where the poster wants the tokens delivered.
+  const [orderSide, setOrderSide] = React.useState<'sell' | 'buy'>('sell');
+  const [buyReceive, setBuyReceive] = React.useState('');
   const [wantCurrency, setWantCurrency] = React.useState('CNY');
   const [wantAmount, setWantAmount] = React.useState('');
   const [validHours, setValidHours] = React.useState('24');
@@ -109,7 +113,8 @@ export default function P2pScreen() {
   const availOnL0 = (giveChain.trim().toUpperCase() || 'L0') === 'L0';
   const availItem = findBalance(availOnL0 ? l0Balances : l1Balances, { tokenId: giveTokenId, tokenName: giveToken });
   const availText = availItem ? `${availItem.balance} ${availItem.tokenname}` : '';
-  const overBalance = exceedsBalance(giveAmount, availItem);
+  // A seller must hold the token; a buyer pays fiat (an unfunded buyer is fine).
+  const overBalance = orderSide === 'sell' && exceedsBalance(giveAmount, availItem);
   // `wantAmount` is the TOTAL fiat for the whole `giveAmount` (the seller types
   // the total; the instructions amount is `wantAmount`), so show the implied
   // per-unit price alongside it.
@@ -262,6 +267,13 @@ export default function P2pScreen() {
       setNotice({ ok: false, text: t('p2p.createFailed') });
       return;
     }
+    // A buy bid must say where the tokens go; default to this wallet.
+    const isBuy = orderSide === 'buy';
+    const recv = buyReceive.trim() || publicInfo?.address || '';
+    if (isBuy && !recv) {
+      setNotice({ ok: false, text: t('p2p.buyFailed') });
+      return;
+    }
     // Advisory: don't list more than the wallet holds on `giveChain` (the chain
     // would only reject it later, at escrow_lock). Non-blocking when unknown.
     if (overBalance) {
@@ -277,6 +289,7 @@ export default function P2pScreen() {
     setBusy(true);
     try {
       await createOrder(id, {
+        type: isBuy ? 'limit_buy' : 'limit_sell',
         giveToken: giveToken.trim(),
         giveAmount: giveAmount.trim(),
         giveChain: giveChain.trim() || 'L0',
@@ -284,6 +297,7 @@ export default function P2pScreen() {
         wantAmount: wantAmount.trim(),
         wantRail,
         validUntil: Math.floor(Date.now() / 1000) + Math.floor(hours * 3600),
+        ...(isBuy ? { receiveAddress: recv } : {}),
         // pin the order to the escrow key we will settle against (§26)
         ...((caps?.escrowPubkey || P2P_ENGINE_PUBKEYS[0])
           ? { enginePubkey: caps?.escrowPubkey || P2P_ENGINE_PUBKEYS[0] }
@@ -305,7 +319,10 @@ export default function P2pScreen() {
     const id = requireIdentity();
     if (!id) return;
     const cny = isCnyRail(order.wantRail);
-    if (!cny || !buyRecv.trim()) { setNotice({ ok: false, text: t('p2p.buyFailed') }); return; }
+    // A `limit_buy` bid is filled by a seller: no receive address is asked (the
+    // poster's is used). A `limit_sell` is taken by a buyer, who gives theirs.
+    const isBid = order.type === 'limit_buy';
+    if (!cny || (!isBid && !buyRecv.trim())) { setNotice({ ok: false, text: t('p2p.buyFailed') }); return; }
     // Important transaction (signs with the wallet key): device unlock first.
     const approved = await confirmImportant({
       subtitle: t('p2p.buyTitle'),
@@ -314,7 +331,7 @@ export default function P2pScreen() {
     if (!approved) { setNotice({ ok: false, text: t('confirm.cancelled') }); return; }
     setBusy(true);
     try {
-      const res = await matchOrder(id, order.orderId, { receiveAddress: buyRecv.trim() });
+      const res = await matchOrder(id, order.orderId, { receiveAddress: isBid ? '' : buyRecv.trim() });
       setSelected(null); setBuyRecv('');
       setNotice({ ok: true, text: `${t('p2p.buyTitle')}: ${res.swapId}` });
       setTab('mine');
@@ -639,6 +656,26 @@ export default function P2pScreen() {
         <>
           <View style={s.card}>
             <Text style={s.cardTitle}>{t('p2p.createTitle')}</Text>
+            <View style={s.chips} testID="p2p-order-side">
+              {(['sell', 'buy'] as const).map((side) => (
+                <TouchableOpacity
+                  key={side}
+                  style={[s.chip, orderSide === side && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
+                  onPress={() => {
+                    setOrderSide(side);
+                    if (side === 'buy' && !buyReceive.trim()) setBuyReceive(publicInfo?.address ?? '');
+                  }}
+                  disabled={busy}
+                  testID={`p2p-side-${side}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: orderSide === side }}
+                >
+                  <Text style={[s.chipText, { color: orderSide === side ? theme.colors.primary : theme.colors.text.secondary }]}>
+                    {side === 'buy' ? t('order.buy') : t('order.sell')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
             <View style={s.field}>
               <Text style={s.fieldLabel}>{t('p2p.giveToken')}</Text>
               <TextInput
@@ -665,7 +702,7 @@ export default function P2pScreen() {
               ) : null}
             </View>
             <Field label={t('p2p.giveAmount')} value={giveAmount} onChange={setGiveAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-give-amount" />
-            {availItem || overBalance ? (
+            {orderSide === 'sell' && (availItem || overBalance) ? (
               <Text style={[s.hint, overBalance && { color: theme.colors.accent.red }]} testID="p2p-give-available">
                 {overBalance
                   ? t('p2p.overBalance', { amount: availText })
@@ -698,6 +735,15 @@ export default function P2pScreen() {
                 ))}
               </View>
             </View>
+            {orderSide === 'buy' ? (
+              <Field
+                label={t('p2p.receiveAddress')}
+                value={buyReceive}
+                onChange={setBuyReceive}
+                placeholder={publicInfo?.address ?? ''}
+                testID="p2p-create-recv"
+              />
+            ) : null}
             <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.primary }]} onPress={submitOrder} disabled={busy || overBalance} testID="p2p-create">
               <Text style={s.btnText}>{t('p2p.create')}</Text>
             </TouchableOpacity>
@@ -710,7 +756,9 @@ export default function P2pScreen() {
               return (
               <View key={o.orderId} style={s.card} testID={`p2p-order-${i}`}>
                 <View style={s.rowBetween}>
-                  <Text style={s.cardTitle}>{o.giveAmount} {o.giveToken}</Text>
+                  <Text style={s.cardTitle} testID={`p2p-order-${i}-side`}>
+                    {o.type === 'limit_buy' ? `${t('order.buy')} ` : `${t('order.sell')} `}{o.giveAmount} {o.giveToken}
+                  </Text>
                   <Text style={s.mono} testID={`p2p-order-${i}-total`}>{t('p2p.total')}: {o.wantAmount} {o.wantCurrency}</Text>
                 </View>
                 <Text style={s.sub}>{t('p2p.giveChain')}: {o.giveChain} · {o.wantRail}</Text>
@@ -749,14 +797,16 @@ export default function P2pScreen() {
                 ) : null}
                 {selected?.orderId === o.orderId ? (
                   <View style={s.buyPanel}>
-                    <Field label={t('p2p.receiveAddress')} value={buyRecv} onChange={setBuyRecv} testID="p2p-buy-recv" />
+                    {o.type !== 'limit_buy' ? (
+                      <Field label={t('p2p.receiveAddress')} value={buyRecv} onChange={setBuyRecv} testID="p2p-buy-recv" />
+                    ) : null}
                     <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => submitBuy(o)} disabled={busy} testID="p2p-buy-confirm">
-                      <Text style={s.btnText}>{t('p2p.buy')}</Text>
+                      <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
                   <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => { setSelected(o); setBuyRecv(''); }} testID={`p2p-buy-${i}`}>
-                    <Text style={s.btnText}>{t('p2p.buy')}</Text>
+                    <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
                   </TouchableOpacity>
                 )}
               </View>
