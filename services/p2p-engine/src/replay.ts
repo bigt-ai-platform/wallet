@@ -72,6 +72,16 @@ export function pgCursorStore(db: Queryable): CursorStore {
 export async function ensureWatchSchema(db: Queryable): Promise<void> {
   await db.query(`ALTER TABLE p2p_orders ADD COLUMN IF NOT EXISTS txid TEXT`);
   await db.query(`ALTER TABLE p2p_orders ADD COLUMN IF NOT EXISTS engine_pubkey TEXT`);
+  for (const col of [
+    "buyer_receive_address TEXT",
+    "min_order TEXT",
+    "max_order TEXT",
+    "time_limit INTEGER",
+    "remarks TEXT",
+    "remaining_give TEXT",
+  ]) {
+    await db.query(`ALTER TABLE p2p_orders ADD COLUMN IF NOT EXISTS ${col}`);
+  }
   await db.query(`ALTER TABLE p2p_payment_proofs ADD COLUMN IF NOT EXISTS receipt_ref TEXT`);
   await db.query(
     `CREATE TABLE IF NOT EXISTS p2p_watch_cursor (
@@ -263,6 +273,7 @@ function eventFromSwapRecord(rec: P2pSwapRecord, txid: string): P2pSwapEvent {
     ...(rec.escrowTxHash !== undefined ? { escrowTxHash: rec.escrowTxHash } : {}),
     ...(rec.releaseTxHash !== undefined ? { releaseTxHash: rec.releaseTxHash } : {}),
     ...(rec.refundTxHash !== undefined ? { refundTxHash: rec.refundTxHash } : {}),
+    ...(rec.payWindowSec !== undefined ? { payWindowSec: rec.payWindowSec } : {}),
     ...(rec.receiptSha256 !== undefined ? { receiptSha256: rec.receiptSha256 } : {}),
     ...(rec.verifySide !== undefined
       ? {
@@ -358,8 +369,13 @@ async function applyRecord(
       result.swapsAppended++;
     }
     if (event.status === "MATCHED" && event.orderId) {
-      if (!(await store.markOrderMatched(event.orderId, event.swapId))) {
-        const o = await store.getOrder(event.orderId);
+      // Rebuild the order's remaining from the anchored match amounts, so a
+      // wipe replays the same partial fills (docs/p2p.md).
+      const o = await store.getOrder(event.orderId);
+      const prevRemaining = Number(o?.remainingGive ?? o?.giveAmount ?? event.giveAmount ?? 0);
+      const filled = Number(event.giveAmount ?? 0);
+      const nextRemaining = prevRemaining - filled;
+      if (!(await store.markOrderMatched(event.orderId, event.swapId, nextRemaining > 0 ? String(nextRemaining) : undefined))) {
         if (o && o.status === "CANCELLED") {
           result.conflicts.push(`match ${event.swapId}: order ${event.orderId} already cancelled`);
         }

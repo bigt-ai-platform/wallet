@@ -25,6 +25,15 @@ CREATE TABLE IF NOT EXISTS p2p_orders (
   -- The engine escrow participant the order is pinned to (docs/p2p.md §26);
   -- NULL on legacy orders. Additive: ALTERed in on boot.
   engine_pubkey TEXT,
+  -- Binance-style ad fields (docs/p2p.md): buy/bid receive address, per-order
+  -- fiat min/max, payment window (minutes), free-text terms, and the crypto
+  -- remaining after partial fills. Additive: ALTERed in on boot.
+  buyer_receive_address TEXT,
+  min_order     TEXT,
+  max_order     TEXT,
+  time_limit    INTEGER,
+  remarks       TEXT,
+  remaining_give TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS p2p_orders_open_idx ON p2p_orders (status, created_at DESC);

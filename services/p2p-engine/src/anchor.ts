@@ -87,6 +87,7 @@ export function swapEventRecord(event: P2pSwapEvent, from: string): P2pSwapRecor
     releaseTxHash: event.releaseTxHash,
     refundTxHash: event.refundTxHash,
     enginePubkey: event.enginePubkey,
+    payWindowSec: event.payWindowSec,
     // CNY receipt evidence anchors as a hash only — the image stays in the
     // engine store (docs/p2p.md §14).
     receiptSha256: event.receiptSha256,

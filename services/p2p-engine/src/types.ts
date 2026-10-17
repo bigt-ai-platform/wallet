@@ -67,6 +67,9 @@ export interface P2pOrder extends Omit<P2pOrderInput, "validUntil"> {
    * orders (they fall back to the current key).
    */
   enginePubkey?: string;
+  /** Crypto remaining after partial fills (absent → the full `giveAmount`).
+   *  Store-only: the projector rebuilds it from the anchored match swaps. */
+  remainingGive?: string;
   createdAt: number;
 }
 
@@ -122,6 +125,9 @@ export interface P2pSwapEvent {
    * re-point an in-flight swap. Public (it is in the on-chain redeem script).
    */
   enginePubkey?: string;
+  /** Buyer's payment window in seconds, from the ad's timeLimit (docs/p2p.md):
+   *  sets the instructions' `payBy`. Absent → the engine's env default. */
+  payWindowSec?: number;
   /** CUSTOMER.DISPUTE state (OPEN/UPDATED blocks progress; RESOLVED clears). */
   dispute?: string;
   /** CNY-rail dispute reason (buyer/seller supplied; store-only, never anchored). */

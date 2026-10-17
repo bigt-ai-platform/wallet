@@ -429,6 +429,104 @@ describe("buy orders (limit_buy)", () => {
     });
     expect(m.statusCode).toBe(409);
   });
+
+  it("uses the ad's payment window (timeLimit) for the instructions payBy", async () => {
+    const a = await app();
+    const o = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, {
+        type: "limit_sell",
+        sellerDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "CNY",
+        wantAmount: "715",
+        wantRail: "wechat",
+        validUntil: Math.floor(clock / 1000) + 86400,
+        timeLimit: 60, // 60 minutes → 3600s
+      }),
+    });
+    expect(o.statusCode).toBe(201);
+    bump();
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${o.json().orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Recv" }),
+    });
+    expect(m.statusCode).toBe(201);
+    bump();
+    const swapId = m.json().swapId as string;
+    const lock = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/transitions`,
+      payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64) }),
+    });
+    expect(lock.statusCode).toBe(200);
+    bump();
+    const ins = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/payment-instructions`,
+      payload: signed(buyer, buyerDid, {}),
+    });
+    expect(ins.statusCode).toBe(201);
+    expect(ins.json().payBy).toBe(Math.floor(clock / 1000) + 3600);
+  });
+
+  it("supports a partial fill within the order limit", async () => {
+    const a = await app();
+    const o = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, {
+        type: "limit_sell",
+        sellerDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "CNY",
+        wantAmount: "715", // unit 7.15
+        wantRail: "wechat",
+        validUntil: Math.floor(clock / 1000) + 86400,
+        minOrder: "100",
+        maxOrder: "800",
+      }),
+    });
+    expect(o.statusCode).toBe(201);
+    const orderId = o.json().orderId as string;
+    bump();
+    const m1 = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", fillAmount: "40" }),
+    });
+    expect(m1.statusCode).toBe(201);
+    const swap1 = await store.getSwap(m1.json().swapId as string);
+    expect(swap1?.giveAmount).toBe("40");
+    expect(swap1?.wantAmount).toBe("286"); // 40 × 7.15
+    expect((await store.getOrder(orderId))?.status).toBe("ACTIVE");
+    expect((await store.getOrder(orderId))?.remainingGive).toBe("60");
+    bump();
+    // Below the ad's minimum → rejected.
+    const m2 = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: "1R2", fillAmount: "5" }),
+    });
+    expect(m2.statusCode).toBe(409);
+    bump();
+    // Fill the rest → the order closes.
+    const m3 = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R3", fillAmount: "60" }),
+    });
+    expect(m3.statusCode).toBe(201);
+    const closed = await store.getOrder(orderId);
+    expect(closed?.status).toBe("MATCHED");
+    expect(closed?.remainingGive).toBeUndefined();
+  });
 });
 
 describe("per-IP rate limit", () => {

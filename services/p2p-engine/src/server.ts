@@ -374,7 +374,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 
   /** Buyer-facing payment instructions for a CNY swap (PII: party-scoped only). */
   function instructionsView(swap: P2pSwapEvent, profile: PaymentProfile, remark: string) {
-    const ttl = Number(env.SETTLEMENT_CNY_REMARK_TTL ?? "900");
+    // The ad's payment window (timeLimit → payWindowSec) wins over the engine
+    // default, so the buyer gets the time the seller advertised (docs/p2p.md).
+    const envTtl = Number(env.SETTLEMENT_CNY_REMARK_TTL ?? "900");
+    const ttl =
+      swap.payWindowSec && swap.payWindowSec > 0
+        ? Math.floor(swap.payWindowSec)
+        : Number.isFinite(envTtl) && envTtl > 0
+          ? Math.floor(envTtl)
+          : 900;
     return {
       method: profile.method,
       rail: swap.wantRail,
@@ -385,7 +393,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       amount: swap.wantAmount,
       currency: swap.wantCurrency,
       remark,
-      payBy: Math.floor(now() / 1000) + (Number.isFinite(ttl) && ttl > 0 ? Math.floor(ttl) : 900),
+      payBy: Math.floor(now() / 1000) + ttl,
     };
   }
 
@@ -1188,6 +1196,24 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     }
     const enginePin = pinned || enginePubkeyHex();
 
+    // Partial fill (Binance's order limit): the taker may take part of the order.
+    // `fillAmount` is crypto; the default is the whole remaining amount.
+    const total = order.giveAmount;
+    const remaining = order.remainingGive ?? total;
+    const fill = body.fillAmount === undefined ? remaining : String(body.fillAmount).trim();
+    if (!/^\d+(\.\d+)?$/.test(fill) || Number(fill) <= 0 || Number(fill) > Number(remaining)) {
+      return reply.code(400).send({ error: `fillAmount must be 0 < x <= ${remaining}` });
+    }
+    const unitPrice = Number(order.wantAmount) / Number(order.giveAmount);
+    const fillFiat = String(Number((Number(fill) * unitPrice).toFixed(8)));
+    if (order.minOrder && Number(fillFiat) < Number(order.minOrder)) {
+      return reply.code(409).send({ error: `order minimum is ${order.minOrder} ${order.wantCurrency}` });
+    }
+    if (order.maxOrder && Number(fillFiat) > Number(order.maxOrder)) {
+      return reply.code(409).send({ error: `order maximum is ${order.maxOrder} ${order.wantCurrency}` });
+    }
+    const nextRemaining = Number(remaining) - Number(fill);
+
     const swapId = `swap-${randomBytes(8).toString("hex")}`;
     const event: P2pSwapEvent = {
       swapId,
@@ -1200,18 +1226,19 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       buyerDid,
       giveChain: order.giveChain,
       giveToken: order.giveToken,
-      giveAmount: order.giveAmount,
-      wantAmount: order.wantAmount,
+      giveAmount: fill,
+      wantAmount: fillFiat,
       wantRail: order.wantRail,
       wantCurrency: order.wantCurrency,
       escrowAddress: escrowFor(sellerDid, buyerDid, pinned || undefined),
       ...(enginePin ? { enginePubkey: enginePin } : {}),
+      ...(order.timeLimit ? { payWindowSec: order.timeLimit * 60 } : {}),
       receiveAddress,
       at: now(),
     };
-    // Conditional ACTIVE→MATCHED: two concurrent matches race here and the
-    // first claim wins (the loser never anchors a second MATCHED event).
-    if (!(await deps.store.markOrderMatched(orderId, swapId))) {
+    // Conditional ACTIVE→(MATCHED | ACTIVE with reduced remaining): concurrent
+    // matches race here and the first claim wins (a loser never double-fills).
+    if (!(await deps.store.markOrderMatched(orderId, swapId, nextRemaining > 0 ? String(nextRemaining) : undefined))) {
       return reply.code(409).send({ error: "order is no longer active" });
     }
     let stored: P2pSwapEvent;

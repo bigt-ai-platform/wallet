@@ -23,8 +23,10 @@ export interface SettlementStore {
   createOrder(o: P2pOrder): Promise<void>;
   getOrder(orderId: string): Promise<P2pOrder | null>;
   listOrders(status?: string): Promise<P2pOrder[]>;
-  /** ACTIVE → MATCHED. Returns false when the order was not ACTIVE (lost race). */
-  markOrderMatched(orderId: string, swapId: string): Promise<boolean>;
+  /** ACTIVE → MATCHED when the whole order is taken; a partial fill passes
+   *  `remainingGive` and the order stays ACTIVE with that reduced amount.
+   *  Returns false when the order was not ACTIVE (lost race). */
+  markOrderMatched(orderId: string, swapId: string, remainingGive?: string): Promise<boolean>;
   /** ACTIVE → CANCELLED. Returns false when the order was not ACTIVE (lost race). */
   markOrderCancelled(orderId: string): Promise<boolean>;
   /** Undo a match whose event never anchored: ACTIVE again, only for `swapId`. */
@@ -82,10 +84,16 @@ export class MemSettlementStore implements SettlementStore {
       .slice(0, 100);
   }
 
-  async markOrderMatched(orderId: string, swapId: string): Promise<boolean> {
+  async markOrderMatched(orderId: string, swapId: string, remainingGive?: string): Promise<boolean> {
     const o = this.orders.get(orderId);
     if (!o || o.status !== "ACTIVE") return false;
-    this.orders.set(orderId, { ...o, status: "MATCHED", swapId });
+    // A partial fill keeps the order ACTIVE with the reduced crypto amount; a
+    // full fill (no remaining) closes it.
+    if (remainingGive !== undefined && Number(remainingGive) > 0) {
+      this.orders.set(orderId, { ...o, remainingGive });
+    } else {
+      this.orders.set(orderId, { ...o, status: "MATCHED", swapId, remainingGive: undefined });
+    }
     return true;
   }
 
@@ -229,6 +237,12 @@ function orderFromRow(row: any): P2pOrder {
     swapId: row.swap_id ?? undefined,
     txid: row.txid ?? undefined,
     enginePubkey: row.engine_pubkey ?? undefined,
+    buyerReceiveAddress: row.buyer_receive_address ?? undefined,
+    minOrder: row.min_order ?? undefined,
+    maxOrder: row.max_order ?? undefined,
+    timeLimit: row.time_limit ?? undefined,
+    remarks: row.remarks ?? undefined,
+    remainingGive: row.remaining_give ?? undefined,
     createdAt: new Date(row.created_at).getTime(),
   };
 }
@@ -245,8 +259,9 @@ export class PgSettlementStore implements SettlementStore {
   async createOrder(o: P2pOrder): Promise<void> {
     await this.db.query(
       `INSERT INTO p2p_orders (order_id, seller_did, type, give_token, give_amount, give_chain,
-         want_currency, want_amount, want_rail, valid_until, status, signature, swap_id, txid, engine_pubkey, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         want_currency, want_amount, want_rail, valid_until, status, signature, swap_id, txid, engine_pubkey,
+         buyer_receive_address, min_order, max_order, time_limit, remarks, remaining_give, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
        ON CONFLICT (order_id) DO NOTHING`,
       [
         o.orderId,
@@ -264,6 +279,12 @@ export class PgSettlementStore implements SettlementStore {
         o.swapId ?? null,
         o.txid ?? null,
         o.enginePubkey ?? null,
+        o.buyerReceiveAddress ?? null,
+        o.minOrder ?? null,
+        o.maxOrder ?? null,
+        o.timeLimit ?? null,
+        o.remarks ?? null,
+        o.remainingGive ?? null,
         new Date(o.createdAt),
       ],
     );
@@ -281,9 +302,17 @@ export class PgSettlementStore implements SettlementStore {
     return res.rows.map(orderFromRow);
   }
 
-  async markOrderMatched(orderId: string, swapId: string): Promise<boolean> {
+  async markOrderMatched(orderId: string, swapId: string, remainingGive?: string): Promise<boolean> {
+    if (remainingGive !== undefined && Number(remainingGive) > 0) {
+      const part = await this.db.query(
+        `UPDATE p2p_orders SET remaining_give = $3 WHERE order_id = $1 AND status = 'ACTIVE'`,
+        [orderId, swapId, remainingGive],
+      );
+      return (part.rowCount ?? 0) === 1;
+    }
     const res = await this.db.query(
-      `UPDATE p2p_orders SET status = 'MATCHED', swap_id = $2 WHERE order_id = $1 AND status = 'ACTIVE'`,
+      `UPDATE p2p_orders SET status = 'MATCHED', swap_id = $2, remaining_give = NULL
+       WHERE order_id = $1 AND status = 'ACTIVE'`,
       [orderId, swapId],
     );
     return (res.rowCount ?? 0) === 1;

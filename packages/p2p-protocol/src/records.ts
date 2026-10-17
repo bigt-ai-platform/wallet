@@ -69,6 +69,9 @@ export interface P2pSwapRecord {
    * re-point an in-flight swap. Public — it is in the on-chain redeem script.
    */
   enginePubkey?: string;
+  /** Buyer's payment window in seconds (from the ad's timeLimit, docs/p2p.md).
+   *  Sets the instructions' `payBy`; absent → the engine's env default. */
+  payWindowSec?: number;
   /** sha256 of the buyer's receipt evidence (docs/p2p.md §14) — a
    *  hash only, so the image itself never reaches the chain. */
   receiptSha256?: string;
@@ -118,6 +121,7 @@ export function p2pSwapRecord(a: P2pSwapRecordInput): P2pSwapRecord {
   if (a.releaseTxHash !== undefined) record.releaseTxHash = a.releaseTxHash;
   if (a.refundTxHash !== undefined) record.refundTxHash = a.refundTxHash;
   if (a.enginePubkey !== undefined) record.enginePubkey = a.enginePubkey;
+  if (a.payWindowSec !== undefined) record.payWindowSec = a.payWindowSec;
   if (a.receiptSha256 !== undefined) record.receiptSha256 = a.receiptSha256;
   if (a.verifySide !== undefined) record.verifySide = a.verifySide;
   if (a.verifyObserved !== undefined) record.verifyObserved = a.verifyObserved;
@@ -164,6 +168,9 @@ export function validateP2pSwapRecord(r: Partial<P2pSwapRecord>): { ok: true } |
   // The pinned escrow participant is a prefixed PQ pubkey (~5.2k hex chars).
   if (r.enginePubkey !== undefined && !/^[0-9a-f]{64,6000}$/.test(r.enginePubkey)) {
     return { ok: false, error: "invalid enginePubkey (prefixed PQ pubkey hex)" };
+  }
+  if (r.payWindowSec !== undefined && (!Number.isInteger(r.payWindowSec) || r.payWindowSec < 60 || r.payWindowSec > 86_400)) {
+    return { ok: false, error: "invalid payWindowSec (60..86400)" };
   }
   for (const field of ["giveAmount", "wantAmount"] as const) {
     const v = r[field];
