@@ -14,9 +14,10 @@ import { HelpIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex } from '@/lib/p2pIdentity';
+import { exceedsBalance, findBalance } from '@/lib/p2pBalance';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
-import type { TokenItem } from '@/types/api';
+import type { TokenItem, WalletAccountItem } from '@/types/api';
 import {
   cancelOrder, confirmPayment, cosignEscrow, createOrder, escrowContext, fetchInstructions, getCapabilities,
   getMyProfiles, getSwap, listOpenOrders, matchOrder, mySwaps, openDispute, p2pConfigured, presignEscrow,
@@ -79,8 +80,16 @@ export default function P2pScreen() {
   // USDT is the market base (Binance-P2P style): sellers list USDT, buyers
   // pay fiat and receive USDT. Default fiat is CNY on the WeChat rail.
   const [giveToken, setGiveToken] = React.useState('USDT');
+  // The id of the token picked from the search list, when known — the balance
+  // check matches on it; a free-typed name falls back to a name match.
+  const [giveTokenId, setGiveTokenId] = React.useState<string | null>(null);
   const [tokenResults, setTokenResults] = React.useState<TokenItem[]>([]);
   const [tokenSearching, setTokenSearching] = React.useState(false);
+  // Advisory: the seller's balances on L0 and the active L1 chain, to warn when
+  // a listing exceeds what the wallet holds (the chain only enforces this at
+  // escrow_lock). Empty until it loads; never blocks on an unknown balance.
+  const [l0Balances, setL0Balances] = React.useState<WalletAccountItem[]>([]);
+  const [l1Balances, setL1Balances] = React.useState<WalletAccountItem[]>([]);
   const [giveAmount, setGiveAmount] = React.useState('');
   const [giveChain, setGiveChain] = React.useState('L0');
   const [wantCurrency, setWantCurrency] = React.useState('CNY');
@@ -92,6 +101,14 @@ export default function P2pScreen() {
   const [caps, setCaps] = React.useState<P2pCapabilities | null>(null);
   // The rail picker never offers `bank`; filter it out of the engine list too.
   const enabledRails: readonly string[] = (caps ? caps.rails : DEFAULT_RAILS).filter((r) => r !== 'bank');
+
+  // Advisory availability for the sell form: compare `giveAmount` against the
+  // seller's balance on `giveChain` (L0 vs the active L1). Unknown balance → no
+  // warning (the chain enforces it at escrow_lock, not here).
+  const availOnL0 = (giveChain.trim().toUpperCase() || 'L0') === 'L0';
+  const availItem = findBalance(availOnL0 ? l0Balances : l1Balances, { tokenId: giveTokenId, tokenName: giveToken });
+  const availText = availItem ? `${availItem.balance} ${availItem.tokenname}` : '';
+  const overBalance = exceedsBalance(giveAmount, availItem);
 
   // seller's CNY collection profile (mine tab)
   const [profiles, setProfiles] = React.useState<P2pPaymentProfile[]>([]);
@@ -120,18 +137,39 @@ export default function P2pScreen() {
     setSwaps(await mySwaps(identity));
   }, [identity]);
 
+  // Advisory balances for the sell form (L0 + the active L1 chain, matching the
+  // `giveChain` field). Best-effort: a failure leaves the lists empty and the
+  // check simply never fires.
+  const loadBalances = React.useCallback(async () => {
+    const unlocked = getUnlockedWallet();
+    if (!isUnlocked || !unlocked) { setL0Balances([]); setL1Balances([]); return; }
+    const pk = unlocked.wallet.privateKey;
+    const kt = unlocked.wallet.keyType;
+    const l1Url = httpService.getL1Url();
+    const l1Base = httpService.l1Bases(l1Url)[0] ?? l1Url;
+    const [l0, l1] = await Promise.all([
+      httpService.getBalances(pk, kt).catch(() => null),
+      httpService.getBalancesOn(l1Base, pk, kt).catch(() => null),
+    ]);
+    setL0Balances(l0?.success && l0.data ? l0.data : []);
+    setL1Balances(l1?.success && l1.data ? l1.data : []);
+  }, [isUnlocked, getUnlockedWallet]);
+
+  React.useEffect(() => { loadBalances(); }, [loadBalances]);
+
   const refresh = React.useCallback(async () => {
     if (!p2pConfigured()) { setLoading(false); return; }
     setLoading(true);
     try {
       if (tab === 'open') await loadOrders();
       else await loadSwaps();
+      await loadBalances();
     } catch (e) {
       setNotice({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
       setLoading(false);
     }
-  }, [tab, loadOrders, loadSwaps]);
+  }, [tab, loadOrders, loadSwaps, loadBalances]);
 
   React.useEffect(() => { refresh(); }, [refresh]);
 
@@ -189,6 +227,7 @@ export default function P2pScreen() {
 
   const searchTokens = async (keyword: string) => {
     setGiveToken(keyword);
+    setGiveTokenId(null);
     if (!keyword.trim()) { setTokenResults([]); return; }
     setTokenSearching(true);
     try {
@@ -204,6 +243,7 @@ export default function P2pScreen() {
 
   const pickToken = (tk: TokenItem) => {
     setGiveToken(tk.tokenname || tk.tokenid.slice(0, 8));
+    setGiveTokenId(tk.tokenid);
     setTokenResults([]);
   };
 
@@ -213,6 +253,12 @@ export default function P2pScreen() {
     const hours = parseFloat(validHours);
     if (!giveToken.trim() || !giveAmount.trim() || !wantAmount.trim() || !hours || hours <= 0) {
       setNotice({ ok: false, text: t('p2p.createFailed') });
+      return;
+    }
+    // Advisory: don't list more than the wallet holds on `giveChain` (the chain
+    // would only reject it later, at escrow_lock). Non-blocking when unknown.
+    if (overBalance) {
+      setNotice({ ok: false, text: t('p2p.overBalance', { amount: availText }) });
       return;
     }
     // Important transaction (signs with the wallet key): device unlock first.
@@ -237,6 +283,7 @@ export default function P2pScreen() {
           : {}),
       });
       setGiveToken('USDT'); setGiveAmount(''); setWantAmount('');
+      setGiveTokenId(null);
       setNotice({ ok: true, text: t('p2p.created') });
       setTab('mine');
       await loadSwaps();
@@ -602,6 +649,13 @@ export default function P2pScreen() {
               ) : null}
             </View>
             <Field label={t('p2p.giveAmount')} value={giveAmount} onChange={setGiveAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-give-amount" />
+            {availItem || overBalance ? (
+              <Text style={[s.hint, overBalance && { color: theme.colors.accent.red }]} testID="p2p-give-available">
+                {overBalance
+                  ? t('p2p.overBalance', { amount: availText })
+                  : t('p2p.available', { amount: availText })}
+              </Text>
+            ) : null}
             <Field label={t('p2p.wantAmount')} value={wantAmount} onChange={setWantAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
             <Field label={t('p2p.wantCurrency')} value={wantCurrency} onChange={setWantCurrency} placeholder="CNY" testID="p2p-want-currency" />
             <Field label={t('p2p.giveChain')} value={giveChain} onChange={setGiveChain} placeholder="L0" testID="p2p-give-chain" />
@@ -623,7 +677,7 @@ export default function P2pScreen() {
                 ))}
               </View>
             </View>
-            <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.primary }]} onPress={submitOrder} disabled={busy} testID="p2p-create">
+            <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.primary }]} onPress={submitOrder} disabled={busy || overBalance} testID="p2p-create">
               <Text style={s.btnText}>{t('p2p.create')}</Text>
             </TouchableOpacity>
           </View>
