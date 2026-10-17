@@ -84,6 +84,14 @@ VERSION_MJS="$ROOT/webapp/scripts/version.mjs"
 VERSION="${APP_VERSION:-$(node "$VERSION_MJS" name)}"
 VERSION_CODE="${APP_VERSION_CODE:-$(node "$VERSION_MJS" code "$VERSION")}"
 [ "${VERSION_CODE:-0}" -gt 0 ] || VERSION_CODE="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+# An explicit APP_VERSION must be a real tag: an untagged override is how the
+# version drifts above the tag line, after which tag-derived builds are refused
+# by the deploy's strictly-increasing check and the two silently diverge.
+if [ -n "${APP_VERSION:-}" ] && ! git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null 2>&1; then
+  echo "refusing: APP_VERSION=$VERSION has no matching tag v$VERSION" >&2
+  echo "    tag it first:  git tag -a v$VERSION -m \"wallet $VERSION\" && git push origin v$VERSION" >&2
+  exit 1
+fi
 export APP_VERSION_NAME="$VERSION" APP_VERSION_CODE="$VERSION_CODE"
 # Bake the release channel this APK updates from.
 export EXPO_PUBLIC_APK_ENV="$APP_ENV"
