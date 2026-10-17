@@ -591,6 +591,8 @@ SETTLEMENT_L1_SOCIAL_URL / _URLS          # social node(s): order txid confirmat
 SETTLEMENT_ANCHOR_MODE=best-effort        # L1-SOCIAL swap-anchor policy: best-effort (default) | required | off
 SETTLEMENT_RATE_LIMIT=10                  # signed WRITES per DID per 60s window (process-local, §18.1)
 SETTLEMENT_RATE_LIMIT_READ=120            # signed party-scoped READS per DID per 60s (mine/get/context)
+SETTLEMENT_IP_RATE_LIMIT=600              # requests per client IP per 60s (0 = off); bounds sybil floods the per-DID caps cannot
+SETTLEMENT_TRUST_PROXY=1                  # trust X-Forwarded-For for the client IP (behind Caddy; 0 = engine exposed directly)
 SETTLEMENT_ORDER_TX_VERIFY=0              # disable the txid check (default: on when a social URL exists)
 SETTLEMENT_ORDER_TX_TRIES=4               # bounded verifyTx polls per order/cancel (500ms apart)
 SETTLEMENT_WATCH=1                        # run the chain-scan projector loop in-process
@@ -1032,8 +1034,13 @@ there is no machine fiat signal to drop even that for a personal CNY transfer.
 
 ## 18. Prerequisites — not built
 
-1. **Shared nonce + rate-limit store** — process-local today, so it resets on
-   restart and is wrong with more than one instance.
+1. **Shared nonce + rate-limit store** — the **nonce** set now persists in
+   Postgres (`p2p_nonces`) and is re-hydrated at boot, so a restart no longer
+   forgets an accepted nonce (a replayed signed write is still rejected). The
+   `mem`/`blob` store modes have no database and keep the in-memory set only.
+   The **rate limit** (per DID) and the **per-IP** bucket are still
+   process-local, so they reset on restart and are per-instance — a single
+   engine is the deploy.
 2. **Arbitration console** — the admin dispute route exists; the evidence-pack
    viewer and AI-assisted review loop (§12) are the remaining work.
 3. **Escrow signer** — *delivered:* engine key management
@@ -1466,6 +1473,8 @@ escrow address. Rotation is therefore **additive, never in-place**:
 | 8 | **Record bloat / DoS** (~5.2 KB `enginePubkey` per record) | chain/store growth | Length-bounded (≤6000 hex chars) in both record validators |
 | 9 | **Non-existent engine pin** | order the buyer can never settle (grief) | Same as #1 — a trusted-set check rejects unknown keys |
 | 10 | **Key retention window** | old keys linger as attack surface | Retain only keys with open swaps; retire after settlement |
+| 11 | **Sybil / flood** (a DID is a free key; public reads are unauthenticated) | burn the shared engine's CPU (PQ verify) and connections by rotating keys | Per-IP sliding-window cap (`SETTLEMENT_IP_RATE_LIMIT`, trusted `X-Forwarded-For`); per-DID read/write split; `reputationMap` is cached 30s. A shared nonce/rate store remains the multi-instance follow-up |
+| 12 | **Nonce replay across a restart** | replay a captured signed write within the ±5 min skew after a restart drops the in-memory set | Nonce set persisted in pg (`p2p_nonces`) and re-hydrated at boot (docs §18.1); `mem`/`blob` keep the in-memory set only |
 
 **The critical one is #1.** Pinning the key in a *seller-authored* record turns
 the key from a server-provided fact into an attacker-influenceable one, so the

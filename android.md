@@ -276,6 +276,12 @@ For local development use `./webapp.sh --with-p2p`: it starts the engine,
 reverses its port, and bakes `EXPO_PUBLIC_P2P_ENGINE_URL` (overriding the
 default) into the export.
 
+Release builds should also bake `EXPO_PUBLIC_P2P_ENGINE_PUBKEYS` with the
+deployed engine's escrow public key(s). With an empty allowlist a device has no
+trusted key, so it cannot reject a seller-pinned rogue `enginePubkey`
+(docs/p2p.md §27.4 #1) — the built-in engine URL does not by itself constrain
+which vault the wallet will sign for.
+
 ## Limitations / non-goals
 
 - No native background features beyond the web app's.
