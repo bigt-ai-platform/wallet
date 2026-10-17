@@ -11,9 +11,9 @@
 #   APP_ENV          android variant (default preview)
 #   BUILD_TYPE       debug|release (default debug)
 #   ABI_SPLIT        e.g. arm64-v8a (default all four ABIs)
-#   S3_ENDPOINT (default https://minio-s1001.bigt.ai)
+#   S3_ENDPOINT (default https://minio-s1002.bigt.ai)
 #   S3_ACCESS_KEY / S3_SECRET_KEY (required)
-#   S3_BUCKET (default aifeeds-content) / S3_PREFIX (default releases)
+#   S3_BUCKET (default apps) / S3_PREFIX (default wallet/apk)
 #   OUT_DIR          local APK dir (default ./out)
 #   IMAGE            builder image name (default wallet-android)
 #   APP_VERSION      override the release version (default: latest git tag, else package.json)
@@ -32,9 +32,9 @@ cd "$ROOT"
 
 APP_ENV="${APP_ENV:-preview}"
 BUILD_TYPE="${BUILD_TYPE:-debug}"
-S3_ENDPOINT="${S3_ENDPOINT:-https://minio-s1001.bigt.ai}"
-S3_BUCKET="${S3_BUCKET:-aifeeds-content}"
-S3_PREFIX="${S3_PREFIX:-releases}"
+S3_ENDPOINT="${S3_ENDPOINT:-https://minio-s1002.bigt.ai}"
+S3_BUCKET="${S3_BUCKET:-apps}"
+S3_PREFIX="${S3_PREFIX:-wallet/apk}"
 OUT_DIR="${OUT_DIR:-$ROOT/out}"
 IMAGE="${IMAGE:-wallet-android}"
 SKIP_BUILD=0; LATEST=1

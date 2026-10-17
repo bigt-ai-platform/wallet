@@ -12,7 +12,7 @@ import {
 const VALID = {
   versionName: '1.2.0',
   versionCode: 1002000,
-  url: 'https://minio.test/aifeeds-content/releases/wallet-production-release-1.2.0.apk',
+  url: 'https://s3.bigt.ai/apps/wallet/apk/wallet-production-release-1.2.0.apk',
   sha256: 'abc123',
   mandatory: false,
 };

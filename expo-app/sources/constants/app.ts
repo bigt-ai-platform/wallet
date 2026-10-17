@@ -150,7 +150,7 @@ export const DEFAULT_L1_TESTNET_URL = 'https://testm.bigtangle.org';
  * deploy.apk.sh (EXPO_PUBLIC_APK_ENV); both can be overridden for testing.
  */
 export const OTA_BASE =
-  process.env.EXPO_PUBLIC_OTA_BASE || 'https://minio-s1001.bigt.ai/aifeeds-content/releases';
+  process.env.EXPO_PUBLIC_OTA_BASE || 'https://s3.bigt.ai/apps/wallet/apk';
 export const OTA_CHANNEL = process.env.EXPO_PUBLIC_APK_ENV || 'production';
 export const OTA_TYPE = 'release';
 

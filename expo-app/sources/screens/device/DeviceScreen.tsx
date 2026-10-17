@@ -15,7 +15,7 @@ const K_DEVICE = ['device', 'mobileDevice'];
 /** The deployed on-phone app (android-remote-control-mcp, built as "Mobile
  *  Agent" by ../android-remote-control-mcp/deploy.apk.sh). Same URL the dai
  *  #mobile page links. */
-const APK_URL = 'https://s3.bigt.ai/mobile-agent/MobileAgent.apk';
+const APK_URL = 'https://s3.bigt.ai/apps/android-remote-control-mcp/apk/MobileAgent.apk';
 
 const msg = (e: unknown): string => (e instanceof Error ? e.message : String(e)).slice(0, 160);
 

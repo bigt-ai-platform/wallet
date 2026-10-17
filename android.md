@@ -179,7 +179,7 @@ it fetches the manifest directly and the manifest's `url` is the APK object.
 
 The channel is baked at build time (`EXPO_PUBLIC_APK_ENV`, default
 `production`); the manifest base defaults to
-`https://minio-s1001.bigt.ai/aifeeds-content/releases` and is overridable with
+`https://s3.bigt.ai/apps/wallet/apk` and is overridable with
 `EXPO_PUBLIC_OTA_BASE`. Debug and release builds share the one pinned
 certificate, so either can install over the other, but only `--release` builds
 publish/consume a manifest — and `versionCode` must strictly increase.
