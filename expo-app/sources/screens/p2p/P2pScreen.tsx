@@ -167,12 +167,14 @@ export default function P2pScreen() {
     try {
       if (tab === 'open') await loadOrders();
       else await loadSwaps();
-      await loadBalances();
     } catch (e) {
       setNotice({ ok: false, text: e instanceof Error ? e.message : String(e) });
     } finally {
       setLoading(false);
     }
+    // Advisory balances (may be slow — no L0/L1, or slow discovery): refresh
+    // them off the critical path so the order/swap list is never blocked.
+    void loadBalances();
   }, [tab, loadOrders, loadSwaps, loadBalances]);
 
   React.useEffect(() => { refresh(); }, [refresh]);
