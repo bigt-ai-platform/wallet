@@ -78,6 +78,13 @@ services:
       # blocks a settlement on an unfunded/down anchor node:
       #   best-effort (default) | required (fail closed) | off (L0-only).
       SETTLEMENT_ANCHOR_MODE: ${SETTLEMENT_ANCHOR_MODE:-best-effort}
+      # Signed-request throttles (docs/p2p.md §27.4): writes/reads per DID per
+      # 60s, and a per-IP cap that bounds sybil floods (trustProxy reads the
+      # client IP from Caddy's X-Forwarded-For).
+      SETTLEMENT_RATE_LIMIT: ${SETTLEMENT_RATE_LIMIT:-10}
+      SETTLEMENT_RATE_LIMIT_READ: ${SETTLEMENT_RATE_LIMIT_READ:-120}
+      SETTLEMENT_IP_RATE_LIMIT: ${SETTLEMENT_IP_RATE_LIMIT:-600}
+      SETTLEMENT_TRUST_PROXY: ${SETTLEMENT_TRUST_PROXY:-1}
       # seller-anchored order intake (docs/p2p.md §11) + the chain-scan
       # projector (§14). SETTLEMENT_WATCH=1 runs the rebuild loop in-process
       # (otherwise: `yarn workspace p2p-engine replay` only). ON by default in
