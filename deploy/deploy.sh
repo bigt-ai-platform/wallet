@@ -58,8 +58,12 @@ else
     fi
     VERSION="$(echo "$CUR" | awk -F. '{printf "%d.%d.%d", $1, $2, $3+1}')"
   fi
-  if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
-    echo -e "${RED}tag v$VERSION already exists — pass a higher version${NC}"; exit 1
+  # Reject a version that already exists — locally OR on origin. The local
+  # check alone lets a stale clone (missing origin's newer tags) pick an
+  # already-published version, which then fails at tag push / OTA publish.
+  if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null \
+     || git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+    echo -e "${RED}tag v$VERSION already exists (local or origin) — pass a higher version${NC}"; exit 1
   fi
 fi
 

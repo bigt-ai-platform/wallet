@@ -23,14 +23,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
-# Refresh remote tags first: the patch bump (deploy/deploy.sh) and the APK
-# version (webapp/scripts/version.mjs) both read the highest `vX.Y.Z` tag, and
-# a fresh clone often lacks tags that point at commits not reachable from main
-# (releases land on rebased/cherry-picked commits). Without this the bump
-# collides with an already-published version and the tag push is rejected.
-# Non-fatal: a divergent local tag only warns, and the newer fetched tags still
-# advance the computed version.
-git fetch --tags --quiet origin 2>/dev/null || true
+# Refresh remote tags first — origin is the source of truth. The patch bump
+# (deploy/deploy.sh) and the APK version (webapp/scripts/version.mjs) both read
+# the highest LOCAL `vX.Y.Z` tag, and a clone is often missing origin's newer
+# tags (fetch never run, or a fetch that failed silently because the bump then
+# reads stale tags). That makes the bump compute an already-published version:
+# the tag push is rejected and the APK step refuses to publish. So refresh
+# FORCEd (a release tag can be re-pointed by a rebase/cherry-pick, so a
+# divergent local tag must be overwritten) and FAIL LOUDLY rather than bumping
+# from a tag set we could not verify.
+git fetch --tags --force origin \
+  || { echo "deployall: 'git fetch --tags --force origin' failed — refusing to bump from possibly stale tags" >&2; exit 1; }
 
 [ -x deploy/deploy.sh ] || { echo "missing deploy/deploy.sh" >&2; exit 1; }
 [ -x deploy.apk.sh ] || { echo "missing deploy.apk.sh" >&2; exit 1; }
