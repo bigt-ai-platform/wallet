@@ -82,7 +82,7 @@ import {
   vaultFor,
   type EscrowKind,
 } from "./escrowSpend.js";
-import { HttpChainClient, verifyChainLock, verifyChainPayment, type ChainClient } from "./chain.js";
+import { HttpChainClient, confirmedTxToAddress, verifyChainLock, verifyChainPayment, verifyPaymentOutput, type ChainClient } from "./chain.js";
 import {
   CNY_RAILS,
   isCnyRail,
@@ -619,7 +619,31 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (submitted) {
       const out = await awaitConfirmed(deps.chain, submitted, to, escrowPollOpts());
       if (out.confirmed) return finishSettle(swap, kind, out.txHash, opts.actorDid);
+      // The node can report BATCHED for a while (and, for a PQ-witness 2-of-3
+      // spend, getTransactionStatus(hash) can lag the address index entirely),
+      // so prove the spend landed by the recipient's confirmed output — the
+      // canonical, txid-independent path — on every tick, before deciding.
+      const proof = await verifyPaymentOutput(deps.chain, {
+        toAddress: toBase58,
+        token: swap.giveToken ?? "",
+        amount: swap.giveAmount ?? "",
+      });
+      if (proof.ok) {
+        app.log.info({ swapId: swap.swapId, kind, txHash: submitted, via: "output" }, "escrow settled");
+        return finishSettle(swap, kind, submitted, opts.actorDid);
+      }
+      // The node's own txid index: the spend can be CONFIRMED there while our
+      // computed hash is still BATCHED (PQ-witness 2-of-3 spend).
+      const nodeTx = await confirmedTxToAddress(deps.chain, toBase58);
+      if (nodeTx) {
+        app.log.info({ swapId: swap.swapId, kind, txHash: nodeTx, via: "index" }, "escrow settled");
+        return finishSettle(swap, kind, nodeTx, opts.actorDid);
+      }
       if (out.status !== "DROPPED") {
+        app.log.warn(
+          { swapId: swap.swapId, kind, status: out.status, reason: out.reason, output: proof.reason },
+          "escrow hook: settlement deferred",
+        );
         return { ok: true, status: swap.status, txHash: out.txHash, pending: true };
       }
       // Dropped (reorg/conflict): rebuild below and resubmit the same bytes.
@@ -671,6 +695,25 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     );
     const out = await awaitConfirmed(deps.chain, txHash, to, escrowPollOpts());
     if (out.confirmed) return finishSettle(swap, kind, txHash, opts.actorDid);
+    // Same txid-independence as above: fall back to the recipient's output.
+    const proof = await verifyPaymentOutput(deps.chain, {
+      toAddress: toBase58,
+      token: swap.giveToken ?? "",
+      amount: swap.giveAmount ?? "",
+    });
+    if (proof.ok) {
+      app.log.info({ swapId: swap.swapId, kind, txHash, via: "output" }, "escrow settled");
+      return finishSettle(swap, kind, txHash, opts.actorDid);
+    }
+    const nodeTx = await confirmedTxToAddress(deps.chain, toBase58);
+    if (nodeTx) {
+      app.log.info({ swapId: swap.swapId, kind, txHash: nodeTx, via: "index" }, "escrow settled");
+      return finishSettle(swap, kind, nodeTx, opts.actorDid);
+    }
+    app.log.warn(
+      { swapId: swap.swapId, kind, status: out.status, reason: out.reason, output: proof.reason },
+      "escrow hook: settlement deferred",
+    );
     return { ok: true, status: swap.status, txHash, pending: true };
   }
 

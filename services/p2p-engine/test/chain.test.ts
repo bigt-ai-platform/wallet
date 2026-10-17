@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ECKey } from "bigtangle-ts";
-import { HttpChainClient, verifyChainLock, verifyChainPayment, type ChainClient } from "../src/chain.js";
+import { HttpChainClient, confirmedTxToAddress, verifyChainLock, verifyChainPayment, type ChainClient } from "../src/chain.js";
 import { escrowAddress } from "../src/escrow.js";
 
 const escrow = escrowAddress([ECKey.createNewKey(), ECKey.createNewKey(), ECKey.createNewKey()], 2);
@@ -91,5 +91,30 @@ describe("HttpChainClient.outputsHistory", () => {
       starttime: null,
       endtime: null,
     });
+  });
+});
+
+describe("confirmedTxToAddress", () => {
+  it("returns the node txid of a CONFIRMED tx paying the address", async () => {
+    const c = {
+      ...client("CONFIRMED", escrow),
+      transactionsStatusByAddress: async () => [
+        { txHash: "a".repeat(64), status: "BATCHED" },
+        { txHash: "b".repeat(64), status: "CONFIRMED" },
+      ],
+    } as ChainClient;
+    expect(await confirmedTxToAddress(c, escrow)).toBe("b".repeat(64));
+  });
+
+  it("returns null when nothing is confirmed or the query fails (never throws)", async () => {
+    const none = { ...client("CONFIRMED", escrow), transactionsStatusByAddress: async () => [] } as ChainClient;
+    expect(await confirmedTxToAddress(none, escrow)).toBeNull();
+    const down = {
+      ...client("CONFIRMED", escrow),
+      transactionsStatusByAddress: async () => {
+        throw new Error("L0 down");
+      },
+    } as ChainClient;
+    expect(await confirmedTxToAddress(down, escrow)).toBeNull();
   });
 });

@@ -236,6 +236,9 @@ export class PooledChainClient implements ChainClient {
   outputsHistory(address: string) {
     return this.route((c) => c.outputsHistory(address));
   }
+  transactionsStatusByAddress(address: string) {
+    return this.route((c) => c.transactionsStatusByAddress(address));
+  }
   submitTransaction(rawTxHex: string) {
     return this.route((c) => c.submitTransaction(rawTxHex));
   }

@@ -24,8 +24,18 @@ export interface ChainClient {
   balances(hashHex: string): Promise<SettlementOutput[]>;
   /** Raw UTXO JSON for an address (getOutputsHistory) — escrow outpoint lookup. */
   outputsHistory(address: string): Promise<RawUtxo[]>;
+  /** Transactions touching an address (getTransactionsStatusByAddress) — the
+   *  node's own txid index, which stays reliable when a locally computed txid
+   *  does not (a PQ-witness 2-of-3 spend). */
+  transactionsStatusByAddress(address: string): Promise<ChainTxStatus[]>;
   /** Broadcast raw transaction bytes (submitTransaction); throws on rejection. */
   submitTransaction(rawTxHex: string): Promise<void>;
+}
+
+/** One row of `getTransactionsStatusByAddress` (the fields we use). */
+export interface ChainTxStatus {
+  txHash: string;
+  status?: string;
 }
 
 /** Raw getOutputs/getOutputsHistory output JSON (bigtangle `UTXO` shape). */
@@ -108,6 +118,22 @@ export class HttpChainClient implements ChainClient {
     if (!res.ok) throw new Error(`getBalances ${res.status}`);
     const raw = (await res.json()) as RawBalances;
     return normalizeOutputs(raw.outputs ?? [], raw.tokennames ?? {});
+  }
+
+  async transactionsStatusByAddress(address: string): Promise<ChainTxStatus[]> {
+    const res = await this.fetchImpl(`${this.base}/getTransactionsStatusByAddress`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ address }),
+      signal: AbortSignal.timeout(this.timeoutMs),
+    });
+    if (!res.ok) throw new Error(`getTransactionsStatusByAddress ${res.status}`);
+    const raw = (await res.json()) as {
+      transactions?: Array<{ txHash?: string; txid?: string; status?: string }>;
+    };
+    return (raw.transactions ?? [])
+      .map((t) => ({ txHash: String(t.txHash ?? t.txid ?? ""), status: t.status }))
+      .filter((t) => !!t.txHash);
   }
 
   async outputsHistory(address: string): Promise<RawUtxo[]> {
@@ -205,5 +231,47 @@ export async function verifyChainPayment(
     return { ok: true };
   } catch (e) {
     return { ok: false, reason: `L0 unreachable (${String(e).slice(0, 100)})` };
+  }
+}
+
+/**
+ * Prove a *settled* spend by its recipient output (getOutputsHistory) — the
+ * canonical path the lock proof uses. A 2-of-3 P2SH spend's node txid can differ
+ * from the engine's local `Transaction.getHash()`, so `getTransactionStatus(hash)`
+ * can stay UNKNOWN even after the spend confirmed; a confirmed, unspent output of
+ * the expected token/amount at the recipient is the proof the wallet itself uses
+ * (Java-first: DatabaseFullBlockStoreBase.getOutputsHistory).
+ */
+export async function verifyPaymentOutput(
+  chain: ChainClient,
+  opts: { toAddress: string; token: string; amount: string },
+): Promise<ChainEvidence> {
+  try {
+    const outputs = normalizeOutputs(await chain.outputsHistory(opts.toAddress));
+    const check = verifySettlement(outputs, {
+      toAddress: opts.toAddress,
+      token: opts.token,
+      amount: opts.amount,
+    });
+    return check.ok ? { ok: true } : { ok: false, reason: check.error ?? "no confirmed output at the recipient" };
+  } catch (e) {
+    return { ok: false, reason: `L0 unreachable (${String(e).slice(0, 100)})` };
+  }
+}
+
+/**
+ * Resolve the node's own txid for a CONFIRMED transaction paying `toAddress`
+ * (getTransactionsStatusByAddress) — the address index the wallet uses. A
+ * locally computed txid can stay BATCHED for a PQ-witness 2-of-3 spend while
+ * the node has already confirmed it, so this is the authoritative way to finish
+ * a settlement (and to record the node's txid rather than the local one).
+ */
+export async function confirmedTxToAddress(chain: ChainClient, toAddress: string): Promise<string | null> {
+  try {
+    const txs = await chain.transactionsStatusByAddress(toAddress);
+    const hit = txs.find((t) => (t.status ?? "").toUpperCase() === "CONFIRMED");
+    return hit?.txHash ?? null;
+  } catch {
+    return null;
   }
 }
