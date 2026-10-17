@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import { isCapacitorNative } from '@/lib/platform';
+import { p2pEngineUrl } from '@/lib/p2pEngineUrl';
 
 /**
  * App version shown in Settings/About. Baked at build time from the release
@@ -64,6 +65,16 @@ export const PRIVATE_L1_URL = `${PRIVATE_API_BASE}/l1/`;
 
 export const PROD_L0_URL = PRIVATE_L0_URL;
 export const PROD_L1_URL = PRIVATE_L1_URL;
+
+/**
+ * Public P2P settlement-engine base, for native builds. The deploy stack
+ * (deploy/region.sh config_caddy) routes `<domain>/p2p/*` to the shared engine
+ * and strips the prefix, so this is the direct-network form of the web build's
+ * same-origin `/p2p`. The apex vhost (`wallet.bigt.ai`, APEX_REGION) serves it.
+ * The Capacitor app performs `fetch` natively (CapacitorHttp), so this
+ * cross-origin call needs no `CORS_ORIGIN` entry for the WebView.
+ */
+export const PROD_P2P_URL = 'https://wallet.bigt.ai/p2p';
 
 /**
  * Candidate set probed by auto-discovery (default ON, see
@@ -166,12 +177,23 @@ export const DEFAULT_L1_CHAINS_TESTNET = [
 ];
 
 /**
- * P2P settlement engine base URL (services/p2p-engine). Unset in production
- * unless baked at build time, so the P2P screen shows a not-configured state
- * rather than failing on every call. Dev defaults to the engine's local port.
+ * P2P settlement engine base URL (services/p2p-engine).
+ *
+ * - dev: the local engine (webapp.sh --with-p2p reverses its port);
+ * - web production: `EXPO_PUBLIC_P2P_ENGINE_URL` baked at build time
+ *   (deploy/tag.sh sets the same-origin `/p2p`, proxied by the deploy stack's
+ *   Caddy/nginx) — empty when unset, which the P2P screen shows as
+ *   not-configured (e2e relies on this);
+ * - native/Android: the Capacitor app has no same-origin proxy, so it uses the
+ *   public engine directly (`PROD_P2P_URL`), exactly as the L0/L1 endpoints do.
+ *   `EXPO_PUBLIC_P2P_ENGINE_URL` (e.g. webapp.sh --with-p2p) still overrides it.
  */
-export const P2P_ENGINE_URL =
-  process.env.EXPO_PUBLIC_P2P_ENGINE_URL || (IS_DEV ? 'http://127.0.0.1:8108' : '');
+export const P2P_ENGINE_URL = p2pEngineUrl({
+  env: process.env.EXPO_PUBLIC_P2P_ENGINE_URL,
+  isDev: IS_DEV,
+  isWebBrowser: IS_WEB_BROWSER,
+  prodUrl: PROD_P2P_URL,
+});
 
 /**
  * L1-SOCIAL base URL for seller-anchored `social.p2p-order` records

@@ -1,4 +1,5 @@
 import { P2P_ENGINE_URL, P2P_SOCIAL_URL } from '@/constants/app';
+import { serverErrorMessage } from '@/lib/httpError';
 import type { PQKey } from 'bigtangle-ts';
 import { p2pOrderRecord, type P2pReleaseRecord } from 'p2p-protocol';
 import { newOrderId, signP2pRecord, signedBody } from '@/lib/p2pIdentity';
@@ -254,8 +255,7 @@ async function request<T>(path: string, body?: Record<string, unknown>): Promise
     }
   }
   if (!res.ok) {
-    const message = (data as { error?: string }).error || `HTTP ${res.status}`;
-    throw new Error(message);
+    throw new Error(serverErrorMessage(data, res.status));
   }
   return data as T;
 }

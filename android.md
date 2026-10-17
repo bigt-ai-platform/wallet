@@ -258,6 +258,24 @@ would be unusable there. To discover *more than the seeds*, the network itself
 must return its peer list (a public `/seeds`-style RPC); `/getPeers` exists but
 returns no public URLs today.
 
+## P2P settlement engine
+
+The P2P screen talks to `services/p2p-engine`, which is **not** part of the
+Capacitor bundle — it is a host-side service. The web build bakes the
+same-origin `/p2p` path (`deploy/tag.sh`, proxied by the deploy stack's Caddy),
+but the Android app is served from its own local asset origin, so a relative
+`/p2p` would resolve to the WebView itself. Native builds therefore use the
+public engine directly, `PROD_P2P_URL` (`https://wallet.bigt.ai/p2p`, the apex
+vhost's `/p2p/*` route) — the same "direct endpoint" rule as L0/L1 (see
+`IS_WEB_BROWSER` in `constants/app.ts`). Cross-origin is a non-issue: the
+Capacitor `CapacitorHttp` plugin (enabled in `capacitor.config.json`) performs
+`fetch` natively, so the engine does not need the WebView origin in
+`CORS_ORIGIN`.
+
+For local development use `./webapp.sh --with-p2p`: it starts the engine,
+reverses its port, and bakes `EXPO_PUBLIC_P2P_ENGINE_URL` (overriding the
+default) into the export.
+
 ## Limitations / non-goals
 
 - No native background features beyond the web app's.
