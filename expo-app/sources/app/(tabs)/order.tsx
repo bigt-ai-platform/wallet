@@ -168,7 +168,12 @@ export default function OrderScreen() {
                         {o.side === 'buy' ? t('order.buy') : t('order.sell')}
                       </Text>
                       <View style={s.orderInfoCol}>
-                        <Text style={s.orderInfo}>{o.amount} {o.tokenName} @ {o.price}</Text>
+                        <Text style={s.orderInfo}>
+                          {o.amount} {o.tokenName} @ {o.price}
+                          {Number(o.amount) > 0 && Number(o.price) > 0
+                            ? ` · ${t('order.total')}: ${parseFloat((Number(o.amount) * Number(o.price)).toFixed(8))}${o.baseToken ? ` ${o.baseToken}` : ''}`
+                            : ''}
+                        </Text>
                         <Text style={s.orderSub}>{o.statusDetail || o.status}{o.createdAt ? ` · ${new Date(o.createdAt).toISOString().slice(0, 10)}` : ''}</Text>
                       </View>
                       <View style={[s.statusBadge, { backgroundColor: badgeColor }]}>

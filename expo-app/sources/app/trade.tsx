@@ -662,15 +662,26 @@ export default function TradeScreen() {
   const myOrdersCard = myOrders.length > 0 ? (
     <View style={s.card} testID="trade-my-orders">
       <Text style={s.cardTitle}>{t('order.yourOrders')}</Text>
+      <View style={s.bookRow}>
+        <Text style={[s.bookHeadText, s.bookPrice]} />
+        <Text style={[s.bookHeadText, s.bookAmount]}>{t('order.amount')}</Text>
+        <Text style={[s.bookHeadText, s.bookTotal]}>{t('order.total')}</Text>
+      </View>
       {myOrders.map((o, i) => {
         const isBuy = (o.side || '').toUpperCase() === 'BUY';
+        const amount = toHuman(Number(isBuy ? o.targetValue : o.offerValue), tokenDecimals);
+        const price = toHuman(Number(o.price), priceDecimals);
+        // Total notional of the order: price × amount, in the quote token.
+        const total = Number(price) * Number(amount);
         return (
-          <View key={i} style={s.bookRow}>
+          <View key={i} style={s.bookRow} testID={`trade-my-order-${i}`}>
             <Text style={[s.bookPrice, { color: isBuy ? theme.colors.positive : theme.colors.negative }]}>
               {isBuy ? t('order.buy') : t('order.sell')}
             </Text>
-            <Text style={[s.bookAmount, s.mono]}>{fmtNum(toHuman(isBuy ? o.targetValue : o.offerValue, tokenDecimals))}</Text>
-            <Text style={[s.bookTotal, s.mono]}>{fmtNum(toHuman(Number(o.price), priceDecimals))}</Text>
+            <Text style={[s.bookAmount, s.mono]}>{fmtNum(amount)} @ {fmtNum(price)}</Text>
+            <Text style={[s.bookTotal, s.mono]} testID={`trade-my-order-${i}-total`}>
+              {fmtNum(total)} {quote.tokenname.toUpperCase()}
+            </Text>
           </View>
         );
       })}
