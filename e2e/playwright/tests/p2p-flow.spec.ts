@@ -216,4 +216,82 @@ test.describe('P2P Flow', () => {
       await buyer.context.close();
     }
   });
+
+  test('seller expires a locked, unpaid swap (buyer no-show)', async ({ browser }) => {
+    test.setTimeout(150000);
+
+    const seller = await newWalletPage(browser);
+    const buyer = await newWalletPage(browser);
+
+    try {
+      await listOrder(seller.page, '10', '70');
+      await matchOrder(buyer.page);
+      await lockEscrow(seller.page);
+
+      // The buyer never pays; the seller unwinds it. EXPIRED settles through
+      // the refund action (ESCROW_REFUNDED).
+      await el(seller.page, 'p2p-swap-0-expire').click();
+      await expect(el(seller.page, 'p2p-swap-0-status')).toHaveText('EXPIRED', { timeout: 15000 });
+      await expect(el(seller.page, 'p2p-swap-0-refund')).toBeAttached();
+
+      await el(buyer.page, 'p2p-refresh').click();
+      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('EXPIRED', { timeout: 15000 });
+    } finally {
+      await seller.context.close();
+      await buyer.context.close();
+    }
+  });
+
+  test('buyer cancels before paying (never sent fiat)', async ({ browser }) => {
+    test.setTimeout(150000);
+
+    const seller = await newWalletPage(browser);
+    const buyer = await newWalletPage(browser);
+
+    try {
+      await listOrder(seller.page, '10', '70');
+      await matchOrder(buyer.page);
+      await lockEscrow(seller.page);
+
+      await el(buyer.page, 'p2p-refresh').click();
+      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED', { timeout: 15000 });
+      await el(buyer.page, 'p2p-swap-0-cancel').click();
+      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('CANCELLED', { timeout: 15000 });
+    } finally {
+      await seller.context.close();
+      await buyer.context.close();
+    }
+  });
+
+  test('buyer disputes after claiming — the swap freezes', async ({ browser }) => {
+    test.setTimeout(180000);
+
+    const seller = await newWalletPage(browser);
+    const buyer = await newWalletPage(browser);
+
+    try {
+      await listOrder(seller.page, '10', '70');
+      await saveWechatProfile(seller.page, 'Zhang San', 'wxid_e2e');
+      await matchOrder(buyer.page);
+      await lockEscrow(seller.page);
+
+      // Claim a payment (PAYMENT_PENDING → PAYMENT_CLAIMED), then dispute it:
+      // an open dispute freezes the swap (nothing advances or unwinds).
+      await el(buyer.page, 'p2p-refresh').click();
+      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED', { timeout: 15000 });
+      await el(buyer.page, 'p2p-swap-0-instructions').click();
+      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_PENDING', { timeout: 15000 });
+      await el(buyer.page, 'p2p-swap-0-txid').fill('4200001234567890');
+      await el(buyer.page, 'p2p-swap-0-proof').click();
+      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_CLAIMED', { timeout: 15000 });
+
+      await el(buyer.page, 'p2p-swap-0-dispute').click();
+      await expect(el(buyer.page, 'p2p-swap-0')).toContainText('OPEN', { timeout: 15000 });
+      // Frozen: the swap did not advance past the claim.
+      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_CLAIMED');
+    } finally {
+      await seller.context.close();
+      await buyer.context.close();
+    }
+  });
 });
