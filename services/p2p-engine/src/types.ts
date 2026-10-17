@@ -49,6 +49,8 @@ export interface P2pOrderInput {
   timeLimit?: number;
   /** Free-text ad terms shown to the counterparty. */
   remarks?: string;
+  /** Enabled payment methods (Binance allows several; the taker picks one). */
+  wantRails?: string[];
 }
 
 export interface P2pOrder extends Omit<P2pOrderInput, "validUntil"> {

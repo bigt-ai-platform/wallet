@@ -79,6 +79,7 @@ export async function ensureWatchSchema(db: Queryable): Promise<void> {
     "time_limit INTEGER",
     "remarks TEXT",
     "remaining_give TEXT",
+    "want_rails TEXT",
   ]) {
     await db.query(`ALTER TABLE p2p_orders ADD COLUMN IF NOT EXISTS ${col}`);
   }
@@ -342,6 +343,7 @@ async function applyRecord(
         ...(rec.maxOrder ? { maxOrder: rec.maxOrder } : {}),
         ...(rec.timeLimit !== undefined ? { timeLimit: rec.timeLimit } : {}),
         ...(rec.remarks ? { remarks: rec.remarks } : {}),
+        ...(rec.wantRails ? { wantRails: rec.wantRails } : {}),
         createdAt: rec.ts,
       });
       result.ordersOpened++;

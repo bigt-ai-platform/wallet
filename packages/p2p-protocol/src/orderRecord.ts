@@ -65,6 +65,9 @@ export interface P2pOrderRecord {
   timeLimit?: number;
   /** Free-text ad terms/instructions shown to the counterparty. */
   remarks?: string;
+  /** Enabled payment methods (Binance allows several). The taker picks one;
+   *  `wantRail` stays the primary/first for back-compat. */
+  wantRails?: string[];
 }
 
 export interface P2pOrderRecordInput extends Omit<P2pOrderRecord, "type" | "ts" | "status" | "orderSeq"> {
@@ -96,6 +99,7 @@ export function p2pOrderRecord(a: P2pOrderRecordInput): P2pOrderRecord {
   if (a.maxOrder !== undefined) record.maxOrder = a.maxOrder;
   if (a.timeLimit !== undefined) record.timeLimit = a.timeLimit;
   if (a.remarks !== undefined) record.remarks = a.remarks;
+  if (a.wantRails !== undefined) record.wantRails = a.wantRails;
   return record;
 }
 
@@ -152,9 +156,17 @@ export function validateP2pOrderRecord(r: Partial<P2pOrderRecord>): { ok: true }
     if (r.remarks !== undefined && (typeof r.remarks !== "string" || r.remarks.length > 256)) {
       return { ok: false, error: "invalid remarks (<=256)" };
     }
+    if (r.wantRails !== undefined) {
+      if (!Array.isArray(r.wantRails) || r.wantRails.length < 1 || r.wantRails.length > 6) {
+        return { ok: false, error: "invalid wantRails (1..6)" };
+      }
+      for (const rail of r.wantRails) {
+        if (typeof rail !== "string" || !rail || rail.length > 32) return { ok: false, error: "invalid wantRails entry" };
+      }
+    }
   } else {
     // A cancel references the order only — it must not carry (or mutate) terms.
-    for (const field of [...ORDER_FIELDS, "validUntil", "enginePubkey", "side", "buyerReceiveAddress", "minOrder", "maxOrder", "timeLimit", "remarks"] as const) {
+    for (const field of [...ORDER_FIELDS, "validUntil", "enginePubkey", "side", "buyerReceiveAddress", "minOrder", "maxOrder", "timeLimit", "remarks", "wantRails"] as const) {
       if (r[field] !== undefined) return { ok: false, error: `${field} not allowed on CANCELLED` };
     }
   }

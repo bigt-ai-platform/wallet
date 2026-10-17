@@ -243,8 +243,19 @@ function orderFromRow(row: any): P2pOrder {
     timeLimit: row.time_limit ?? undefined,
     remarks: row.remarks ?? undefined,
     remainingGive: row.remaining_give ?? undefined,
+    ...(row.want_rails ? { wantRails: safeParseRails(row.want_rails) } : {}),
     createdAt: new Date(row.created_at).getTime(),
   };
+}
+
+/** Parse the persisted `want_rails` JSON, or undefined when malformed. */
+function safeParseRails(raw: unknown): string[] | undefined {
+  try {
+    const v = typeof raw === "string" ? JSON.parse(raw) : raw;
+    return Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export class PgSettlementStore implements SettlementStore {
@@ -260,8 +271,8 @@ export class PgSettlementStore implements SettlementStore {
     await this.db.query(
       `INSERT INTO p2p_orders (order_id, seller_did, type, give_token, give_amount, give_chain,
          want_currency, want_amount, want_rail, valid_until, status, signature, swap_id, txid, engine_pubkey,
-         buyer_receive_address, min_order, max_order, time_limit, remarks, remaining_give, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+         buyer_receive_address, min_order, max_order, time_limit, remarks, remaining_give, want_rails, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
        ON CONFLICT (order_id) DO NOTHING`,
       [
         o.orderId,
@@ -285,6 +296,7 @@ export class PgSettlementStore implements SettlementStore {
         o.timeLimit ?? null,
         o.remarks ?? null,
         o.remainingGive ?? null,
+        o.wantRails ? JSON.stringify(o.wantRails) : null,
         new Date(o.createdAt),
       ],
     );

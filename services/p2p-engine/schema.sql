@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS p2p_orders (
   time_limit    INTEGER,
   remarks       TEXT,
   remaining_give TEXT,
+  want_rails    TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS p2p_orders_open_idx ON p2p_orders (status, created_at DESC);

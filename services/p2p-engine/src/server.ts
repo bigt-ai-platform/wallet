@@ -1006,6 +1006,14 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       return reply.code(400).send({ error: "invalid timeLimit (minutes 5..1440)" });
     }
     const remarks = typeof body.remarks === "string" && body.remarks.trim() ? body.remarks.trim().slice(0, 256) : undefined;
+    // Multiple payment methods (Binance allows several): a non-empty subset of
+    // the engine's enabled rails.
+    const wantRails = Array.isArray(body.wantRails)
+      ? (body.wantRails as unknown[]).filter((r): r is string => typeof r === "string" && cnyRails().includes(r))
+      : undefined;
+    if (body.wantRails !== undefined && (!wantRails || wantRails.length === 0)) {
+      return reply.code(400).send({ error: `wantRails must be a non-empty subset of: ${cnyRails().join(", ")}` });
+    }
     // Seller-anchored orders carry the orderId the record already committed to
     // and the L1-SOCIAL txid that landed it; both are optional so the legacy
     // engine-intake path (mock / no chain) keeps working.
@@ -1060,6 +1068,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       ...(maxOrder ? { maxOrder } : {}),
       ...(timeLimit !== undefined ? { timeLimit } : {}),
       ...(remarks ? { remarks } : {}),
+      ...(wantRails ? { wantRails } : {}),
       createdAt: now(),
     };
     await deps.store.createOrder(order);
@@ -1214,6 +1223,13 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     }
     const nextRemaining = Number(remaining) - Number(fill);
 
+    // The taker picks one of the ad's payment methods (Binance multi-rail).
+    const rails = order.wantRails && order.wantRails.length ? order.wantRails : [order.wantRail];
+    const chosenRail = body.rail === undefined ? rails[0] ?? order.wantRail : String(body.rail);
+    if (!rails.includes(chosenRail)) {
+      return reply.code(400).send({ error: `rail must be one of: ${rails.join(", ")}` });
+    }
+
     const swapId = `swap-${randomBytes(8).toString("hex")}`;
     const event: P2pSwapEvent = {
       swapId,
@@ -1228,7 +1244,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       giveToken: order.giveToken,
       giveAmount: fill,
       wantAmount: fillFiat,
-      wantRail: order.wantRail,
+      wantRail: chosenRail,
       wantCurrency: order.wantCurrency,
       escrowAddress: escrowFor(sellerDid, buyerDid, pinned || undefined),
       ...(enginePin ? { enginePubkey: enginePin } : {}),

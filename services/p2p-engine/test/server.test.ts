@@ -527,6 +527,44 @@ describe("buy orders (limit_buy)", () => {
     expect(closed?.status).toBe("MATCHED");
     expect(closed?.remainingGive).toBeUndefined();
   });
+
+  it("matches with a chosen rail from the ad's methods", async () => {
+    const a = await app();
+    const o = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, {
+        type: "limit_sell",
+        sellerDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "CNY",
+        wantAmount: "715",
+        wantRail: "wechat",
+        wantRails: ["wechat", "alipay"],
+        validUntil: Math.floor(clock / 1000) + 3600,
+      }),
+    });
+    expect(o.statusCode).toBe(201);
+    const orderId = o.json().orderId as string;
+    bump();
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", rail: "alipay", fillAmount: "40" }),
+    });
+    expect(m.statusCode).toBe(201);
+    expect((await store.getSwap(m.json().swapId as string))?.wantRail).toBe("alipay");
+    bump();
+    // A rail the ad does not offer is rejected.
+    const bad = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: "1R2", rail: "bank", fillAmount: "10" }),
+    });
+    expect(bad.statusCode).toBe(400);
+  });
 });
 
 describe("per-IP rate limit", () => {
