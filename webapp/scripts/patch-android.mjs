@@ -205,6 +205,34 @@ for (const name of ["updater", "deviceauth"]) {
   console.log(`patch-android: native/${name} sources → ${path.relative(root, javaDest)}`);
 }
 
+// ── 1f. no GMS: strip the template's google-services wiring ─────────────────
+// Capacitor's android template ships the FCM `google-services` classpath and
+// apply-block, but this app has no Google Play Services / Firebase dependency
+// (no push plugin; notifications are not used natively). Leaving the wiring in
+// a regenerated tree makes the build recipe reference a proprietary plugin for
+// nothing, so remove both fragments here — `cap add android` re-injects them.
+// Idempotent.
+const topBuildGradle = path.join(root, "android", "build.gradle");
+if (fs.existsSync(topBuildGradle)) {
+  const topSrc = fs.readFileSync(topBuildGradle, "utf8");
+  const topStripped = topSrc.replace(/^\s*classpath ['"]com\.google\.gms:google-services:.*['"]\s*$\n?/m, "");
+  if (topStripped !== topSrc) {
+    fs.writeFileSync(topBuildGradle, topStripped);
+    console.log("patch-android: removed google-services classpath (no GMS)");
+  }
+}
+if (fs.existsSync(buildGradle)) {
+  const appSrc = fs.readFileSync(buildGradle, "utf8");
+  const appStripped = appSrc.replace(
+    /\n*try \{\n\s*def servicesJSON = file\('google-services\.json'\)[\s\S]*?Push Notifications won't work"\)\n\}\n?/,
+    "\n",
+  );
+  if (appStripped !== appSrc) {
+    fs.writeFileSync(buildGradle, appStripped);
+    console.log("patch-android: removed google-services apply-block (no GMS)");
+  }
+}
+
 // ── 2. production signing (fail-closed) ──────────────────────────────────────
 // Debug and release install over the same package, so both carry the pinned
 // production certificate. webapp.sh re-checks the artifact itself before it

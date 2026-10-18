@@ -4171,11 +4171,6 @@ babel-preset-jest@30.5.0:
     babel-plugin-jest-hoist "30.5.0"
     babel-preset-current-node-syntax "^1.2.0"
 
-badgin@^1.1.5:
-  version "1.2.3"
-  resolved "https://registry.yarnpkg.com/badgin/-/badgin-1.2.3.tgz#994b5f519827d7d5422224825b2c8faea2bc43ad"
-  integrity sha512-NQGA7LcfCpSzIbGRbkgjgdWkjy7HI+Th5VLxTJfW5EeaAf3fnS+xWQaQOCYiny+q6QSvxqoSO04vCx+4u++EJw==
-
 balanced-match@^1.0.0:
   version "1.0.2"
   resolved "https://registry.npmjs.org/balanced-match/-/balanced-match-1.0.2.tgz"
@@ -4858,11 +4853,6 @@ cross-spawn@^7.0.3, cross-spawn@^7.0.6:
     path-key "^3.1.0"
     shebang-command "^2.0.0"
     which "^2.0.1"
-
-crypto-js@^4.2.0:
-  version "4.2.0"
-  resolved "https://registry.npmjs.org/crypto-js/-/crypto-js-4.2.0.tgz"
-  integrity sha512-KALDyEYgpY+Rlob/iriUtjV6d5Eq+Y191A5g4UqLAi8CyGP9N1+FdVbkc1SxKc2r4YAYqG8JzO2KGL+AizD70Q==
 
 css-in-js-utils@^3.1.0:
   version "3.1.0"
@@ -5685,7 +5675,7 @@ expect@^30.0.0:
     jest-mock "30.2.0"
     jest-util "30.2.0"
 
-expo-application@~57.0.2, expo-application@~57.0.3:
+expo-application@~57.0.2:
   version "57.0.3"
   resolved "https://registry.yarnpkg.com/expo-application/-/expo-application-57.0.3.tgz#92d3f386e5a02b978c377a24e7eb32d1fcee1edb"
   integrity sha512-t/CxeLio0NjY9/cOak1tQp62/hAUjzJxmhR4rVUR7K5bb9YoEtfl1ZekTn+Iuh+dYOMYzF0l72ODMSmY3CR1NA==
@@ -5806,17 +5796,6 @@ expo-modules-jsi@~57.1.2:
   version "57.1.2"
   resolved "https://registry.yarnpkg.com/expo-modules-jsi/-/expo-modules-jsi-57.1.2.tgz#7c4639c900ecf036b212dc08558c3ce8fce407b1"
   integrity sha512-DYhBwO0fqcKIUma4jF16zRDP/m6ZbawEZbo4eX3gdekREIFqrrz8HKWXydgNUqOyOQcUkdrkZatxi2I9+V6E8g==
-
-expo-notifications@~57.0.20:
-  version "57.0.22"
-  resolved "https://registry.yarnpkg.com/expo-notifications/-/expo-notifications-57.0.22.tgz#3a1c5e34392140a5a2f28dac101f700466b58cf8"
-  integrity sha512-JVZCyY660d7L5bKcNK8J3/ghG70WtyRYlvAQgAISlgRCt3QWhghhodx/j+nRAPcfc2mmCzUjNB0Ck+LbzpBEMg==
-  dependencies:
-    "@expo/image-utils" "^0.11.6"
-    abort-controller "^3.0.0"
-    badgin "^1.1.5"
-    expo-application "~57.0.3"
-    expo-constants "~57.0.21"
 
 expo-router@~57.0.19:
   version "57.0.26"

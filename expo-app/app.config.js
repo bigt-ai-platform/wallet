@@ -61,13 +61,6 @@ export default {
                 }
             ],
             "expo-asset",
-            [
-                "expo-notifications",
-                {
-                    icon: "./sources/assets/images/icon-notification.png",
-                    iosDisplayInForeground: true
-                }
-            ],
             "expo-localization",
             "expo-secure-store",
             "expo-web-browser",
