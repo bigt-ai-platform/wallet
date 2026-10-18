@@ -30,6 +30,10 @@
 # manifest the app reads; see expo-app/sources/lib/ota.ts).
 set -euo pipefail
 
+# A release must never stop for a keypress: every child (docker, node, gradle)
+# gets EOF on stdin instead of the operator's terminal.
+exec </dev/null
+
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
@@ -62,15 +66,27 @@ done
 : "${S3_ACCESS_KEY:?set S3_ACCESS_KEY}"
 : "${S3_SECRET_KEY:?set S3_SECRET_KEY}"
 
-# MinIO client image. quay.io/minio/mc is preferred; where it's blocked the
-# minio server image (which bundles `mc`) is used instead.
-MC_IMAGE="${MC_IMAGE:-quay.io/minio/mc}"
+# MinIO client image (overridable for a registry mirror). quay.io/minio/mc
+# anonymous pulls are 401 — and a pull against a terminal never returns — so the
+# default is the ghcr mirror of `mc`.
+MC_IMAGE="${MC_IMAGE:-ghcr.io/bigt-ai-platform/mc:latest}"
+# A registry pull must never stall a release: bound it, and fall back to the
+# minio server image (which bundles `mc`) when the configured image is absent.
+mc_pull() {
+  # --kill-after, not just timeout: a `docker pull` that never returns ignores
+  # SIGTERM, and GNU timeout then waits for it forever.
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=10 "${MC_PULL_TIMEOUT:-120}" docker pull "$1" >/dev/null 2>&1 || true
+  else
+    docker pull "$1" >/dev/null 2>&1 || true
+  fi
+}
 if ! docker image inspect "$MC_IMAGE" >/dev/null 2>&1; then
-  docker pull "$MC_IMAGE" >/dev/null 2>&1 || true
+  mc_pull "$MC_IMAGE"
 fi
 if ! docker image inspect "$MC_IMAGE" >/dev/null 2>&1; then
   alt="quay.io/minio/minio:latest"
-  docker image inspect "$alt" >/dev/null 2>&1 || docker pull "$alt" >/dev/null 2>&1 || true
+  docker image inspect "$alt" >/dev/null 2>&1 || mc_pull "$alt"
   if docker image inspect "$alt" >/dev/null 2>&1; then
     echo "mc image $MC_IMAGE unavailable — using $alt (bundles mc)" >&2
     MC_IMAGE="$alt"
@@ -325,4 +341,4 @@ if [ "$FDROID" -eq 1 ]; then
 fi
 
 echo "uploaded: $S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX/$NAME"
-[ "$LATEST" -eq 1 ] && echo "uploaded: $S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX/$LATEST_NAME"
+if [ "$LATEST" -eq 1 ]; then echo "uploaded: $S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX/$LATEST_NAME"; fi
