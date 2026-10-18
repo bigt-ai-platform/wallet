@@ -303,4 +303,6 @@ mainnet/testnet switching and app-wide L1 chain selection
 
 ## License
 
-MIT (see `packages/bigtangle-ts/LICENSE`).
+AGPL-3.0-or-later — see [LICENSE](./LICENSE). The bundled
+`packages/bigtangle-ts` package keeps its own MIT license (see
+`packages/bigtangle-ts/LICENSE`).

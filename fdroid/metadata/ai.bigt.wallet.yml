@@ -1,7 +1,9 @@
 # F-Droid listing for the self-hosted repo published by `./deploy.apk.sh --fdroid`.
 Categories:
   - Money
-License: Proprietary
+License: AGPL-3.0-or-later
+SourceCode: https://github.com/bigt-ai-platform/wallet
+IssueTracker: https://github.com/bigt-ai-platform/wallet/issues
 Summary: Bigtangle wallet with keys, transfers, market and P2P settlement
 Description: |
   A self-custodial Bigtangle wallet: encrypted key management and backups,
