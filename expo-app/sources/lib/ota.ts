@@ -61,6 +61,17 @@ export function parseManifest(raw: unknown): OtaManifest | null {
   };
 }
 
+/**
+ * True when a native install error means the APK download path is missing:
+ * the release was moved/renamed and its URL now returns 404/410, so the app
+ * cannot self-update and the user has to reinstall manually. The native plugin
+ * rejects with `apk not found: HTTP <code>` (see `UpdaterPlugin.downloadToCache`);
+ * the bare `HTTP <code>` form also matches older builds still in the field.
+ */
+export function isUpgradePathMissing(message: string): boolean {
+  return /apk not found|HTTP (404|410)\b/i.test(message);
+}
+
 /** True when the manifest describes a strictly newer build. */
 export function hasUpdate(manifest: OtaManifest | null, currentVersionCode: number): boolean {
   if (!manifest) return false;

@@ -13,6 +13,7 @@ import { OTA_BASE, OTA_CHANNEL, OTA_TYPE } from '@/constants/app';
 import i18n from '@/lib/i18n';
 import {
   fetchManifest,
+  isUpgradePathMissing,
   manifestUrl,
   parseManifest,
   updateInfo,
@@ -150,6 +151,7 @@ export type InstallErrorCode =
   | "blocked"
   | "checksum"
   | "download"
+  | "notfound"
   | "incompatible"
   | "timeout"
   | "unknown";
@@ -175,6 +177,7 @@ function classify(err: unknown): InstallResult {
   const msg = err instanceof Error ? err.message : String(err ?? "");
   const status = /install status (\d+)/.exec(msg);
   if (status) return { ok: false, code: STATUS_REASON[Number(status[1])] ?? "unknown", detail: msg };
+  if (isUpgradePathMissing(msg)) return { ok: false, code: "notfound", detail: msg };
   if (msg.includes("sha256 mismatch")) return { ok: false, code: "checksum", detail: msg };
   if (msg.startsWith("download failed")) return { ok: false, code: "download", detail: msg };
   return { ok: false, code: "unknown", detail: msg || undefined };
@@ -194,6 +197,10 @@ export async function installUpdate(info: UpdateInfo): Promise<InstallResult> {
 
 /** Localized sentence for a failed install, for callers without a status line. */
 export function installFailureText(res: Extract<InstallResult, { ok: false }>): string {
+  // A missing download path is not a transient download error: the release
+  // moved/was removed, so the only recovery is a manual reinstall. Show that
+  // as a standalone instruction rather than "Update failed: …".
+  if (res.code === "notfound") return i18n.t("updates.apkMissing");
   return i18n.t("updates.failedDetail", { reason: i18n.t(`updates.err.${res.code}`) });
 }
 

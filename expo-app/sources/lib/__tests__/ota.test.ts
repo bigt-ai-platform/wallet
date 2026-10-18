@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   fetchManifest,
   hasUpdate,
+  isUpgradePathMissing,
   manifestName,
   manifestUrl,
   parseManifest,
@@ -16,6 +17,22 @@ const VALID = {
   sha256: 'abc123',
   mandatory: false,
 };
+
+describe('isUpgradePathMissing', () => {
+  it('is true when the APK path 404s/410s', () => {
+    expect(isUpgradePathMissing('download failed: apk not found: HTTP 404')).toBe(true);
+    expect(isUpgradePathMissing('download failed: apk not found: HTTP 410')).toBe(true);
+    // an older shipped plugin still rejects with the bare HTTP form
+    expect(isUpgradePathMissing('download failed: HTTP 404')).toBe(true);
+  });
+
+  it('is false for other install failures', () => {
+    expect(isUpgradePathMissing('download failed: HTTP 500')).toBe(false);
+    expect(isUpgradePathMissing('download failed: connection reset')).toBe(false);
+    expect(isUpgradePathMissing('install status 5')).toBe(false);
+    expect(isUpgradePathMissing('sha256 mismatch: expected a got b')).toBe(false);
+  });
+});
 
 describe('manifestName / manifestUrl', () => {
   it('names the manifest by channel and type', () => {

@@ -152,6 +152,9 @@ public class UpdaterPlugin extends Plugin {
     int code = conn.getResponseCode();
     if (code < 200 || code >= 300) {
       conn.disconnect();
+      // A 404/410 means the release was moved or removed: the web layer turns
+      // this into a "path not found — reinstall manually" message.
+      if (code == 404 || code == 410) throw new IllegalStateException("apk not found: HTTP " + code);
       throw new IllegalStateException("HTTP " + code);
     }
     File dir = new File(getActivity().getCacheDir(), "ota");
