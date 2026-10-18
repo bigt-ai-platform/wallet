@@ -1,0 +1,12 @@
+# F-Droid listing for the self-hosted repo published by `./deploy.apk.sh --fdroid`.
+Categories:
+  - Money
+License: Proprietary
+Summary: Bigtangle wallet with keys, transfers, market and P2P settlement
+Description: |
+  A self-custodial Bigtangle wallet: encrypted key management and backups,
+  transfers, token creation, trading orders with charts, and a peer-to-peer
+  fiat settlement flow with escrow.
+  .
+  Distributed by bigt.ai for direct install with in-app OTA updates; no Google
+  Play Services is required.

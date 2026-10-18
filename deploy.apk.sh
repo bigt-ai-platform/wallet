@@ -6,6 +6,7 @@
 #   ./deploy.apk.sh --env production --release
 #   ./deploy.apk.sh --skip-build             # upload the APK already in out/
 #   ./deploy.apk.sh --no-latest              # skip the -latest aliases/manifest
+#   ./deploy.apk.sh --fdroid                 # release APK + publish the self-hosted F-Droid repo
 #
 # Env:
 #   APP_ENV          android variant (default preview)
@@ -20,6 +21,8 @@
 #   MANDATORY        true to mark the release mandatory in the OTA manifest (default false)
 #   PUBLIC_BASE_URL  public base the OTA manifest url is built from
 #                    (default $S3_ENDPOINT/$S3_BUCKET)
+#   FDROID_DIR       local F-Droid workspace (default $OUT_DIR/fdroid)
+#   FDROID_S3_PREFIX bucket prefix for the repo (default wallet/fdroid)
 #
 # Uploads out/wallet-<env>-<type>-<app-version>.apk plus a
 # wallet-<env>-<type>-latest.apk alias to s3://$S3_BUCKET/$S3_PREFIX/.
@@ -42,7 +45,7 @@ S3_PREFIX="${S3_PREFIX:-wallet/apk}"
 LEGACY_OTA_BASE="${LEGACY_OTA_BASE-https://minio-s1001.bigt.ai/aifeeds-content/releases}"
 OUT_DIR="${OUT_DIR:-$ROOT/out}"
 IMAGE="${IMAGE:-wallet-android}"
-SKIP_BUILD=0; LATEST=1
+SKIP_BUILD=0; LATEST=1; FDROID=0
 
 for a in "$@"; do
   case "$a" in
@@ -50,7 +53,8 @@ for a in "$@"; do
     --env=*) APP_ENV="${a#--env=}" ;;
     --skip-build) SKIP_BUILD=1 ;;
     --no-latest) LATEST=0 ;;
-    --help|-h) sed -n '2,22p' "$0"; exit 0 ;;
+    --fdroid) FDROID=1 ;;
+    --help|-h) sed -n '2,25p' "$0"; exit 0 ;;
     *) echo "unknown arg: $a" >&2; exit 1 ;;
   esac
 done
@@ -235,6 +239,90 @@ node "$ROOT/webapp/scripts/appid.mjs" artifact "$OUT_DIR/$VERIFY_APK" \
   || { echo "uploaded object declares the wrong Android package" >&2; exit 1; }
 rm -f "$OUT_DIR/$VERIFY_APK"
 echo "verified: $S3_PREFIX/$NAME ($GOT_SHA, production key)"
+
+# --fdroid: also publish the release APK into a self-hosted F-Droid repo
+# (workspace under $FDROID_DIR, listing text from ./fdroid/metadata/) and mirror
+# it to $FDROID_S3_PREFIX/repo. The repo index is signed with the app's release
+# key (webapp/keystore.properties).
+publish_fdroid() {
+  local apk="$1"
+  local fd_dir="${FDROID_DIR:-$OUT_DIR/fdroid}"
+  local s3_prefix="${FDROID_S3_PREFIX:-wallet/fdroid}"
+  local venv="${FDROID_VENV:-${XDG_CACHE_HOME:-$HOME/.cache}/fdroidserver-venv}"
+  local props="$ROOT/webapp/keystore.properties"
+  local base="${PUBLIC_BASE_URL:-${S3_ENDPOINT%/}/$S3_BUCKET}"
+  local repo_url="${FDROID_REPO_URL:-${base%/}/$s3_prefix/repo}"
+
+  # fdroidserver needs JDK tools (jar/keytool) and apksigner (via ANDROID_HOME).
+  if ! command -v jar >/dev/null 2>&1; then
+    local jdk=""
+    if [ -n "${JAVA_HOME:-}" ] && [ -x "$JAVA_HOME/bin/jar" ]; then jdk="$JAVA_HOME"
+    else for d in "$HOME"/.local/java-* /usr/lib/jvm/*; do [ -x "$d/bin/jar" ] && jdk="$d"; done; fi
+    [ -n "$jdk" ] && PATH="$jdk/bin:$PATH" || { echo "fdroid: a JDK is required (jar on PATH or JAVA_HOME)" >&2; exit 1; }
+  fi
+  local aapt
+  aapt="$(ls "${ANDROID_HOME:-/nonexistent}"/build-tools/*/aapt 2>/dev/null | sort -V | tail -1 || true)"
+  [ -n "$aapt" ] || { echo "fdroid: ANDROID_HOME is required (aapt/apksigner)" >&2; exit 1; }
+
+  if [ ! -x "$venv/bin/fdroid" ]; then
+    echo "fdroid: creating fdroidserver venv at $venv (one-time, needs network)"
+    python3 -m venv "$venv"
+    "$venv/bin/pip" install -q --disable-pip-version-check fdroidserver
+  fi
+  local FDBIN="$venv/bin/fdroid"
+
+  # Sign the index with the release key, read from keystore.properties.
+  local keystore keyalias kspass
+  keystore="${FDROID_KEYSTORE:-$(sed -n 's/^storeFile=//p' "$props" 2>/dev/null | head -1)}"
+  keyalias="${FDROID_KEY_ALIAS:-$(sed -n 's/^keyAlias=//p' "$props" 2>/dev/null | head -1)}"
+  kspass="${FDROID_KEY_PASS:-$(sed -n 's/^storePassword=//p' "$props" 2>/dev/null | head -1)}"
+  [ -f "$keystore" ] || { echo "fdroid: keystore not found: ${keystore:-<none>} — see $props or FDROID_KEYSTORE" >&2; exit 1; }
+  [ -n "$keyalias" ] && [ -n "$kspass" ] || { echo "fdroid: keystore alias/password missing — see $props or FDROID_KEY_ALIAS/FDROID_KEY_PASS" >&2; exit 1; }
+  local keydname
+  keydname="$(keytool -list -v -keystore "$keystore" -storepass "$kspass" -alias "$keyalias" 2>/dev/null | sed -n 's/^Owner: //p' | head -1)"
+  [ -n "$keydname" ] || { echo "fdroid: cannot read the certificate DN for '$keyalias' in $keystore" >&2; exit 1; }
+
+  local app_id version_code
+  app_id="$("$aapt" dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")"
+  version_code="$("$aapt" dump badging "$apk" | sed -n "s/^package:.*versionCode='\([^']*\)'.*/\1/p")"
+  [ -n "$app_id" ] && [ -n "$version_code" ] || { echo "fdroid: cannot read package/version from $apk" >&2; exit 1; }
+
+  [ -d "$ROOT/fdroid/metadata" ] || { echo "fdroid: $ROOT/fdroid/metadata is missing" >&2; exit 1; }
+  mkdir -p "$fd_dir/repo" "$fd_dir/metadata"
+  cp -f "$ROOT"/fdroid/metadata/*.yml "$fd_dir/metadata/"
+  cat > "$fd_dir/config.yml" <<EOF
+repo_url: $repo_url
+repo_name: ${FDROID_REPO_NAME:-Wallet}
+repo_description: ${FDROID_REPO_DESCRIPTION:-Wallet Android builds, published by bigt.ai}
+keystore: $keystore
+repo_keyalias: $keyalias
+keystorepass: $kspass
+keypass: $kspass
+keydname: $keydname
+EOF
+  chmod 600 "$fd_dir/config.yml"
+  cp -f "$apk" "$fd_dir/repo/${app_id}_${version_code}.apk"
+
+  ( cd "$fd_dir" && "$FDBIN" update )
+
+  docker run --rm \
+    -e S3_ENDPOINT="$S3_ENDPOINT" -e S3_ACCESS_KEY="$S3_ACCESS_KEY" -e S3_SECRET_KEY="$S3_SECRET_KEY" \
+    -e S3_BUCKET="$S3_BUCKET" -e S3_PREFIX="$s3_prefix" \
+    -v "$fd_dir/repo:/fdroid-repo:ro" --entrypoint /bin/sh "$MC_IMAGE" -c \
+    'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && \
+     mc mirror --overwrite --remove /fdroid-repo "up/$S3_BUCKET/$S3_PREFIX/repo"' \
+    || { echo "fdroid upload failed — check S3_* creds / MC_IMAGE ($MC_IMAGE)" >&2; exit 1; }
+
+  local fp
+  fp="$(keytool -list -v -keystore "$keystore" -storepass "$kspass" 2>/dev/null | sed -n 's/.*SHA256: //p' | head -1 || true)"
+  echo "fdroid repo: $repo_url"
+  echo "fdroid key : ${fp:-fingerprint unavailable}"
+}
+
+if [ "$FDROID" -eq 1 ]; then
+  [ "$BUILD_TYPE" = release ] || { echo "--fdroid publishes release APKs only (not $BUILD_TYPE)" >&2; exit 1; }
+  publish_fdroid "$APK"
+fi
 
 echo "uploaded: $S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX/$NAME"
 [ "$LATEST" -eq 1 ] && echo "uploaded: $S3_ENDPOINT/$S3_BUCKET/$S3_PREFIX/$LATEST_NAME"
