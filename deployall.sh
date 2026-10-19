@@ -75,7 +75,16 @@ if [ "$APK" -eq 1 ]; then
   # other vars cannot leak into that build.
   if [ -z "${S3_ACCESS_KEY:-}" ] || [ -z "${S3_SECRET_KEY:-}" ]; then
     for f in "$ROOT/deploy/env/.env.europa" "$ROOT/../dai/deploy/env/.env.europa"; do
-      if [ -f "$f" ]; then set -a; . "$f"; set +a; break; fi
+      if [ -f "$f" ]; then
+        # Credentials only. The fallback file is usually ../dai's, whose
+        # S3_BUCKET (aifeeds-content) and S3_ENDPOINT (minio-s1001) must not
+        # leak: they would override the wallet's own apps@minio-s1002 target
+        # and the publish fails with "Bucket aifeeds-content does not exist".
+        S3_ACCESS_KEY="$(sed -n 's/^S3_ACCESS_KEY=//p' "$f" | head -1)"
+        S3_SECRET_KEY="$(sed -n 's/^S3_SECRET_KEY=//p' "$f" | head -1)"
+        export S3_ACCESS_KEY S3_SECRET_KEY
+        break
+      fi
     done
   fi
   run ./deploy.apk.sh ${APK_ARGS[@]+"${APK_ARGS[@]}"}
