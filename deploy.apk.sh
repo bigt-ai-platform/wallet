@@ -43,10 +43,10 @@ S3_ENDPOINT="${S3_ENDPOINT:-https://minio-s1002.bigt.ai}"
 S3_BUCKET="${S3_BUCKET:-apps}"
 S3_PREFIX="${S3_PREFIX:-wallet/apk}"
 # Legacy OTA base baked into installs built before the move to the shared `apps`
-# bucket (they fetch wallet-<env>-release-latest.json from here). The manifest is
-# mirrored there on every publish so those installs still upgrade; set empty to
-# disable (e.g. once a 30x redirect covers the old path instead).
-LEGACY_OTA_BASE="${LEGACY_OTA_BASE-https://minio-s1001.bigt.ai/aifeeds-content/releases}"
+# bucket (they fetch wallet-<env>-release-latest.json from here). Retired: the
+# bucket it pointed at no longer exists, so the mirror is off by default — set
+# LEGACY_OTA_BASE explicitly (e.g. to a redirect-backed prefix) to re-enable it.
+LEGACY_OTA_BASE="${LEGACY_OTA_BASE-}"
 OUT_DIR="${OUT_DIR:-$ROOT/out}"
 IMAGE="${IMAGE:-wallet-android}"
 SKIP_BUILD=0; LATEST=1; FDROID=0
@@ -228,9 +228,10 @@ if [ "$LATEST" -eq 1 ] && [ "$BUILD_TYPE" = "release" ]; then
   mc_cp "/out/$MANIFEST" "up/$S3_BUCKET/$S3_PREFIX/$MANIFEST" \
     || { echo "manifest upload failed" >&2; exit 1; }
   echo "uploaded: $PUBLIC_BASE_URL/$S3_PREFIX/$MANIFEST ($VERSION / code $VERSION_CODE)"
-  # Migration cutover: installs built before the move to `apps` have the legacy
-  # base baked, but the manifest's `url` already points at the new apps/… object,
-  # so mirroring only the manifest keeps them upgrading. Non-fatal.
+  # Migration cutover (opt-in): installs built before the move to `apps` have a
+  # legacy base baked, but the manifest's `url` already points at the new apps/…
+  # object, so mirroring only the manifest keeps them upgrading. Non-fatal, and
+  # skipped unless LEGACY_OTA_BASE is set explicitly (the old base is retired).
   if [ -n "$LEGACY_OTA_BASE" ]; then
     LEGACY_REST="${LEGACY_OTA_BASE#*://}"
     LEGACY_HOST="https://${LEGACY_REST%%/*}"        # scheme://host (mc alias rejects a path)
