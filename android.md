@@ -164,8 +164,8 @@ stops instead of silently uninstalling; `--force-reinstall` opts into the wipe.
 
 ## Automatic updates (OTA)
 
-Analog of `../dai/apps/web/src/lib/updater.ts`. The release bucket
-(`aifeeds-content`, `releases/`) is public-read, so the app needs no gateway:
+Analog of `../dai/apps/web/src/lib/updater.ts`. The shared release bucket
+(`apps`, `wallet/apk/`) is public-read, so the app needs no gateway:
 it fetches the manifest directly and the manifest's `url` is the APK object.
 
 | Piece | Role |
