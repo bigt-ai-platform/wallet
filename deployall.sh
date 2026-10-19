@@ -13,7 +13,7 @@
 # and `./deploy.apk.sh --help` for the full option sets.
 #
 #   deploy/deploy.sh:  --yes -y --dry-run --commit --deploy-only <version>
-#   deploy.apk.sh:     --release --env= --skip-build --no-latest
+#   deploy.apk.sh:     --release --env= --skip-build --no-latest --no-prune
 #
 # Remote tags are fetched up front, and the APK step auto-loads the S3 creds
 # from deploy/env/.env.europa (else ../dai's) when S3_ACCESS_KEY/S3_SECRET_KEY
@@ -53,7 +53,7 @@ for a in "$@"; do
     # deploy.apk.sh options
     --release) APK_ARGS+=("$a"); APK_BUILD_SPEC=1 ;;
     --env=*) APK_ARGS+=("$a"); APK_BUILD_SPEC=1 ;;
-    --skip-build|--no-latest) APK_ARGS+=("$a") ;;
+    --skip-build|--no-latest|--no-prune) APK_ARGS+=("$a") ;;
     *) echo "unknown arg: $a (see --help)" >&2; exit 1 ;;
   esac
 done

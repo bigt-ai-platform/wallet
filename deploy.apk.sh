@@ -6,6 +6,7 @@
 #   ./deploy.apk.sh --env production --release
 #   ./deploy.apk.sh --skip-build             # upload the APK already in out/
 #   ./deploy.apk.sh --no-latest              # skip the -latest aliases/manifest
+#   ./deploy.apk.sh --no-prune               # keep older versioned artifacts in the prefix
 #   ./deploy.apk.sh --fdroid                 # release APK + publish the self-hosted F-Droid repo
 #
 # Env:
@@ -27,7 +28,11 @@
 # Uploads out/wallet-<env>-<type>-<app-version>.apk plus a
 # wallet-<env>-<type>-latest.apk alias to s3://$S3_BUCKET/$S3_PREFIX/.
 # For release APKs it also writes wallet-<env>-release-latest.json (the OTA
-# manifest the app reads; see expo-app/sources/lib/ota.ts).
+# manifest the app reads; see expo-app/sources/lib/ota.ts). The prefix then
+# holds that one generation: older wallet-<env>-<type>-<version> objects of the
+# same channel are removed once the upload verifies (--no-prune keeps them).
+# Nothing public reads them — the app follows the manifest — and rebuilding
+# from their git tag reproduces them.
 set -euo pipefail
 
 # A release must never stop for a keypress: every child (docker, node, gradle)
@@ -49,7 +54,7 @@ S3_PREFIX="${S3_PREFIX:-wallet/apk}"
 LEGACY_OTA_BASE="${LEGACY_OTA_BASE-}"
 OUT_DIR="${OUT_DIR:-$ROOT/out}"
 IMAGE="${IMAGE:-wallet-android}"
-SKIP_BUILD=0; LATEST=1; FDROID=0
+SKIP_BUILD=0; LATEST=1; FDROID=0; PRUNE=1
 
 for a in "$@"; do
   case "$a" in
@@ -57,8 +62,9 @@ for a in "$@"; do
     --env=*) APP_ENV="${a#--env=}" ;;
     --skip-build) SKIP_BUILD=1 ;;
     --no-latest) LATEST=0 ;;
+    --no-prune) PRUNE=0 ;;
     --fdroid) FDROID=1 ;;
-    --help|-h) sed -n '2,25p' "$0"; exit 0 ;;
+    --help|-h) sed -n '2,/^set -euo pipefail/p' "$0" | sed '$d'; exit 0 ;;
     *) echo "unknown arg: $a" >&2; exit 1 ;;
   esac
 done
@@ -124,6 +130,7 @@ if [ -n "${ABI_SPLIT:-}" ]; then
 fi
 NAME="wallet-$APP_ENV-$BUILD_TYPE-$VERSION.apk"
 LATEST_NAME="wallet-$APP_ENV-$BUILD_TYPE-latest.apk"
+FAMILY="wallet-$APP_ENV-$BUILD_TYPE"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
   # Build the signed Capacitor artifact (static web export → cap sync → gradle
@@ -166,6 +173,94 @@ mc_cp_host() {
     -v "$OUT_DIR:/out" -e MC_SRC="$2" -e MC_DST="$3" \
     --entrypoint /bin/sh "$MC_IMAGE" -c \
     'mc alias set h "$EP" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && mc cp "$MC_SRC" "$MC_DST"'
+}
+
+# The release prefix is a distribution point, not an archive: it keeps only the
+# generation just uploaded — the artifact, the -latest alias and the OTA
+# manifest — and drops older versioned objects of the same channel, so a public
+# prefix does not grow one ~7 MB object per release forever (the bucket had
+# accumulated 1.0.64/1.0.65/1.0.84/1.0.85). Scoped to "$FAMILY"-*.apk/json, so
+# the other channels (preview/debug) and the F-Droid repo (its own prefix,
+# whose index intentionally lists every version it ever shipped) are never
+# touched. Called only after the upload verified, so a failed publish never
+# takes the previous release with it; --no-prune keeps the old objects.
+#
+# `apps` has versioning on (replication requires it) and no ILM rule, so a plain
+# `mc rm` only writes a delete marker: the bytes stay, and every superseded
+# -latest.apk/-latest.json also keeps its own non-current copies (~7 MB each).
+# The kept objects are therefore trimmed to their newest version, and the stale
+# keys are purged version-by-version. Deletes replicate to the peers (the rules
+# carry DeleteReplication/DeleteMarkerReplication), so the space is reclaimed on
+# every site, not just here.
+prune_old_releases() {
+  local listing line name vid ord
+  local -a rows=() stale_keys=() del_keys=() pairs=()
+  local -A newest=()
+
+  if ! listing="$(docker run --rm "${MC_ENV[@]}" --entrypoint /bin/sh "$MC_IMAGE" -c \
+      'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && mc ls --versions --recursive --json "up/$S3_BUCKET/$S3_PREFIX"')"; then
+    echo "prune: could not list $S3_PREFIX — older artifacts left in place" >&2
+    return 0
+  fi
+
+  # mc sorts newest first, but compare ordinals explicitly: the current version
+  # of a kept key is the highest, whatever the listing order.
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    name="$(printf '%s\n' "$line" | sed -n 's/.*"key":"\([^"]*\)".*/\1/p')"
+    case "$name" in
+      "$FAMILY"-*.apk|"$FAMILY"-*.json) ;;
+      *) continue ;;
+    esac
+    vid="$(printf '%s\n' "$line" | sed -n 's/.*"versionId":"\([^"]*\)".*/\1/p')"
+    ord="$(printf '%s\n' "$line" | sed -n 's/.*"versionOrdinal":\([0-9]*\).*/\1/p')"
+    ord="${ord:-0}"
+    rows+=("$name"$'\t'"$vid"$'\t'"$ord")
+    case "$name" in
+      "$NAME"|"$LATEST_NAME"|"$FAMILY-latest.json")
+        if [ -z "${newest[$name]:-}" ] || [ "$ord" -gt "${newest[$name]}" ]; then
+          newest[$name]="$ord"
+        fi ;;
+      *) stale_keys+=("$name") ;;
+    esac
+  done < <(printf '%s\n' "$listing")
+
+  local row
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r name vid ord <<<"$row"
+    if [ -n "${newest[$name]:-}" ]; then
+      # A kept key: drop everything but the version just published/verified.
+      if [ "$ord" -lt "${newest[$name]}" ] && [ -n "$vid" ]; then
+        pairs+=("$vid" "$name")
+      fi
+    fi
+  done
+  if [ "${#stale_keys[@]}" -gt 0 ]; then
+    mapfile -t stale_keys < <(printf '%s\n' "${stale_keys[@]}" | sort -u)
+    del_keys=("${stale_keys[@]}")
+  fi
+
+  if [ "${#del_keys[@]}" -eq 0 ] && [ "${#pairs[@]}" -eq 0 ]; then
+    echo "prune: $S3_PREFIX holds only $VERSION + latest"
+    return 0
+  fi
+  echo "prune: $S3_PREFIX keeps $NAME + $LATEST_NAME + $FAMILY-latest.json"
+  if [ "${#del_keys[@]}" -gt 0 ]; then
+    printf '    - %s (all versions)\n' "${del_keys[@]##*/}"
+    docker run --rm "${MC_ENV[@]}" --entrypoint /bin/sh "$MC_IMAGE" -c \
+      'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null || exit 1
+       for k in "$@"; do mc rm --versions --force "up/$S3_BUCKET/$S3_PREFIX/$k" || exit 1; done' \
+      sh "${del_keys[@]}" || echo "warning: prune of stale artifacts failed — left in $S3_PREFIX" >&2
+  fi
+  if [ "${#pairs[@]}" -gt 0 ]; then
+    echo "    - $(( ${#pairs[@]} / 2 )) superseded version(s) of the kept objects"
+    docker run --rm "${MC_ENV[@]}" --entrypoint /bin/sh "$MC_IMAGE" -c \
+      'mc alias set up "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null || exit 1
+       while [ "$#" -gt 1 ]; do
+         mc rm --version-id "$1" "up/$S3_BUCKET/$S3_PREFIX/$2" >/dev/null || exit 1
+         shift 2
+       done' sh "${pairs[@]}" || echo "warning: prune of superseded versions failed — left in $S3_PREFIX" >&2
+  fi
 }
 
 # Key check: what is live right now. A release published under a different
@@ -256,6 +351,11 @@ node "$ROOT/webapp/scripts/appid.mjs" artifact "$OUT_DIR/$VERIFY_APK" \
   || { echo "uploaded object declares the wrong Android package" >&2; exit 1; }
 rm -f "$OUT_DIR/$VERIFY_APK"
 echo "verified: $S3_PREFIX/$NAME ($GOT_SHA, production key)"
+
+# Same-generation policy: keep only what was just verified (see the helper).
+if [ "$PRUNE" -eq 1 ]; then
+  prune_old_releases
+fi
 
 # --fdroid: also publish the release APK into a self-hosted F-Droid repo
 # (workspace under $FDROID_DIR, listing text from ./fdroid/metadata/) and mirror
