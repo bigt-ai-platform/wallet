@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Publish the rendered P2P guide PDFs to the per-region MinIO docs buckets the
-# wallet links to (expo-app/sources/lib/docs.ts): wallet-docs-eu / -us / -asia,
-# one per geo site (../pm/minio/GEO.md), mirroring ../dai scripts/docs-upload.sh.
-# The buckets are public static content — anonymous download is (re)asserted on
-# every run; no signing involved.
+# Publish the rendered P2P guide PDFs to the shared `apps` bucket under
+# `wallet/docs/demo`, on every site (expo-app/sources/lib/docs.ts links via the
+# region endpoint), mirroring ../dai scripts/docs-upload.sh. The apps bucket is
+# public static content — anonymous download is (re)asserted on every run; no
+# signing involved.
 #
 # Usage: scripts/docs-upload.sh [pdf-dir]
 #   pdf-dir defaults to docs/p2p-demo/assets (committed p2p*.pdf, 12 languages).
@@ -36,31 +36,35 @@ if [ ! -f "$ENV_FILE" ]; then
 fi
 set -a; . "$ENV_FILE"; set +a
 
+BUCKET=apps
+PREFIX=wallet/docs
+
 SCRIPT='mc alias set r "$EP" "$AK" "$SK" >/dev/null \
  && mc mb --ignore-existing "r/$B" \
  && { mc version enable "r/$B" >/dev/null 2>&1 || :; } \
  && mc anonymous set download "r/$B" \
- && mc mirror --overwrite --exclude "*.jpg" /data "r/$B/demo/"'
+ && mc mirror --overwrite --exclude "*.jpg" /data "r/$B/$P/demo/"'
 
-# bucket => write endpoint of its geo site (server-to-server host)
-REGION_BUCKETS="wallet-docs-eu wallet-docs-us wallet-docs-asia"
+# site => write host that serves the public s3-<region> reads. s3.bigt.ai is
+# only a 307 dispatch (SigV4/mc cannot sign against it), so the EU copy goes to
+# the pool host minio-s1001; US/Asia serve directly, no dispatch hop.
 endpoint_for() {
   case "$1" in
-    wallet-docs-eu) echo "https://minio-s2001.bigt.ai" ;;
-    wallet-docs-us) echo "https://minio-us1001.bigt.ai" ;;
-    wallet-docs-asia) echo "https://minio-hk1002.bigt.ai" ;;
+    eu)   echo "https://minio-s1001.bigt.ai" ;;
+    us)   echo "https://minio-us1001.bigt.ai" ;;
+    asia) echo "https://minio-hk1002.bigt.ai" ;;
     *) return 1 ;;
   esac
 }
 
-for B in $REGION_BUCKETS; do
-  EP="$(endpoint_for "$B")"
-  echo "==> $B ← $EP"
+for site in eu us asia; do
+  EP="$(endpoint_for "$site")"
+  echo "==> apps/wallet/docs/demo ← $EP"
   # Resolve via public DNS so a stale local/router cache (the *.bigt.ai
   # wildcard) cannot send mc to the wrong backend and break the TLS handshake.
   docker run --rm --dns 1.1.1.1 --dns 8.8.8.8 \
-    -e EP="$EP" -e AK="$S3_ACCESS_KEY" -e SK="$S3_SECRET_KEY" -e B="$B" \
+    -e EP="$EP" -e AK="$S3_ACCESS_KEY" -e SK="$S3_SECRET_KEY" -e B="$BUCKET" -e P="$PREFIX" \
     -v "$SRC:/data:ro" --entrypoint sh "$MCIMG" -c "$SCRIPT"
 done
 
-echo "==> published $(ls "$SRC"/*.pdf | wc -l) PDFs × $(echo $REGION_BUCKETS | wc -w) regions"
+echo "==> published $(ls "$SRC"/*.pdf | wc -l) PDFs × 3 sites to $BUCKET/$PREFIX/demo"

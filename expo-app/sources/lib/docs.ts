@@ -1,14 +1,14 @@
 /**
  * Help-center guide PDFs. The guides under `docs/guides` are rendered to PDFs
  * by `scripts/docs-pdf.mts` (→ docs/p2p-demo/assets) and published to the
- * per-region MinIO docs buckets by `scripts/docs-upload.sh`, mirroring ../dai
- * (apps/web/src/lib/docs.ts + scripts/docs-pdf.mts).
+ * shared `apps` bucket under `wallet/docs/demo` by `scripts/docs-upload.sh`,
+ * mirroring ../dai (apps/web/src/lib/docs.ts + scripts/docs-upload.sh).
  *
- * Each bucket holds `demo/<guide><suffix>.pdf`: English has no suffix, other
+ * Every site holds `demo/<guide><suffix>.pdf`: English has no suffix, other
  * rendered languages use `.<lang>` (see {@link PDF_LANGS}). The native APK and
  * the static web export cannot host the files themselves, so they link straight
- * at the bucket (which is public-read). Pure (no React imports), so it is unit
- * testable in isolation.
+ * at the bucket prefix (which is public-read). Pure (no React imports), so it
+ * is unit testable in isolation.
  */
 
 /** Languages that have a rendered PDF (`demo/<guide><suffix>.pdf`). Every UI
@@ -26,19 +26,19 @@ export function pdfSuffix(lang: string): string {
 
 export type BigtRegion = 'europa' | 'usa' | 'asia';
 
-/** Public regional S3 endpoints (minio GEO) and the per-region wallet docs
- *  bucket created by scripts/docs-upload.sh — identical content in all three,
- *  so the region only decides latency. Mirrors ../dai. */
-const DOCS_SITES: Record<BigtRegion, { endpoint: string; bucket: string }> = {
-  europa: { endpoint: 'https://s3.bigt.ai', bucket: 'wallet-docs-eu' },
-  usa: { endpoint: 'https://s3-us.bigt.ai', bucket: 'wallet-docs-us' },
-  asia: { endpoint: 'https://s3-asia.bigt.ai', bucket: 'wallet-docs-asia' },
+/** Public regional S3 endpoints (minio GEO); every region serves the same
+ *  `apps/wallet/docs` prefix, so the region only decides latency. Mirrors
+ *  ../dai. */
+const DOCS_ENDPOINT: Record<BigtRegion, string> = {
+  europa: 'https://s3.bigt.ai',
+  usa: 'https://s3-us.bigt.ai',
+  asia: 'https://s3-asia.bigt.ai',
 };
+const DOCS_KEY = 'apps/wallet/docs';
 
 /** Absolute URL for a rendered guide PDF under `demo/` (e.g. `p2p.zh.pdf`). */
 export function docsPdfUrl(file: string, region: BigtRegion = 'europa'): string {
-  const site = DOCS_SITES[region];
-  return `${site.endpoint}/${site.bucket}/demo/${file}`;
+  return `${DOCS_ENDPOINT[region]}/${DOCS_KEY}/demo/${file}`;
 }
 
 /** Timezone-implied region (Asia/Oceania/Pacific → asia, America → usa, else

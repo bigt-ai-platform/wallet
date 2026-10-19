@@ -17,18 +17,18 @@ describe('pdfSuffix', () => {
 });
 
 describe('docsPdfUrl', () => {
-  it('points every region at its own wallet docs bucket', () => {
-    expect(docsPdfUrl('p2p.pdf')).toBe('https://s3.bigt.ai/wallet-docs-eu/demo/p2p.pdf');
-    expect(docsPdfUrl('p2p.pdf', 'usa')).toBe('https://s3-us.bigt.ai/wallet-docs-us/demo/p2p.pdf');
-    expect(docsPdfUrl('p2p.zh.pdf', 'asia')).toBe('https://s3-asia.bigt.ai/wallet-docs-asia/demo/p2p.zh.pdf');
+  it('points every region at the shared apps/wallet/docs/demo key', () => {
+    expect(docsPdfUrl('p2p.pdf')).toBe('https://s3.bigt.ai/apps/wallet/docs/demo/p2p.pdf');
+    expect(docsPdfUrl('p2p.pdf', 'usa')).toBe('https://s3-us.bigt.ai/apps/wallet/docs/demo/p2p.pdf');
+    expect(docsPdfUrl('p2p.zh.pdf', 'asia')).toBe('https://s3-asia.bigt.ai/apps/wallet/docs/demo/p2p.zh.pdf');
   });
 });
 
 describe('p2pPdfUrl', () => {
   it('builds the language-suffixed file and normalizes BCP-47 tags', () => {
-    expect(p2pPdfUrl('en')).toBe('https://s3.bigt.ai/wallet-docs-eu/demo/p2p.pdf');
-    expect(p2pPdfUrl('zh')).toBe('https://s3.bigt.ai/wallet-docs-eu/demo/p2p.zh.pdf');
-    expect(p2pPdfUrl('de-AT', 'usa')).toBe('https://s3-us.bigt.ai/wallet-docs-us/demo/p2p.de.pdf');
+    expect(p2pPdfUrl('en')).toBe('https://s3.bigt.ai/apps/wallet/docs/demo/p2p.pdf');
+    expect(p2pPdfUrl('zh')).toBe('https://s3.bigt.ai/apps/wallet/docs/demo/p2p.zh.pdf');
+    expect(p2pPdfUrl('de-AT', 'usa')).toBe('https://s3-us.bigt.ai/apps/wallet/docs/demo/p2p.de.pdf');
   });
 });
 

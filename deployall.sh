@@ -78,8 +78,8 @@ if [ "$APK" -eq 1 ]; then
       if [ -f "$f" ]; then
         # Credentials only. The fallback file is usually ../dai's, whose
         # S3_BUCKET/S3_ENDPOINT must not leak: they would override the wallet's
-        # own apps@minio-s1002 target and the publish then fails with a missing
-        # bucket error.
+        # own apps target and the publish then fails with a missing bucket
+        # error.
         S3_ACCESS_KEY="$(sed -n 's/^S3_ACCESS_KEY=//p' "$f" | head -1)"
         S3_SECRET_KEY="$(sed -n 's/^S3_SECRET_KEY=//p' "$f" | head -1)"
         export S3_ACCESS_KEY S3_SECRET_KEY
