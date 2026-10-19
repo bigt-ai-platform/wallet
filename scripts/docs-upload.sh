@@ -45,14 +45,14 @@ SCRIPT='mc alias set r "$EP" "$AK" "$SK" >/dev/null \
  && mc anonymous set download "r/$B" \
  && mc mirror --overwrite --exclude "*.jpg" /data "r/$B/$P/demo/"'
 
-# site => write host that serves the public s3-<region> reads. s3.bigt.ai is
-# only a 307 dispatch (SigV4/mc cannot sign against it), so the EU copy goes to
-# the pool host minio-s1001; US/Asia serve directly, no dispatch hop.
+# site => write host that serves the public s3-<region> reads. s3.bigt.ai is a
+# transparent proxy that preserves Host (SigV4 stays valid), so every region
+# uses its public `s3-*` name.
 endpoint_for() {
   case "$1" in
-    eu)   echo "https://minio-s1001.bigt.ai" ;;
-    us)   echo "https://minio-us1001.bigt.ai" ;;
-    asia) echo "https://minio-hk1002.bigt.ai" ;;
+    eu)   echo "https://s3.bigt.ai" ;;
+    us)   echo "https://s3-us.bigt.ai" ;;
+    asia) echo "https://s3-asia.bigt.ai" ;;
     *) return 1 ;;
   esac
 }
