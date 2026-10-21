@@ -38,8 +38,8 @@ export class BlobSettlementStore implements SettlementStore {
   listOrders(status?: string): Promise<P2pOrder[]> {
     return this.projection.listOrders(status);
   }
-  markOrderMatched(orderId: string, swapId: string): Promise<boolean> {
-    return this.projection.markOrderMatched(orderId, swapId);
+  markOrderMatched(orderId: string, swapId: string, remainingGive?: string, expectedRemaining?: string): Promise<boolean> {
+    return this.projection.markOrderMatched(orderId, swapId, remainingGive, expectedRemaining);
   }
   markOrderCancelled(orderId: string): Promise<boolean> {
     return this.projection.markOrderCancelled(orderId);
@@ -47,8 +47,8 @@ export class BlobSettlementStore implements SettlementStore {
   reopenOrder(orderId: string, swapId: string): Promise<void> {
     return this.projection.reopenOrder(orderId, swapId);
   }
-  appendEvent(e: P2pSwapEvent): Promise<void> {
-    return this.projection.appendEvent(e);
+  appendEvent(e: P2pSwapEvent, prepare?: () => Promise<P2pSwapEvent>): Promise<void> {
+    return this.projection.appendEvent(e, prepare);
   }
   events(swapId: string): Promise<P2pSwapEvent[]> {
     return this.projection.events(swapId);

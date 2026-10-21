@@ -564,8 +564,26 @@ The engine's own admin routes (`GET /orders`, `GET /swaps`,
 
 ## 11. Engine API (`services/p2p-engine`)
 
-All routes are whole-body signed like the existing ones. A swap picks its rail
-from `wantRail` at match time and never touches both.
+Party-scoped POST requests sign the body including `requestMethod: "POST"` and
+`requestPath`, the exact destination path without a query string. For example,
+confirming a swap signs `/swaps/<swapId>/confirm`. A signature cannot be moved
+from a read to a mutation, or to another swap. Missing or mismatched scope is
+rejected: deploy the engine and wallet together; older unscoped clients are not
+compatible. Admin routes retain their token authentication.
+
+A swap picks its rail from `wantRail` at match time and never touches both.
+The buyer's `payBy` is fixed at the first payment-instructions event, using the
+ad's payment window or `SETTLEMENT_CNY_REMARK_TTL`. Re-reading instructions does
+not extend it. Manual expiry and the sweep enforce that same deadline while
+`PAYMENT_PENDING`; a resolved refund arbitration can bypass the wait.
+Concurrent stale swap updates or order fills return 409: reload before signing
+a retry with a fresh nonce. Settlement output/address-index fallbacks must
+confirm the exact broadcast transaction, never unrelated recipient history.
+
+PostgreSQL concurrency regressions run with
+`P2P_TEST_DATABASE_URL=... npx vitest run test/blob.test.ts` from
+`services/p2p-engine`. They create and remove a unique test schema; use a
+disposable database with schema-creation privileges.
 
 | Endpoint | Who | Effect |
 |---|---|---|

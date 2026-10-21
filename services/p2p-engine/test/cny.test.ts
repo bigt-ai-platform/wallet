@@ -58,8 +58,7 @@ async function saveProfile(a: TestApp, method = "wechat") {
       method,
       accountName: "Zhang San",
       account: "wxid_pay888",
-      ...(method === "bank" ? { bankName: "ICBC 1234" } : {}),
-    }),
+      ...(method === "bank" ? { bankName: "ICBC 1234" } : {}), requestMethod: "POST", requestPath: "/profiles" }),
   });
   expect(r.statusCode).toBe(200);
 }
@@ -78,15 +77,14 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
       wantCurrency: "CNY",
       wantAmount: "715",
       wantRail,
-      validUntil: Math.floor(clock / 1000) + 3600,
-    }),
+      validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
   });
   expect(r1.statusCode).toBe(201);
   bump();
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
   });
   expect(r2.statusCode).toBe(201);
   const swapId = r2.json().swapId as string;
@@ -94,7 +92,7 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64) }),
+    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
   });
   expect(lock.statusCode).toBe(200);
   expect(lock.json().status).toBe("ESCROW_LOCKED");
@@ -103,6 +101,76 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
 }
 
 describe("CNY rails (docs/p2p.md)", () => {
+  it("returns a conflict for simultaneous proof and confirmation instead of false success", async () => {
+    const a = await app();
+    const swapId = "swap-0000000000000005";
+    await store.appendEvent({ swapId, seq: 0, status: "PAYMENT_PENDING", eventType: "instructions", sellerDid, buyerDid, wantRail: "wechat", at: clock });
+    const originalGetSwap = store.getSwap.bind(store);
+    let readers = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    store.getSwap = async (id) => {
+      const snapshot = await originalGetSwap(id);
+      if (id === swapId && readers < 2) {
+        readers++;
+        if (readers === 2) release();
+        await gate;
+      }
+      return snapshot;
+    };
+    try {
+      const confirmPath = `/swaps/${swapId}/confirm`;
+      const proofPath = `/swaps/${swapId}/proof`;
+      const results = await Promise.all([
+        a.inject({ method: "POST", url: confirmPath, payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: confirmPath }) }),
+        a.inject({ method: "POST", url: proofPath, payload: signed(buyer, buyerDid, { txId: "TX-1", requestMethod: "POST", requestPath: proofPath }) }),
+      ]);
+      expect(results.map((response) => response.statusCode).sort()).toEqual([200, 409]);
+      expect((await store.getSwap(swapId))?.status).toBe(results.find((response) => response.statusCode === 200)!.json().status);
+      expect(anchored.filter((event) => event.swapId === swapId && event.seq === 1)).toHaveLength(1);
+    } finally {
+      store.getSwap = originalGetSwap;
+      await a.close();
+    }
+  });
+
+  it("rejects redirected reads and keeps a fixed payment deadline for expiry", async () => {
+    const a = await app({ SETTLEMENT_CNY_REMARK_TTL: "900" });
+    const swapId = await toEscrowLocked(a);
+    const instructionsPath = `/swaps/${swapId}/payment-instructions`;
+    const instructions = await a.inject({
+      method: "POST", url: instructionsPath,
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: instructionsPath }),
+    });
+    expect(instructions.statusCode).toBe(201);
+    const confirmPath = `/swaps/${swapId}/confirm`;
+    const redirected = await a.inject({
+      method: "POST", url: confirmPath,
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: "/swaps/mine" }),
+    });
+    expect(redirected.statusCode).toBe(400);
+    expect((await store.getSwap(swapId))?.status).toBe("PAYMENT_PENDING");
+    const transitionsPath = `/swaps/${swapId}/transitions`;
+    const expire = () => a.inject({
+      method: "POST", url: transitionsPath,
+      payload: signed(seller, sellerDid, { action: "expire", requestMethod: "POST", requestPath: transitionsPath }),
+    });
+    expect((await expire()).statusCode).toBe(409);
+    clock += 60_000;
+    const repeated = await a.inject({
+      method: "POST", url: instructionsPath,
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: instructionsPath }),
+    });
+    expect(repeated.json().payBy).toBe(instructions.json().payBy);
+    clock = instructions.json().payBy * 1000 - 1;
+    await sweepTick(a);
+    expect((await store.getSwap(swapId))?.status).toBe("PAYMENT_PENDING");
+    expect((await expire()).statusCode).toBe(409);
+    clock += 1;
+    expect((await expire()).statusCode).toBe(200);
+    await a.close();
+  });
+
   beforeEach(async () => {
     clock = 1_700_000_000_000;
     store.orders.clear();
@@ -121,7 +189,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     expect(ins.statusCode).toBe(201);
     expect(ins.json()).toMatchObject({
@@ -142,7 +210,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const again = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     expect(again.statusCode).toBe(200);
     expect(again.json().remark).toBe(ins.json().remark);
@@ -151,7 +219,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const view = await a.inject({
       method: "POST",
       url: "/swaps/get",
-      payload: signed(seller, sellerDid, { swapId }),
+      payload: signed(seller, sellerDid, { swapId, requestMethod: "POST", requestPath: "/swaps/get" }),
     });
     expect(view.json().swap.remark).toBe(ins.json().remark);
     expect(view.json().swap.receiveAddress).toBeUndefined();
@@ -161,7 +229,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const badReceipt = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "4200001234567890", receipt: "data:image/png;base64,@@not-base64@@" }),
+      payload: signed(buyer, buyerDid, { txId: "4200001234567890", receipt: "data:image/png;base64,@@not-base64@@", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(badReceipt.statusCode).toBe(400);
     expect(badReceipt.json().error).toMatch(/base64/);
@@ -172,7 +240,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const proof = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "4200001234567890", remark: ins.json().remark, receipt }),
+      payload: signed(buyer, buyerDid, { txId: "4200001234567890", remark: ins.json().remark, receipt, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(proof.statusCode).toBe(200);
     expect(proof.json()).toMatchObject({ status: "PAYMENT_CLAIMED", txId: "4200001234567890" });
@@ -197,7 +265,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const confirm = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/confirm`,
-      payload: signed(seller, sellerDid, {}),
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }),
     });
     expect(confirm.statusCode).toBe(200);
     expect(confirm.json().status).toBe("PAYMENT_VERIFIED");
@@ -207,14 +275,14 @@ describe("CNY rails (docs/p2p.md)", () => {
     const release = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(engine, engineDid, { action: "release", txHash: "b".repeat(64) }),
+      payload: signed(engine, engineDid, { action: "release", txHash: "b".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(release.json().status).toBe("ESCROW_RELEASED");
     bump();
     const complete = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(engine, engineDid, { action: "complete" }),
+      payload: signed(engine, engineDid, { action: "complete", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(complete.statusCode).toBe(200);
     expect(complete.json().status).toBe("COMPLETED");
@@ -248,7 +316,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const hint = await a.inject({
       method: "POST",
       url: "/payments/send",
-      payload: signed(buyer, buyerDid, { swapId, paymentRef: "PAY-1" }),
+      payload: signed(buyer, buyerDid, { swapId, paymentRef: "PAY-1", requestMethod: "POST", requestPath: "/payments/send" }),
     });
     expect(hint.statusCode).toBe(404);
 
@@ -256,7 +324,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const payout = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(engine, engineDid, { action: "payout" }),
+      payload: signed(engine, engineDid, { action: "payout", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(payout.statusCode).toBe(400);
     expect(payout.json().error).toContain("unknown action");
@@ -278,8 +346,7 @@ describe("CNY rails (docs/p2p.md)", () => {
         wantCurrency: "CNY",
         wantAmount: "7",
         wantRail: "cash",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(badOrder.statusCode).toBe(400);
     expect(badOrder.json().error).toContain("wantRail not enabled");
@@ -298,8 +365,7 @@ describe("CNY rails (docs/p2p.md)", () => {
         wantCurrency: "CNY",
         wantAmount: "7",
         wantRail: "wechat",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(disabled.statusCode).toBe(400);
 
@@ -308,7 +374,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const noProfile = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     expect(noProfile.statusCode).toBe(409);
     expect(noProfile.json().error).toContain("no payment profile");
@@ -319,7 +385,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     expect(ins.statusCode).toBe(201);
     expect(ins.json().method).toBe("bank");
@@ -330,7 +396,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const bySeller = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(seller, sellerDid, {}),
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     expect(bySeller.statusCode).toBe(403);
 
@@ -347,20 +413,19 @@ describe("CNY rails (docs/p2p.md)", () => {
         wantCurrency: "CNY",
         wantAmount: "7",
         wantRail: "wechat",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     bump();
     const r2 = await a.inject({
       method: "POST",
       url: `/orders/${r1.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R" }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
     });
     bump();
     const early = await a.inject({
       method: "POST",
       url: `/swaps/${r2.json().swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${r2.json().swapId}/payment-instructions` }),
     });
     expect(early.statusCode).toBe(409);
   });
@@ -373,7 +438,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const early = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-1" }),
+      payload: signed(buyer, buyerDid, { txId: "TX-1", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(early.statusCode).toBe(409);
 
@@ -381,7 +446,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     expect(ins.statusCode).toBe(201);
     bump();
@@ -390,7 +455,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const bySeller = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(seller, sellerDid, { txId: "TX-1" }),
+      payload: signed(seller, sellerDid, { txId: "TX-1", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(bySeller.statusCode).toBe(403);
 
@@ -398,7 +463,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const badTx = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "not valid!" }),
+      payload: signed(buyer, buyerDid, { txId: "not valid!", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(badTx.statusCode).toBe(400);
 
@@ -406,7 +471,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const badRemark = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: "deadbeefdeadbeef" }),
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: "deadbeefdeadbeef", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(badRemark.statusCode).toBe(400);
     expect(badRemark.json().error).toContain("remark");
@@ -416,14 +481,14 @@ describe("CNY rails (docs/p2p.md)", () => {
     const ok = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark }),
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(ok.statusCode).toBe(200);
     bump();
     const dup = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-2" }),
+      payload: signed(buyer, buyerDid, { txId: "TX-2", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(dup.statusCode).toBe(409);
     expect(dup.json().error).toContain("PAYMENT_PENDING");
@@ -437,7 +502,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const early = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/confirm`,
-      payload: signed(seller, sellerDid, {}),
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }),
     });
     expect(early.statusCode).toBe(409);
 
@@ -445,20 +510,20 @@ describe("CNY rails (docs/p2p.md)", () => {
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-9" }),
+      payload: signed(buyer, buyerDid, { txId: "TX-9", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
 
     // the buyer cannot confirm their own payment
     const byBuyer = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/confirm`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }),
     });
     expect(byBuyer.statusCode).toBe(403);
 
@@ -467,7 +532,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const ok = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/confirm`,
-      payload: signed(seller, sellerDid, {}),
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }),
     });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().status).toBe("PAYMENT_VERIFIED");
@@ -480,7 +545,7 @@ describe("CNY rails (docs/p2p.md)", () => {
       const r = await a.inject({
         method: "POST",
         url: `/swaps/${swapId}/transitions`,
-        payload: signed(seller, sellerDid, { action }),
+        payload: signed(seller, sellerDid, { action, requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
       });
       expect(r.statusCode).toBe(400);
       expect(r.json().error).toContain("dedicated route");
@@ -490,7 +555,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const forged = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(seller, sellerDid, { action: "complete" }),
+      payload: signed(seller, sellerDid, { action: "complete", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(forged.statusCode).toBe(403);
   });
@@ -502,13 +567,13 @@ describe("CNY rails (docs/p2p.md)", () => {
     await a.inject({
       method: "POST",
       url: `/swaps/${fresh}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${fresh}/payment-instructions` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${fresh}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-1" }),
+      payload: signed(buyer, buyerDid, { txId: "TX-1", requestMethod: "POST", requestPath: `/swaps/${fresh}/proof` }),
     });
 
     // outsider cannot dispute
@@ -517,7 +582,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const denied = await a.inject({
       method: "POST",
       url: `/swaps/${fresh}/dispute`,
-      payload: signed(outsider, outsiderDid, { reason: "not mine" }),
+      payload: signed(outsider, outsiderDid, { reason: "not mine", requestMethod: "POST", requestPath: `/swaps/${fresh}/dispute` }),
     });
     expect(denied.statusCode).toBe(403);
 
@@ -525,7 +590,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const opened = await a.inject({
       method: "POST",
       url: `/swaps/${fresh}/dispute`,
-      payload: signed(buyer, buyerDid, { reason: "paid but seller silent" }),
+      payload: signed(buyer, buyerDid, { reason: "paid but seller silent", requestMethod: "POST", requestPath: `/swaps/${fresh}/dispute` }),
     });
     expect(opened.statusCode).toBe(200);
     expect(opened.json()).toMatchObject({ dispute: "OPEN", status: "PAYMENT_CLAIMED" });
@@ -534,7 +599,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const dup = await a.inject({
       method: "POST",
       url: `/swaps/${fresh}/dispute`,
-      payload: signed(seller, sellerDid, {}),
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${fresh}/dispute` }),
     });
     expect(dup.statusCode).toBe(409);
 
@@ -542,7 +607,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const confirmBlocked = await a.inject({
       method: "POST",
       url: `/swaps/${fresh}/confirm`,
-      payload: signed(seller, sellerDid, {}),
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${fresh}/confirm` }),
     });
     expect(confirmBlocked.statusCode).toBe(422);
     expect(confirmBlocked.json().error).toContain("dispute OPEN");
@@ -573,7 +638,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const complete = await a.inject({
       method: "POST",
       url: `/swaps/${fresh}/transitions`,
-      payload: signed(engine, engineDid, { action: "complete" }),
+      payload: signed(engine, engineDid, { action: "complete", requestMethod: "POST", requestPath: `/swaps/${fresh}/transitions` }),
     });
     expect(complete.statusCode).toBe(200);
     expect((await store.getSwap(fresh))!.status).toBe("COMPLETED");
@@ -595,19 +660,19 @@ describe("CNY rails (docs/p2p.md)", () => {
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-1" }),
+      payload: signed(buyer, buyerDid, { txId: "TX-1", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/dispute`,
-      payload: signed(seller, sellerDid, { reason: "buyer never paid" }),
+      payload: signed(seller, sellerDid, { reason: "buyer never paid", requestMethod: "POST", requestPath: `/swaps/${swapId}/dispute` }),
     });
     bump();
     const badOutcome = await a.inject({
@@ -644,7 +709,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const confirm = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/confirm`,
-      payload: signed(seller, sellerDid, {}),
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }),
     });
     expect(confirm.statusCode).toBe(422);
     expect(confirm.json().error).toContain("refund ordered");
@@ -654,7 +719,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const expire = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(seller, sellerDid, { action: "expire" }),
+      payload: signed(seller, sellerDid, { action: "expire", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(expire.statusCode).toBe(409);
   });
@@ -662,7 +727,7 @@ describe("CNY rails (docs/p2p.md)", () => {
   it("stores seller profiles per method and rejects bad input", async () => {
     const a = await app();
 
-    const mine = await a.inject({ method: "POST", url: "/profiles/mine", payload: signed(seller, sellerDid, {}) });
+    const mine = await a.inject({ method: "POST", url: "/profiles/mine", payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: "/profiles/mine" }) });
     expect(mine.statusCode).toBe(200);
     expect(mine.json().profiles).toHaveLength(1);
     expect(mine.json().profiles[0]).toMatchObject({ method: "wechat", account: "wxid_pay888" });
@@ -672,20 +737,20 @@ describe("CNY rails (docs/p2p.md)", () => {
     const badMethod = await a.inject({
       method: "POST",
       url: "/profiles",
-      payload: signed(seller, sellerDid, { method: "paypal", accountName: "x", account: "y" }),
+      payload: signed(seller, sellerDid, { method: "paypal", accountName: "x", account: "y", requestMethod: "POST", requestPath: "/profiles" }),
     });
     expect(badMethod.statusCode).toBe(400);
     const badAccount = await a.inject({
       method: "POST",
       url: "/profiles",
-      payload: signed(seller, sellerDid, { method: "alipay", accountName: "x", account: "a".repeat(129) }),
+      payload: signed(seller, sellerDid, { method: "alipay", accountName: "x", account: "a".repeat(129), requestMethod: "POST", requestPath: "/profiles" }),
     });
     expect(badAccount.statusCode).toBe(400);
 
     // another seller's profiles are invisible without their key
     const stranger = Ed25519Key.createNewKey();
     const strangerDid = didFromEd25519Key(stranger);
-    const strangerMine = await a.inject({ method: "POST", url: "/profiles/mine", payload: signed(stranger, strangerDid, {}) });
+    const strangerMine = await a.inject({ method: "POST", url: "/profiles/mine", payload: signed(stranger, strangerDid, { requestMethod: "POST", requestPath: "/profiles/mine" }) });
     expect(strangerMine.json().profiles).toEqual([]);
 
     // upsert switches the seller's wechat profile in place
@@ -693,10 +758,10 @@ describe("CNY rails (docs/p2p.md)", () => {
     const updated = await a.inject({
       method: "POST",
       url: "/profiles",
-      payload: signed(seller, sellerDid, { method: "wechat", accountName: "Li Si", account: "wxid_new999" }),
+      payload: signed(seller, sellerDid, { method: "wechat", accountName: "Li Si", account: "wxid_new999", requestMethod: "POST", requestPath: "/profiles" }),
     });
     expect(updated.statusCode).toBe(200);
-    const after = await a.inject({ method: "POST", url: "/profiles/mine", payload: signed(seller, sellerDid, {}) });
+    const after = await a.inject({ method: "POST", url: "/profiles/mine", payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: "/profiles/mine" }) });
     expect(after.json().profiles).toHaveLength(1);
     expect(after.json().profiles[0]).toMatchObject({ accountName: "Li Si", account: "wxid_new999" });
 
@@ -712,7 +777,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const payout = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(engine, engineDid, { action: "payout" }),
+      payload: signed(engine, engineDid, { action: "payout", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(payout.statusCode).toBe(400);
     expect(payout.json().error).toContain("unknown action");
@@ -730,7 +795,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     // the seller sees the transfer land before the buyer uploads any proof —
     // the rescue hatch for a paid-but-unclaimed payment (docs/p2p.md §9)
@@ -738,7 +803,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const confirm = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/confirm`,
-      payload: signed(seller, sellerDid, {}),
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }),
     });
     expect(confirm.statusCode).toBe(200);
     expect(confirm.json().status).toBe("PAYMENT_VERIFIED");
@@ -752,7 +817,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const sellerEarly = await a.inject({
       method: "POST",
       url: `/swaps/${early}/transitions`,
-      payload: signed(seller, sellerDid, { action: "cancel" }),
+      payload: signed(seller, sellerDid, { action: "cancel", requestMethod: "POST", requestPath: `/swaps/${early}/transitions` }),
     });
     expect(sellerEarly.statusCode).toBe(200);
     expect((await store.getSwap(early))!.status).toBe("CANCELLED");
@@ -764,19 +829,19 @@ describe("CNY rails (docs/p2p.md)", () => {
     await a.inject({
       method: "POST",
       url: `/swaps/${late}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${late}/payment-instructions` }),
     });
     bump();
     const sellerLate = await a.inject({
       method: "POST",
       url: `/swaps/${late}/transitions`,
-      payload: signed(seller, sellerDid, { action: "cancel" }),
+      payload: signed(seller, sellerDid, { action: "cancel", requestMethod: "POST", requestPath: `/swaps/${late}/transitions` }),
     });
     expect(sellerLate.statusCode).toBe(409);
     const buyerCancel = await a.inject({
       method: "POST",
       url: `/swaps/${late}/transitions`,
-      payload: signed(buyer, buyerDid, { action: "cancel" }),
+      payload: signed(buyer, buyerDid, { action: "cancel", requestMethod: "POST", requestPath: `/swaps/${late}/transitions` }),
     });
     expect(buyerCancel.statusCode).toBe(200);
     expect((await store.getSwap(late))!.status).toBe("CANCELLED");
@@ -789,13 +854,13 @@ describe("CNY rails (docs/p2p.md)", () => {
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark }),
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     // cancel is dead for both parties once the buyer asserted a payment
     for (const [key, did] of [
@@ -806,7 +871,7 @@ describe("CNY rails (docs/p2p.md)", () => {
       const r = await a.inject({
         method: "POST",
         url: `/swaps/${swapId}/transitions`,
-        payload: signed(key, did, { action: "cancel" }),
+        payload: signed(key, did, { action: "cancel", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
       });
       expect(r.statusCode, did).toBe(409);
     }
@@ -815,19 +880,19 @@ describe("CNY rails (docs/p2p.md)", () => {
     const expire = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(seller, sellerDid, { action: "expire" }),
+      payload: signed(seller, sellerDid, { action: "expire", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(expire.statusCode).toBe(409);
     expect(expire.json().error).toContain("payment claim in flight");
 
     // a confirmed payment is even more final: release is the only way out
     bump();
-    await a.inject({ method: "POST", url: `/swaps/${swapId}/confirm`, payload: signed(seller, sellerDid, {}) });
+    await a.inject({ method: "POST", url: `/swaps/${swapId}/confirm`, payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }) });
     bump();
     const cancelAfter = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(buyer, buyerDid, { action: "cancel" }),
+      payload: signed(buyer, buyerDid, { action: "cancel", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(cancelAfter.statusCode).toBe(409);
   });
@@ -839,13 +904,13 @@ describe("CNY rails (docs/p2p.md)", () => {
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/dispute`,
-      payload: signed(buyer, buyerDid, { reason: "paid to a wrong account" }),
+      payload: signed(buyer, buyerDid, { reason: "paid to a wrong account", requestMethod: "POST", requestPath: `/swaps/${swapId}/dispute` }),
     });
     for (const [key, did, action] of [
       [seller, sellerDid, "expire"],
@@ -855,7 +920,7 @@ describe("CNY rails (docs/p2p.md)", () => {
       const r = await a.inject({
         method: "POST",
         url: `/swaps/${swapId}/transitions`,
-        payload: signed(key, did, { action }),
+        payload: signed(key, did, { action, requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
       });
       expect(r.statusCode, action).toBe(422);
       expect(r.json().error).toContain("dispute OPEN");
@@ -881,13 +946,13 @@ describe("CNY rails (docs/p2p.md)", () => {
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark }),
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     clock += 31_000;
     await sweepTick(a);
@@ -902,7 +967,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const confirm = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/confirm`,
-      payload: signed(seller, sellerDid, {}),
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }),
     });
     expect(confirm.statusCode).toBe(422);
     expect(confirm.json().error).toContain("dispute OPEN");
@@ -916,19 +981,19 @@ describe("CNY rails (docs/p2p.md)", () => {
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${disputed}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${disputed}/payment-instructions` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${disputed}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark }),
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark, requestMethod: "POST", requestPath: `/swaps/${disputed}/proof` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${disputed}/dispute`,
-      payload: signed(buyer, buyerDid, { reason: "review" }),
+      payload: signed(buyer, buyerDid, { reason: "review", requestMethod: "POST", requestPath: `/swaps/${disputed}/dispute` }),
     });
     const before = (await store.getSwap(disputed))!;
 
@@ -938,16 +1003,16 @@ describe("CNY rails (docs/p2p.md)", () => {
     await a.inject({
       method: "POST",
       url: `/swaps/${verified}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${verified}/payment-instructions` }),
     });
     bump();
     await a.inject({
       method: "POST",
       url: `/swaps/${verified}/proof`,
-      payload: signed(buyer, buyerDid, { txId: "TX-2" }),
+      payload: signed(buyer, buyerDid, { txId: "TX-2", requestMethod: "POST", requestPath: `/swaps/${verified}/proof` }),
     });
     bump();
-    await a.inject({ method: "POST", url: `/swaps/${verified}/confirm`, payload: signed(seller, sellerDid, {}) });
+    await a.inject({ method: "POST", url: `/swaps/${verified}/confirm`, payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${verified}/confirm` }) });
 
     clock += 600_000;
     await sweepTick(a);

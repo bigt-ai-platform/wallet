@@ -105,20 +105,19 @@ test.describe('P2P Orders (chain)', () => {
       '--key', seller.key, '--orderId', orderId1, '--terms', JSON.stringify(TERMS),
     ]);
     expect(open1.txid).toMatch(/^[0-9a-f]{64}$/i);
-    const created = await post(ENGINE, '/orders', signBody(seller.key, open1.fields));
+    const created = await post(ENGINE, '/orders', signBody(seller.key, { ...(open1.fields), requestMethod: 'POST', requestPath: '/orders' }));
     // 201 = intake created it; 200 = the chain projector already indexed the
     // anchored record (idempotent re-register). Both leave the same ACTIVE order.
     expect([200, 201]).toContain(created.status);
     expect(created.body).toMatchObject({ orderId: orderId1, status: 'ACTIVE', txid: open1.txid });
 
-    const repost = await post(ENGINE, '/orders', signBody(seller.key, open1.fields));
+    const repost = await post(ENGINE, '/orders', signBody(seller.key, { ...(open1.fields), requestMethod: 'POST', requestPath: '/orders' }));
     expect(repost.status).toBe(200);
     expect(repost.body).toMatchObject({ orderId: orderId1, status: 'ACTIVE' });
 
     // An unconfirmed/unknown txid must never be indexed (fail-closed gate).
     const bogus = await post(ENGINE, '/orders', signBody(seller.key, {
-      sellerDid: seller.did, orderId: orderId3, txid: '0'.repeat(64), ...TERMS,
-    }));
+      sellerDid: seller.did, orderId: orderId3, txid: '0'.repeat(64), ...TERMS, requestMethod: 'POST', requestPath: '/orders' }));
     expect(bogus.status).toBe(409);
     expect(bogus.body.error).toMatch(/txid not confirmed/);
     expect(await orderIds(ENGINE, 'ACTIVE')).not.toContain(orderId3);
@@ -129,12 +128,11 @@ test.describe('P2P Orders (chain)', () => {
     const open2 = helperJSON('anchor-order', [
       '--key', seller.key, '--orderId', orderId2, '--terms', JSON.stringify(TERMS),
     ]);
-    const created2 = await post(ENGINE, '/orders', signBody(seller.key, open2.fields));
+    const created2 = await post(ENGINE, '/orders', signBody(seller.key, { ...(open2.fields), requestMethod: 'POST', requestPath: '/orders' }));
     expect([200, 201]).toContain(created2.status);
 
     const matched = await post(ENGINE, `/orders/${orderId2}/match`, signBody(buyer.key, {
-      buyerDid: buyer.did, receiveAddress: buyer.address,
-    }));
+      buyerDid: buyer.did, receiveAddress: buyer.address, requestMethod: 'POST', requestPath: `/orders/${orderId2}/match` }));
     expect(matched.status).toBe(201);
     expect(matched.body.swapId).toMatch(/^swap-[0-9a-f]{16}$/);
     expect(matched.body.escrowAddress).toBeTruthy();
@@ -145,11 +143,11 @@ test.describe('P2P Orders (chain)', () => {
     // --- order 1: seller cancel (anchored) + idempotent re-post ---
     const cancel1 = helperJSON('anchor-order', ['--key', seller.key, '--orderId', orderId1, '--status', 'CANCELLED']);
     expect(cancel1.txid).toMatch(/^[0-9a-f]{64}$/i);
-    const cancelled = await post(ENGINE, `/orders/${orderId1}/cancel`, signBody(seller.key, cancel1.fields));
+    const cancelled = await post(ENGINE, `/orders/${orderId1}/cancel`, signBody(seller.key, { ...(cancel1.fields), requestMethod: 'POST', requestPath: `/orders/${orderId1}/cancel` }));
     expect(cancelled.status).toBe(200);
     expect(cancelled.body).toMatchObject({ orderId: orderId1, status: 'CANCELLED' });
 
-    const recancel = await post(ENGINE, `/orders/${orderId1}/cancel`, signBody(seller.key, cancel1.fields));
+    const recancel = await post(ENGINE, `/orders/${orderId1}/cancel`, signBody(seller.key, { ...(cancel1.fields), requestMethod: 'POST', requestPath: `/orders/${orderId1}/cancel` }));
     expect(recancel.status).toBe(200);
     expect(recancel.body.status).toBe('CANCELLED');
 
@@ -158,25 +156,21 @@ test.describe('P2P Orders (chain)', () => {
 
     // --- transition conflicts: chain/API order decides, losers get 409 ---
     const cancelMatched = await post(ENGINE, `/orders/${orderId2}/cancel`, signBody(seller.key, {
-      sellerDid: seller.did, orderId: orderId2,
-    }));
+      sellerDid: seller.did, orderId: orderId2, requestMethod: 'POST', requestPath: `/orders/${orderId2}/cancel` }));
     expect(cancelMatched.status).toBe(409);
     expect(cancelMatched.body.error).toMatch(/MATCHED/);
 
     const matchCancelled = await post(ENGINE, `/orders/${orderId1}/match`, signBody(buyer.key, {
-      buyerDid: buyer.did, receiveAddress: buyer.address,
-    }));
+      buyerDid: buyer.did, receiveAddress: buyer.address, requestMethod: 'POST', requestPath: `/orders/${orderId1}/match` }));
     expect(matchCancelled.status).toBe(409);
     expect(matchCancelled.body.error).toMatch(/CANCELLED/);
 
     const unknown = await post(ENGINE, `/orders/${orderId4}/cancel`, signBody(seller.key, {
-      sellerDid: seller.did, orderId: orderId4,
-    }));
+      sellerDid: seller.did, orderId: orderId4, requestMethod: 'POST', requestPath: `/orders/${orderId4}/cancel` }));
     expect(unknown.status).toBe(404);
 
     const wrongSeller = await post(ENGINE, `/orders/${orderId1}/cancel`, signBody(buyer.key, {
-      sellerDid: buyer.did, orderId: orderId1,
-    }));
+      sellerDid: buyer.did, orderId: orderId1, requestMethod: 'POST', requestPath: `/orders/${orderId1}/cancel` }));
     expect(wrongSeller.status).toBe(403);
     expect(wrongSeller.body.error).toMatch(/not the seller/);
 

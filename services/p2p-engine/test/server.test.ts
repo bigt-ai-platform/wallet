@@ -51,7 +51,7 @@ async function saveProfile(a: TestApp, method = "wechat") {
   const r = await a.inject({
     method: "POST",
     url: "/profiles",
-    payload: signed(seller, sellerDid, { method, accountName: "Zhang San", account: "wxid_pay888" }),
+    payload: signed(seller, sellerDid, { method, accountName: "Zhang San", account: "wxid_pay888", requestMethod: "POST", requestPath: "/profiles" }),
   });
   expect(r.statusCode).toBe(200);
 }
@@ -70,15 +70,14 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
       wantCurrency: "CNY",
       wantAmount: "715",
       wantRail,
-      validUntil: Math.floor(clock / 1000) + 3600,
-    }),
+      validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
   });
   expect(r1.statusCode).toBe(201);
   bump();
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
   });
   expect(r2.statusCode).toBe(201);
   const swapId = r2.json().swapId as string;
@@ -86,7 +85,7 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64) }),
+    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
   });
   expect(lock.statusCode).toBe(200);
   bump();
@@ -99,21 +98,21 @@ async function toPaymentVerified(a: TestApp): Promise<string> {
   const ins = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/payment-instructions`,
-    payload: signed(buyer, buyerDid, {}),
+    payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
   });
   expect(ins.statusCode).toBe(201);
   bump();
   const proof = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/proof`,
-    payload: signed(buyer, buyerDid, { txId: "4200001234567890", remark: ins.json().remark }),
+    payload: signed(buyer, buyerDid, { txId: "4200001234567890", remark: ins.json().remark, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
   });
   expect(proof.statusCode).toBe(200);
   bump();
   const confirm = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/confirm`,
-    payload: signed(seller, sellerDid, {}),
+    payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }),
   });
   expect(confirm.statusCode).toBe(200);
   expect(confirm.json().status).toBe("PAYMENT_VERIFIED");
@@ -146,7 +145,7 @@ describe("settlement server", () => {
     const release = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(engine, engineDid, { action: "release", txHash: "b".repeat(64) }),
+      payload: signed(engine, engineDid, { action: "release", txHash: "b".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(release.statusCode).toBe(200);
     expect(release.json().status).toBe("ESCROW_RELEASED");
@@ -154,7 +153,7 @@ describe("settlement server", () => {
     const complete = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(engine, engineDid, { action: "complete" }),
+      payload: signed(engine, engineDid, { action: "complete", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(complete.statusCode).toBe(200);
     expect(complete.json().status).toBe("COMPLETED");
@@ -193,14 +192,13 @@ describe("settlement server", () => {
         wantCurrency: "CNY",
         wantAmount: "715",
         wantRail: "wechat",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(o.statusCode).toBe(201);
     const m = await a.inject({
       method: "POST",
       url: `/orders/${o.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
     });
     expect(m.statusCode).toBe(500);
   });
@@ -229,14 +227,13 @@ describe("settlement server", () => {
         wantCurrency: "CNY",
         wantAmount: "715",
         wantRail: "wechat",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(o.statusCode).toBe(201);
     const m = await a.inject({
       method: "POST",
       url: `/orders/${o.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     const swapId = m.json().swapId as string;
@@ -273,7 +270,7 @@ describe("settlement server", () => {
     const r = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(buyer, buyerDid, { action: "release", txHash: "b".repeat(64) }),
+      payload: signed(buyer, buyerDid, { action: "release", txHash: "b".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(r.statusCode).toBe(403);
     expect(r.json().error).toMatch(/engine signer/);
@@ -306,10 +303,10 @@ describe("settlement server", () => {
   it("scopes swap reads to the signing party and rejects non-parties", async () => {
     const a = await app();
     const swapId = await toEscrowLocked(a);
-    const mine = await a.inject({ method: "POST", url: "/swaps/get", payload: signed(seller, sellerDid, { swapId }) });
+    const mine = await a.inject({ method: "POST", url: "/swaps/get", payload: signed(seller, sellerDid, { swapId, requestMethod: "POST", requestPath: "/swaps/get" }) });
     expect(mine.statusCode).toBe(200);
     expect(mine.json().swap.swapId).toBe(swapId);
-    const stranger = await a.inject({ method: "POST", url: "/swaps/get", payload: signed(other, otherDid, { swapId }) });
+    const stranger = await a.inject({ method: "POST", url: "/swaps/get", payload: signed(other, otherDid, { swapId, requestMethod: "POST", requestPath: "/swaps/get" }) });
     expect(stranger.statusCode).toBe(403);
   });
 
@@ -364,8 +361,7 @@ describe("buy orders (limit_buy)", () => {
         wantAmount: "715",
         wantRail: "wechat",
         validUntil: Math.floor(clock / 1000) + 3600,
-        receiveAddress: "1BuyerRecvAddr",
-      }),
+        receiveAddress: "1BuyerRecvAddr", requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(o.statusCode).toBe(201);
     bump();
@@ -374,7 +370,7 @@ describe("buy orders (limit_buy)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${o.json().orderId}/match`,
-      payload: signed(seller, sellerDid, { buyerDid: sellerDid }),
+      payload: signed(seller, sellerDid, { buyerDid: sellerDid, requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     const swap = await store.getSwap(m.json().swapId as string);
@@ -397,8 +393,7 @@ describe("buy orders (limit_buy)", () => {
         wantCurrency: "CNY",
         wantAmount: "715",
         wantRail: "wechat",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(r.statusCode).toBe(400);
   });
@@ -417,15 +412,14 @@ describe("buy orders (limit_buy)", () => {
         wantCurrency: "CNY",
         wantAmount: "715",
         wantRail: "wechat",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(o.statusCode).toBe(201);
     bump();
     const m = await a.inject({
       method: "POST",
       url: `/orders/${o.json().orderId}/match`,
-      payload: signed(seller, sellerDid, { buyerDid: sellerDid, receiveAddress: "1Self" }),
+      payload: signed(seller, sellerDid, { buyerDid: sellerDid, receiveAddress: "1Self", requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
     });
     expect(m.statusCode).toBe(409);
   });
@@ -446,6 +440,7 @@ describe("buy orders (limit_buy)", () => {
         wantRail: "wechat",
         validUntil: Math.floor(clock / 1000) + 86400,
         timeLimit: 60, // 60 minutes → 3600s
+        requestMethod: "POST", requestPath: "/orders",
       }),
     });
     expect(o.statusCode).toBe(201);
@@ -453,7 +448,7 @@ describe("buy orders (limit_buy)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${o.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Recv" }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Recv", requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     bump();
@@ -461,14 +456,14 @@ describe("buy orders (limit_buy)", () => {
     const lock = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64) }),
+      payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(lock.statusCode).toBe(200);
     bump();
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     expect(ins.statusCode).toBe(201);
     expect(ins.json().payBy).toBe(Math.floor(clock / 1000) + 3600);
@@ -490,8 +485,7 @@ describe("buy orders (limit_buy)", () => {
         wantRail: "wechat",
         validUntil: Math.floor(clock / 1000) + 86400,
         minOrder: "100",
-        maxOrder: "800",
-      }),
+        maxOrder: "800", requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(o.statusCode).toBe(201);
     const orderId = o.json().orderId as string;
@@ -499,7 +493,7 @@ describe("buy orders (limit_buy)", () => {
     const m1 = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", fillAmount: "40" }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", fillAmount: "40", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m1.statusCode).toBe(201);
     const swap1 = await store.getSwap(m1.json().swapId as string);
@@ -512,7 +506,7 @@ describe("buy orders (limit_buy)", () => {
     const m2 = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: "1R2", fillAmount: "5" }),
+      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: "1R2", fillAmount: "5", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m2.statusCode).toBe(409);
     bump();
@@ -520,7 +514,7 @@ describe("buy orders (limit_buy)", () => {
     const m3 = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R3", fillAmount: "60" }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R3", fillAmount: "60", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m3.statusCode).toBe(201);
     const closed = await store.getOrder(orderId);
@@ -543,8 +537,7 @@ describe("buy orders (limit_buy)", () => {
         wantAmount: "715",
         wantRail: "wechat",
         wantRails: ["wechat", "alipay"],
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(o.statusCode).toBe(201);
     const orderId = o.json().orderId as string;
@@ -552,7 +545,7 @@ describe("buy orders (limit_buy)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", rail: "alipay", fillAmount: "40" }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", rail: "alipay", fillAmount: "40", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     expect((await store.getSwap(m.json().swapId as string))?.wantRail).toBe("alipay");
@@ -561,7 +554,7 @@ describe("buy orders (limit_buy)", () => {
     const bad = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: "1R2", rail: "bank", fillAmount: "10" }),
+      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: "1R2", rail: "bank", fillAmount: "10", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(bad.statusCode).toBe(400);
   });

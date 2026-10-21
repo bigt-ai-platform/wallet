@@ -235,19 +235,16 @@ export async function verifyChainPayment(
 }
 
 /**
- * Prove a *settled* spend by its recipient output (getOutputsHistory) — the
- * canonical path the lock proof uses. A 2-of-3 P2SH spend's node txid can differ
- * from the engine's local `Transaction.getHash()`, so `getTransactionStatus(hash)`
- * can stay UNKNOWN even after the spend confirmed; a confirmed, unspent output of
- * the expected token/amount at the recipient is the proof the wallet itself uses
- * (Java-first: DatabaseFullBlockStoreBase.getOutputsHistory).
+ * Prove settlement using a confirmed recipient output from the submitted
+ * transaction. Unrelated outputs must never count toward this spend.
  */
 export async function verifyPaymentOutput(
   chain: ChainClient,
-  opts: { toAddress: string; token: string; amount: string },
+  opts: { txHash: string; toAddress: string; token: string; amount: string },
 ): Promise<ChainEvidence> {
   try {
-    const outputs = normalizeOutputs(await chain.outputsHistory(opts.toAddress));
+    const history = await chain.outputsHistory(opts.toAddress);
+    const outputs = normalizeOutputs(history.filter((output) => output.hashHex === opts.txHash && output.confirmed === true));
     const check = verifySettlement(outputs, {
       toAddress: opts.toAddress,
       token: opts.token,
@@ -260,16 +257,13 @@ export async function verifyPaymentOutput(
 }
 
 /**
- * Resolve the node's own txid for a CONFIRMED transaction paying `toAddress`
- * (getTransactionsStatusByAddress) — the address index the wallet uses. A
- * locally computed txid can stay BATCHED for a PQ-witness 2-of-3 spend while
- * the node has already confirmed it, so this is the authoritative way to finish
- * a settlement (and to record the node's txid rather than the local one).
+ * Check the submitted transaction in the recipient's address index when the
+ * direct status endpoint lags. Other confirmed address history is not proof.
  */
-export async function confirmedTxToAddress(chain: ChainClient, toAddress: string): Promise<string | null> {
+export async function confirmedTxToAddress(chain: ChainClient, toAddress: string, expectedTxHash: string): Promise<string | null> {
   try {
     const txs = await chain.transactionsStatusByAddress(toAddress);
-    const hit = txs.find((t) => (t.status ?? "").toUpperCase() === "CONFIRMED");
+    const hit = txs.find((t) => t.txHash === expectedTxHash && (t.status ?? "").toUpperCase() === "CONFIRMED");
     return hit?.txHash ?? null;
   } catch {
     return null;

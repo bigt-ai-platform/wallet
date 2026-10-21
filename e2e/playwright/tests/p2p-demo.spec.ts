@@ -102,7 +102,7 @@ async function waitStatusAny(page: Page, expected: string[], id = 'p2p-swap-0-st
       const notice = await el(page, 'p2p-notice').first().textContent().catch(() => null);
       throw new Error(`timeout: want one of ${expected.join('|')}, got ${txt} | notice: ${notice}`);
     }
-    await page.waitForTimeout(400);
+    await refresh(page);
   }
 }
 

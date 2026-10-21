@@ -373,16 +373,31 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   }
 
   /** Buyer-facing payment instructions for a CNY swap (PII: party-scoped only). */
-  function instructionsView(swap: P2pSwapEvent, profile: PaymentProfile, remark: string) {
+  function paymentWindowSec(swap: P2pSwapEvent): number {
     // The ad's payment window (timeLimit → payWindowSec) wins over the engine
     // default, so the buyer gets the time the seller advertised (docs/p2p.md).
     const envTtl = Number(env.SETTLEMENT_CNY_REMARK_TTL ?? "900");
-    const ttl =
+    return (
       swap.payWindowSec && swap.payWindowSec > 0
         ? Math.floor(swap.payWindowSec)
         : Number.isFinite(envTtl) && envTtl > 0
           ? Math.floor(envTtl)
-          : 900;
+          : 900
+    );
+  }
+
+  async function paymentDeadline(swap: P2pSwapEvent): Promise<number> {
+    const instructions = (await deps.store.events(swap.swapId)).find((event) => event.eventType === "instructions");
+    return (Math.floor((instructions?.at ?? swap.at) / 1000) + paymentWindowSec(swap)) * 1000;
+  }
+
+  async function expiryDeadline(swap: P2pSwapEvent): Promise<number | null> {
+    if (swap.status === "PAYMENT_PENDING") return paymentDeadline(swap);
+    const duration = secondsMs(env.SETTLEMENT_CNY_EXPIRE_AFTER, 3600);
+    return duration > 0 ? swap.at + duration : null;
+  }
+
+  async function instructionsView(swap: P2pSwapEvent, profile: PaymentProfile, remark: string) {
     return {
       method: profile.method,
       rail: swap.wantRail,
@@ -393,7 +408,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       amount: swap.wantAmount,
       currency: swap.wantCurrency,
       remark,
-      payBy: Math.floor(now() / 1000) + ttl,
+      payBy: Math.floor((await paymentDeadline(swap)) / 1000),
     };
   }
 
@@ -411,25 +426,28 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   }
 
   async function persist(event: P2pSwapEvent): Promise<P2pSwapEvent> {
-    let txid: string | undefined;
-    if (deps.anchor) {
-      try {
-        const res = await deps.anchor(event);
-        txid = res?.txid;
-      } catch (e) {
-        // L1-SOCIAL carries the *evidence/attestation* log; the value leg is
-        // L0 (escrow + fiat). In best-effort mode an anchor failure (node down,
-        // anchor key unfunded) is logged and the event is stored without a
-        // chain record, so the L0 settlement still advances. `required` keeps
-        // the fail-closed default (docs/p2p.md §8/§14).
-        if (!deps.anchorBestEffort) throw e;
-        console.warn(
-          `p2p-engine: anchor failed (best-effort — storing without chain record): ${e instanceof Error ? e.message : String(e)}`,
-        );
+    let stored = event;
+    await deps.store.appendEvent(event, async () => {
+      let txid: string | undefined;
+      if (deps.anchor) {
+        try {
+          const res = await deps.anchor(event);
+          txid = res?.txid;
+        } catch (e) {
+          // L1-SOCIAL carries the *evidence/attestation* log; the value leg is
+          // L0 (escrow + fiat). In best-effort mode an anchor failure (node down,
+          // anchor key unfunded) is logged and the event is stored without a
+          // chain record, so the L0 settlement still advances. `required` keeps
+          // the fail-closed default (docs/p2p.md §8/§14).
+          if (!deps.anchorBestEffort) throw e;
+          console.warn(
+            `p2p-engine: anchor failed (best-effort — storing without chain record): ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
       }
-    }
-    const stored = txid ? { ...event, txid } : event;
-    await deps.store.appendEvent(stored);
+      stored = txid ? { ...event, txid } : event;
+      return stored;
+    });
     return stored;
   }
 
@@ -627,11 +645,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (submitted) {
       const out = await awaitConfirmed(deps.chain, submitted, to, escrowPollOpts());
       if (out.confirmed) return finishSettle(swap, kind, out.txHash, opts.actorDid);
-      // The node can report BATCHED for a while (and, for a PQ-witness 2-of-3
-      // spend, getTransactionStatus(hash) can lag the address index entirely),
-      // so prove the spend landed by the recipient's confirmed output — the
-      // canonical, txid-independent path — on every tick, before deciding.
+      // The status endpoint can lag the output/address indexes. Both fallback
+      // proofs must still identify the exact transaction we broadcast.
       const proof = await verifyPaymentOutput(deps.chain, {
+        txHash: submitted,
         toAddress: toBase58,
         token: swap.giveToken ?? "",
         amount: swap.giveAmount ?? "",
@@ -640,9 +657,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         app.log.info({ swapId: swap.swapId, kind, txHash: submitted, via: "output" }, "escrow settled");
         return finishSettle(swap, kind, submitted, opts.actorDid);
       }
-      // The node's own txid index: the spend can be CONFIRMED there while our
-      // computed hash is still BATCHED (PQ-witness 2-of-3 spend).
-      const nodeTx = await confirmedTxToAddress(deps.chain, toBase58);
+      // Check the same transaction in the recipient's address index.
+      const nodeTx = await confirmedTxToAddress(deps.chain, toBase58, submitted);
       if (nodeTx) {
         app.log.info({ swapId: swap.swapId, kind, txHash: nodeTx, via: "index" }, "escrow settled");
         return finishSettle(swap, kind, nodeTx, opts.actorDid);
@@ -703,8 +719,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     );
     const out = await awaitConfirmed(deps.chain, txHash, to, escrowPollOpts());
     if (out.confirmed) return finishSettle(swap, kind, txHash, opts.actorDid);
-    // Same txid-independence as above: fall back to the recipient's output.
+    // Check the recipient's confirmed output from this exact transaction.
     const proof = await verifyPaymentOutput(deps.chain, {
+      txHash,
       toAddress: toBase58,
       token: swap.giveToken ?? "",
       amount: swap.giveAmount ?? "",
@@ -713,7 +730,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       app.log.info({ swapId: swap.swapId, kind, txHash, via: "output" }, "escrow settled");
       return finishSettle(swap, kind, txHash, opts.actorDid);
     }
-    const nodeTx = await confirmedTxToAddress(deps.chain, toBase58);
+    const nodeTx = await confirmedTxToAddress(deps.chain, toBase58, txHash);
     if (nodeTx) {
       app.log.info({ swapId: swap.swapId, kind, txHash: nodeTx, via: "index" }, "escrow settled");
       return finishSettle(swap, kind, nodeTx, opts.actorDid);
@@ -812,7 +829,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   // but unclaimed transfer. SETTLEMENT_SWEEP_MS=0 (the default) disables the
   // timer — the tick stays exported for tests.
   function secondsMs(raw: string | undefined, fallbackSec: number): number {
-    const n = Number(raw ?? "");
+    const n = Number(raw?.trim() || fallbackSec);
     const sec = Number.isFinite(n) ? n : fallbackSec;
     return sec > 0 ? sec * 1000 : 0;
   }
@@ -827,7 +844,6 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       return;
     }
     const confirmMs = secondsMs(env.SETTLEMENT_CNY_CONFIRM_TIMEOUT, 900);
-    const expireMs = secondsMs(env.SETTLEMENT_CNY_EXPIRE_AFTER, 3600);
     for (const swap of swaps) {
       if (sweepInFlight.has(swap.swapId)) continue;
       // An open dispute is arbitration's; a resolved one is settled below.
@@ -855,7 +871,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         continue;
       }
       if (swap.status !== "MATCHED" && swap.status !== "ESCROW_LOCKED" && swap.status !== "PAYMENT_PENDING") continue;
-      if (!(expireMs > 0) || idle < expireMs) continue;
+      const deadline = await expiryDeadline(swap);
+      if (deadline === null || now() < deadline) continue;
       sweepInFlight.add(swap.swapId);
       try {
         const stored = await persist({
@@ -1021,7 +1038,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!ORDER_ID_RE.test(orderId)) return reply.code(400).send({ error: "invalid orderId" });
     const txid = body.txid === undefined ? undefined : String(body.txid);
     if (txid !== undefined && !TXID_RE.test(txid)) return reply.code(400).send({ error: "invalid txid" });
-    const signed = validateSignedRequest(body, sellerDid, guard);
+    const signed = validateSignedRequest(body, sellerDid, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (txid !== undefined) {
       const gate = await orderTxVerified({
@@ -1086,7 +1103,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (order.sellerDid !== sellerDid) return reply.code(403).send({ error: "not the seller" });
     const txid = body.txid === undefined ? undefined : String(body.txid);
     if (txid !== undefined && !TXID_RE.test(txid)) return reply.code(400).send({ error: "invalid txid" });
-    const signed = validateSignedRequest(body, sellerDid, guard);
+    const signed = validateSignedRequest(body, sellerDid, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (order.status === "CANCELLED") return reply.code(200).send({ orderId, status: "CANCELLED" });
     if (order.status !== "ACTIVE") return reply.code(409).send({ error: `order is ${order.status}` });
@@ -1193,7 +1210,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!receiveAddress) {
       return reply.code(400).send({ error: isBuy ? "order has no buyer receive address" : "receiveAddress required" });
     }
-    const signed = validateSignedRequest(body, signerDid, guard);
+    const signed = validateSignedRequest(body, signerDid, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
 
     // A PINNED order can only be matched by a deployment that holds its engine
@@ -1254,7 +1271,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     };
     // Conditional ACTIVE→(MATCHED | ACTIVE with reduced remaining): concurrent
     // matches race here and the first claim wins (a loser never double-fills).
-    if (!(await deps.store.markOrderMatched(orderId, swapId, nextRemaining > 0 ? String(nextRemaining) : undefined))) {
+    if (!(await deps.store.markOrderMatched(orderId, swapId, nextRemaining > 0 ? String(nextRemaining) : undefined, remaining))) {
       return reply.code(409).send({ error: "order is no longer active" });
     }
     let stored: P2pSwapEvent;
@@ -1321,9 +1338,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         error: "payment claim in flight — expire requires PAYMENT_PENDING or a resolved refund arbitration (docs/p2p.md §12)",
       });
     }
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (!canTransition(swap.status, target)) return reply.code(409).send({ error: `cannot ${swap.status} → ${target}` });
+    if (action === "expire" && swap.disputeOutcome !== "refund") {
+      const deadline = await expiryDeadline(swap);
+      if (deadline === null || now() < deadline) {
+        return reply.code(409).send({ error: "swap expiry deadline has not elapsed" });
+      }
+    }
     // An open dispute / refund arbitration freezes the forward path;
     // expire/refund/cancel stay available so locked tokens can still come home.
     if (action === "release" || action === "complete") {
@@ -1406,7 +1429,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard, "read");
+    const signed = validateSignedRequest(body, did, guard, "read", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const swaps = await deps.store.listSwapsForDid(did);
     return { swaps: await Promise.all(swaps.map(walletView)) };
@@ -1418,7 +1441,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const swapId = typeof body.swapId === "string" ? body.swapId : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const signed = validateSignedRequest(body, did, guard, "read");
+    const signed = validateSignedRequest(body, did, guard, "read", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const swap = await deps.store.getSwap(swapId);
     if (!swap) return reply.code(404).send({ error: "unknown swap" });
@@ -1461,14 +1484,14 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const buyer = typeof body.did === "string" ? body.did : "";
     if (!buyer) return reply.code(400).send({ error: "did required" });
     if (buyer !== swap.buyerDid) return reply.code(403).send({ error: "buyer signer required" });
-    const signed = validateSignedRequest(body, swap.buyerDid, guard);
+    const signed = validateSignedRequest(body, swap.buyerDid, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const frozenReason = frozen(swap);
     if (frozenReason) return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
     const profile = await deps.store.getProfile(swap.sellerDid, swap.wantRail);
     if (!profile) return reply.code(409).send({ error: "seller has no payment profile for this rail" });
     if (swap.status === "PAYMENT_PENDING" && swap.remark) {
-      return { swapId, status: swap.status, ...instructionsView(swap, profile, swap.remark) };
+      return { swapId, status: swap.status, ...(await instructionsView(swap, profile, swap.remark)) };
     }
     if (swap.status !== "ESCROW_LOCKED") {
       return reply.code(409).send({ error: `instructions require ESCROW_LOCKED (swap is ${swap.status})` });
@@ -1483,7 +1506,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       remark,
       at: now(),
     });
-    return reply.code(201).send({ swapId, status: stored.status, ...instructionsView(stored, profile, remark) });
+    return reply.code(201).send({ swapId, status: stored.status, ...(await instructionsView(stored, profile, remark)) });
   });
 
   /**
@@ -1502,7 +1525,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const buyer = typeof body.did === "string" ? body.did : "";
     if (!buyer) return reply.code(400).send({ error: "did required" });
     if (buyer !== swap.buyerDid) return reply.code(403).send({ error: "buyer signer required" });
-    const signed = validateSignedRequest(body, swap.buyerDid, guard);
+    const signed = validateSignedRequest(body, swap.buyerDid, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const frozenReason = frozen(swap);
     if (frozenReason) return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
@@ -1568,7 +1591,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (did !== swap.sellerDid) return reply.code(403).send({ error: "seller signer required" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const frozenReason = frozen(swap);
     if (frozenReason) return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
@@ -1606,7 +1629,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (!isCnyRail(swap.wantRail)) return reply.code(400).send({ error: "not a CNY swap" });
 
@@ -1709,7 +1732,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const grant = {
       did,
@@ -1744,7 +1767,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const pairings = await deps.store.pairingsForDid(did);
     return {
@@ -1766,7 +1789,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const pairingId = typeof body.pairingId === "string" ? body.pairingId : "";
     if (!pairingId) return reply.code(400).send({ error: "pairingId required" });
@@ -1794,7 +1817,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (!isCnyRail(swap.wantRail)) return reply.code(400).send({ error: "not a CNY swap" });
 
@@ -1853,7 +1876,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (swap.dispute && swap.dispute !== "RESOLVED") return reply.code(409).send({ error: "dispute already open" });
     if (swap.status !== "PAYMENT_PENDING" && swap.status !== "PAYMENT_CLAIMED") {
@@ -1966,7 +1989,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (did !== swap.sellerDid && did !== swap.buyerDid) return reply.code(403).send({ error: "not a swap party" });
-    const signed = validateSignedRequest(body, did, guard, "read");
+    const signed = validateSignedRequest(body, did, guard, "read", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (!swap.escrowAddress || !swap.escrowTxHash) return reply.code(409).send({ error: "swap has no locked escrow" });
     const row = await deps.store.getEscrowSigning(swapId);
@@ -1990,7 +2013,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     if (did !== swap.sellerDid) return reply.code(403).send({ error: "seller signer required" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (!deps.chain) return reply.code(503).send({ error: "chain not configured" });
     if (!swap.escrowTxHash || !swap.escrowAddress) return reply.code(409).send({ error: "swap has no locked escrow" });
@@ -2065,7 +2088,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const kind = body.kind === "release" || body.kind === "refund" ? (body.kind as EscrowKind) : null;
     if (!kind) return reply.code(400).send({ error: "kind must be release | refund" });
     if (kind === "refund" && did !== swap.sellerDid) return reply.code(403).send({ error: "seller signer required for a refund" });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const sigHex = typeof body.sig === "string" ? body.sig.trim() : "";
     if (!sigHex) return reply.code(400).send({ error: "sig required" });
@@ -2117,7 +2140,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (bankName && bankName.length > 64) return reply.code(400).send({ error: "invalid bankName (1..64)" });
     const qr = typeof body.qr === "string" && body.qr ? body.qr : undefined;
     if (qr && qr.length > MAX_RECEIPT_CHARS) return reply.code(413).send({ error: `qr too large (max ${MAX_RECEIPT_CHARS} chars)` });
-    const signed = validateSignedRequest(body, did, guard);
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     const profile: PaymentProfile = {
       sellerDid: did,
@@ -2137,7 +2160,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard, "read");
+    const signed = validateSignedRequest(body, did, guard, "read", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
     return { profiles: await deps.store.listProfiles(did) };
   });

@@ -118,6 +118,6 @@ export function signedBody(
   fields: Record<string, unknown>,
   now: number = Date.now(),
 ): Record<string, unknown> {
-  const payload = { ...fields, did, nonce: randomHex(16), timestamp: now };
+  const payload = { ...fields, requestMethod: 'POST', did, nonce: randomHex(16), timestamp: now };
   return { ...payload, signature: signP2pPayload(key, payload) };
 }

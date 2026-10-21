@@ -231,7 +231,12 @@ test.describe('P2P Flow', () => {
       // The buyer never pays; the seller unwinds it. EXPIRED settles through
       // the refund action (ESCROW_REFUNDED).
       await el(seller.page, 'p2p-swap-0-expire').click();
-      await expect(el(seller.page, 'p2p-swap-0-status')).toHaveText('EXPIRED', { timeout: 15000 });
+      await expect(el(seller.page, 'p2p-notice')).toContainText('expiry deadline has not elapsed');
+      await expect(el(seller.page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED');
+      await expect(async () => {
+        await el(seller.page, 'p2p-swap-0-expire').click();
+        await expect(el(seller.page, 'p2p-swap-0-status')).toHaveText('EXPIRED', { timeout: 500 });
+      }).toPass({ timeout: 15000, intervals: [1000] });
       await expect(el(seller.page, 'p2p-swap-0-refund')).toBeAttached();
 
       await el(buyer.page, 'p2p-refresh').click();

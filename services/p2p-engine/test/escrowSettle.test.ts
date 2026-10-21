@@ -22,7 +22,7 @@ import { buildApp } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, canonicalJson } from "../src/sign.js";
 import { escrowAddress, escrowOutputScript } from "../src/escrow.js";
-import { awaitConfirmed, buildSkeleton, vaultFor } from "../src/escrowSpend.js";
+import { assembleSpend, awaitConfirmed, buildSkeleton, vaultFor } from "../src/escrowSpend.js";
 import type { ChainClient, ChainStatus, RawUtxo } from "../src/chain.js";
 import type { P2pSwapEvent } from "../src/types.js";
 
@@ -117,6 +117,10 @@ class MockChain implements ChainClient {
     if (this.submitError) throw new Error(this.submitError);
     this.submitted.push(rawTxHex);
   }
+
+  async transactionsStatusByAddress(): Promise<Array<{ txHash: string; status: string }>> {
+    return [];
+  }
 }
 
 function makeChain(): MockChain {
@@ -170,8 +174,7 @@ async function saveProfile(a: TestApp): Promise<void> {
     payload: signed(sellerKey, sellerDid, {
       method: "wechat",
       accountName: "Zhang San",
-      account: "wxid_pay888",
-    }),
+      account: "wxid_pay888", requestMethod: "POST", requestPath: "/profiles" }),
   });
   expect(r.statusCode).toBe(200);
 }
@@ -190,15 +193,14 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
       wantCurrency: "CNY",
       wantAmount: "715",
       wantRail: "wechat",
-      validUntil: Math.floor(clock / 1000) + 3600,
-    }),
+      validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
   });
   expect(r1.statusCode).toBe(201);
   bump();
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyerKey, buyerDid, { buyerDid, receiveAddress }),
+    payload: signed(buyerKey, buyerDid, { buyerDid, receiveAddress, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
   });
   expect(r2.statusCode).toBe(201);
   expect(r2.json().escrowAddress).toBe(escrowAddr);
@@ -207,7 +209,7 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(sellerKey, sellerDid, { action: "escrow_lock", txHash: lockTxHash }),
+    payload: signed(sellerKey, sellerDid, { action: "escrow_lock", txHash: lockTxHash, requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
   });
   expect(lock.statusCode).toBe(200);
   expect(lock.json().status).toBe("ESCROW_LOCKED");
@@ -220,7 +222,7 @@ async function toPaymentVerified(a: TestApp, swapId: string): Promise<void> {
   const ins = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/payment-instructions`,
-    payload: signed(buyerKey, buyerDid, {}),
+    payload: signed(buyerKey, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
   });
   expect(ins.statusCode).toBe(201);
   bump();
@@ -230,15 +232,14 @@ async function toPaymentVerified(a: TestApp, swapId: string): Promise<void> {
     payload: signed(buyerKey, buyerDid, {
       txId: "4200001234567890",
       remark: ins.json().remark,
-      receipt: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
-    }),
+      receipt: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
   });
   expect(proof.statusCode).toBe(200);
   bump();
   const confirm = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/confirm`,
-    payload: signed(sellerKey, sellerDid, {}),
+    payload: signed(sellerKey, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/confirm` }),
   });
   expect(confirm.statusCode).toBe(200);
   expect(confirm.json().status).toBe("PAYMENT_VERIFIED");
@@ -274,7 +275,7 @@ async function presignRequest(a: TestApp, swapId: string, payload: Record<string
   return a.inject({
     method: "POST",
     url: `/swaps/${swapId}/escrow/presign`,
-    payload: signed(sellerKey, sellerDid, payload),
+    payload: signed(sellerKey, sellerDid, { ...(payload), requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/presign` }),
   });
 }
 
@@ -314,6 +315,22 @@ beforeEach(async () => {
 });
 
 describe("escrow spend helpers", () => {
+  it("tracks the hash of the serialized signed escrow spend", async () => {
+    const skeleton = await buildSkeleton({
+      chain: makeChain(), vault, escrowAddress: escrowAddr, escrowTxHash: lockTxHash,
+      to: Address.fromBase58(params, receiveAddress),
+    });
+    expect(skeleton).not.toBeNull();
+    assembleSpend(vault, skeleton!.tx, new Map([
+      [vault.indexOf(sellerKey), Utils.HEX.encode(sellerKey.sign(skeleton!.sighash).serialize())],
+      [vault.indexOf(engineKey), Utils.HEX.encode(engineKey.sign(skeleton!.sighash).serialize())],
+    ]));
+    const submittedHash = skeleton!.tx.getHash().toString();
+    const bytes = skeleton!.tx.bitcoinSerialize();
+    const parsed = Transaction.fromTransaction6(params, bytes, 0, null, params.getDefaultSerializer(), bytes.length);
+    expect(submittedHash).toBe(parsed.getHash().toString());
+  });
+
   it("escrowSpendAmount: BIG loses the default fee, other tokens pay out in full", () => {
     expect(escrowSpendAmount(Coin.fromJSON({ value: "1000000", tokenHex: "bc" })).getValue()).toBe(999000n);
     expect(escrowSpendAmount(Coin.fromJSON({ value: "5000", tokenHex: "01" })).getValue()).toBe(5000n);
@@ -419,7 +436,7 @@ describe("Path A — party cosign", () => {
     const cosign = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/cosign`,
-      payload: signed(buyerKey, buyerDid, { kind: "release", sig: buyerSig }),
+      payload: signed(buyerKey, buyerDid, { kind: "release", sig: buyerSig, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/cosign` }),
     });
     expect(cosign.statusCode).toBe(200);
     expect(cosign.json()).toMatchObject({ status: "COMPLETED", pending: false });
@@ -441,7 +458,7 @@ describe("Path A — party cosign", () => {
     const retry = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/cosign`,
-      payload: signed(buyerKey, buyerDid, { kind: "release", sig: buyerSig }),
+      payload: signed(buyerKey, buyerDid, { kind: "release", sig: buyerSig, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/cosign` }),
     });
     expect(retry.statusCode).toBe(200);
     expect(retry.json().status).toBe("COMPLETED");
@@ -459,14 +476,15 @@ describe("Path A — party cosign", () => {
     const buyerRefund = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/cosign`,
-      payload: signed(buyerKey, buyerDid, { kind: "refund", sig: "00", refundAddress }),
+      payload: signed(buyerKey, buyerDid, { kind: "refund", sig: "00", refundAddress, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/cosign` }),
     });
     expect(buyerRefund.statusCode).toBe(403);
 
+    clock += 3_600_001;
     const expire = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(sellerKey, sellerDid, { action: "expire" }),
+      payload: signed(sellerKey, sellerDid, { action: "expire", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(expire.statusCode).toBe(200);
     expect(expire.json().status).toBe("EXPIRED");
@@ -483,7 +501,7 @@ describe("Path A — party cosign", () => {
     const cosign = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/cosign`,
-      payload: signed(sellerKey, sellerDid, { kind: "refund", sig: sellerSig, refundAddress }),
+      payload: signed(sellerKey, sellerDid, { kind: "refund", sig: sellerSig, refundAddress, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/cosign` }),
     });
     expect(cosign.statusCode).toBe(200);
     expect(cosign.json()).toMatchObject({ status: "ESCROW_REFUNDED", pending: false });
@@ -508,7 +526,7 @@ describe("Path A — party cosign", () => {
     const bad = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/cosign`,
-      payload: signed(sellerKey, sellerDid, { kind: "release", sig: wrongSig }),
+      payload: signed(sellerKey, sellerDid, { kind: "release", sig: wrongSig, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/cosign` }),
     });
     expect(bad.statusCode).toBe(422);
     expect(bad.json().error).toMatch(/does not verify/);
@@ -517,7 +535,7 @@ describe("Path A — party cosign", () => {
     const outsider = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/cosign`,
-      payload: signed(strangerKey, strangerDid, { kind: "release", sig: wrongSig }),
+      payload: signed(strangerKey, strangerDid, { kind: "release", sig: wrongSig, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/cosign` }),
     });
     expect(outsider.statusCode).toBe(403);
     expect(outsider.json().error).toMatch(/not a swap party/);
@@ -546,7 +564,7 @@ describe("Path A — party cosign", () => {
     const mismatch = await drifted.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/cosign`,
-      payload: signed(buyerKey, buyerDid, { kind: "release", sig }),
+      payload: signed(buyerKey, buyerDid, { kind: "release", sig, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/cosign` }),
     });
     expect(mismatch.statusCode).toBe(409);
     expect(mismatch.json().error).toMatch(/does not match the vault/);
@@ -558,7 +576,7 @@ describe("Path A — party cosign", () => {
     const conf = await inconsistent.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/cosign`,
-      payload: signed(buyerKey, buyerDid, { kind: "release", sig }),
+      payload: signed(buyerKey, buyerDid, { kind: "release", sig, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/cosign` }),
     });
     expect(conf.statusCode).toBe(503);
     expect(conf.json().error).toMatch(/does not match SETTLEMENT_ENGINE_PUBKEY/);
@@ -608,21 +626,20 @@ describe("presign (seller locks both spend paths at escrow_lock)", () => {
         wantCurrency: "CNY",
         wantAmount: "715",
         wantRail: "wechat",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     bump();
     const r3 = await a.inject({
       method: "POST",
       url: `/orders/${r2.json().orderId}/match`,
-      payload: signed(buyerKey, buyerDid, { buyerDid, receiveAddress }),
+      payload: signed(buyerKey, buyerDid, { buyerDid, receiveAddress, requestMethod: "POST", requestPath: `/orders/${r2.json().orderId}/match` }),
     });
     const unlocked = r3.json().swapId as string;
     bump();
     const byBuyer = await a.inject({
       method: "POST",
       url: `/swaps/${unlocked}/escrow/presign`,
-      payload: signed(buyerKey, buyerDid, { releaseSig, refundSig, refundAddress }),
+      payload: signed(buyerKey, buyerDid, { releaseSig, refundSig, refundAddress, requestMethod: "POST", requestPath: `/swaps/${unlocked}/escrow/presign` }),
     });
     expect(byBuyer.statusCode).toBe(403);
 
@@ -657,7 +674,7 @@ describe("escrow context (party-scoped signing reveal)", () => {
     const ctx = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/context`,
-      payload: signed(buyerKey, buyerDid, { swapId }),
+      payload: signed(buyerKey, buyerDid, { swapId, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/context` }),
     });
     expect(ctx.statusCode).toBe(200);
     expect(ctx.json()).toEqual({
@@ -674,7 +691,7 @@ describe("escrow context (party-scoped signing reveal)", () => {
     const view = await a.inject({
       method: "POST",
       url: "/swaps/mine",
-      payload: signed(buyerKey, buyerDid, {}),
+      payload: signed(buyerKey, buyerDid, { requestMethod: "POST", requestPath: "/swaps/mine" }),
     });
     expect(view.statusCode).toBe(200);
     expect(view.json().swaps[0].receiveAddress).toBeUndefined();
@@ -688,13 +705,13 @@ describe("escrow context (party-scoped signing reveal)", () => {
     const after = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/context`,
-      payload: signed(sellerKey, sellerDid, { swapId }),
+      payload: signed(sellerKey, sellerDid, { swapId, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/context` }),
     });
     expect(after.json().presigned).toBe(true);
     const sellerView = await a.inject({
       method: "POST",
       url: "/swaps/get",
-      payload: signed(sellerKey, sellerDid, { swapId }),
+      payload: signed(sellerKey, sellerDid, { swapId, requestMethod: "POST", requestPath: "/swaps/get" }),
     });
     expect(sellerView.json().swap.presigned).toBe(true);
     expect(sellerView.json().swap.receiveAddress).toBeUndefined();
@@ -707,7 +724,7 @@ describe("escrow context (party-scoped signing reveal)", () => {
     const outsider = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/escrow/context`,
-      payload: signed(strangerKey, strangerDid, { swapId }),
+      payload: signed(strangerKey, strangerDid, { swapId, requestMethod: "POST", requestPath: `/swaps/${swapId}/escrow/context` }),
     });
     expect(outsider.statusCode).toBe(403);
     expect(outsider.json().error).toMatch(/not a swap party/);
@@ -730,21 +747,20 @@ describe("escrow context (party-scoped signing reveal)", () => {
         wantCurrency: "CNY",
         wantAmount: "715",
         wantRail: "wechat",
-        validUntil: Math.floor(clock / 1000) + 3600,
-      }),
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     bump();
     const r2 = await a.inject({
       method: "POST",
       url: `/orders/${r1.json().orderId}/match`,
-      payload: signed(buyerKey, buyerDid, { buyerDid, receiveAddress }),
+      payload: signed(buyerKey, buyerDid, { buyerDid, receiveAddress, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
     });
     const unlocked = r2.json().swapId as string;
     bump();
     const lockless = await a.inject({
       method: "POST",
       url: `/swaps/${unlocked}/escrow/context`,
-      payload: signed(sellerKey, sellerDid, { swapId: unlocked }),
+      payload: signed(sellerKey, sellerDid, { swapId: unlocked, requestMethod: "POST", requestPath: `/swaps/${unlocked}/escrow/context` }),
     });
     expect(lockless.statusCode).toBe(409);
     expect(lockless.json().error).toMatch(/no locked escrow/);
@@ -752,6 +768,31 @@ describe("escrow context (party-scoped signing reveal)", () => {
 });
 
 describe("escrow settlement hook (Path B)", () => {
+  it.each(["MEMPOOL", "DROPPED"])("does not complete a %s release using unrelated recipient history", async (status) => {
+    const chain = makeChain();
+    const a = await app(chain);
+    const swapId = await toEscrowLocked(a);
+    const { releaseSig, refundSig } = await presign(a, swapId);
+    await presignRequest(a, swapId, { releaseSig, refundSig, refundAddress });
+    await toPaymentVerified(a, swapId);
+    chain.spendStatus = status;
+    const unrelatedHash = "dd".repeat(32);
+    const originalHistory = chain.outputsHistory.bind(chain);
+    chain.outputsHistory = async (address) => address === escrowAddr ? originalHistory(address) : [{
+      address, hashHex: unrelatedHash, tokenId: "BIG", value: "1000000", confirmed: true, spent: false,
+    }];
+    chain.transactionsStatusByAddress = async () => [{ txHash: unrelatedHash, status: "CONFIRMED" }];
+    await hookTick(a);
+    expect((await store.getSwap(swapId))?.status).toBe("PAYMENT_VERIFIED");
+    await hookTick(a);
+    expect((await store.getSwap(swapId))?.status).toBe("PAYMENT_VERIFIED");
+    const submitted = (await store.getEscrowSigning(swapId))!.releaseTxHash!;
+    chain.transactionsStatusByAddress = async () => [{ txHash: submitted, status: "CONFIRMED" }];
+    await hookTick(a);
+    expect(await store.getSwap(swapId)).toMatchObject({ status: "COMPLETED", releaseTxHash: submitted });
+    await a.close();
+  });
+
   it("releases a presigned swap at PAYMENT_VERIFIED and ignores the second tick", async () => {
     const chain = makeChain();
     const a = await app(chain);
@@ -779,10 +820,11 @@ describe("escrow settlement hook (Path B)", () => {
     const { releaseSig, refundSig } = await presign(a, swapId);
     const pre = await presignRequest(a, swapId, { releaseSig, refundSig, refundAddress });
     expect(pre.statusCode).toBe(200);
+    clock += 3_600_001;
     const expire = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(sellerKey, sellerDid, { action: "expire" }),
+      payload: signed(sellerKey, sellerDid, { action: "expire", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(expire.statusCode).toBe(200);
     bump();
@@ -816,7 +858,7 @@ describe("escrow settlement hook (Path B)", () => {
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyerKey, buyerDid, {}),
+      payload: signed(buyerKey, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     bump();
     await a.inject({
@@ -825,8 +867,7 @@ describe("escrow settlement hook (Path B)", () => {
       payload: signed(buyerKey, buyerDid, {
         txId: "4200001234567890",
         remark: ins.json().remark,
-        receipt: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==",
-      }),
+        receipt: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==", requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     bump();
 
@@ -842,14 +883,14 @@ describe("arbitration settlements are self-executing (docs/p2p.md §12)", () => 
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyerKey, buyerDid, {}),
+      payload: signed(buyerKey, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     expect(ins.statusCode).toBe(201);
     bump();
     const proof = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyerKey, buyerDid, { txId: "4200001234567890", remark: ins.json().remark }),
+      payload: signed(buyerKey, buyerDid, { txId: "4200001234567890", remark: ins.json().remark, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(proof.statusCode).toBe(200);
     bump();
@@ -867,7 +908,7 @@ describe("arbitration settlements are self-executing (docs/p2p.md §12)", () => 
     const opened = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/dispute`,
-      payload: signed(sellerKey, sellerDid, { reason: "buyer never paid" }),
+      payload: signed(sellerKey, sellerDid, { reason: "buyer never paid", requestMethod: "POST", requestPath: `/swaps/${swapId}/dispute` }),
     });
     expect(opened.statusCode).toBe(200);
     bump();
@@ -906,7 +947,7 @@ describe("arbitration settlements are self-executing (docs/p2p.md §12)", () => 
     const opened = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/dispute`,
-      payload: signed(buyerKey, buyerDid, { reason: "paid but seller silent" }),
+      payload: signed(buyerKey, buyerDid, { reason: "paid but seller silent", requestMethod: "POST", requestPath: `/swaps/${swapId}/dispute` }),
     });
     expect(opened.statusCode).toBe(200);
     bump();
@@ -960,7 +1001,7 @@ describe("arbitration settlements are self-executing (docs/p2p.md §12)", () => 
     const cancel = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(sellerKey, sellerDid, { action: "cancel" }),
+      payload: signed(sellerKey, sellerDid, { action: "cancel", requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(cancel.statusCode).toBe(200);
     expect(cancel.json().status).toBe("CANCELLED");

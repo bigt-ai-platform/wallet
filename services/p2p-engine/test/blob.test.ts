@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from "vitest";
+import { Pool } from "pg";
 import { mkdtemp, rm, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +8,7 @@ import { FsBlobStore, EncryptedBlobStore, S3BlobStore, MemBlobStore, blobStoreFr
 import { BlobSettlementStore } from "../src/storeBlob.js";
 import { PgSettlementStore, type Queryable } from "../src/store.js";
 import { MemCursorStore, syncOnce, type ChainBlockView, type SocialSource } from "../src/replay.js";
-import type { PaymentProfile } from "../src/types.js";
+import type { PaymentProfile, P2pSwapEvent } from "../src/types.js";
 
 let dir: string;
 beforeEach(async () => {
@@ -224,5 +225,90 @@ describe("PgSettlementStore — receipt bytes go to the blob store", () => {
     await store.addProof({ swapId: "s", txId: "t", receipt: RECEIPT, createdAt: 1 });
     expect(db.inserted[0][4]).toBe(RECEIPT);
     expect(db.inserted[0][5]).toBeNull();
+  });
+});
+
+describe.skipIf(!process.env.P2P_TEST_DATABASE_URL)("PgSettlementStore concurrency", () => {
+  const schema = `p2p_test_${randomBytes(8).toString("hex")}`;
+  let pool: Pool;
+  let store: PgSettlementStore;
+
+  beforeAll(async () => {
+    pool = new Pool({ connectionString: process.env.P2P_TEST_DATABASE_URL, options: `--search_path=${schema}` });
+    await pool.query(`CREATE SCHEMA ${schema}`);
+    await pool.query(await readFile(new URL("../schema.sql", import.meta.url), "utf8"));
+    store = new PgSettlementStore(pool);
+  });
+
+  afterAll(async () => {
+    try {
+      await pool.query(`DROP SCHEMA ${schema} CASCADE`);
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it("allows only one concurrent fill from the same remainder", async () => {
+    const orderId = "ord-0000000000000001";
+    await store.createOrder({
+      orderId, type: "limit_sell", sellerDid: "did:seller", giveToken: "USDT", giveAmount: "100",
+      giveChain: "L0", wantCurrency: "USD", wantAmount: "100", wantRail: "wechat",
+      validUntil: 1800000000, status: "ACTIVE", signature: "test", createdAt: Date.now(),
+    });
+    const results = await Promise.all([
+      store.markOrderMatched(orderId, "swap-first", "40", "100"),
+      store.markOrderMatched(orderId, "swap-second", "40", "100"),
+    ]);
+    expect(results.sort()).toEqual([false, true]);
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "ACTIVE", remainingGive: "40" });
+    expect(await store.markOrderMatched(orderId, "swap-stale", undefined, "100")).toBe(false);
+    expect(await store.markOrderMatched(orderId, "swap-final", undefined, "40")).toBe(true);
+  });
+
+  it("rejects stale events before anchoring and preserves identical replays", async () => {
+    const initial: P2pSwapEvent = { swapId: "swap-concurrent", seq: 0, status: "PAYMENT_PENDING", eventType: "instructions", at: Date.now() };
+    await store.appendEvent(initial);
+    const proof: P2pSwapEvent = { ...initial, seq: 1, status: "PAYMENT_CLAIMED", eventType: "proof" };
+    const confirmation: P2pSwapEvent = { ...initial, seq: 1, status: "PAYMENT_VERIFIED", eventType: "confirm" };
+    let anchors = 0;
+    const results = await Promise.allSettled([proof, confirmation].map((event) => store.appendEvent(event, async () => {
+      anchors++;
+      return { ...event, txid: "a".repeat(64) };
+    })));
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+    expect(anchors).toBe(1);
+    const stored = (await store.getSwap(initial.swapId))!;
+    await store.appendEvent(stored);
+    await expect(store.appendEvent({ ...stored, status: "EXPIRED" })).rejects.toMatchObject({ statusCode: 409 });
+    expect(await store.events(initial.swapId)).toHaveLength(2);
+  });
+
+  it("rolls back and releases the lock when anchoring fails", async () => {
+    const event: P2pSwapEvent = { swapId: "swap-rollback", seq: 0, status: "MATCHED", eventType: "match", at: Date.now() };
+    await expect(store.appendEvent(event, async () => { throw new Error("anchor failed"); })).rejects.toThrow("anchor failed");
+    expect(await store.getSwap(event.swapId)).toBeNull();
+    await store.appendEvent(event, async () => event);
+    expect(await store.getSwap(event.swapId)).toEqual(event);
+  });
+
+  it("makes replay inserts wait for the same per-swap transaction lock", async () => {
+    const event: P2pSwapEvent = { swapId: "swap-replay-lock", seq: 0, status: "MATCHED", eventType: "match", at: Date.now() };
+    const blocker = await pool.connect();
+    await blocker.query("BEGIN");
+    await blocker.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`p2p-swap:${event.swapId}`]);
+    const insertion = store.appendEvent(event);
+    try {
+      await vi.waitFor(async () => {
+        const waiting = await pool.query("SELECT COUNT(*) AS count FROM pg_locks WHERE locktype = 'advisory' AND NOT granted");
+        expect(Number(waiting.rows[0].count)).toBeGreaterThan(0);
+      });
+      expect(await store.getSwap(event.swapId)).toBeNull();
+    } finally {
+      await blocker.query("ROLLBACK");
+      blocker.release();
+      await insertion;
+    }
+    expect(await store.getSwap(event.swapId)).toEqual(event);
   });
 });

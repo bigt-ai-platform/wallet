@@ -58,7 +58,7 @@ const at = (step) => {
 
 /** Same shape the wallet sends: PQ signature over sha256(canonical JSON). */
 function canonSign(fields) {
-  const payload = { ...fields, did: engineDid, nonce: randomBytes(8).toString('hex'), timestamp: Date.now() };
+  const payload = { ...fields, requestMethod: 'POST', requestPath: `/swaps/${fields.swapId}/transitions`, did: engineDid, nonce: randomBytes(8).toString('hex'), timestamp: Date.now() };
   const canonical = JSON.stringify(payload, Object.keys(payload).sort());
   const digest = Sha256Hash.hash(new TextEncoder().encode(canonical));
   const signature = Utils.HEX.encode(engineKey.sign(Sha256Hash.wrap(digest)).serialize());

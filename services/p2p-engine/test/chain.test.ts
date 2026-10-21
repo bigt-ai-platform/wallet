@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { ECKey } from "bigtangle-ts";
-import { HttpChainClient, confirmedTxToAddress, verifyChainLock, verifyChainPayment, type ChainClient } from "../src/chain.js";
+import { HttpChainClient, confirmedTxToAddress, verifyChainLock, verifyChainPayment, verifyPaymentOutput, type ChainClient } from "../src/chain.js";
 import { escrowAddress } from "../src/escrow.js";
 
 const escrow = escrowAddress([ECKey.createNewKey(), ECKey.createNewKey(), ECKey.createNewKey()], 2);
@@ -27,6 +27,20 @@ function client(status: string, address: string, balances: { token: string; amou
 }
 
 describe("chain evidence", () => {
+  it("requires a confirmed output from the exact settlement transaction", async () => {
+    const chain = client("DROPPED", escrow);
+    let hashHex = "old";
+    let confirmed = true;
+    chain.outputsHistory = async () => [{ address: escrow, hashHex, confirmed, tokenId: "USDT", value: "100", spent: false }];
+    const expected = { txHash: "release", toAddress: escrow, token: "USDT", amount: "100" };
+    expect((await verifyPaymentOutput(chain, expected)).ok).toBe(false);
+    hashHex = "release";
+    confirmed = false;
+    expect((await verifyPaymentOutput(chain, expected)).ok).toBe(false);
+    confirmed = true;
+    expect((await verifyPaymentOutput(chain, expected)).ok).toBe(true);
+  });
+
   it("accepts a CONFIRMED lock that pays the escrow with enough of the token", async () => {
     const res = await verifyChainLock(client("CONFIRMED", escrow, [{ token: "USDT", amount: "100" }]), {
       txHash: "tx",
@@ -103,18 +117,20 @@ describe("confirmedTxToAddress", () => {
         { txHash: "b".repeat(64), status: "CONFIRMED" },
       ],
     } as ChainClient;
-    expect(await confirmedTxToAddress(c, escrow)).toBe("b".repeat(64));
+    expect(await confirmedTxToAddress(c, escrow, "b".repeat(64))).toBe("b".repeat(64));
+    expect(await confirmedTxToAddress(c, escrow, "a".repeat(64))).toBeNull();
+    expect(await confirmedTxToAddress(c, escrow, "c".repeat(64))).toBeNull();
   });
 
   it("returns null when nothing is confirmed or the query fails (never throws)", async () => {
     const none = { ...client("CONFIRMED", escrow), transactionsStatusByAddress: async () => [] } as ChainClient;
-    expect(await confirmedTxToAddress(none, escrow)).toBeNull();
+    expect(await confirmedTxToAddress(none, escrow, "b".repeat(64))).toBeNull();
     const down = {
       ...client("CONFIRMED", escrow),
       transactionsStatusByAddress: async () => {
         throw new Error("L0 down");
       },
     } as ChainClient;
-    expect(await confirmedTxToAddress(down, escrow)).toBeNull();
+    expect(await confirmedTxToAddress(down, escrow, "b".repeat(64))).toBeNull();
   });
 });

@@ -4,6 +4,8 @@ import { PQKey, Utils } from "bigtangle-ts";
 import { Ed25519Key, didFromEd25519Key } from "did";
 import { buildApp } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
+import { BlobSettlementStore } from "../src/storeBlob.js";
+import { MemBlobStore } from "../src/blob.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
 import type { P2pSwapEvent } from "../src/types.js";
 
@@ -64,8 +66,7 @@ function orderPayload(overrides: Record<string, unknown> = {}) {
     wantAmount: "101",
     wantRail: "wechat",
     validUntil: Math.floor(clock / 1000) + 3600,
-    ...overrides,
-  });
+    ...overrides, requestMethod: "POST", requestPath: "/orders" });
 }
 
 beforeEach(() => {
@@ -124,8 +125,7 @@ describe("seller-anchored order intake (orderId + L1-SOCIAL txid)", () => {
         wantAmount: "101",
         wantRail: "wechat",
         validUntil: Math.floor(clock / 1000) + 3600,
-        orderId,
-      }),
+        orderId, requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(clash.statusCode).toBe(409);
   });
@@ -153,7 +153,7 @@ describe("POST /orders/:orderId/cancel", () => {
     const r = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/cancel`,
-      payload: signed(seller, sellerDid, { sellerDid, txid: "d".repeat(64) }),
+      payload: signed(seller, sellerDid, { sellerDid, txid: "d".repeat(64), requestMethod: "POST", requestPath: `/orders/${orderId}/cancel` }),
     });
     expect(r.statusCode).toBe(200);
     expect(r.json()).toMatchObject({ orderId, status: "CANCELLED", txid: "d".repeat(64) });
@@ -161,7 +161,7 @@ describe("POST /orders/:orderId/cancel", () => {
     const again = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/cancel`,
-      payload: signed(seller, sellerDid, { sellerDid }),
+      payload: signed(seller, sellerDid, { sellerDid, requestMethod: "POST", requestPath: `/orders/${orderId}/cancel` }),
     });
     expect(again.statusCode).toBe(200);
     expect(again.json().status).toBe("CANCELLED");
@@ -175,7 +175,7 @@ describe("POST /orders/:orderId/cancel", () => {
     const r = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/cancel`,
-      payload: signed(seller, sellerDid, { sellerDid, txid: TXID }),
+      payload: signed(seller, sellerDid, { sellerDid, txid: TXID, requestMethod: "POST", requestPath: `/orders/${orderId}/cancel` }),
     });
     expect(r.statusCode).toBe(409);
     expect((await store.getOrder(orderId))?.status).toBe("ACTIVE");
@@ -188,48 +188,91 @@ describe("POST /orders/:orderId/cancel", () => {
     const unknown = await a.inject({
       method: "POST",
       url: `/orders/ord-0000000000000000/cancel`,
-      payload: signed(seller, sellerDid, { sellerDid }),
+      payload: signed(seller, sellerDid, { sellerDid, requestMethod: "POST", requestPath: `/orders/ord-0000000000000000/cancel` }),
     });
     expect(unknown.statusCode).toBe(404);
     const stranger = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/cancel`,
-      payload: signed(other, otherDid, { sellerDid: otherDid }),
+      payload: signed(other, otherDid, { sellerDid: otherDid, requestMethod: "POST", requestPath: `/orders/${orderId}/cancel` }),
     });
     expect(stranger.statusCode).toBe(403);
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive" }),
+      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     clock += 1;
     const afterMatch = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/cancel`,
-      payload: signed(seller, sellerDid, { sellerDid }),
+      payload: signed(seller, sellerDid, { sellerDid, requestMethod: "POST", requestPath: `/orders/${orderId}/cancel` }),
     });
     expect(afterMatch.statusCode).toBe(409);
   });
 
   it("400s an invalid orderId in the path", async () => {
     const a = await app();
-    const r = await a.inject({ method: "POST", url: "/orders/not-an-id/cancel", payload: signed(seller, sellerDid, { sellerDid }) });
+    const r = await a.inject({ method: "POST", url: "/orders/not-an-id/cancel", payload: signed(seller, sellerDid, { sellerDid, requestMethod: "POST", requestPath: "/orders/not-an-id/cancel" }) });
     expect(r.statusCode).toBe(400);
   });
 });
 
 describe("match claim + reopen on anchor failure", () => {
+  it("rejects a competing partial fill based on a stale remainder", async () => {
+    const a = await app();
+    const created = await a.inject({ method: "POST", url: "/orders", payload: orderPayload() });
+    const orderId = created.json().orderId;
+    const results = await Promise.all([
+      store.markOrderMatched(orderId, "swap-0000000000000001", "40", "100"),
+      store.markOrderMatched(orderId, "swap-0000000000000002", "40", "100"),
+    ]);
+    expect(results).toEqual([true, false]);
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "ACTIVE", remainingGive: "40" });
+    await a.close();
+  });
+
+  it("rejects stale events before anchoring and does not discard them silently", async () => {
+    const event: P2pSwapEvent = {
+      swapId: "swap-0000000000000001", seq: 0, status: "PAYMENT_PENDING",
+      eventType: "instructions", sellerDid, buyerDid, at: clock,
+    };
+    await store.appendEvent(event);
+    let anchored = 0;
+    const proof = { ...event, seq: 1, status: "PAYMENT_CLAIMED" as const, eventType: "payment_proof" as const };
+    const confirm = { ...event, seq: 1, status: "PAYMENT_VERIFIED" as const, eventType: "payment_confirm" as const };
+    const results = await Promise.allSettled([
+      store.appendEvent(proof, async () => { anchored++; return proof; }),
+      store.appendEvent(confirm, async () => { anchored++; return confirm; }),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
+    expect(anchored).toBe(1);
+    await expect(store.appendEvent(confirm)).rejects.toMatchObject({ statusCode: 409 });
+    await store.appendEvent({ ...confirm, seq: 2 }, async () => ({ ...confirm, seq: 2 }));
+    expect((await store.getSwap(event.swapId))?.status).toBe("PAYMENT_VERIFIED");
+  });
+
+  it("preserves partial-fill remainders in the blob projection", async () => {
+    const a = await app();
+    const created = await a.inject({ method: "POST", url: "/orders", payload: orderPayload() });
+    const orderId = created.json().orderId;
+    const projection = new BlobSettlementStore(new MemBlobStore(), store);
+    expect(await projection.markOrderMatched(orderId, "swap-0000000000000001", "40")).toBe(true);
+    expect(await projection.getOrder(orderId)).toMatchObject({ status: "ACTIVE", remainingGive: "40" });
+    await a.close();
+  });
+
   it("409s a match against a cancelled order", async () => {
     const a = await app();
     const orderId = `ord-${randomBytes(8).toString("hex")}`;
     await a.inject({ method: "POST", url: "/orders", payload: orderPayload({ orderId }) });
     clock += 1;
-    await a.inject({ method: "POST", url: `/orders/${orderId}/cancel`, payload: signed(seller, sellerDid, { sellerDid }) });
+    await a.inject({ method: "POST", url: `/orders/${orderId}/cancel`, payload: signed(seller, sellerDid, { sellerDid, requestMethod: "POST", requestPath: `/orders/${orderId}/cancel` }) });
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive" }),
+      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(409);
   });
@@ -243,7 +286,7 @@ describe("match claim + reopen on anchor failure", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive" }),
+      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(500);
     expect((await store.getOrder(orderId))?.status).toBe("ACTIVE");
@@ -325,7 +368,7 @@ describe("pinned-order match (enginePubkey, docs/p2p.md §26)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     const swap = (await store.getSwap(m.json().swapId as string))!;
@@ -339,7 +382,7 @@ describe("pinned-order match (enginePubkey, docs/p2p.md §26)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(409);
     expect(m.json().error).toMatch(/pinned to an engine/);

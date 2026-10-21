@@ -15,6 +15,11 @@ import type {
   StoredPairing,
 } from "./types.js";
 import type { BlobStore } from "./blob.js";
+import { isDeepStrictEqual } from "node:util";
+
+export class SettlementConflict extends Error {
+  readonly statusCode = 409;
+}
 
 /** Blob collection for buyer receipt bytes (docs/p2p.md §14). */
 const RECEIPTS = "receipts";
@@ -26,12 +31,12 @@ export interface SettlementStore {
   /** ACTIVE → MATCHED when the whole order is taken; a partial fill passes
    *  `remainingGive` and the order stays ACTIVE with that reduced amount.
    *  Returns false when the order was not ACTIVE (lost race). */
-  markOrderMatched(orderId: string, swapId: string, remainingGive?: string): Promise<boolean>;
+  markOrderMatched(orderId: string, swapId: string, remainingGive?: string, expectedRemaining?: string): Promise<boolean>;
   /** ACTIVE → CANCELLED. Returns false when the order was not ACTIVE (lost race). */
   markOrderCancelled(orderId: string): Promise<boolean>;
   /** Undo a match whose event never anchored: ACTIVE again, only for `swapId`. */
   reopenOrder(orderId: string, swapId: string): Promise<void>;
-  appendEvent(e: P2pSwapEvent): Promise<void>;
+  appendEvent(e: P2pSwapEvent, prepare?: () => Promise<P2pSwapEvent>): Promise<void>;
   events(swapId: string): Promise<P2pSwapEvent[]>;
   /** The whole append-only log — input for derived projections (reputation). */
   allEvents(): Promise<P2pSwapEvent[]>;
@@ -61,6 +66,7 @@ export interface SettlementStore {
 }
 
 export class MemSettlementStore implements SettlementStore {
+  private readonly eventLocks = new Map<string, Promise<void>>();
   readonly orders = new Map<string, P2pOrder>();
   readonly swapEvents = new Map<string, P2pSwapEvent[]>();
   readonly paymentProfiles = new Map<string, PaymentProfile>();
@@ -84,9 +90,10 @@ export class MemSettlementStore implements SettlementStore {
       .slice(0, 100);
   }
 
-  async markOrderMatched(orderId: string, swapId: string, remainingGive?: string): Promise<boolean> {
+  async markOrderMatched(orderId: string, swapId: string, remainingGive?: string, expectedRemaining?: string): Promise<boolean> {
     const o = this.orders.get(orderId);
     if (!o || o.status !== "ACTIVE") return false;
+    if (expectedRemaining !== undefined && (o.remainingGive ?? o.giveAmount) !== expectedRemaining) return false;
     // A partial fill keeps the order ACTIVE with the reduced crypto amount; a
     // full fill (no remaining) closes it.
     if (remainingGive !== undefined && Number(remainingGive) > 0) {
@@ -111,11 +118,29 @@ export class MemSettlementStore implements SettlementStore {
     }
   }
 
-  async appendEvent(e: P2pSwapEvent): Promise<void> {
-    const list = this.swapEvents.get(e.swapId) ?? [];
-    if (!list.some((x) => x.seq === e.seq)) list.push(e);
-    list.sort((a, b) => a.seq - b.seq);
-    this.swapEvents.set(e.swapId, list);
+  async appendEvent(e: P2pSwapEvent, prepare?: () => Promise<P2pSwapEvent>): Promise<void> {
+    const previous = this.eventLocks.get(e.swapId) ?? Promise.resolve();
+    let unlock!: () => void;
+    const lock = new Promise<void>((resolve) => { unlock = resolve; });
+    this.eventLocks.set(e.swapId, lock);
+    await previous;
+    try {
+      const list = this.swapEvents.get(e.swapId) ?? [];
+      if (prepare && e.seq !== (list.at(-1)?.seq ?? -1) + 1) {
+        throw new SettlementConflict("swap changed; reload and retry");
+      }
+      const stored = prepare ? await prepare() : e;
+      const existing = list.find((item) => item.seq === stored.seq);
+      if (existing && !isDeepStrictEqual(existing, stored)) {
+        throw new SettlementConflict("conflicting swap event");
+      }
+      if (!existing) list.push(stored);
+      list.sort((first, second) => first.seq - second.seq);
+      this.swapEvents.set(e.swapId, list);
+    } finally {
+      unlock();
+      if (this.eventLocks.get(e.swapId) === lock) this.eventLocks.delete(e.swapId);
+    }
   }
 
   async events(swapId: string): Promise<P2pSwapEvent[]> {
@@ -205,6 +230,10 @@ export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: any[]; rowCount: number | null }>;
 }
 
+interface QueryPool extends Queryable {
+  connect(): Promise<Queryable & { release(): void }>;
+}
+
 function pairingFromRow(row: any): StoredPairing {
   return {
     did: row.did,
@@ -265,7 +294,7 @@ export class PgSettlementStore implements SettlementStore {
    * and a ref. The image is evidence, not a row anyone queries — a DB should
    * not carry the bytes.
    */
-  constructor(private readonly db: Queryable, private readonly blobs: BlobStore | null = null) {}
+  constructor(private readonly db: Queryable | QueryPool, private readonly blobs: BlobStore | null = null) {}
 
   async createOrder(o: P2pOrder): Promise<void> {
     await this.db.query(
@@ -314,18 +343,20 @@ export class PgSettlementStore implements SettlementStore {
     return res.rows.map(orderFromRow);
   }
 
-  async markOrderMatched(orderId: string, swapId: string, remainingGive?: string): Promise<boolean> {
+  async markOrderMatched(orderId: string, swapId: string, remainingGive?: string, expectedRemaining?: string): Promise<boolean> {
     if (remainingGive !== undefined && Number(remainingGive) > 0) {
       const part = await this.db.query(
-        `UPDATE p2p_orders SET remaining_give = $3 WHERE order_id = $1 AND status = 'ACTIVE'`,
-        [orderId, swapId, remainingGive],
+        `UPDATE p2p_orders SET remaining_give = $2 WHERE order_id = $1 AND status = 'ACTIVE'
+         AND ($3::text IS NULL OR COALESCE(remaining_give, give_amount) = $3)`,
+        [orderId, remainingGive, expectedRemaining ?? null],
       );
       return (part.rowCount ?? 0) === 1;
     }
     const res = await this.db.query(
       `UPDATE p2p_orders SET status = 'MATCHED', swap_id = $2, remaining_give = NULL
-       WHERE order_id = $1 AND status = 'ACTIVE'`,
-      [orderId, swapId],
+      WHERE order_id = $1 AND status = 'ACTIVE'
+      AND ($3::text IS NULL OR COALESCE(remaining_give, give_amount) = $3)`,
+        [orderId, swapId, expectedRemaining ?? null],
     );
     return (res.rowCount ?? 0) === 1;
   }
@@ -346,13 +377,45 @@ export class PgSettlementStore implements SettlementStore {
     );
   }
 
-  async appendEvent(e: P2pSwapEvent): Promise<void> {
-    await this.db.query(
+  async appendEvent(e: P2pSwapEvent, prepare?: () => Promise<P2pSwapEvent>): Promise<void> {
+    if ("connect" in this.db) {
+      const client = await this.db.connect();
+      try {
+        await client.query("BEGIN");
+        await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`p2p-swap:${e.swapId}`]);
+        if (prepare) {
+          const latest = await client.query("SELECT MAX(event_seq) AS seq FROM p2p_swap_events WHERE swap_id = $1", [e.swapId]);
+          if (e.seq !== Number(latest.rows[0]?.seq ?? -1) + 1) {
+            throw new SettlementConflict("swap changed; reload and retry");
+          }
+        }
+        await this.insertEvent(prepare ? await prepare() : e, client);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+      return;
+    }
+    if (prepare) throw new Error("event persistence requires a connection pool");
+    await this.insertEvent(e, this.db);
+  }
+
+  private async insertEvent(e: P2pSwapEvent, db: Queryable): Promise<void> {
+    const result = await db.query(
       `INSERT INTO p2p_swap_events (swap_id, event_seq, status, event_type, actor_did, payload, txid, created_at)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT (swap_id, event_seq) DO NOTHING`,
       [e.swapId, e.seq, e.status, e.eventType, e.actorDid ?? null, JSON.stringify(e), e.txid ?? null, new Date(e.at)],
     );
+    if (result.rowCount === 0) {
+      const existing = await db.query("SELECT payload FROM p2p_swap_events WHERE swap_id = $1 AND event_seq = $2", [e.swapId, e.seq]);
+      if (!isDeepStrictEqual(existing.rows[0]?.payload, JSON.parse(JSON.stringify(e)))) {
+        throw new SettlementConflict("conflicting swap event");
+      }
+    }
   }
 
   async events(swapId: string): Promise<P2pSwapEvent[]> {

@@ -15,6 +15,18 @@ function signed(body: Record<string, unknown>, nonce = "n".repeat(16), timestamp
 }
 
 describe("p2p signed requests", () => {
+  it("binds requests to the method, operation, and resource before consuming the nonce", () => {
+    const guard = new ReplayGuard(() => 1_000_000);
+    const body = signed({ did, requestMethod: "POST", requestPath: "/swaps/mine" });
+    expect(validateSignedRequest(body, did, guard, "write", "/swaps/swap-0000000000000001/confirm").ok).toBe(false);
+    expect(validateSignedRequest(body, did, guard, "read", "/swaps/mine").ok).toBe(true);
+    const confirm = signed({ did, requestMethod: "POST", requestPath: "/swaps/swap-0000000000000001/confirm" }, "c".repeat(16));
+    expect(validateSignedRequest(confirm, did, guard, "write", "/swaps/swap-0000000000000002/confirm").ok).toBe(false);
+    expect(validateSignedRequest({ ...confirm, requestPath: "/swaps/swap-0000000000000002/confirm" }, did, guard, "write", "/swaps/swap-0000000000000002/confirm").ok).toBe(false);
+    expect(validateSignedRequest(confirm, did, guard, "write", "/swaps/swap-0000000000000001/confirm").ok).toBe(true);
+    expect(validateSignedRequest(signed({ did }), did, guard, "read", "/swaps/mine").ok).toBe(false);
+  });
+
   it("canonicalizes with sorted top-level keys", () => {
     expect(canonicalJson({ b: 1, a: 2 })).toBe('{"a":2,"b":1}');
   });

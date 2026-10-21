@@ -159,9 +159,13 @@ export function validateSignedRequest(
   expectedDid: string,
   guard: ReplayGuard,
   kind: SignedRequestKind = "write",
+  requestPath?: string,
 ): SignedRequestResult {
   const { signature, ...payload } = body;
   if (typeof signature !== "string" || !signature) return { ok: false, error: "signature required", status: 400 };
+  if (requestPath !== undefined && (body.requestMethod !== "POST" || body.requestPath !== requestPath)) {
+    return { ok: false, error: "signed request method/path mismatch", status: 400 };
+  }
   if (!verifySignature(payload, expectedDid, signature)) return { ok: false, error: "invalid signature", status: 400 };
   const nonceError = guard.checkNonce(body.nonce, body.timestamp);
   if (nonceError) return { ok: false, error: nonceError, status: 400 };

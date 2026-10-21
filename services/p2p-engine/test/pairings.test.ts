@@ -61,15 +61,14 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
     url: "/orders",
     payload: signed(seller, sellerDid, {
       type: "limit_sell", sellerDid, giveToken: "USDT", giveAmount: "100", giveChain: "L0",
-      wantCurrency: "CNY", wantAmount: "715", wantRail: "wechat", validUntil: Math.floor(clock / 1000) + 3600,
-    }),
+      wantCurrency: "CNY", wantAmount: "715", wantRail: "wechat", validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
   });
   expect(r1.statusCode).toBe(201);
   bump();
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
   });
   expect(r2.statusCode).toBe(201);
   const swapId = r2.json().swapId as string;
@@ -77,7 +76,7 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64) }),
+    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
   });
   expect(lock.statusCode).toBe(200);
   bump();
@@ -100,14 +99,13 @@ async function pair(a: TestApp, key: Ed25519Key, did: string, opts: { swapId?: s
       token: "tok_" + randomBytes(4).toString("hex"),
       ...(opts.swapId ? { swapId: opts.swapId } : {}),
       issuedAt: clock,
-      expiresAt: clock + (opts.ttlMs ?? 24 * 60 * 60 * 1000),
-    }),
+      expiresAt: clock + (opts.ttlMs ?? 24 * 60 * 60 * 1000), requestMethod: "POST", requestPath: "/pairings" }),
   });
   return { id, status: r.statusCode, json: () => r.json() };
 }
 
 function deviceRead(a: TestApp, key: Ed25519Key, did: string, swapId: string, extra: Record<string, unknown> = {}) {
-  return a.inject({ method: "POST", url: `/swaps/${swapId}/device-read`, payload: signed(key, did, { ...extra }) });
+  return a.inject({ method: "POST", url: `/swaps/${swapId}/device-read`, payload: signed(key, did, { ...extra, requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }) });
 }
 
 beforeEach(() => {
@@ -127,7 +125,7 @@ describe("device pairing + engine read (docs/p2p.md §12)", () => {
     const p = await pair(a, buyer, buyerDid);
     expect(p.status).toBe(201);
 
-    const mine = await a.inject({ method: "POST", url: "/pairings/mine", payload: signed(buyer, buyerDid, {}) });
+    const mine = await a.inject({ method: "POST", url: "/pairings/mine", payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: "/pairings/mine" }) });
     expect(mine.statusCode).toBe(200);
     const list = mine.json().pairings as Array<Record<string, unknown>>;
     expect(list).toHaveLength(1);
@@ -141,8 +139,7 @@ describe("device pairing + engine read (docs/p2p.md §12)", () => {
       method: "POST",
       url: "/pairings",
       payload: signed(buyer, buyerDid, {
-        pairingId: pairingId(), endpoint: "", deviceId: "self", token: "t", issuedAt: clock, expiresAt: clock + 1000,
-      }),
+        pairingId: pairingId(), endpoint: "", deviceId: "self", token: "t", issuedAt: clock, expiresAt: clock + 1000, requestMethod: "POST", requestPath: "/pairings" }),
     });
     expect(bad.statusCode).toBe(422);
   });
@@ -199,7 +196,7 @@ describe("device pairing + engine read (docs/p2p.md §12)", () => {
     const p = await pair(a, buyer, buyerDid, { swapId });
 
     const rev = await a.inject({
-      method: "POST", url: "/pairings/revoke", payload: signed(buyer, buyerDid, { pairingId: p.id }),
+      method: "POST", url: "/pairings/revoke", payload: signed(buyer, buyerDid, { pairingId: p.id, requestMethod: "POST", requestPath: "/pairings/revoke" }),
     });
     expect(rev.statusCode).toBe(200);
 

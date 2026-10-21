@@ -205,15 +205,14 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
       wantCurrency: "CNY",
       wantAmount: "715",
       wantRail: "wechat",
-      validUntil: Math.floor(clock / 1000) + 3600,
-    }),
+      validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
   });
   expect(r1.statusCode).toBe(201);
   bump();
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive" }),
+    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
   });
   expect(r2.statusCode).toBe(201);
   const swapId = r2.json().swapId as string;
@@ -221,7 +220,7 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64) }),
+    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
   });
   expect(lock.statusCode).toBe(200);
   bump();
@@ -241,8 +240,7 @@ async function pair(a: TestApp, key: Ed25519Key, did: string, swapId: string): P
       token: "tok_" + randomBytes(4).toString("hex"),
       swapId,
       issuedAt: clock,
-      expiresAt: clock + 24 * 60 * 60 * 1000,
-    }),
+      expiresAt: clock + 24 * 60 * 60 * 1000, requestMethod: "POST", requestPath: "/pairings" }),
   });
   expect(r.statusCode).toBe(201);
   return pairingId;
@@ -259,7 +257,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(buyer, buyerDid, { pairingId }),
+      payload: signed(buyer, buyerDid, { pairingId, requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
     });
 
     // The read went through MCP: the mock endpoint served android_get_screen_state.
@@ -290,7 +288,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(buyer, buyerDid, { pairingId }),
+      payload: signed(buyer, buyerDid, { pairingId, requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
     });
     expect(read.statusCode).toBe(200);
     const verdict = read.json().verdict as Record<string, unknown>;
@@ -311,8 +309,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
         amount: verdict.amount,
         remark: verdict.remark,
         paidAt: verdict.paidAt,
-        captures: verdict.captures,
-      }),
+        captures: verdict.captures, requestMethod: "POST", requestPath: `/swaps/${swapId}/verify` }),
     });
     expect(verify.statusCode).toBe(200);
     expect(verify.json()).toMatchObject({ stored: true, side: "buyer" });
@@ -329,7 +326,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(buyer, buyerDid, { pairingId }),
+      payload: signed(buyer, buyerDid, { pairingId, requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
     });
 
     // The read succeeds over MCP, but the check flags the amount mismatch.
@@ -347,7 +344,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(seller, sellerDid, { pairingId, via: "notification" }),
+      payload: signed(seller, sellerDid, { pairingId, via: "notification", requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
     });
 
     expect(read.statusCode).toBe(200);
@@ -372,7 +369,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const profile = await a.inject({
       method: "POST",
       url: "/profiles",
-      payload: signed(seller, sellerDid, { method: "wechat", accountName: "Zhang San", account: "wxid_pay888" }),
+      payload: signed(seller, sellerDid, { method: "wechat", accountName: "Zhang San", account: "wxid_pay888", requestMethod: "POST", requestPath: "/profiles" }),
     });
     expect(profile.statusCode).toBe(200);
     bump();
@@ -381,7 +378,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {}),
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
     });
     expect(ins.statusCode).toBe(201);
     const remark = ins.json().remark as string;
@@ -392,7 +389,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const proof = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: TX_ID, remark, receipt }),
+      payload: signed(buyer, buyerDid, { txId: TX_ID, remark, receipt, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
     });
     expect(proof.statusCode).toBe(200);
     expect(proof.json().status).toBe("PAYMENT_CLAIMED");
@@ -406,7 +403,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(seller, sellerDid, { pairingId, via: "notification" }),
+      payload: signed(seller, sellerDid, { pairingId, via: "notification", requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
     });
     expect(read.statusCode).toBe(200);
     const verdict = read.json().verdict as Record<string, unknown>;
@@ -423,8 +420,7 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
         txId: verdict.txId,
         amount: verdict.amount,
         remark: verdict.remark,
-        paidAt: verdict.paidAt,
-      }),
+        paidAt: verdict.paidAt, requestMethod: "POST", requestPath: `/swaps/${swapId}/verify` }),
     });
     expect(verify.statusCode).toBe(200);
     expect(verify.json()).toMatchObject({ stored: true, machineConfirmed: true, advanced: true });

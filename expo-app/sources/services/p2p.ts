@@ -325,6 +325,7 @@ export async function createOrder(
       type,
       ...(receiveAddress ? { receiveAddress } : {}),
       sellerDid: id.did,
+      requestPath: '/orders',
     });
     return request<{ orderId: string; status: string; txid?: string | null }>('/orders', body);
   }
@@ -349,6 +350,7 @@ export async function createOrder(
     type,
     ...(receiveAddress ? { receiveAddress } : {}),
     sellerDid: id.did,
+    requestPath: '/orders',
   });
   return request<{ orderId: string; status: string; txid?: string | null }>('/orders', body);
 }
@@ -386,7 +388,7 @@ export async function cancelOrder(
       record: { ...record, ...signP2pRecord(id.key, record) },
     });
   }
-  const body = signedBody(id.key, id.did, { sellerDid: id.did, ...(txid ? { txid } : {}) });
+  const body = signedBody(id.key, id.did, { sellerDid: id.did, ...(txid ? { txid } : {}), requestPath: `/orders/${orderId}/cancel` });
   return request(`/orders/${orderId}/cancel`, body);
 }
 
@@ -396,7 +398,7 @@ export async function matchOrder(
   orderId: string,
   input: MatchOrderInput,
 ): Promise<{ swapId: string; status: string; escrowAddress: string | null }> {
-  const body = signedBody(id.key, id.did, { ...input, buyerDid: id.did });
+  const body = signedBody(id.key, id.did, { ...input, buyerDid: id.did, requestPath: `/orders/${orderId}/match` });
   return request(`/orders/${orderId}/match`, body);
 }
 
@@ -413,20 +415,20 @@ export async function transition(
   action: P2pSwapAction,
   extra: Record<string, unknown> = {},
 ): Promise<{ swapId: string; status: string; txid?: string | null }> {
-  const body = signedBody(id.key, id.did, { swapId, action, ...extra });
+  const body = signedBody(id.key, id.did, { swapId, action, ...extra, requestPath: `/swaps/${swapId}/transitions` });
   return request(`/swaps/${swapId}/transitions`, body);
 }
 
 /** Party-scoped swap list (PII redacted, only swaps this did is party to). */
 export async function mySwaps(id: P2pIdentity): Promise<P2pSwap[]> {
-  const body = signedBody(id.key, id.did, {});
+  const body = signedBody(id.key, id.did, { requestPath: '/swaps/mine' });
   const data = await request<{ swaps: P2pSwap[] }>('/swaps/mine', body);
   return data.swaps ?? [];
 }
 
 /** One party-scoped swap. */
 export async function getSwap(id: P2pIdentity, swapId: string): Promise<P2pSwap> {
-  const body = signedBody(id.key, id.did, { swapId });
+  const body = signedBody(id.key, id.did, { swapId, requestPath: '/swaps/get' });
   const data = await request<{ swap: P2pSwap }>('/swaps/get', body);
   return data.swap;
 }
@@ -439,7 +441,7 @@ export async function fetchInstructions(
   id: P2pIdentity,
   swapId: string,
 ): Promise<P2pPaymentInstructions> {
-  const body = signedBody(id.key, id.did, {});
+  const body = signedBody(id.key, id.did, { requestPath: `/swaps/${swapId}/payment-instructions` });
   return request(`/swaps/${swapId}/payment-instructions`, body);
 }
 
@@ -452,7 +454,7 @@ export async function submitProof(
   swapId: string,
   input: { txId: string; remark?: string; receipt?: string },
 ): Promise<{ swapId: string; status: string; txId: string; receiptSha256: string | null }> {
-  const body = signedBody(id.key, id.did, { ...input });
+  const body = signedBody(id.key, id.did, { ...input, requestPath: `/swaps/${swapId}/proof` });
   return request(`/swaps/${swapId}/proof`, body);
 }
 
@@ -461,7 +463,7 @@ export async function confirmPayment(
   id: P2pIdentity,
   swapId: string,
 ): Promise<{ swapId: string; status: string }> {
-  const body = signedBody(id.key, id.did, {});
+  const body = signedBody(id.key, id.did, { requestPath: `/swaps/${swapId}/confirm` });
   return request(`/swaps/${swapId}/confirm`, body);
 }
 
@@ -471,7 +473,7 @@ export async function openDispute(
   swapId: string,
   reason?: string,
 ): Promise<{ swapId: string; dispute: string }> {
-  const body = signedBody(id.key, id.did, reason ? { reason } : {});
+  const body = signedBody(id.key, id.did, { ...(reason ? { reason } : {}), requestPath: `/swaps/${swapId}/dispute` });
   return request(`/swaps/${swapId}/dispute`, body);
 }
 
@@ -491,7 +493,7 @@ export interface P2pEscrowContext {
 }
 
 export async function escrowContext(id: P2pIdentity, swapId: string): Promise<P2pEscrowContext> {
-  const body = signedBody(id.key, id.did, { swapId });
+  const body = signedBody(id.key, id.did, { swapId, requestPath: `/swaps/${swapId}/escrow/context` });
   return request(`/swaps/${swapId}/escrow/context`, body);
 }
 
@@ -505,7 +507,7 @@ export async function presignEscrow(
   swapId: string,
   input: { releaseSig: string; refundSig: string; refundAddress: string },
 ): Promise<{ swapId: string; presigned: boolean; refundAddress: string }> {
-  const body = signedBody(id.key, id.did, { swapId, ...input });
+  const body = signedBody(id.key, id.did, { swapId, ...input, requestPath: `/swaps/${swapId}/escrow/presign` });
   return request(`/swaps/${swapId}/escrow/presign`, body);
 }
 
@@ -522,7 +524,7 @@ export async function cosignEscrow(
 ): Promise<{ swapId: string; status: string; txHash: string | null; pending: boolean }> {
   const fields: Record<string, unknown> = { swapId, kind: input.kind, sig: input.sig };
   if (input.refundAddress) fields.refundAddress = input.refundAddress;
-  const body = signedBody(id.key, id.did, fields);
+  const body = signedBody(id.key, id.did, { ...fields, requestPath: `/swaps/${swapId}/escrow/cosign` });
   return request(`/swaps/${swapId}/escrow/cosign`, body);
 }
 
@@ -531,13 +533,13 @@ export async function saveProfile(
   id: P2pIdentity,
   input: { method: P2pCnyRail; accountName: string; account: string; bankName?: string },
 ): Promise<{ ok: boolean; method: string }> {
-  const body = signedBody(id.key, id.did, { ...input });
+  const body = signedBody(id.key, id.did, { ...input, requestPath: '/profiles' });
   return request('/profiles', body);
 }
 
 /** Seller: list own collection profiles. */
 export async function getMyProfiles(id: P2pIdentity): Promise<P2pPaymentProfile[]> {
-  const body = signedBody(id.key, id.did, {});
+  const body = signedBody(id.key, id.did, { requestPath: '/profiles/mine' });
   const data = await request<{ profiles: P2pPaymentProfile[] }>('/profiles/mine', body);
   return data.profiles ?? [];
 }
@@ -591,6 +593,7 @@ export async function createPairing(
       ...(input.swapId ? { swapId: input.swapId } : {}),
       issuedAt: now,
       expiresAt: now + ttl,
+      requestPath: '/pairings',
     },
     now,
   );
@@ -599,14 +602,14 @@ export async function createPairing(
 
 /** The caller's own pairings (revoke any of them at will). */
 export async function listMyPairings(id: P2pIdentity): Promise<P2pPairing[]> {
-  const body = signedBody(id.key, id.did, {});
+  const body = signedBody(id.key, id.did, { requestPath: '/pairings/mine' });
   const data = await request<{ pairings: P2pPairing[] }>('/pairings/mine', body);
   return data.pairings ?? [];
 }
 
 /** Revoke a pairing — the endpoint is never reached again. */
 export async function revokePairing(id: P2pIdentity, pairingId: string): Promise<void> {
-  const body = signedBody(id.key, id.did, { pairingId });
+  const body = signedBody(id.key, id.did, { pairingId, requestPath: '/pairings/revoke' });
   await request('/pairings/revoke', body);
 }
 
@@ -634,6 +637,7 @@ export async function deviceRead(
     ...(input.pairingId ? { pairingId: input.pairingId } : {}),
     ...(input.evidenceKind ? { evidenceKind: input.evidenceKind } : {}),
     ...(input.receiptVerified !== undefined ? { receiptVerified: input.receiptVerified } : {}),
+    requestPath: `/swaps/${swapId}/device-read`,
   });
   return request(`/swaps/${swapId}/device-read`, body);
 }
@@ -644,6 +648,6 @@ export async function submitVerdict(
   swapId: string,
   verdict: Record<string, unknown>,
 ): Promise<{ swapId: string; status: string; verifySource?: string }> {
-  const body = signedBody(id.key, id.did, { ...verdict });
+  const body = signedBody(id.key, id.did, { ...verdict, requestPath: `/swaps/${swapId}/verify` });
   return request(`/swaps/${swapId}/verify`, body);
 }
