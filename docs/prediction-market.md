@@ -3,6 +3,53 @@
 Status: proposed
 Date: 2026-10-10
 
+## Implementation safety update (2026-10-21)
+
+The design proposal below is historical; prediction markets are now implemented.
+The wallet's redemption flow requires the prediction server's read-only
+`POST /getPredictionState` endpoint with `{ "contractTokenid": "..." }`.
+It returns the latest confirmed contract checkpoint, including `contractTokenid`,
+`confirmed`, `blockHash`, `chainlength`, and `state` (with `initialized`, `status`,
+and `outcome`). No confirmed checkpoint returns `confirmed: false, state: null`.
+The read does not advance liveness or infer finality from wall-clock time.
+
+Deploy the updated `../blockchain` prediction server before enabling redemption
+in the updated wallet. Missing, malformed, or unavailable state disables
+redemption without hiding balances. Every redemption re-reads confirmed state:
+only `FINAL` markets can redeem, directional results burn only winning shares,
+and invalid results burn equal complete sets, preserving unmatched shares.
+Market orders use only outcome/collateral liquidity. Committee disputes burn
+`disputeBond`; staked challenges burn at least `proposalBond`.
+
+### Wallet workflow
+
+- Market cards show confirmed status, proposed/challenged outcomes, and oracle
+  deadlines. An elapsed deadline is not presented as confirmed finality.
+- Split, merge, trading, proposals, disputes, votes, and redemption are gated by
+  market state. Signing paths re-read state; split/merge also reject expired
+  markets. Oracle checks include committee membership, conflicting outcomes,
+  bond minimums, self-challenges, and attempts to switch an existing vote.
+- Outcome books show the best paired bid/ask and available size. Buy/sell opens
+  a preview with estimated fill, a price limit, and configurable slippage
+  (0-10%). Quotes expire after 30 seconds and the book is re-read at submission.
+  Prices and amounts are raw on-chain units, not percentages or guaranteed
+  execution prices. These are crossing limit orders; unfilled orders may rest.
+- Creation supports 2-16 unique outcome labels, collateral selection, staked or
+  committee oracles, bonds, and timing controls. Labels are persisted as
+  `outcomeNames`. Numeric settings and labels are validated before minting.
+  The existing prediction-chain domain-signing authorization is still required.
+
+These are client preflight checks, not atomic reservations: chain state can
+change between a read and transaction execution. Contract execution remains
+the protocol authority. The state API is read-only; deadline settlement may
+require a subsequent contract event (including a heartbeat).
+
+The prediction Playwright suite includes read-endpoint fixtures for UI guards
+and desktop/mobile previews. Its separate live lifecycle uses a funded operator
+to create, split, merge, match an order, resolve, and redeem, verifying confirmed
+state and balances. Run `e2e/e2etest.sh predict` with isolated Java infrastructure
+and `E2E_PREDICTION_KEY`; UI fixtures alone do not establish live-chain success.
+
 Binary event markets ("Will X happen by date D?") with YES/NO outcome shares
 priced 0–1 (displayed 0–100¢), full collateral backing (1 winning share
 redeems for exactly 1 collateral unit), traded on the order books of a

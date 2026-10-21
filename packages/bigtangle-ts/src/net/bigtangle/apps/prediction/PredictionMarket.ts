@@ -23,6 +23,7 @@ export interface PredictionConfigInput {
    * pair and is written as the comma-separated `outcomeTokenids` key-value.
    */
   outcomeTokenids?: string[];
+  outcomeNames?: string[];
   /** binary market: outcome index 0. */
   yesTokenid?: string;
   /** binary market: outcome index 1. */
@@ -107,6 +108,12 @@ export class PredictionMarketConfig {
       (input.yesTokenid && input.noTokenid ? [input.yesTokenid, input.noTokenid] : undefined);
     if (!outcomes || outcomes.length < 2) {
       throw new Error('prediction market: need at least 2 outcome tokens (outcomeTokenids or yesTokenid+noTokenid)');
+    }
+    if (input.outcomeNames) {
+      if (input.outcomeNames.length !== outcomes.length || input.outcomeNames.some((name) => !name.trim() || name.includes(','))) {
+        throw new Error('prediction market: outcome names must match the tokens and cannot contain commas');
+      }
+      add('outcomeNames', input.outcomeNames.map((name) => name.trim()).join(','));
     }
     if (input.outcomeTokenids) {
       add('outcomeTokenids', outcomes.join(','));

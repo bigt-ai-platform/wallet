@@ -99,6 +99,7 @@ describe("PredictionMarketTest", () => {
       supply: 1000n,
       collateralTokenid: "bc",
       outcomeTokenids: ["tok-a", "tok-b", "tok-c"],
+      outcomeNames: ["Home", "Draw", "Away"],
       question: "which one?",
       resolutionTimeSec: 10,
       disputeWindowSec: 300,
@@ -111,6 +112,7 @@ describe("PredictionMarketTest", () => {
       map.set(kv.getKey(), kv.getValue());
     }
     expect(map.get("outcomeTokenids")).toBe("tok-a,tok-b,tok-c");
+    expect(map.get("outcomeNames")).toBe("Home,Draw,Away");
     expect(map.get("yesTokenid")).toBeUndefined();
     expect(map.get("noTokenid")).toBeUndefined();
   });

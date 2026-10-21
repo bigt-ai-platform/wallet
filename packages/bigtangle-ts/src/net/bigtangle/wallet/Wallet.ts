@@ -1161,7 +1161,10 @@ export class Wallet extends WalletBase {
     contractTokenid: string,
     offerSystem: string = ""
   ): Promise<Transaction> {
-    const amount = new Coin(payAmount, new Uint8Array(Utils.HEX.decode(tokenId))).negate();
+    let amount = new Coin(payAmount, new Uint8Array(Utils.HEX.decode(tokenId))).negate();
+    if (this.getFee() && NetworkParameters.BIGTANGLE_TOKENID_STRING === tokenId) {
+      amount = amount.add(Coin.FEE_DEFAULT.negate());
+    }
     const tx = new Transaction(this.params);
     const coinList = await this.calculateAllSpendCandidates(aesKey, false);
     let beneficiary: PQKey | null = null;
@@ -1169,7 +1172,7 @@ export class Wallet extends WalletBase {
       const utxo = spendableOutput.getUTXO();
       if (utxo) {
         beneficiary = (await this.getECKey(aesKey, utxo.getAddress())) as PQKey;
-        amount.add(utxo.getValue());
+        amount = amount.add(utxo.getValue());
         tx.addInput2(utxo.getBlockHash(), spendableOutput);
         if (!amount.isNegative()) {
           tx.addOutputEckey(amount, beneficiary!);
