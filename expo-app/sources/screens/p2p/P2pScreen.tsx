@@ -16,7 +16,7 @@ import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex, shortDid } from '@/lib/p2pIdentity';
 import { exceedsBalance, findBalance, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
-import { filterP2pOrders } from '@/lib/p2pOrderBook';
+import { checkP2pFill, filterP2pOrders } from '@/lib/p2pOrderBook';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
 import type { TokenItem, WalletAccountItem } from '@/types/api';
@@ -354,7 +354,12 @@ export default function P2pScreen() {
     }
   };
 
+  const fillError = (check: ReturnType<typeof checkP2pFill>, order: P2pOrder) =>
+    check.ok ? '' : t(`p2pFill.${check.reason}`, { limit: check.limit, token: order.giveToken, currency: order.wantCurrency });
+
   const submitBuy = async (order: P2pOrder) => {
+    const fill = checkP2pFill(order, buyFill);
+    if (!fill.ok) { setNotice({ ok: false, text: fillError(fill, order) }); return; }
     const id = requireIdentity();
     if (!id) return;
     const cny = isCnyRail(order.wantRail);
@@ -363,16 +368,17 @@ export default function P2pScreen() {
     const isBid = order.type === 'limit_buy';
     if (!cny || (!isBid && !buyRecv.trim())) { setNotice({ ok: false, text: t('p2p.buyFailed') }); return; }
     // Important transaction (signs with the wallet key): device unlock first.
+    const summary = t('p2pFill.preview', { amount: fill.fill, token: order.giveToken, fiat: fill.fiat, currency: order.wantCurrency });
     const approved = await confirmImportant({
-      subtitle: t('p2p.buyTitle'),
-      reason: `${order.giveAmount} ${order.giveToken} → ${order.wantAmount} ${order.wantCurrency}`,
+      subtitle: `${isBid ? t('order.sell') : t('p2p.buy')}: ${summary}`,
+      reason: summary,
     });
     if (!approved) { setNotice({ ok: false, text: t('confirm.cancelled') }); return; }
     setBusy(true);
     try {
       const res = await matchOrder(id, order.orderId, {
         receiveAddress: isBid ? '' : buyRecv.trim(),
-        ...(buyFill.trim() ? { fillAmount: buyFill.trim() } : {}),
+        fillAmount: fill.fill,
         ...(chosenRail ? { rail: chosenRail } : {}),
       });
       setSelected(null); setBuyRecv(''); setBuyFill(''); setBuyFillFiat(''); setChosenRail('');
@@ -834,6 +840,7 @@ export default function P2pScreen() {
             : visibleOrders.length === 0 ? <Text style={s.emptyText} testID="p2p-book-empty">{bookQuery.trim() ? t('tokens.noMatches') : bookSide === 'buy' ? t('p2p.emptyOpen') : t('p2pBook.emptyBuy')}</Text>
             : visibleOrders.map((o, i) => {
               const unit = perUnitPrice(o.wantAmount, o.giveAmount);
+              const fill = checkP2pFill(o, buyFill);
               return (
               <View key={o.orderId} style={s.card} testID={`p2p-order-${i}`}>
                 <View style={s.rowBetween}>
@@ -898,7 +905,7 @@ export default function P2pScreen() {
                       onChange={(v) => {
                         setBuyFillFiat(v);
                         const unit = Number(o.wantAmount) / Number(o.giveAmount);
-                        setBuyFill(unit > 0 && Number(v) > 0 ? String(Number((Number(v) / unit).toFixed(8))) : '');
+                        setBuyFill(unit > 0 && Number(v) > 0 ? String(Number((Number(v) / unit).toFixed(8))) : v);
                       }}
                       placeholder={o.wantAmount}
                       keyboardType="decimal-pad" mono testID="p2p-buy-fill-fiat"
@@ -925,7 +932,19 @@ export default function P2pScreen() {
                         </View>
                       </View>
                     ) : null}
-                    <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => submitBuy(o)} disabled={busy} testID="p2p-buy-confirm">
+                    <Text
+                      style={[s.sub, !fill.ok && { color: theme.colors.accent.red }]}
+                      accessibilityLiveRegion="polite"
+                      testID="p2p-fill-feedback"
+                    >
+                      {fill.ok ? t('p2pFill.preview', { amount: fill.fill, token: o.giveToken, fiat: fill.fiat, currency: o.wantCurrency }) : fillError(fill, o)}
+                    </Text>
+                    <TouchableOpacity
+                      style={[s.btn, { backgroundColor: theme.colors.accent.emerald, opacity: busy || !fill.ok ? 0.5 : 1 }]}
+                      onPress={() => submitBuy(o)} disabled={busy || !fill.ok}
+                      accessibilityRole="button" accessibilityState={{ disabled: busy || !fill.ok }}
+                      testID="p2p-buy-confirm"
+                    >
                       <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
                     </TouchableOpacity>
                   </View>
