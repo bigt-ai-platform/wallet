@@ -9,6 +9,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import WalletUnlock from '@/components/WalletUnlock';
+import { filterPredictionEvents, PREDICTION_FILTERS, type PredictionFilter } from '@/lib/predictionMarkets';
 import { httpService } from '@/services/http';
 import {
   predictionService,
@@ -36,6 +37,8 @@ export default function PredictScreen() {
   const { isUnlocked, publicInfo, getUnlockedWallet } = useWallet();
 
   const [events, setEvents] = React.useState<PredictionEvent[]>([]);
+  const [marketQuery, setMarketQuery] = React.useState('');
+  const [marketFilter, setMarketFilter] = React.useState<PredictionFilter>('all');
   const [positions, setPositions] = React.useState<Record<string, PredictionPosition>>({});
   const [loading, setLoading] = React.useState(false);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -332,6 +335,8 @@ export default function PredictScreen() {
     });
   };
 
+  const visibleEvents = filterPredictionEvents(events, states, isUnlocked ? positions : {}, marketFilter, marketQuery);
+
   const renderEvent = (event: PredictionEvent) => {
     const pos = positions[event.contractTokenid];
     const isOpen = expanded === event.contractTokenid;
@@ -543,6 +548,41 @@ export default function PredictScreen() {
           <WalletUnlock fullScreen={false} subtitle={t('predict.unlockFirst')} testID="predict-unlock" />
         ) : null}
 
+        <View style={s.marketToolbar} testID="predict-market-toolbar">
+          <View style={s.searchRow}>
+            <Ionicons name="search-outline" size={20} color={theme.colors.text.secondary} />
+            <TextInput
+              style={s.searchInput} value={marketQuery}
+              onChangeText={(value) => { setMarketQuery(value); setExpanded(null); }}
+              placeholder={t('predictionBrowse.search')} placeholderTextColor={theme.colors.text.secondary}
+              accessibilityLabel={t('predictionBrowse.search')} autoCapitalize="none" autoCorrect={false}
+              testID="predict-search"
+            />
+            <TouchableOpacity
+              style={s.refreshBtn} accessibilityRole="button" accessibilityLabel={t('predictionBrowse.clear')}
+              {...{ title: t('predictionBrowse.clear') }} disabled={!marketQuery}
+              onPress={() => { setMarketQuery(''); setExpanded(null); }} testID="predict-search-clear"
+            >
+              <Ionicons name="close-outline" size={22} color={marketQuery ? theme.colors.text.primary : theme.colors.text.secondary} />
+            </TouchableOpacity>
+          </View>
+          <View style={s.marketFilters} accessibilityRole="radiogroup" accessibilityLabel={t('predictionBrowse.status')}>
+            {PREDICTION_FILTERS.map((filter) => (
+              <TouchableOpacity
+                key={filter} style={[s.marketFilter, marketFilter === filter && s.selected]}
+                accessibilityRole="radio" accessibilityState={{ checked: marketFilter === filter }}
+                aria-checked={marketFilter === filter}
+                onPress={() => { setMarketFilter(filter); setExpanded(null); }} testID={`predict-filter-${filter}`}
+              >
+                <Text style={s.miniText}>{t(`predictionBrowse.${filter}`)}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+          <Text style={s.meta} accessibilityLiveRegion="polite" testID="predict-market-count">
+            {t('predictionBrowse.count', { shown: visibleEvents.length, total: events.length })}
+          </Text>
+        </View>
+
         {loading ? (
           <ActivityIndicator size="large" color={theme.colors.primary} style={{ padding: 24 }} testID="predict-loading" />
         ) : events.length === 0 ? (
@@ -550,8 +590,16 @@ export default function PredictScreen() {
             <Text style={s.emptyTitle}>{t('predict.empty')}</Text>
             <Text style={s.emptySub}>{t('predict.emptySub')}</Text>
           </View>
+        ) : visibleEvents.length === 0 ? (
+          <View style={s.marketEmpty} testID="predict-no-matches">
+            <Text style={s.emptyTitle}>{t(marketFilter === 'mine' && !isUnlocked ? 'predict.unlockFirst' : 'predictionBrowse.noMatches')}</Text>
+            <TouchableOpacity accessibilityRole="button" style={s.miniBtn}
+              onPress={() => { setMarketQuery(''); setMarketFilter('all'); setExpanded(null); }} testID="predict-reset-filters">
+              <Text style={s.miniText}>{t('predictionBrowse.reset')}</Text>
+            </TouchableOpacity>
+          </View>
         ) : (
-          events.map(renderEvent)
+          visibleEvents.map(renderEvent)
         )}
       </ScrollView>
 
@@ -664,6 +712,12 @@ const s = StyleSheet.create((theme) => ({
   content: { padding: 16, paddingBottom: 40 },
   headerRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   headerTitle: { flexGrow: 1, flexShrink: 1, minWidth: 150 },
+  marketToolbar: { gap: 10, marginBottom: 16 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingLeft: 10, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface },
+  searchInput: { flex: 1, minWidth: 0, height: 44, fontSize: 14, color: theme.colors.text.primary },
+  marketFilters: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  marketFilter: { minHeight: 40, justifyContent: 'center', paddingHorizontal: 10, paddingVertical: 8, borderWidth: 2, borderColor: theme.colors.border, borderRadius: 8 },
+  marketEmpty: { paddingVertical: 24, alignItems: 'center', gap: 8 },
   refreshBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
   disabled: { opacity: 0.4 },
   selected: { borderColor: theme.colors.primary, borderWidth: 2 },

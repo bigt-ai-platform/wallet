@@ -73,6 +73,87 @@ async function pointAtL1P(page: Page) {
 }
 
 test.describe('Predict Screen', () => {
+  for (const width of [390, 1440]) {
+    test(`filters fixture markets at ${width}px`, async ({ page }, testInfo) => {
+      await page.setViewportSize({ width, height: 900 });
+      const markets = [
+        { tokenid: 'open-btc', question: 'Will BTC close above 100k?', status: 'OPEN' },
+        { tokenid: 'pending-rain', question: 'Rain in Berlin tomorrow?', status: 'PENDING' },
+        { tokenid: 'voting-election', question: 'Election winner', status: 'VOTING' },
+        { tokenid: 'final-sport', question: 'Home team result', status: 'FINAL' },
+        { tokenid: 'unavailable-market', question: 'Unavailable market', status: null },
+        { tokenid: 'initializing-market', question: 'Initializing market', status: 'OPEN' },
+      ];
+      const tokens = markets.map((market) => ({
+        tokenid: market.tokenid,
+        tokenKeyValues: { keyvalues: Object.entries({
+          classname: 'net.bigtangle.server.service.PredictionContract', S: '1000',
+          outcomeTokenids: `${market.tokenid}-yes,${market.tokenid}-no`, outcomeNames: 'YES,NO',
+          collateralTokenid: 'bc', question: market.question, oracle: 'staked',
+          resolutionTimeSec: String(Math.floor(Date.now() / 1000) + 3600),
+        }).map(([key, value]) => ({ key, value })) },
+      }));
+      await page.route('**/searchContractTokens', (route) => route.fulfill({ json: { tokens } }));
+      await page.route('**/getPredictionState', (route) => {
+        const { contractTokenid } = route.request().postDataJSON();
+        const market = markets.find((candidate) => candidate.tokenid === contractTokenid)!;
+        return route.fulfill({ json: market.status ? {
+          contractTokenid, confirmed: true, blockHash: 'ab'.repeat(32),
+          state: { initialized: contractTokenid !== 'initializing-market', status: market.status,
+            outcome: market.status === 'FINAL' ? `${contractTokenid}-yes` : null },
+        } : { contractTokenid, confirmed: false, state: null } });
+      });
+      await waitForApp(page);
+      await configurePredictionChain(page, 'http://127.0.0.1:24088/');
+      await clickTab(page, 'Predict');
+      await expect(page.getByTestId('predict-loading')).toHaveCount(0);
+      const count = page.getByTestId('predict-market-count');
+      const cards = page.locator('[data-testid^="predict-event-"]');
+      const search = page.getByTestId('predict-search');
+      await expect(count).toHaveText('6 / 6 markets');
+      await expect(cards).toHaveCount(6);
+      await page.getByTestId('predict-filter-open').click();
+      await expect(count).toHaveText('1 / 6 markets');
+      await expect(cards).toHaveCount(1);
+      await expect(cards).toContainText('BTC');
+      await expect(page.getByTestId('predict-filter-open')).toHaveAttribute('aria-checked', 'true');
+      await search.fill('berlin');
+      await expect(page.getByTestId('predict-no-matches')).toContainText('No matching markets');
+      await page.getByTestId('predict-filter-resolving').click();
+      await expect(count).toHaveText('1 / 6 markets');
+      await expect(cards).toContainText('Berlin');
+      await page.getByTestId('predict-search-clear').click();
+      await expect(search).toHaveValue('');
+      await expect(count).toHaveText('2 / 6 markets');
+      await expect(cards).toHaveCount(2);
+      await page.getByTestId('predict-filter-final').click();
+      await expect(count).toHaveText('1 / 6 markets');
+      await expect(cards).toContainText('Home team result');
+      await page.getByTestId('predict-filter-mine').click();
+      await expect(count).toHaveText('0 / 6 markets');
+      await expect(page.getByTestId('predict-no-matches')).toContainText('Unlock');
+      await page.getByTestId('predict-reset-filters').click();
+      await expect(count).toHaveText('6 / 6 markets');
+      await expect(page.getByTestId('predict-filter-all')).toHaveAttribute('aria-checked', 'true');
+      await search.fill('  btc BIG YES ');
+      await expect(count).toHaveText('1 / 6 markets');
+      await expect(cards).toContainText('BTC');
+      await search.fill('nonexistent');
+      await expect(count).toHaveText('0 / 6 markets');
+      await page.getByTestId('predict-reset-filters').click();
+      await expect(search).toHaveValue('');
+      await expect(cards).toHaveCount(6);
+      await page.getByTestId('predict-market-toolbar').scrollIntoViewIfNeeded();
+      for (const control of [search, ...await page.getByRole('radio').all()]) {
+        const bounds = await control.boundingBox();
+        expect(bounds).not.toBeNull();
+        expect(bounds!.x).toBeGreaterThanOrEqual(0);
+        expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+      }
+      await page.screenshot({ path: testInfo.outputPath(`predict-browse-${width}.png`) });
+    });
+  }
+
   test('predict screen is reachable through the sidebar', async ({ page }) => {
     await waitForApp(page);
     await clickTab(page, 'Predict');
