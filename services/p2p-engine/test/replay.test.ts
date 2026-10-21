@@ -87,6 +87,42 @@ function rec(record: unknown, txid = "f".repeat(64)): ChainRecord {
 }
 
 describe("syncOnce — order-book projection from the chain", () => {
+  it("recovers from an event-write failure after reserving the order", async () => {
+    const src = chain([GENESIS, block("h1", 1, "h0", [rec(orderRec()), rec(swapRec())])]);
+    const store = new MemSettlementStore();
+    const append = store.appendEvent.bind(store);
+    store.appendEvent = async () => { throw new Error("write interrupted"); };
+    await expect(syncOnce(src, store, new MemCursorStore())).rejects.toThrow("write interrupted");
+    expect((await store.getOrder("ord-0123456789abcdef"))?.remainingGive).toBe("0");
+    store.appendEvent = append;
+    const recovered = await syncOnce(src, store, new MemCursorStore());
+    expect(recovered.conflicts).toEqual([]);
+    expect(recovered.swapsAppended).toBe(1);
+    expect((await store.getOrder("ord-0123456789abcdef"))?.remainingGive).toBe("0");
+  });
+
+  it("replays decimal fills and unfunded cancellations exactly once", async () => {
+    const match = swapRec({ giveAmount: "0.1", wantAmount: "0.1" });
+    const src = chain([
+      GENESIS,
+      block("h1", 1, "h0", [rec(orderRec({ giveAmount: "0.3", wantAmount: "0.3" })), rec(match), rec(match)]),
+    ]);
+    const store = new MemSettlementStore();
+    const first = await syncOnce(src, store, new MemCursorStore());
+    expect(first.swapsAppended).toBe(1);
+    expect((await store.getOrder(match.orderId!))?.remainingGive).toBe("0.2");
+    await syncOnce(src, store, new MemCursorStore());
+    expect((await store.getOrder(match.orderId!))?.remainingGive).toBe("0.2");
+    const cancelled = swapRec({ giveAmount: "0.1", wantAmount: "0.1", status: "CANCELLED", swapSeq: 1 });
+    const terminal = chain([
+      GENESIS,
+      block("h1", 1, "h0", [rec(orderRec({ giveAmount: "0.3", wantAmount: "0.3" })), rec(match)]),
+      block("h2", 2, "h1", [rec(cancelled), rec(match), rec(cancelled)]),
+    ]);
+    await syncOnce(terminal, store, new MemCursorStore());
+    expect((await store.getOrder(match.orderId!))?.remainingGive).toBe("0.3");
+  });
+
   it("opens an order, is idempotent across runs, and advances the cursor", async () => {
     const src = chain([GENESIS, block("h1", 1, "h0", [rec(orderRec())])]);
     const store = new MemSettlementStore();

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { Ed25519Key, didFromEd25519Key } from "did";
 import { buildApp, type DeviceReadArgs, type DeviceReadResult } from "../src/server.js";
+import { RECEIVE_ADDRESS } from "./address.js";
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
 
@@ -68,7 +69,7 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
+    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
   });
   expect(r2.statusCode).toBe(201);
   const swapId = r2.json().swapId as string;

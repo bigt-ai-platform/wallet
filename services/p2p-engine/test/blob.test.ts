@@ -265,6 +265,59 @@ describe.skipIf(!process.env.P2P_TEST_DATABASE_URL)("PgSettlementStore concurren
     expect(await store.markOrderMatched(orderId, "swap-final", undefined, "40")).toBe(true);
   });
 
+  it("restores concurrent reservations once and preserves a seller cancellation", async () => {
+    const orderId = "ord-0000000000000002";
+    await store.createOrder({
+      orderId, type: "limit_sell", sellerDid: "did:seller", giveToken: "USDT", giveAmount: "0.3",
+      giveChain: "L0", wantCurrency: "USD", wantAmount: "0.3", wantRail: "wechat",
+      validUntil: 1800000000, status: "ACTIVE", signature: "test", createdAt: Date.now(),
+    });
+    await store.markOrderMatched(orderId, "swap-refund-first", "0.2", "0.3");
+    await store.markOrderMatched(orderId, "swap-refund-second", "0", "0.2");
+    await Promise.all([
+      store.reopenOrder(orderId, "swap-refund-first"),
+      store.reopenOrder(orderId, "swap-refund-first"),
+    ]);
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "ACTIVE", remainingGive: "0.1" });
+    await store.markOrderCancelled(orderId);
+    await store.reopenOrder(orderId, "swap-refund-second");
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "CANCELLED", remainingGive: "0.3" });
+  });
+
+  it("restores pre-upgrade reservations from the recorded fill only once", async () => {
+    const orderId = "ord-0000000000000004";
+    const swapId = "swap-legacy-reservation";
+    await store.createOrder({
+      orderId, type: "limit_sell", sellerDid: "did:seller", giveToken: "USDT", giveAmount: "100",
+      giveChain: "L0", wantCurrency: "USD", wantAmount: "100", wantRail: "wechat",
+      validUntil: 1800000000, status: "MATCHED", signature: "test", createdAt: Date.now(),
+    });
+    const matched: P2pSwapEvent = { swapId, orderId, seq: 0, status: "MATCHED", eventType: "match", giveAmount: "60", at: Date.now() };
+    await store.appendEvent(matched);
+    const cancelled: P2pSwapEvent = { ...matched, seq: 1, status: "CANCELLED", eventType: "cancel" };
+    await store.appendEvent(cancelled);
+    await store.appendEvent(cancelled);
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "ACTIVE", remainingGive: "60" });
+  });
+
+  it("restores a funded reservation only on the confirmed refund event", async () => {
+    const orderId = "ord-0000000000000003";
+    const swapId = "swap-funded-reservation";
+    await store.createOrder({
+      orderId, type: "limit_sell", sellerDid: "did:seller", giveToken: "USDT", giveAmount: "0.3",
+      giveChain: "L0", wantCurrency: "USD", wantAmount: "0.3", wantRail: "wechat",
+      validUntil: 1800000000, status: "ACTIVE", signature: "test", createdAt: Date.now(),
+    });
+    await store.markOrderMatched(orderId, swapId, "0.2", "0.3");
+    const expired: P2pSwapEvent = { swapId, orderId, seq: 0, status: "EXPIRED", eventType: "expire", escrowTxHash: "a".repeat(64), at: Date.now() };
+    await store.appendEvent(expired);
+    expect((await store.getOrder(orderId))?.remainingGive).toBe("0.2");
+    const refunded: P2pSwapEvent = { ...expired, seq: 1, status: "ESCROW_REFUNDED", eventType: "refund", refundTxHash: "b".repeat(64) };
+    await store.appendEvent(refunded, async () => refunded);
+    await store.appendEvent(refunded);
+    expect((await store.getOrder(orderId))?.remainingGive).toBe("0.3");
+  });
+
   it("rejects stale events before anchoring and preserves identical replays", async () => {
     const initial: P2pSwapEvent = { swapId: "swap-concurrent", seq: 0, status: "PAYMENT_PENDING", eventType: "instructions", at: Date.now() };
     await store.appendEvent(initial);

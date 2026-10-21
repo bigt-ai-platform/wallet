@@ -3,6 +3,7 @@ import { serverErrorMessage } from '@/lib/httpError';
 import type { PQKey } from 'bigtangle-ts';
 import { p2pOrderRecord, type P2pReleaseRecord } from 'p2p-protocol';
 import { newOrderId, signP2pRecord, signedBody } from '@/lib/p2pIdentity';
+import { parseP2pMatch, parseP2pOrders, parseP2pSwap, parseP2pSwaps } from '@/lib/p2pOrderBook';
 import { anchorSocialRecord } from '@/services/transaction';
 import { chainBookEnabled, orderBookFromChain } from '@/services/p2pChain';
 
@@ -229,7 +230,7 @@ export interface P2pCapabilities {
 export async function getCapabilities(): Promise<P2pCapabilities | null> {
   if (!p2pConfigured()) return null;
   try {
-    const res = await fetch(`${baseUrl()}/capabilities`);
+    const res = await fetchWithTimeout(`${baseUrl()}/capabilities`);
     if (!res.ok) return null;
     const data = (await res.json()) as Partial<P2pCapabilities>;
     if (!Array.isArray(data.rails)) return null;
@@ -262,11 +263,26 @@ function baseUrl(): string {
   return P2P_ENGINE_URL.replace(/\/$/, '');
 }
 
+const REQUEST_TIMEOUT_MS = 20_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (e) {
+    if (controller.signal.aborted) throw new Error('p2p engine request timed out');
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function request<T>(path: string, body?: Record<string, unknown>): Promise<T> {
   const url = `${baseUrl()}${path}`;
   let res: Response;
   try {
-    res = await fetch(url, {
+    res = await fetchWithTimeout(url, {
       method: body === undefined ? 'GET' : 'POST',
       headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -293,17 +309,17 @@ async function request<T>(path: string, body?: Record<string, unknown>): Promise
  *
  *  With `EXPO_PUBLIC_P2P_CHAIN_BOOK=1` and a social node configured, the book
  *  is derived straight from L1-SOCIAL (docs/p2p.md §26) so no engine is needed
- *  to browse; any failure falls back to the engine's `/public/orders`. */
+ *  to browse. A chain read failure is reported, never silently replaced by the
+ *  engine's unverified book. */
 export async function listOpenOrders(): Promise<P2pOrder[]> {
   if (chainBookEnabled()) {
     try {
       return await orderBookFromChain();
-    } catch {
-      // social node unreachable / not indexed — fall back to the engine
+    } catch (e) {
+      throw new Error(`chain order book unavailable: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
-  const data = await request<{ orders: P2pOrder[] }>('/public/orders?status=ACTIVE');
-  return data.orders ?? [];
+  return parseP2pOrders(await request<unknown>('/public/orders?status=ACTIVE'));
 }
 
 /** Seller lists a sell order (signed by the seller's wallet key).
@@ -399,7 +415,7 @@ export async function matchOrder(
   input: MatchOrderInput,
 ): Promise<{ swapId: string; status: string; escrowAddress: string | null }> {
   const body = signedBody(id.key, id.did, { ...input, buyerDid: id.did, requestPath: `/orders/${orderId}/match` });
-  return request(`/orders/${orderId}/match`, body);
+  return parseP2pMatch(await request<unknown>(`/orders/${orderId}/match`, body));
 }
 
 /**
@@ -422,15 +438,13 @@ export async function transition(
 /** Party-scoped swap list (PII redacted, only swaps this did is party to). */
 export async function mySwaps(id: P2pIdentity): Promise<P2pSwap[]> {
   const body = signedBody(id.key, id.did, { requestPath: '/swaps/mine' });
-  const data = await request<{ swaps: P2pSwap[] }>('/swaps/mine', body);
-  return data.swaps ?? [];
+  return parseP2pSwaps(await request<unknown>('/swaps/mine', body));
 }
 
 /** One party-scoped swap. */
 export async function getSwap(id: P2pIdentity, swapId: string): Promise<P2pSwap> {
   const body = signedBody(id.key, id.did, { swapId, requestPath: '/swaps/get' });
-  const data = await request<{ swap: P2pSwap }>('/swaps/get', body);
-  return data.swap;
+  return parseP2pSwap(await request<unknown>('/swaps/get', body), swapId);
 }
 
 /**

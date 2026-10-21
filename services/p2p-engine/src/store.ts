@@ -16,6 +16,7 @@ import type {
 } from "./types.js";
 import type { BlobStore } from "./blob.js";
 import { isDeepStrictEqual } from "node:util";
+import { addAmounts, subtractAmounts, compareAmounts } from "p2p-protocol";
 
 export class SettlementConflict extends Error {
   readonly statusCode = 409;
@@ -23,6 +24,11 @@ export class SettlementConflict extends Error {
 
 /** Blob collection for buyer receipt bytes (docs/p2p.md §14). */
 const RECEIPTS = "receipts";
+
+function returnsOrderQuantity(event: P2pSwapEvent): boolean {
+  return (event.status === "ESCROW_REFUNDED" && !!event.refundTxHash) ||
+    ((event.status === "CANCELLED" || event.status === "EXPIRED") && !event.escrowTxHash);
+}
 
 export interface SettlementStore {
   createOrder(o: P2pOrder): Promise<void>;
@@ -34,8 +40,9 @@ export interface SettlementStore {
   markOrderMatched(orderId: string, swapId: string, remainingGive?: string, expectedRemaining?: string): Promise<boolean>;
   /** ACTIVE → CANCELLED. Returns false when the order was not ACTIVE (lost race). */
   markOrderCancelled(orderId: string): Promise<boolean>;
-  /** Undo a match whose event never anchored: ACTIVE again, only for `swapId`. */
+  /** Restore a swap's reservation once, without reopening a cancelled order. */
   reopenOrder(orderId: string, swapId: string): Promise<void>;
+  hasOrderReservation(orderId: string, swapId: string): Promise<boolean>;
   appendEvent(e: P2pSwapEvent, prepare?: () => Promise<P2pSwapEvent>): Promise<void>;
   events(swapId: string): Promise<P2pSwapEvent[]>;
   /** The whole append-only log — input for derived projections (reputation). */
@@ -67,6 +74,7 @@ export interface SettlementStore {
 
 export class MemSettlementStore implements SettlementStore {
   private readonly eventLocks = new Map<string, Promise<void>>();
+  private readonly reservations = new Map<string, Map<string, string>>();
   readonly orders = new Map<string, P2pOrder>();
   readonly swapEvents = new Map<string, P2pSwapEvent[]>();
   readonly paymentProfiles = new Map<string, PaymentProfile>();
@@ -94,13 +102,17 @@ export class MemSettlementStore implements SettlementStore {
     const o = this.orders.get(orderId);
     if (!o || o.status !== "ACTIVE") return false;
     if (expectedRemaining !== undefined && (o.remainingGive ?? o.giveAmount) !== expectedRemaining) return false;
-    // A partial fill keeps the order ACTIVE with the reduced crypto amount; a
-    // full fill (no remaining) closes it.
-    if (remainingGive !== undefined && Number(remainingGive) > 0) {
-      this.orders.set(orderId, { ...o, remainingGive });
-    } else {
-      this.orders.set(orderId, { ...o, status: "MATCHED", swapId, remainingGive: undefined });
-    }
+    const reservations = this.reservations.get(orderId) ?? new Map<string, string>();
+    if (reservations.has(swapId)) return false;
+    const remaining = remainingGive ?? "0";
+    const quantity = subtractAmounts(o.remainingGive ?? o.giveAmount, remaining);
+    if (compareAmounts(quantity, "0") <= 0) return false;
+    reservations.set(swapId, quantity);
+    this.reservations.set(orderId, reservations);
+    this.orders.set(orderId, {
+      ...o, remainingGive: remaining,
+      ...(compareAmounts(remaining, "0") === 0 ? { status: "MATCHED", swapId } : {}),
+    });
     return true;
   }
 
@@ -111,11 +123,20 @@ export class MemSettlementStore implements SettlementStore {
     return true;
   }
 
+  async hasOrderReservation(orderId: string, swapId: string): Promise<boolean> {
+    return this.reservations.get(orderId)?.has(swapId) ?? false;
+  }
+
   async reopenOrder(orderId: string, swapId: string): Promise<void> {
     const o = this.orders.get(orderId);
-    if (o && o.status === "MATCHED" && o.swapId === swapId) {
-      this.orders.set(orderId, { ...o, status: "ACTIVE", swapId: undefined });
-    }
+    const reservations = this.reservations.get(orderId);
+    const quantity = reservations?.get(swapId);
+    if (!o || !quantity || quantity === "0") return;
+    this.orders.set(orderId, {
+      ...o, remainingGive: addAmounts(o.remainingGive ?? "0", quantity),
+      status: o.status === "MATCHED" ? "ACTIVE" : o.status, swapId: undefined,
+    });
+    reservations!.set(swapId, "0");
   }
 
   async appendEvent(e: P2pSwapEvent, prepare?: () => Promise<P2pSwapEvent>): Promise<void> {
@@ -137,6 +158,9 @@ export class MemSettlementStore implements SettlementStore {
       if (!existing) list.push(stored);
       list.sort((first, second) => first.seq - second.seq);
       this.swapEvents.set(e.swapId, list);
+      if (stored.orderId && returnsOrderQuantity(stored)) {
+        await this.reopenOrder(stored.orderId, stored.swapId);
+      }
     } finally {
       unlock();
       if (this.eventLocks.get(e.swapId) === lock) this.eventLocks.delete(e.swapId);
@@ -344,19 +368,18 @@ export class PgSettlementStore implements SettlementStore {
   }
 
   async markOrderMatched(orderId: string, swapId: string, remainingGive?: string, expectedRemaining?: string): Promise<boolean> {
-    if (remainingGive !== undefined && Number(remainingGive) > 0) {
-      const part = await this.db.query(
-        `UPDATE p2p_orders SET remaining_give = $2 WHERE order_id = $1 AND status = 'ACTIVE'
-         AND ($3::text IS NULL OR COALESCE(remaining_give, give_amount) = $3)`,
-        [orderId, remainingGive, expectedRemaining ?? null],
-      );
-      return (part.rowCount ?? 0) === 1;
-    }
     const res = await this.db.query(
-      `UPDATE p2p_orders SET status = 'MATCHED', swap_id = $2, remaining_give = NULL
+      `UPDATE p2p_orders SET
+        reservations = reservations || jsonb_build_object($2::text,
+          (COALESCE(remaining_give, give_amount)::numeric - $3::numeric)::text),
+        remaining_give = $3,
+        status = CASE WHEN $3::numeric = 0 THEN 'MATCHED' ELSE 'ACTIVE' END,
+        swap_id = CASE WHEN $3::numeric = 0 THEN $2 ELSE swap_id END
       WHERE order_id = $1 AND status = 'ACTIVE'
-      AND ($3::text IS NULL OR COALESCE(remaining_give, give_amount) = $3)`,
-        [orderId, swapId, expectedRemaining ?? null],
+      AND NOT (reservations ? $2)
+      AND $3::numeric >= 0 AND $3::numeric < COALESCE(remaining_give, give_amount)::numeric
+      AND ($4::text IS NULL OR COALESCE(remaining_give, give_amount) = $4)`,
+      [orderId, swapId, remainingGive ?? "0", expectedRemaining ?? null],
     );
     return (res.rowCount ?? 0) === 1;
   }
@@ -370,9 +393,27 @@ export class PgSettlementStore implements SettlementStore {
   }
 
   async reopenOrder(orderId: string, swapId: string): Promise<void> {
-    await this.db.query(
-      `UPDATE p2p_orders SET status = 'ACTIVE', swap_id = NULL
-       WHERE order_id = $1 AND status = 'MATCHED' AND swap_id = $2`,
+    await this.restoreReservation(orderId, swapId, this.db);
+  }
+
+  async hasOrderReservation(orderId: string, swapId: string): Promise<boolean> {
+    const result = await this.db.query("SELECT reservations ? $2 AS reserved FROM p2p_orders WHERE order_id = $1", [orderId, swapId]);
+    return result.rows[0]?.reserved === true;
+  }
+
+  private async restoreReservation(orderId: string, swapId: string, db: Queryable): Promise<void> {
+    const quantity = `COALESCE(reservations ->> $2, (
+      SELECT payload ->> 'giveAmount' FROM p2p_swap_events
+      WHERE swap_id = $2 AND status = 'MATCHED' AND payload ->> 'orderId' = $1
+      ORDER BY event_seq LIMIT 1
+    ))::numeric`;
+    await db.query(
+      `UPDATE p2p_orders SET
+         remaining_give = (COALESCE(remaining_give, '0')::numeric + ${quantity})::text,
+         status = CASE WHEN status = 'MATCHED' THEN 'ACTIVE' ELSE status END,
+         swap_id = NULL,
+         reservations = reservations || jsonb_build_object($2::text, '0'::text)
+       WHERE order_id = $1 AND ${quantity} > 0`,
       [orderId, swapId],
     );
   }
@@ -415,6 +456,9 @@ export class PgSettlementStore implements SettlementStore {
       if (!isDeepStrictEqual(existing.rows[0]?.payload, JSON.parse(JSON.stringify(e)))) {
         throw new SettlementConflict("conflicting swap event");
       }
+    }
+    if (e.orderId && returnsOrderQuantity(e)) {
+      await this.restoreReservation(e.orderId, e.swapId, db);
     }
   }
 

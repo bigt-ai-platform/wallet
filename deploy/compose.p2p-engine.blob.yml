@@ -54,11 +54,9 @@ services:
       SETTLEMENT_L1_URL: ${SETTLEMENT_L1_URL:-}
       SETTLEMENT_L1_SOCIAL_URL: ${SETTLEMENT_L1_SOCIAL_URL:-}
       SETTLEMENT_L1_SOCIAL_URLS: ${SETTLEMENT_L1_SOCIAL_URLS:-}
-      # L1-SOCIAL swap-anchor policy (docs/p2p.md §8/§14). The value leg is L0
-      # (escrow + fiat); L1-SOCIAL is the evidence log, so the default never
-      # blocks a settlement on an unfunded/down anchor node:
-      #   best-effort (default) | required (fail closed) | off (L0-only).
-      SETTLEMENT_ANCHOR_MODE: ${SETTLEMENT_ANCHOR_MODE:-best-effort}
+      # No database: L1-SOCIAL is the only durable copy of swap events, so the
+      # engine refuses any anchor mode but required (fail closed).
+      SETTLEMENT_ANCHOR_MODE: ${SETTLEMENT_ANCHOR_MODE:-required}
       # Signed-request throttles (docs/p2p.md §27.4): writes/reads per DID per
       # 60s, and a per-IP cap that bounds sybil floods (trustProxy reads the
       # client IP from Caddy's X-Forwarded-For).

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { P2pOrder } from '@/services/p2p';
-import { checkP2pFill, filterP2pOrders } from '../p2pOrderBook';
+import { checkP2pFill, filterP2pOrders, parseP2pMatch, parseP2pOrders, parseP2pSwap, parseP2pSwaps } from '../p2pOrderBook';
 
 const sell: P2pOrder = {
   orderId: 'sell', type: 'limit_sell', sellerDid: 'did:pq:alice',
@@ -37,6 +37,30 @@ describe('filterP2pOrders', () => {
   });
 });
 
+describe('engine response validation', () => {
+  const swap = { swapId: 'swap-1', seq: 0, status: 'MATCHED', eventType: 'match', at: 1 };
+
+  it('drops malformed orders and rejects a malformed order book', () => {
+    const bad = [{ ...sell, giveAmount: '1e3' }, { ...sell, status: 'PENDING' }, { ...sell, remainingGive: -1 }, null];
+    expect(parseP2pOrders({ orders: [sell, ...bad] })).toEqual([sell]);
+    expect(() => parseP2pOrders({ orders: 'x' })).toThrow(/invalid/);
+    expect(() => parseP2pOrders(null)).toThrow(/invalid/);
+  });
+
+  it('requires well-formed swaps and the requested swap id', () => {
+    expect(parseP2pSwaps({ swaps: [swap] })).toEqual([swap]);
+    expect(() => parseP2pSwaps({ swaps: [{ ...swap, status: 'PAID' }] })).toThrow(/invalid/);
+    expect(parseP2pSwap({ swap }, 'swap-1')).toEqual(swap);
+    expect(() => parseP2pSwap({ swap }, 'swap-2')).toThrow(/invalid/);
+  });
+
+  it('requires a swap id and escrow address shape on match', () => {
+    expect(parseP2pMatch({ swapId: 'swap-1', status: 'MATCHED', escrowAddress: null })).toEqual({ swapId: 'swap-1', status: 'MATCHED', escrowAddress: null });
+    expect(() => parseP2pMatch({ status: 'MATCHED', escrowAddress: null })).toThrow(/invalid/);
+    expect(() => parseP2pMatch({ swapId: 'swap-1', status: 'MATCHED', escrowAddress: 5 })).toThrow(/invalid/);
+  });
+});
+
 describe('checkP2pFill', () => {
   const partial = { ...sell, remainingGive: '25', minOrder: '70', maxOrder: '140' };
 
@@ -56,14 +80,17 @@ describe('checkP2pFill', () => {
   it('enforces fiat minimum and maximum inclusively', () => {
     expect(checkP2pFill(partial, '9.99')).toEqual({ ok: false, reason: 'min', limit: '70' });
     expect(checkP2pFill(partial, '10').ok).toBe(true);
-    expect(checkP2pFill(partial, '20').ok).toBe(true);
+    expect(checkP2pFill({ ...partial, remainingGive: '30' }, '20').ok).toBe(true);
+    expect(checkP2pFill(partial, '20')).toEqual({ ok: false, reason: 'remainder', limit: '70' });
     expect(checkP2pFill({ ...partial, remainingGive: '50' }, '20.01')).toEqual({ ok: false, reason: 'max', limit: '140' });
   });
 
-  it('uses the same eight-decimal fiat rounding for bids and sell ads', () => {
+  it('rejects inexact fiat prices consistently for bids and sell ads', () => {
     const fractional = { ...sell, giveAmount: '3', wantAmount: '1' };
-    expect(checkP2pFill(fractional, ' 1 ')).toEqual({ ok: true, fill: '1', fiat: '0.33333333' });
-    expect(checkP2pFill({ ...fractional, type: 'limit_buy' }, '1')).toEqual(checkP2pFill(fractional, '1'));
+    expect(checkP2pFill(fractional, ' 1 ')).toEqual({ ok: false, reason: 'precision', limit: '8' });
+    expect(checkP2pFill(fractional, '3')).toEqual({ ok: true, fill: '3', fiat: '1' });
+    const bid: Parameters<typeof checkP2pFill>[0] & { type: string } = { ...fractional, type: 'limit_buy' };
+    expect(checkP2pFill(bid, '1')).toEqual(checkP2pFill(fractional, '1'));
   });
 
   it('rejects exhausted orders, non-finite calculations and rounded zero totals', () => {

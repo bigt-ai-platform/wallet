@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { p2pOrderRecord } from 'p2p-protocol';
+import { p2pOrderRecord, p2pSwapRecord } from 'p2p-protocol';
 import { foldOrderBook } from '../orderBook';
 import type { SocialRecordEntry } from '../socialReader';
 
@@ -33,6 +33,24 @@ function swapFor(orderId: string): SocialRecordEntry {
 }
 
 describe('foldOrderBook', () => {
+  it('preserves exact partial remainders and only returns safely released reservations', () => {
+    const order = openOrder({ giveAmount: '0.3', wantAmount: '0.3' });
+    const match: SocialRecordEntry = {
+      kind: 'swap', verified: true, txid: 'tx-match',
+      record: p2pSwapRecord({
+        from: 'did:key:zEngine', to: 'swap-0123456789abcdef', orderId: String(order.record.to),
+        status: 'MATCHED', swapSeq: 0, giveAmount: '0.1', ts: NOW_MS,
+      }) as unknown as Record<string, unknown>,
+    };
+    expect(foldOrderBook([order, match, match], { now: NOW_MS })[0].remainingGive).toBe('0.2');
+    const cancelled = { ...match, record: { ...match.record, status: 'CANCELLED', swapSeq: 1 } };
+    expect(foldOrderBook([cancelled, order, match], { now: NOW_MS })[0].remainingGive).toBe('0.3');
+    const funded = { ...cancelled, record: { ...cancelled.record, escrowTxHash: 'a'.repeat(64) } };
+    expect(foldOrderBook([order, match, funded], { now: NOW_MS })[0].remainingGive).toBe('0.2');
+    const refunded = { ...funded, record: { ...funded.record, status: 'ESCROW_REFUNDED', swapSeq: 2, refundTxHash: 'b'.repeat(64) } };
+    expect(foldOrderBook([refunded, order, funded, match], { now: NOW_MS })[0].remainingGive).toBe('0.3');
+  });
+
   it('keeps a verified OPEN order and maps it to the UI shape', () => {
     const book = foldOrderBook([openOrder({ enginePubkey: '05' + 'ab'.repeat(2600) })], { now: NOW_MS });
     expect(book).toHaveLength(1);

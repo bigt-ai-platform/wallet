@@ -5,6 +5,7 @@ import { buildApp } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
 import type { P2pSwapEvent } from "../src/types.js";
+import { RECEIVE_ADDRESS } from "./address.js";
 
 const seller = Ed25519Key.createNewKey();
 const buyer = Ed25519Key.createNewKey();
@@ -84,7 +85,7 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
+    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
   });
   expect(r2.statusCode).toBe(201);
   const swapId = r2.json().swapId as string;
@@ -419,7 +420,7 @@ describe("CNY rails (docs/p2p.md)", () => {
     const r2 = await a.inject({
       method: "POST",
       url: `/orders/${r1.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
     });
     bump();
     const early = await a.inject({

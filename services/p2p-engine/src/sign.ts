@@ -99,7 +99,12 @@ export class ReplayGuard {
     private readonly limits: RateLimits = { read: RATE_LIMIT_READ, write: RATE_LIMIT },
     /** Optional persistence so the nonce set survives a restart (docs §18.1). */
     private readonly nonceStore?: NonceStore,
-  ) {}
+  ) {
+    this.startedAt = now();
+  }
+
+  /** Nonces signed before this process started may have been used before a restart. */
+  private readonly startedAt: number;
 
   /** Load persisted (unexpired) nonces at boot — a restarted guard then still
    *  rejects a replay of a request accepted before the restart. */
@@ -117,6 +122,7 @@ export class ReplayGuard {
     if (!Number.isFinite(ts) || Math.abs(this.now() - ts) > NONCE_MAX_SKEW_MS) {
       return "request timestamp out of window";
     }
+    if (ts < this.startedAt) return "request signed before the engine restarted; sign it again";
     const now = this.now();
     this.prune(now);
     if (this.used.has(nonce)) return "nonce already used (replay detected)";

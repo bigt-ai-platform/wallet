@@ -25,6 +25,8 @@ const el = (page: Page, id: string) => page.locator(`[data-testid="${id}"]`);
 const E2E_P2P_ENGINE_URL = process.env.E2E_P2P_ENGINE_URL || '';
 const APP_URL = process.env.APP_URL || 'http://localhost:8081';
 const PASSWORD = 'TestPass123!';
+// The p2p-ui engine runs mainnet params and rejects unparseable receive addresses.
+const BUYER_RECEIVE_ADDRESS = '1FvyAqqELFiQyaEWdhFbWF8MZapKPZS8J7';
 
 async function createWallet(page: Page) {
   await page.addInitScript(() => {
@@ -83,7 +85,7 @@ async function matchOrder(page: Page) {
   await clickTab(page, 'P2P');
   await expect(el(page, 'p2p-order-0')).toBeAttached({ timeout: 15000 });
   await el(page, 'p2p-buy-0').click();
-  await el(page, 'p2p-buy-recv').fill('mBuyerReceiveAddressE2E');
+  await el(page, 'p2p-buy-recv').fill(BUYER_RECEIVE_ADDRESS);
   await el(page, 'p2p-buy-confirm').click();
   // submitBuy switches to the mine tab, where the swap card lives.
   await expect(el(page, 'p2p-swap-0-status')).toHaveText('MATCHED', { timeout: 15000 });
@@ -124,7 +126,7 @@ test.describe('P2P Flow', () => {
 
       // 4. Buyer matches.
       await el(buyer.page, 'p2p-buy-0').click();
-      await el(buyer.page, 'p2p-buy-recv').fill('mBuyerReceiveAddressE2E');
+      await el(buyer.page, 'p2p-buy-recv').fill(BUYER_RECEIVE_ADDRESS);
       await el(buyer.page, 'p2p-buy-confirm').click();
       await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('MATCHED', { timeout: 15000 });
 

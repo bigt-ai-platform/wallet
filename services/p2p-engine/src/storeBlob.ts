@@ -47,6 +47,9 @@ export class BlobSettlementStore implements SettlementStore {
   reopenOrder(orderId: string, swapId: string): Promise<void> {
     return this.projection.reopenOrder(orderId, swapId);
   }
+  hasOrderReservation(orderId: string, swapId: string): Promise<boolean> {
+    return this.projection.hasOrderReservation(orderId, swapId);
+  }
   appendEvent(e: P2pSwapEvent, prepare?: () => Promise<P2pSwapEvent>): Promise<void> {
     return this.projection.appendEvent(e, prepare);
   }

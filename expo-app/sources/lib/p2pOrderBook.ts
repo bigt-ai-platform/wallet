@@ -1,23 +1,53 @@
-import type { P2pOrder } from '@/services/p2p';
+import type { P2pOrder, P2pSwap } from '@/services/p2p';
 
-export type P2pFillCheck =
-  | { ok: true; fill: string; fiat: string }
-  | { ok: false; reason: 'amount'; limit: string }
-  | { ok: false; reason: 'min' | 'max'; limit: string };
+export { checkP2pFill, type P2pFillCheck } from 'p2p-protocol';
 
-// Keep fiat rounding aligned with the engine's match endpoint.
-export function checkP2pFill(order: P2pOrder, input: string): P2pFillCheck {
-  const remaining = order.remainingGive ?? order.giveAmount;
-  const fill = input.trim() || remaining;
-  if (!/^\d+(\.\d+)?$/.test(fill) || !Number.isFinite(Number(fill)) || !Number.isFinite(Number(remaining)) || Number(fill) <= 0 || Number(fill) > Number(remaining)) {
-    return { ok: false, reason: 'amount', limit: remaining };
+const AMOUNT = /^\d+(\.\d+)?$/;
+const ORDER_STATUSES = new Set(['ACTIVE', 'MATCHED', 'CANCELLED']);
+const SWAP_STATUSES = new Set([
+  'MATCHED', 'ESCROW_LOCKED', 'PAYMENT_PENDING', 'PAYMENT_CLAIMED', 'PAYMENT_VERIFIED',
+  'ESCROW_RELEASED', 'COMPLETED', 'EXPIRED', 'ESCROW_REFUNDED', 'CANCELLED',
+]);
+
+const record = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const text = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
+const amount = (v: unknown) => typeof v === 'string' && v.length <= 100 && AMOUNT.test(v);
+
+function isOrder(o: unknown): o is P2pOrder {
+  return record(o) && text(o.orderId) && (o.type === 'limit_sell' || o.type === 'limit_buy') &&
+    text(o.sellerDid) && text(o.giveToken) && text(o.giveChain) && text(o.wantCurrency) && text(o.wantRail) &&
+    amount(o.giveAmount) && amount(o.wantAmount) && Number.isFinite(o.validUntil) &&
+    typeof o.status === 'string' && ORDER_STATUSES.has(o.status) &&
+    (o.remainingGive === undefined || amount(o.remainingGive)) &&
+    (o.minOrder === undefined || amount(o.minOrder)) && (o.maxOrder === undefined || amount(o.maxOrder));
+}
+
+function isSwap(s: unknown): s is P2pSwap {
+  return record(s) && text(s.swapId) && Number.isInteger(s.seq) && typeof s.status === 'string' && SWAP_STATUSES.has(s.status);
+}
+
+/** Engine order book: drop malformed entries instead of rendering untrusted shapes. */
+export function parseP2pOrders(data: unknown): P2pOrder[] {
+  if (!record(data) || !Array.isArray(data.orders)) throw new Error('invalid p2p engine response');
+  return data.orders.filter(isOrder);
+}
+
+export function parseP2pSwaps(data: unknown): P2pSwap[] {
+  if (!record(data) || !Array.isArray(data.swaps) || !data.swaps.every(isSwap)) throw new Error('invalid p2p engine response');
+  return data.swaps;
+}
+
+export function parseP2pSwap(data: unknown, swapId: string): P2pSwap {
+  if (!record(data) || !isSwap(data.swap) || data.swap.swapId !== swapId) throw new Error('invalid p2p engine response');
+  return data.swap;
+}
+
+export function parseP2pMatch(data: unknown): { swapId: string; status: string; escrowAddress: string | null } {
+  if (!record(data) || !text(data.swapId) || typeof data.status !== 'string' || !SWAP_STATUSES.has(data.status) ||
+    (data.escrowAddress !== null && !text(data.escrowAddress))) {
+    throw new Error('invalid p2p engine response');
   }
-  const unitPrice = Number(order.wantAmount) / Number(order.giveAmount);
-  const fiat = String(Number((Number(fill) * unitPrice).toFixed(8)));
-  if (!Number.isFinite(Number(fiat)) || Number(fiat) <= 0) return { ok: false, reason: 'amount', limit: remaining };
-  if (order.minOrder && Number(fiat) < Number(order.minOrder)) return { ok: false, reason: 'min', limit: order.minOrder };
-  if (order.maxOrder && Number(fiat) > Number(order.maxOrder)) return { ok: false, reason: 'max', limit: order.maxOrder };
-  return { ok: true, fill, fiat };
+  return { swapId: data.swapId, status: data.status, escrowAddress: data.escrowAddress };
 }
 
 export function filterP2pOrders(

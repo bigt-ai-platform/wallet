@@ -1,4 +1,4 @@
-import { validateP2pOrderRecord, type P2pOrderRecord } from 'p2p-protocol';
+import { subtractAmounts, validateP2pOrderRecord, validateP2pSwapRecord, type P2pOrderRecord, type P2pSwapRecord } from 'p2p-protocol';
 import { collectSocialRecords, type SocialRecordEntry, type SocialSource } from '@/lib/socialReader';
 import type { P2pOrder } from '@/services/p2p';
 
@@ -29,12 +29,18 @@ export function foldOrderBook(
 ): P2pOrder[] {
   const nowSec = Math.floor((opts.now ?? Date.now()) / 1000);
 
-  // An order referenced by ANY swap event is no longer on the open book.
-  const claimed = new Set<string>();
+  const blocked = new Set<string>();
+  const swaps = new Map<string, P2pSwapRecord>();
   for (const e of entries) {
-    if (e.kind !== 'swap') continue;
-    const orderId = e.record.orderId;
-    if (typeof orderId === 'string') claimed.add(orderId);
+    if (e.kind !== 'swap' || !e.verified) continue;
+    const swap = e.record as Partial<P2pSwapRecord>;
+    if (typeof swap.orderId !== 'string') continue;
+    if (!validateP2pSwapRecord(swap).ok || !swap.giveAmount) {
+      blocked.add(swap.orderId);
+      continue;
+    }
+    const previous = swaps.get(swap.to!);
+    if (!previous || swap.swapSeq! > previous.swapSeq) swaps.set(swap.to!, swap as P2pSwapRecord);
   }
 
   const latest = new Map<string, { record: P2pOrderRecord; txid: string }>();
@@ -51,14 +57,27 @@ export function foldOrderBook(
   const out: P2pOrder[] = [];
   for (const [orderId, { record: r, txid }] of latest) {
     if (r.status !== 'OPEN') continue;
-    if (claimed.has(orderId)) continue;
+    if (blocked.has(orderId)) continue;
     if (typeof r.validUntil !== 'number' || r.validUntil <= nowSec) continue;
+    let remainingGive = r.giveAmount as string;
+    try {
+      for (const swap of swaps.values()) {
+        if (swap.orderId !== orderId) continue;
+        const returned = (swap.status === 'ESCROW_REFUNDED' && !!swap.refundTxHash) ||
+          ((swap.status === 'CANCELLED' || swap.status === 'EXPIRED') && !swap.escrowTxHash);
+        if (!returned) remainingGive = subtractAmounts(remainingGive, swap.giveAmount!);
+      }
+    } catch {
+      continue;
+    }
+    if (remainingGive === '0') continue;
     out.push({
       orderId,
       type: r.side === 'buy' ? 'limit_buy' : 'limit_sell',
       sellerDid: r.from,
       giveToken: r.giveToken as string,
       giveAmount: r.giveAmount as string,
+      remainingGive,
       giveChain: r.giveChain as string,
       wantCurrency: r.wantCurrency as string,
       wantAmount: r.wantAmount as string,

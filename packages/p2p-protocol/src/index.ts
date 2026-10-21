@@ -1,3 +1,4 @@
+export { addAmounts, subtractAmounts, compareAmounts, checkP2pFill, type P2pFillCheck } from "./amounts.js";
 export {
   P2P_SWAP_TYPE,
   P2P_SWAP_STATUSES,

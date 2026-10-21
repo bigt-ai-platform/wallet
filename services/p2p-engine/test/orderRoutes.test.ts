@@ -8,6 +8,7 @@ import { BlobSettlementStore } from "../src/storeBlob.js";
 import { MemBlobStore } from "../src/blob.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
 import type { P2pSwapEvent } from "../src/types.js";
+import { RECEIVE_ADDRESS } from "./address.js";
 
 const seller = Ed25519Key.createNewKey();
 const other = Ed25519Key.createNewKey();
@@ -200,7 +201,7 @@ describe("POST /orders/:orderId/cancel", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     clock += 1;
@@ -220,6 +221,137 @@ describe("POST /orders/:orderId/cancel", () => {
 });
 
 describe("match claim + reopen on anchor failure", () => {
+  it.each(["1Receive", "not-an-address", RECEIVE_ADDRESS.slice(0, -1)])("rejects an invalid receive address %s without reserving", async (receiveAddress) => {
+    const a = await app();
+    const orderId = (await a.inject({ method: "POST", url: "/orders", payload: orderPayload() })).json().orderId;
+    const matched = await a.inject({
+      method: "POST", url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress, requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+    });
+    expect(matched.statusCode).toBe(400);
+    expect(matched.json().error).toMatch(/not a valid address/);
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "ACTIVE" });
+    expect(await store.allEvents()).toEqual([]);
+    const bid = await a.inject({ method: "POST", url: "/orders", payload: orderPayload({ type: "limit_buy", receiveAddress }) });
+    expect(bid.statusCode).toBe(400);
+    await a.close();
+  });
+  it("keeps the reservation when the anchor succeeds but event storage fails", async () => {
+    const a = await app();
+    const created = await a.inject({ method: "POST", url: "/orders", payload: orderPayload() });
+    const orderId = created.json().orderId;
+    store.appendEvent = async (_event, prepare) => {
+      await prepare?.();
+      throw new Error("projection unavailable");
+    };
+    const matched = await a.inject({
+      method: "POST", url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, {
+        buyerDid, fillAmount: "40", receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${orderId}/match`,
+      }),
+    });
+    expect(matched.statusCode).toBe(500);
+    expect((await store.getOrder(orderId))?.remainingGive).toBe("60");
+    await a.close();
+  });
+
+  it.each([
+    ["0.3", "0.1", "0.2"],
+    ["0.00000003", "0.00000001", "0.00000002"],
+    ["9007199254740993", "1", "9007199254740992"],
+  ])("keeps %s minus %s exact through the final fill", async (total, fill, remaining) => {
+    const a = await app();
+    const created = await a.inject({ method: "POST", url: "/orders", payload: orderPayload({ giveAmount: total, wantAmount: total }) });
+    expect(created.statusCode).toBe(201);
+    const orderId = created.json().orderId;
+    for (const fillAmount of [fill, remaining]) {
+      const matched = await a.inject({
+        method: "POST", url: `/orders/${orderId}/match`,
+        payload: signed(buyer, buyerDid, {
+          buyerDid, fillAmount, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${orderId}/match`,
+        }),
+      });
+      expect(matched.statusCode).toBe(201);
+      expect((await store.getSwap(matched.json().swapId))?.wantAmount).toBe(fillAmount);
+      expect((await store.getOrder(orderId))?.remainingGive).toBe(fillAmount === fill ? remaining : "0");
+    }
+    await a.close();
+  });
+
+  it.each([
+    [{ giveAmount: "100", wantAmount: "100", minOrder: "30" }, "80", 409, /remaining order/],
+    [{ giveAmount: "3", wantAmount: "1" }, "1", 400, /exact fiat/],
+  ] as const)("rejects a stranded or inexact fill without reserving quantity", async (terms, fillAmount, status, error) => {
+    const a = await app();
+    const created = await a.inject({ method: "POST", url: "/orders", payload: orderPayload(terms) });
+    const orderId = created.json().orderId;
+    const matched = await a.inject({
+      method: "POST", url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, {
+        buyerDid, fillAmount, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${orderId}/match`,
+      }),
+    });
+    expect(matched.statusCode).toBe(status);
+    expect(matched.json().error).toMatch(error);
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "ACTIVE", giveAmount: terms.giveAmount });
+    expect(await store.allEvents()).toEqual([]);
+    await a.close();
+  });
+
+  it("restores reservations once without overwriting other fills or cancellations", async () => {
+    const a = await app();
+    const created = await a.inject({ method: "POST", url: "/orders", payload: orderPayload() });
+    const orderId = created.json().orderId;
+    await store.markOrderMatched(orderId, "swap-first", "60", "100");
+    await store.markOrderMatched(orderId, "swap-second", undefined, "60");
+    await store.reopenOrder(orderId, "swap-first");
+    await store.reopenOrder(orderId, "swap-first");
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "ACTIVE", remainingGive: "40" });
+    expect(await store.markOrderMatched(orderId, "swap-first", "20", "40")).toBe(false);
+    await store.markOrderCancelled(orderId);
+    await store.reopenOrder(orderId, "swap-second");
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "CANCELLED", remainingGive: "100" });
+    await a.close();
+  });
+
+  it.each(["CANCELLED", "EXPIRED"] as const)("restores an unfunded %s swap but waits for a funded refund", async (status) => {
+    const a = await app();
+    const created = await a.inject({ method: "POST", url: "/orders", payload: orderPayload() });
+    const orderId = created.json().orderId;
+    await store.markOrderMatched(orderId, "swap-unfunded", "60", "100");
+    await store.markOrderMatched(orderId, "swap-funded", "10", "60");
+    const event: P2pSwapEvent = {
+      swapId: "swap-unfunded", seq: 0, status, eventType: "cancel", orderId, at: clock,
+    };
+    await store.appendEvent(event);
+    await store.appendEvent(event);
+    expect((await store.getOrder(orderId))?.remainingGive).toBe("50");
+    const funded = { ...event, swapId: "swap-funded", escrowTxHash: TXID };
+    await store.appendEvent(funded);
+    expect((await store.getOrder(orderId))?.remainingGive).toBe("50");
+    await store.appendEvent({ ...funded, seq: 1, status: "ESCROW_REFUNDED", refundTxHash: TXID });
+    expect((await store.getOrder(orderId))?.remainingGive).toBe("100");
+    await a.close();
+  });
+
+  it.each(["20", "60"])("restores only the failed %s fill after an earlier partial fill", async (fillAmount) => {
+    const a = await app();
+    const created = await a.inject({ method: "POST", url: "/orders", payload: orderPayload() });
+    const orderId = created.json().orderId;
+    const match = (amount: string) => a.inject({
+      method: "POST", url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, {
+        buyerDid, fillAmount: amount, receiveAddress: RECEIVE_ADDRESS,
+        requestMethod: "POST", requestPath: `/orders/${orderId}/match`,
+      }),
+    });
+    expect((await match("40")).statusCode).toBe(201);
+    anchorThrows = true;
+    expect((await match(fillAmount)).statusCode).toBe(500);
+    expect(await store.getOrder(orderId)).toMatchObject({ status: "ACTIVE", remainingGive: "60" });
+    await a.close();
+  });
+
   it("rejects a competing partial fill based on a stale remainder", async () => {
     const a = await app();
     const created = await a.inject({ method: "POST", url: "/orders", payload: orderPayload() });
@@ -272,7 +404,7 @@ describe("match claim + reopen on anchor failure", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(409);
   });
@@ -286,7 +418,7 @@ describe("match claim + reopen on anchor failure", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, amount: "100", receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(500);
     expect((await store.getOrder(orderId))?.status).toBe("ACTIVE");
@@ -368,7 +500,7 @@ describe("pinned-order match (enginePubkey, docs/p2p.md §26)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     const swap = (await store.getSwap(m.json().swapId as string))!;
@@ -382,7 +514,7 @@ describe("pinned-order match (enginePubkey, docs/p2p.md §26)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(409);
     expect(m.json().error).toMatch(/pinned to an engine/);

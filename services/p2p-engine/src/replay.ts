@@ -22,6 +22,8 @@ import { verifyRecordSig, type AnchoredRecord } from "record-sig";
 import {
   P2P_ORDER_TYPE,
   P2P_SWAP_TYPE,
+  compareAmounts,
+  subtractAmounts,
   validateP2pOrderRecord,
   validateP2pSwapRecord,
   type P2pOrderRecord,
@@ -79,6 +81,7 @@ export async function ensureWatchSchema(db: Queryable): Promise<void> {
     "time_limit INTEGER",
     "remarks TEXT",
     "remaining_give TEXT",
+    "reservations JSONB NOT NULL DEFAULT '{}'::jsonb",
     "want_rails TEXT",
   ]) {
     await db.query(`ALTER TABLE p2p_orders ADD COLUMN IF NOT EXISTS ${col}`);
@@ -300,7 +303,7 @@ function eventFromSwapRecord(rec: P2pSwapRecord, txid: string): P2pSwapEvent {
 
 type OrderStore = Pick<
   import("./store.js").SettlementStore,
-  "createOrder" | "getOrder" | "markOrderMatched" | "markOrderCancelled" | "appendEvent" | "events"
+  "createOrder" | "getOrder" | "markOrderMatched" | "markOrderCancelled" | "appendEvent" | "events" | "hasOrderReservation"
 >;
 
 async function applyRecord(
@@ -366,23 +369,26 @@ async function applyRecord(
     const rec = raw.record as unknown as P2pSwapRecord;
     const event = eventFromSwapRecord(rec, raw.txid);
     const prior = await store.events(event.swapId);
-    if (!prior.some((e) => e.seq === event.seq)) {
-      await store.appendEvent(event);
-      result.swapsAppended++;
-    }
-    if (event.status === "MATCHED" && event.orderId) {
+    if (prior.some((e) => e.seq === event.seq)) return;
+    if (event.status === "MATCHED" && event.orderId && !(await store.hasOrderReservation(event.orderId, event.swapId))) {
       // Rebuild the order's remaining from the anchored match amounts, so a
       // wipe replays the same partial fills (docs/p2p.md).
       const o = await store.getOrder(event.orderId);
-      const prevRemaining = Number(o?.remainingGive ?? o?.giveAmount ?? event.giveAmount ?? 0);
-      const filled = Number(event.giveAmount ?? 0);
-      const nextRemaining = prevRemaining - filled;
-      if (!(await store.markOrderMatched(event.orderId, event.swapId, nextRemaining > 0 ? String(nextRemaining) : undefined))) {
+      const prevRemaining = o?.remainingGive ?? o?.giveAmount ?? "0";
+      const filled = event.giveAmount ?? "0";
+      if (compareAmounts(filled, "0") <= 0 || compareAmounts(filled, prevRemaining) > 0) {
+        result.conflicts.push(`match ${event.swapId}: invalid fill amount`);
+        return;
+      }
+      const nextRemaining = subtractAmounts(prevRemaining, filled);
+      if (!(await store.markOrderMatched(event.orderId, event.swapId, nextRemaining, prevRemaining))) {
         if (o && o.status === "CANCELLED") {
           result.conflicts.push(`match ${event.swapId}: order ${event.orderId} already cancelled`);
         }
       }
     }
+    await store.appendEvent(event);
+    result.swapsAppended++;
     return;
   }
   result.skipped++;

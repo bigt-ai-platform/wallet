@@ -5,6 +5,7 @@ import { buildApp, normalizeAnchorMode, rateLimitsFromEnv } from "../src/server.
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
 import type { P2pSwapEvent } from "../src/types.js";
+import { RECEIVE_ADDRESS } from "./address.js";
 
 const seller = Ed25519Key.createNewKey();
 const buyer = Ed25519Key.createNewKey();
@@ -77,7 +78,7 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
+    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
   });
   expect(r2.statusCode).toBe(201);
   const swapId = r2.json().swapId as string;
@@ -198,7 +199,7 @@ describe("settlement server", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${o.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
     });
     expect(m.statusCode).toBe(500);
   });
@@ -233,7 +234,7 @@ describe("settlement server", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${o.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Receive", requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     const swapId = m.json().swapId as string;
@@ -298,6 +299,9 @@ describe("settlement server", () => {
     const r = await a.inject({ method: "GET", url: "/public/orders?status=MATCHED" });
     expect(r.statusCode).toBe(200);
     expect(r.json().orders[0].signature).toBeUndefined();
+    for (const status of ["", "PENDING", "active"]) {
+      expect((await a.inject({ method: "GET", url: `/public/orders?status=${status}` })).statusCode).toBe(400);
+    }
   });
 
   it("scopes swap reads to the signing party and rejects non-parties", async () => {
@@ -330,6 +334,13 @@ describe("normalizeAnchorMode", () => {
     expect(normalizeAnchorMode("required")).toBe("required");
     expect(normalizeAnchorMode(" OFF ")).toBe("off");
   });
+  it("requires anchoring when blob mode keeps swap events only in memory", () => {
+    expect(normalizeAnchorMode(undefined, "blob")).toBe("required");
+    expect(normalizeAnchorMode("required", "blob")).toBe("required");
+    expect(() => normalizeAnchorMode("best-effort", "blob")).toThrow(/lost on restart/);
+    expect(() => normalizeAnchorMode("off", "blob")).toThrow(/lost on restart/);
+    expect(normalizeAnchorMode(undefined, "pg")).toBe("best-effort");
+  });
 });
 
 describe("rateLimitsFromEnv", () => {
@@ -361,7 +372,7 @@ describe("buy orders (limit_buy)", () => {
         wantAmount: "715",
         wantRail: "wechat",
         validUntil: Math.floor(clock / 1000) + 3600,
-        receiveAddress: "1BuyerRecvAddr", requestMethod: "POST", requestPath: "/orders" }),
+        receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: "/orders" }),
     });
     expect(o.statusCode).toBe(201);
     bump();
@@ -376,7 +387,7 @@ describe("buy orders (limit_buy)", () => {
     const swap = await store.getSwap(m.json().swapId as string);
     expect(swap?.sellerDid).toBe(sellerDid); // taker funds the escrow
     expect(swap?.buyerDid).toBe(buyerDid); // poster pays the fiat
-    expect(swap?.receiveAddress).toBe("1BuyerRecvAddr");
+    expect(swap?.receiveAddress).toBe(RECEIVE_ADDRESS);
   });
 
   it("requires a receive address on a buy order", async () => {
@@ -419,7 +430,7 @@ describe("buy orders (limit_buy)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${o.json().orderId}/match`,
-      payload: signed(seller, sellerDid, { buyerDid: sellerDid, receiveAddress: "1Self", requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
+      payload: signed(seller, sellerDid, { buyerDid: sellerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
     });
     expect(m.statusCode).toBe(409);
   });
@@ -448,7 +459,7 @@ describe("buy orders (limit_buy)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${o.json().orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1Recv", requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     bump();
@@ -493,7 +504,7 @@ describe("buy orders (limit_buy)", () => {
     const m1 = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", fillAmount: "40", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, fillAmount: "40", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m1.statusCode).toBe(201);
     const swap1 = await store.getSwap(m1.json().swapId as string);
@@ -506,7 +517,7 @@ describe("buy orders (limit_buy)", () => {
     const m2 = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: "1R2", fillAmount: "5", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: RECEIVE_ADDRESS, fillAmount: "5", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m2.statusCode).toBe(409);
     bump();
@@ -514,12 +525,12 @@ describe("buy orders (limit_buy)", () => {
     const m3 = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R3", fillAmount: "60", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, fillAmount: "60", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m3.statusCode).toBe(201);
     const closed = await store.getOrder(orderId);
     expect(closed?.status).toBe("MATCHED");
-    expect(closed?.remainingGive).toBeUndefined();
+    expect(closed?.remainingGive).toBe("0");
   });
 
   it("matches with a chosen rail from the ad's methods", async () => {
@@ -545,7 +556,7 @@ describe("buy orders (limit_buy)", () => {
     const m = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: "1R", rail: "alipay", fillAmount: "40", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, rail: "alipay", fillAmount: "40", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(m.statusCode).toBe(201);
     expect((await store.getSwap(m.json().swapId as string))?.wantRail).toBe("alipay");
@@ -554,7 +565,7 @@ describe("buy orders (limit_buy)", () => {
     const bad = await a.inject({
       method: "POST",
       url: `/orders/${orderId}/match`,
-      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: "1R2", rail: "bank", fillAmount: "10", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: RECEIVE_ADDRESS, rail: "bank", fillAmount: "10", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(bad.statusCode).toBe(400);
   });

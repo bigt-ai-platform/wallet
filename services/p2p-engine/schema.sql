@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS p2p_orders (
   time_limit    INTEGER,
   remarks       TEXT,
   remaining_give TEXT,
+  reservations JSONB NOT NULL DEFAULT '{}'::jsonb,
   want_rails    TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );

@@ -47,6 +47,9 @@ import { PQKey, Utils } from "bigtangle-ts";
 import type { Escrow } from "bigtangle-ts";
 import {
   P2P_ORDER_ID_RE,
+  checkP2pFill,
+  compareAmounts,
+  subtractAmounts,
   grantAllows,
   machineConfirm,
   normalizeAutoReleasePolicy,
@@ -194,8 +197,15 @@ const TXID_RE = /^[0-9a-f]{64}$/i;
  */
 export type AnchorMode = "required" | "best-effort" | "off";
 
-export function normalizeAnchorMode(v: string | undefined): AnchorMode {
+export function normalizeAnchorMode(v: string | undefined, store?: string): AnchorMode {
   const m = (v ?? "").trim().toLowerCase();
+  if (store === "blob") {
+    // Blob mode keeps swap events only in memory; L1-SOCIAL is their sole durable copy.
+    if (m && m !== "required") {
+      throw new Error(`SETTLEMENT_ANCHOR_MODE=${m} is unsafe with SETTLEMENT_STORE=blob: unanchored swap events are lost on restart`);
+    }
+    return "required";
+  }
   return m === "required" || m === "off" ? m : "best-effort";
 }
 
@@ -220,6 +230,8 @@ export function rateLimitsFromEnv(env: NodeJS.ProcessEnv): RateLimits {
 
 /** Receipt/QR cap as data-URL characters (≈512 KiB binary image). */
 const MAX_RECEIPT_CHARS = 700_000;
+
+const PUBLIC_ORDER_STATUSES = new Set(["ACTIVE", "MATCHED", "CANCELLED"]);
 
 /**
  * Decode a `data:image/…;base64,…` receipt to its bytes, or null when the
@@ -425,7 +437,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     }
   }
 
-  async function persist(event: P2pSwapEvent): Promise<P2pSwapEvent> {
+  async function persist(event: P2pSwapEvent, prepared?: () => void): Promise<P2pSwapEvent> {
     let stored = event;
     await deps.store.appendEvent(event, async () => {
       let txid: string | undefined;
@@ -446,6 +458,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         }
       }
       stored = txid ? { ...event, txid } : event;
+      prepared?.();
       return stored;
     });
     return stored;
@@ -995,7 +1008,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     for (const [k, v] of Object.entries({ giveToken, giveAmount, giveChain, wantCurrency, wantAmount, wantRail })) {
       if (typeof v !== "string" || !v) return reply.code(400).send({ error: `${k} required` });
     }
-    if (!/^\d+(\.\d+)?$/.test(String(giveAmount)) || !/^\d+(\.\d+)?$/.test(String(wantAmount))) {
+    if (!/^\d+(\.\d+)?$/.test(String(giveAmount)) || !/^\d+(\.\d+)?$/.test(String(wantAmount)) ||
+      giveAmount.length > 100 || wantAmount.length > 100 ||
+      compareAmounts(giveAmount, "0") <= 0 || compareAmounts(wantAmount, "0") <= 0) {
       return reply.code(400).send({ error: "amounts must be decimal strings" });
     }
     // rail must be one of the CNY methods configured for this engine
@@ -1012,12 +1027,19 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (type === "limit_buy" && (!buyerReceiveAddress || buyerReceiveAddress.length > 128)) {
       return reply.code(400).send({ error: "buy order requires receiveAddress (1..128)" });
     }
+    if (type === "limit_buy" && !destAddress(buyerReceiveAddress)) {
+      return reply.code(400).send({ error: "receiveAddress is not a valid address" });
+    }
     // Binance-style ad fields: per-order fiat min/max, payment window, terms.
-    const dec = (v: unknown) => (typeof v === "string" && /^\d+(\.\d+)?$/.test(v) ? v : undefined);
+    const dec = (v: unknown) => (typeof v === "string" && v.length <= 100 && /^\d+(\.\d+)?$/.test(v) ? v : undefined);
     const minOrder = dec(body.minOrder);
     const maxOrder = dec(body.maxOrder);
     if (body.minOrder !== undefined && !minOrder) return reply.code(400).send({ error: "invalid minOrder (decimal string)" });
     if (body.maxOrder !== undefined && !maxOrder) return reply.code(400).send({ error: "invalid maxOrder (decimal string)" });
+    if ((minOrder && (compareAmounts(minOrder, "0") <= 0 || compareAmounts(minOrder, wantAmount) > 0)) ||
+        (maxOrder && (compareAmounts(maxOrder, "0") <= 0 || (minOrder && compareAmounts(maxOrder, minOrder) < 0)))) {
+      return reply.code(400).send({ error: "invalid order limits" });
+    }
     const timeLimit = body.timeLimit === undefined ? undefined : Math.floor(Number(body.timeLimit));
     if (timeLimit !== undefined && (!Number.isFinite(timeLimit) || timeLimit < 5 || timeLimit > 1440)) {
       return reply.code(400).send({ error: "invalid timeLimit (minutes 5..1440)" });
@@ -1155,6 +1177,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   app.get("/public/orders", async (request, reply) => {
     const q = (request.query as { status?: string }) ?? {};
     const status = q.status === undefined ? "ACTIVE" : q.status;
+    if (!PUBLIC_ORDER_STATUSES.has(status)) {
+      return reply.code(400).send({ error: "status must be ACTIVE, MATCHED or CANCELLED" });
+    }
     const orders = await deps.store.listOrders(status);
     const map = await reputationMap();
     return {
@@ -1210,6 +1235,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!receiveAddress) {
       return reply.code(400).send({ error: isBuy ? "order has no buyer receive address" : "receiveAddress required" });
     }
+    // Release pays this address; reject it before the seller funds an unspendable escrow.
+    if (receiveAddress.length > 128 || !destAddress(receiveAddress)) {
+      return reply.code(400).send({ error: "receiveAddress is not a valid address" });
+    }
     const signed = validateSignedRequest(body, signerDid, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
 
@@ -1227,18 +1256,22 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const total = order.giveAmount;
     const remaining = order.remainingGive ?? total;
     const fill = body.fillAmount === undefined ? remaining : String(body.fillAmount).trim();
-    if (!/^\d+(\.\d+)?$/.test(fill) || Number(fill) <= 0 || Number(fill) > Number(remaining)) {
+    if (!fill) {
       return reply.code(400).send({ error: `fillAmount must be 0 < x <= ${remaining}` });
     }
-    const unitPrice = Number(order.wantAmount) / Number(order.giveAmount);
-    const fillFiat = String(Number((Number(fill) * unitPrice).toFixed(8)));
-    if (order.minOrder && Number(fillFiat) < Number(order.minOrder)) {
-      return reply.code(409).send({ error: `order minimum is ${order.minOrder} ${order.wantCurrency}` });
+    const check = checkP2pFill(order, fill);
+    if (!check.ok) {
+      const errors = {
+        amount: `fillAmount must be 0 < x <= ${remaining}`,
+        min: `order minimum is ${order.minOrder} ${order.wantCurrency}`,
+        max: `order maximum is ${order.maxOrder} ${order.wantCurrency}`,
+        remainder: `remaining order would be below minimum ${order.minOrder} ${order.wantCurrency}`,
+        precision: "fill must have an exact fiat value within 8 decimal places",
+      };
+      return reply.code(check.reason === "amount" || check.reason === "precision" ? 400 : 409).send({ error: errors[check.reason] });
     }
-    if (order.maxOrder && Number(fillFiat) > Number(order.maxOrder)) {
-      return reply.code(409).send({ error: `order maximum is ${order.maxOrder} ${order.wantCurrency}` });
-    }
-    const nextRemaining = Number(remaining) - Number(fill);
+    const fillFiat = check.fiat;
+    const nextRemaining = subtractAmounts(remaining, fill);
 
     // The taker picks one of the ad's payment methods (Binance multi-rail).
     const rails = order.wantRails && order.wantRails.length ? order.wantRails : [order.wantRail];
@@ -1271,17 +1304,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     };
     // Conditional ACTIVE→(MATCHED | ACTIVE with reduced remaining): concurrent
     // matches race here and the first claim wins (a loser never double-fills).
-    if (!(await deps.store.markOrderMatched(orderId, swapId, nextRemaining > 0 ? String(nextRemaining) : undefined, remaining))) {
+    if (!(await deps.store.markOrderMatched(orderId, swapId, nextRemaining, remaining))) {
       return reply.code(409).send({ error: "order is no longer active" });
     }
     let stored: P2pSwapEvent;
+    let prepared = false;
     try {
-      stored = await persist(event);
+      stored = await persist(event, () => { prepared = true; });
     } catch (e) {
-      // Anchor/store failure after the claim: put the order back so the seller
-      // is not left with a MATCHED order that has no swap (replay would flag
-      // the same gap later — better to heal it now).
-      await deps.store.reopenOrder(orderId, swapId);
+      if (!prepared) await deps.store.reopenOrder(orderId, swapId);
       throw e;
     }
     return reply.code(201).send({ swapId, status: stored.status, escrowAddress: stored.escrowAddress ?? null });
@@ -2214,7 +2245,10 @@ async function main() {
   const l0Pool = poolFromEnv(env, "l0");
   const socialPool = poolFromEnv(env, "social");
   await Promise.all([l0Pool?.start(), socialPool?.start()]);
-  const anchorMode = normalizeAnchorMode(env.SETTLEMENT_ANCHOR_MODE);
+  const anchorMode = normalizeAnchorMode(env.SETTLEMENT_ANCHOR_MODE, storeMode);
+  if (storeMode === "blob" && !anchorCfg) {
+    throw new Error("SETTLEMENT_STORE=blob needs a valid SETTLEMENT_ENGINE_KEY and L1-SOCIAL URL: swap events are only durable on chain");
+  }
   const anchor =
     anchorMode !== "off" && anchorCfg
       ? l1Anchor(socialPool ? { ...anchorCfg, resolveUrl: () => socialPool.best() } : anchorCfg)

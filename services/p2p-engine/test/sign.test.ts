@@ -111,4 +111,14 @@ describe("p2p signed requests", () => {
     restarted.hydrate(await store.load());
     expect(validateSignedRequest(req, did, restarted).status).toBe(400);
   });
+
+  it("rejects a pre-restart request even when its nonce was never persisted", () => {
+    let clock = 1_000_000;
+    const req = signed({ sellerDid: did }, "u".repeat(16), clock);
+    expect(validateSignedRequest(req, did, new ReplayGuard(() => clock)).ok).toBe(true);
+    clock += 1_000;
+    const restarted = new ReplayGuard(() => clock);
+    expect(validateSignedRequest(req, did, restarted)).toMatchObject({ ok: false, error: expect.stringMatching(/sign it again/) });
+    expect(validateSignedRequest(signed({ sellerDid: did }, "v".repeat(16), clock), did, restarted).ok).toBe(true);
+  });
 });
