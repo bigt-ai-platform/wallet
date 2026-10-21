@@ -10,6 +10,7 @@ const resources = {
     translation: {
       boot: { start: 'Starting…', storage: 'Loading secure storage…', ready: 'Ready' },
       confirm: { cancelled: 'Transaction cancelled' },
+      p2pBook: { search: 'Search ads', clear: 'Clear search', count: '{{shown}} / {{total}} ads', emptyBuy: 'No open buy orders' },
       predictionWorkflow: {
         status: { OPEN: 'Open', PENDING: 'Proposal pending', VOTING: 'Voting', FINAL: 'Final' },
         initializing: 'Initializing', stateUnavailable: 'Confirmed state unavailable',

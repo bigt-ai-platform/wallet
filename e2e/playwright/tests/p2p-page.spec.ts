@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { waitForApp, getElement, clickTab } from '../helpers';
+import type { P2pOrder } from '../../../expo-app/sources/services/p2p';
 
 /**
  * P2P trading page (sources/screens/p2p/P2pScreen.tsx).
@@ -11,6 +12,56 @@ import { waitForApp, getElement, clickTab } from '../helpers';
  * test asserts the route renders and the edge state is handled, not a stub.
  */
 test.describe('P2P Page', () => {
+  for (const width of [390, 1440]) {
+    test(`searches fixture ads and shows remaining availability at ${width}px`, async ({ page }, testInfo) => {
+      test.skip(!process.env.E2E_P2P_ENGINE_URL, 'requires a P2P-enabled web build');
+      await page.setViewportSize({ width, height: 900 });
+      const sell: P2pOrder = {
+        orderId: 'search-sell', type: 'limit_sell', sellerDid: 'did:pq:alice',
+        giveToken: 'USDT', giveAmount: '100', remainingGive: '25', giveChain: 'L0',
+        wantCurrency: 'CNY', wantAmount: '700', wantRail: 'wechat', wantRails: ['wechat', 'alipay'],
+        validUntil: Math.floor(Date.now() / 1000) + 3600, status: 'ACTIVE', createdAt: 1,
+      };
+      const orders: P2pOrder[] = [
+        sell,
+        { ...sell, orderId: 'other-sell', giveToken: 'BIG', sellerDid: 'did:pq:bob', wantRails: ['wechat'] },
+        { ...sell, orderId: 'search-buy', type: 'limit_buy', sellerDid: 'did:pq:carol' },
+      ];
+      await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders } }));
+      await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat', 'alipay'] } }));
+      await waitForApp(page);
+      await clickTab(page, 'P2P');
+      const search = page.getByTestId('p2p-book-search');
+      const count = page.getByTestId('p2p-book-count');
+      await expect(count).toHaveText('2 / 2 ads');
+      await search.fill('  usdt CNY alipay alice ');
+      await expect(count).toHaveText('1 / 2 ads');
+      await expect(page.getByTestId('p2p-order-0-limit')).toContainText('Available: 25 USDT');
+      await expect(page.getByTestId('p2p-order-1')).toHaveCount(0);
+      await page.getByTestId('p2p-buy-0').click();
+      await expect(page.getByTestId('p2p-buy-fill')).toHaveValue('25');
+      await search.fill('EUR');
+      await expect(count).toHaveText('0 / 2 ads');
+      await expect(page.getByTestId('p2p-book-empty')).toHaveText('No matches');
+      await page.getByTestId('p2p-book-clear').click();
+      await expect(search).toHaveValue('');
+      await expect(count).toHaveText('2 / 2 ads');
+      await expect(page.getByTestId('p2p-buy-fill')).toHaveCount(0);
+      await page.getByTestId('p2p-tab-sell').click();
+      await expect(count).toHaveText('1 / 1 ads');
+      await expect(page.getByTestId('p2p-order-0-side')).toContainText('Buy');
+      await search.fill('alice');
+      await expect(count).toHaveText('0 / 1 ads');
+      await page.getByTestId('p2p-book-clear').click();
+      await page.getByTestId('p2p-order-0').scrollIntoViewIfNeeded();
+      const bounds = await search.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.x).toBeGreaterThanOrEqual(0);
+      expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(width);
+      await page.screenshot({ path: testInfo.outputPath(`p2p-search-${width}.png`) });
+    });
+  }
+
   test('navigates from the sidebar and mounts the P2P screen', async ({ page }) => {
     await waitForApp(page);
     await clickTab(page, 'P2P');

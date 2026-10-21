@@ -11,11 +11,12 @@ import { MONO_FONT } from '@/constants/fonts';
 import { P2P_ENGINE_PUBKEYS } from '@/constants/app';
 import WalletUnlock from '@/components/WalletUnlock';
 import { useTransactionConfirm } from '@/components/TransactionConfirm';
-import { HelpIcon } from '@/components/Icons';
+import { CloseIcon, HelpIcon, SearchIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex, shortDid } from '@/lib/p2pIdentity';
 import { exceedsBalance, findBalance, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
+import { filterP2pOrders } from '@/lib/p2pOrderBook';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
 import type { TokenItem, WalletAccountItem } from '@/types/api';
@@ -114,6 +115,9 @@ export default function P2pScreen() {
   // Book side filter (Binance's Buy/Sell tabs): the Buy tab lists sell ads you
   // can take; the Sell tab lists buy ads (bids) you can fill.
   const [bookSide, setBookSide] = React.useState<'buy' | 'sell'>('buy');
+  const [bookQuery, setBookQuery] = React.useState('');
+  const sideOrders = filterP2pOrders(orders, bookSide, '');
+  const visibleOrders = filterP2pOrders(sideOrders, bookSide, bookQuery);
   const [validHours, setValidHours] = React.useState('24');
   const [wantRail, setWantRail] = React.useState('wechat');
   // Enabled payment methods (Binance multi-rail); `wantRail` stays the primary.
@@ -793,9 +797,42 @@ export default function P2pScreen() {
             </TouchableOpacity>
           </View>
 
+          <View style={s.bookToolbar}>
+            <Text style={s.fieldLabel}>{t('p2pBook.search')}</Text>
+            <View style={s.bookSearchRow}>
+              <SearchIcon size={18} color={theme.colors.text.secondary} />
+              <TextInput
+                style={[s.input, s.bookSearchInput]}
+                value={bookQuery}
+                onChangeText={(value) => { setBookQuery(value); setSelected(null); }}
+                placeholder="USDT CNY WeChat"
+                placeholderTextColor={theme.colors.text.secondary}
+                accessibilityLabel={t('p2pBook.search')}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="p2p-book-search"
+              />
+              <TouchableOpacity
+                style={s.bookClear}
+                onPress={() => { setBookQuery(''); setSelected(null); }}
+                disabled={!bookQuery}
+                accessibilityRole="button"
+                accessibilityLabel={t('p2pBook.clear')}
+                accessibilityState={{ disabled: !bookQuery }}
+                testID="p2p-book-clear"
+              >
+                <CloseIcon size={18} color={bookQuery ? theme.colors.text.primary : theme.colors.text.secondary} />
+              </TouchableOpacity>
+            </View>
+            {!loading ? (
+              <Text style={s.sub} accessibilityLiveRegion="polite" testID="p2p-book-count">
+                {t('p2pBook.count', { shown: visibleOrders.length, total: sideOrders.length })}
+              </Text>
+            ) : null}
+          </View>
           {loading ? <ActivityIndicator color={theme.colors.primary} style={s.loader} />
-            : orders.filter((o) => (bookSide === 'buy' ? o.type === 'limit_sell' : o.type === 'limit_buy')).length === 0 ? <Text style={s.emptyText}>{t('p2p.emptyOpen')}</Text>
-            : orders.filter((o) => (bookSide === 'buy' ? o.type === 'limit_sell' : o.type === 'limit_buy')).map((o, i) => {
+            : visibleOrders.length === 0 ? <Text style={s.emptyText} testID="p2p-book-empty">{bookQuery.trim() ? t('tokens.noMatches') : bookSide === 'buy' ? t('p2p.emptyOpen') : t('p2pBook.emptyBuy')}</Text>
+            : visibleOrders.map((o, i) => {
               const unit = perUnitPrice(o.wantAmount, o.giveAmount);
               return (
               <View key={o.orderId} style={s.card} testID={`p2p-order-${i}`}>
@@ -808,7 +845,7 @@ export default function P2pScreen() {
                   ) : null}
                 </View>
                 <Text style={s.sub} testID={`p2p-order-${i}-limit`}>
-                  {t('p2p.available', { amount: `${o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).join(', ')}
+                  {t('p2p.available', { amount: `${o.remainingGive ?? o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).join(', ')}
                 </Text>
                 <Text style={s.sub} testID={`p2p-order-${i}-total`}>
                   {t('p2p.total')}: {o.wantAmount} {o.wantCurrency} · {t('p2p.giveChain')}: {o.giveChain}{o.timeLimit ? ` · ${o.timeLimit} min` : ''}
@@ -1179,6 +1216,10 @@ const s = StyleSheet.create((theme) => ({
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.colors.groupped.background, padding: 24 },
   emptyText: { fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', marginTop: 24 },
   loader: { marginTop: 24 },
+  bookToolbar: { marginBottom: 12 },
+  bookSearchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  bookSearchInput: { flex: 1, minWidth: 0 },
+  bookClear: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   tabs: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 12 },
   tab: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
   tabText: { fontSize: 14, fontWeight: '600' },
