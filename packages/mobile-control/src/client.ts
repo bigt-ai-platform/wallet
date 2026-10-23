@@ -80,12 +80,15 @@ interface JsonRpcResponse {
 
 /** Canonical JSON: sorted keys, no whitespace — the server recomputes this. */
 export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
+  if (value === null || typeof value !== "object")
+    return JSON.stringify(value) ?? "null";
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, v]) => v !== undefined)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-  return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+  return `{${entries
+    .map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`)
+    .join(",")}}`;
 }
 
 /** `mobile_list_apps` answers a human string ("Name (pkg), …") or json — accept both. */
@@ -105,8 +108,10 @@ export function parseAppsText(text: string): DeviceApp[] {
 /** `mobile_list_available_devices` answers `{"devices":[…]}` (with an optional hint). */
 export function parseDevicesText(text: string): MobileDevice[] {
   try {
-    const parsed = JSON.parse(text) as { devices?: MobileDevice[] } | MobileDevice[];
-    return Array.isArray(parsed) ? parsed : (parsed.devices ?? []);
+    const parsed = JSON.parse(text) as
+      | { devices?: MobileDevice[] }
+      | MobileDevice[];
+    return Array.isArray(parsed) ? parsed : parsed.devices ?? [];
   } catch {
     return [];
   }
@@ -164,38 +169,60 @@ export abstract class BaseMobileClient implements DeviceGateway {
   ) {}
 
   /** Send a JSON-RPC request and resolve with its `result`. */
-  protected abstract request(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown>;
+  protected abstract request(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown>;
 
   /**
    * Raw JSON-RPC — for dialect clients that do not map onto mobile-mcp's
    * `mobile_*` tools (e.g. the android-remote-control-mcp `android_*` surface).
    */
-  rpc(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
+  rpc(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> {
     return this.request(method, params, timeoutMs);
   }
 
   /** tools/call → the first text block. The device id is injected into every call. */
-  async callToolText(name: string, args: Record<string, unknown> = {}, timeoutMs?: number): Promise<string> {
+  async callToolText(
+    name: string,
+    args: Record<string, unknown> = {},
+    timeoutMs?: number,
+  ): Promise<string> {
     const result = await this.request(
       "tools/call",
       { name, arguments: { device: this.device, ...args } },
       timeoutMs,
     );
-    const blocks = (result as { content?: Array<{ type: string; text?: string }> } | undefined)?.content ?? [];
+    const blocks =
+      (
+        result as
+          | { content?: Array<{ type: string; text?: string }> }
+          | undefined
+      )?.content ?? [];
     const text = blocks.find((b) => b.type === "text")?.text;
-    if (text === undefined) throw new Error(`${name}: no text content in tool result`);
+    if (text === undefined)
+      throw new Error(`${name}: no text content in tool result`);
     return text;
   }
 
   /** tools/list — capability check (also proves the handshake works). */
   async listTools(): Promise<string[]> {
-    const result = (await this.request("tools/list", {})) as { tools?: Array<{ name: string }> };
+    const result = (await this.request("tools/list", {})) as {
+      tools?: Array<{ name: string }>;
+    };
     return (result?.tools ?? []).map((t) => t.name);
   }
 
   /** mobile_list_available_devices — the devices the user may pair/control. */
   async listDevices(): Promise<MobileDevice[]> {
-    return parseDevicesText(await this.callToolText("mobile_list_available_devices", {}, 30_000));
+    return parseDevicesText(
+      await this.callToolText("mobile_list_available_devices", {}, 30_000),
+    );
   }
 
   async listApps(): Promise<DeviceApp[]> {
@@ -212,17 +239,26 @@ export abstract class BaseMobileClient implements DeviceGateway {
 
   /** The package currently in the foreground. */
   async foregroundApp(): Promise<string> {
-    return (await this.callToolText("mobile_get_foreground_app", {}, 30_000)).trim();
+    return (
+      await this.callToolText("mobile_get_foreground_app", {}, 30_000)
+    ).trim();
   }
 
   async listElements(): Promise<UiElement[]> {
-    const text = await this.callToolText("mobile_list_elements_on_screen", { format: "json" });
+    const text = await this.callToolText("mobile_list_elements_on_screen", {
+      format: "json",
+    });
     // mobile-mcp wraps the json array: "Found these elements on screen: [...]"
-    return JSON.parse(text.replace(/^Found these elements on screen:\s*/, "")) as UiElement[];
+    return JSON.parse(
+      text.replace(/^Found these elements on screen:\s*/, ""),
+    ) as UiElement[];
   }
 
   async typeKeys(text: string, submit?: boolean): Promise<void> {
-    await this.callToolText("mobile_type_keys", { text, ...(submit ? { submit: true } : {}) });
+    await this.callToolText("mobile_type_keys", {
+      text,
+      ...(submit ? { submit: true } : {}),
+    });
   }
 
   async swipe(direction: "up" | "down" | "left" | "right"): Promise<void> {
@@ -247,9 +283,15 @@ export abstract class BaseMobileClient implements DeviceGateway {
       name: "mobile_take_screenshot",
       arguments: { device: this.device },
     });
-    const blocks = (result as { content?: Array<{ type: string; data?: string }> } | undefined)?.content ?? [];
+    const blocks =
+      (
+        result as
+          | { content?: Array<{ type: string; data?: string }> }
+          | undefined
+      )?.content ?? [];
     const image = blocks.find((b) => b.type === "image" && b.data);
-    if (!image?.data) throw new Error("mobile_take_screenshot: no image in tool result");
+    if (!image?.data)
+      throw new Error("mobile_take_screenshot: no image in tool result");
     return base64ToBytes(image.data);
   }
 
@@ -260,9 +302,20 @@ export abstract class BaseMobileClient implements DeviceGateway {
       arguments: { device: this.device },
     });
     const blocks =
-      (result as { content?: Array<{ type: string; data?: string; mimeType?: string }> } | undefined)?.content ?? [];
+      (
+        result as
+          | {
+              content?: Array<{
+                type: string;
+                data?: string;
+                mimeType?: string;
+              }>;
+            }
+          | undefined
+      )?.content ?? [];
     const image = blocks.find((b) => b.type === "image" && b.data);
-    if (!image?.data) throw new Error("mobile_take_screenshot: no image in tool result");
+    if (!image?.data)
+      throw new Error("mobile_take_screenshot: no image in tool result");
     return `data:${image.mimeType ?? "image/png"};base64,${image.data}`;
   }
 
@@ -286,7 +339,10 @@ export interface HttpMobileClientOptions {
 }
 
 /** Parse a Streamable HTTP MCP response body into the JSON-RPC message. */
-export function parseHttpBody(body: string, contentType: string): JsonRpcResponse {
+export function parseHttpBody(
+  body: string,
+  contentType: string,
+): JsonRpcResponse {
   // The SDK answers with text/event-stream framing: "event: message\ndata: {...}"
   if (contentType.includes("text/event-stream")) {
     const dataLine = body
@@ -321,7 +377,12 @@ function ipv4InRange(ip: number, net: string, bits: number): boolean {
 
 /** Loopback / RFC1918 / link-local / unique-local hosts — the user's own phone or its LAN. */
 function isLocalOrPrivateHost(host: string): boolean {
-  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local")
+  )
+    return true;
   const v4 = ipv4ToInt(host);
   if (v4 !== null) {
     return (
@@ -333,7 +394,12 @@ function isLocalOrPrivateHost(host: string): boolean {
     );
   }
   if (host.includes(":")) {
-    return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80");
+    return (
+      host === "::1" ||
+      host.startsWith("fc") ||
+      host.startsWith("fd") ||
+      host.startsWith("fe80")
+    );
   }
   return false;
 }
@@ -347,7 +413,9 @@ function isLocalOrPrivateHost(host: string): boolean {
  * Returns the trimmed base URL (no trailing slash).
  */
 export function assertSecureBaseUrl(raw: string): string {
-  const base = String(raw ?? "").trim().replace(/\/+$/, "");
+  const base = String(raw ?? "")
+    .trim()
+    .replace(/\/+$/, "");
   let url: URL;
   try {
     url = new URL(base);
@@ -357,7 +425,8 @@ export function assertSecureBaseUrl(raw: string): string {
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     throw new Error(`endpoint must use http or https: ${raw}`);
   }
-  if (url.username || url.password) throw new Error("endpoint must not embed credentials");
+  if (url.username || url.password)
+    throw new Error("endpoint must not embed credentials");
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (url.protocol === "http:" && !isLocalOrPrivateHost(host)) {
     throw new Error(
@@ -380,14 +449,18 @@ export class HttpMobileClient extends BaseMobileClient {
 
   protected constructor(
     device: string,
-    private readonly opts: Required<Pick<HttpMobileClientOptions, "baseUrl" | "timeoutMs">> &
+    private readonly opts: Required<
+      Pick<HttpMobileClientOptions, "baseUrl" | "timeoutMs">
+    > &
       Pick<HttpMobileClientOptions, "token" | "authHeaders" | "fetchImpl">,
   ) {
     super(device, opts.timeoutMs);
   }
 
   /** Verify the endpoint answers and the credential is accepted before any device work. */
-  static async connect(opts: HttpMobileClientOptions): Promise<HttpMobileClient> {
+  static async connect(
+    opts: HttpMobileClientOptions,
+  ): Promise<HttpMobileClient> {
     const gw = new HttpMobileClient(opts.device, {
       baseUrl: assertSecureBaseUrl(opts.baseUrl),
       token: opts.token,
@@ -406,7 +479,11 @@ export class HttpMobileClient extends BaseMobileClient {
   /** Nothing to tear down — no child process, one HTTP request per call. */
   override close(): void {}
 
-  protected async request(method: string, params: Record<string, unknown>, timeoutMs?: number): Promise<unknown> {
+  protected async request(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> {
     const id = this.nextId++;
     const payload = { jsonrpc: "2.0", id, method, params };
     const headers: Record<string, string> = {
@@ -421,21 +498,29 @@ export class HttpMobileClient extends BaseMobileClient {
       headers.authorization = `Bearer ${this.opts.token}`;
     }
 
-    const response = await (this.opts.fetchImpl ?? fetch)(`${this.opts.baseUrl}/mcp`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(timeoutMs ?? this.opts.timeoutMs),
-    });
+    const response = await (this.opts.fetchImpl ?? fetch)(
+      `${this.opts.baseUrl}/mcp`,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(timeoutMs ?? this.opts.timeoutMs),
+      },
+    );
 
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       throw new Error(
-        `mcp http ${method}: ${response.status} ${response.statusText}${detail ? ` — ${detail.slice(0, 200)}` : ""}`,
+        `mcp http ${method}: ${response.status} ${response.statusText}${
+          detail ? ` — ${detail.slice(0, 200)}` : ""
+        }`,
       );
     }
 
-    const message = parseHttpBody(await response.text(), response.headers.get("content-type") ?? "");
+    const message = parseHttpBody(
+      await response.text(),
+      response.headers.get("content-type") ?? "",
+    );
     if (message.error) throw new Error(`${method}: ${message.error.message}`);
     return message.result;
   }

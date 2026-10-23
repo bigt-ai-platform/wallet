@@ -121,18 +121,25 @@ export class HttpChainClient implements ChainClient {
   }
 
   async transactionsStatusByAddress(address: string): Promise<ChainTxStatus[]> {
-    const res = await this.fetchImpl(`${this.base}/getTransactionsStatusByAddress`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ address }),
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
-    if (!res.ok) throw new Error(`getTransactionsStatusByAddress ${res.status}`);
+    const res = await this.fetchImpl(
+      `${this.base}/getTransactionsStatusByAddress`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ address }),
+        signal: AbortSignal.timeout(this.timeoutMs),
+      },
+    );
+    if (!res.ok)
+      throw new Error(`getTransactionsStatusByAddress ${res.status}`);
     const raw = (await res.json()) as {
       transactions?: Array<{ txHash?: string; txid?: string; status?: string }>;
     };
     return (raw.transactions ?? [])
-      .map((t) => ({ txHash: String(t.txHash ?? t.txid ?? ""), status: t.status }))
+      .map((t) => ({
+        txHash: String(t.txHash ?? t.txid ?? ""),
+        status: t.status,
+      }))
       .filter((t) => !!t.txHash);
   }
 
@@ -147,7 +154,12 @@ export class HttpChainClient implements ChainClient {
     const res = await this.fetchImpl(`${this.base}/getOutputsHistory`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ fromaddress: "", toaddress: address, starttime: null, endtime: null }),
+      body: JSON.stringify({
+        fromaddress: "",
+        toaddress: address,
+        starttime: null,
+        endtime: null,
+      }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (!res.ok) throw new Error(`getOutputsHistory ${res.status}`);
@@ -169,8 +181,14 @@ export class HttpChainClient implements ChainClient {
     } catch {
       // non-JSON response: fall through to the status check
     }
-    if (!res.ok || body.error || (body.errorcode !== undefined && body.errorcode !== 0)) {
-      throw new Error(body.message || body.error || `submitTransaction ${res.status}`);
+    if (
+      !res.ok ||
+      body.error ||
+      (body.errorcode !== undefined && body.errorcode !== 0)
+    ) {
+      throw new Error(
+        body.message || body.error || `submitTransaction ${res.status}`,
+      );
     }
   }
 }
@@ -183,15 +201,28 @@ export class HttpChainClient implements ChainClient {
  */
 export async function verifyChainLock(
   chain: ChainClient,
-  opts: { txHash: string; escrowAddress: string; token?: string; amount?: string },
+  opts: {
+    txHash: string;
+    escrowAddress: string;
+    token?: string;
+    amount?: string;
+  },
 ): Promise<ChainEvidence> {
   if (!opts.txHash.trim()) return { ok: false, reason: "txHash required" };
   try {
     const st = await chain.transactionStatus(opts.txHash);
-    if (!st.status) return { ok: false, reason: "L0 has no status for this transaction" };
-    if (st.status !== "CONFIRMED") return { ok: false, reason: `transaction is ${st.status}, expected CONFIRMED` };
+    if (!st.status)
+      return { ok: false, reason: "L0 has no status for this transaction" };
+    if (st.status !== "CONFIRMED")
+      return {
+        ok: false,
+        reason: `transaction is ${st.status}, expected CONFIRMED`,
+      };
     if (st.address && st.address !== opts.escrowAddress) {
-      return { ok: false, reason: `transaction pays ${st.address}, expected ${opts.escrowAddress}` };
+      return {
+        ok: false,
+        reason: `transaction pays ${st.address}, expected ${opts.escrowAddress}`,
+      };
     }
     if (opts.token && opts.amount) {
       // getBalances cannot prove this lock: it rebuilds the query address with
@@ -201,14 +232,17 @@ export async function verifyChainLock(
       // getOutputsHistory matches on `toaddress` and uses the computed
       // OUTPUTS_CONFIRMED, so it is the only path that can see a P2SH escrow
       // output (Java-first: DatabaseFullBlockStoreBase.getOutputsHistory).
-      const own = (await chain.outputsHistory(opts.escrowAddress)).filter((o) => String(o.hashHex ?? "") === opts.txHash);
+      const own = (await chain.outputsHistory(opts.escrowAddress)).filter(
+        (o) => String(o.hashHex ?? "") === opts.txHash,
+      );
       const outputs = normalizeOutputs(own);
       const check = verifySettlement(outputs, {
         toAddress: opts.escrowAddress,
         token: opts.token,
         amount: opts.amount,
       });
-      if (!check.ok) return { ok: false, reason: check.error ?? "escrow amount not found" };
+      if (!check.ok)
+        return { ok: false, reason: check.error ?? "escrow amount not found" };
     }
     return { ok: true };
   } catch (e) {
@@ -225,14 +259,28 @@ export async function verifyChainPayment(
   try {
     const st = await chain.transactionStatus(opts.txHash);
     if (st.status !== "CONFIRMED") {
-      return { ok: false, reason: st.status ? `transaction is ${st.status}, expected CONFIRMED` : "no status" };
+      return {
+        ok: false,
+        reason: st.status
+          ? `transaction is ${st.status}, expected CONFIRMED`
+          : "no status",
+      };
     }
     if (st.address && st.address !== opts.toAddress) {
-      return { ok: false, reason: `transaction pays ${st.address}, expected ${opts.toAddress}` };
+      return {
+        ok: false,
+        reason: `transaction pays ${st.address}, expected ${opts.toAddress}`,
+      };
     }
     // No address in the status: the recipient's own index must list this tx.
-    if (!st.address && !(await confirmedTxToAddress(chain, opts.toAddress, opts.txHash))) {
-      return { ok: false, reason: `transaction not found in ${opts.toAddress}'s confirmed history` };
+    if (
+      !st.address &&
+      !(await confirmedTxToAddress(chain, opts.toAddress, opts.txHash))
+    ) {
+      return {
+        ok: false,
+        reason: `transaction not found in ${opts.toAddress}'s confirmed history`,
+      };
     }
     return { ok: true };
   } catch (e) {
@@ -250,13 +298,22 @@ export async function verifyPaymentOutput(
 ): Promise<ChainEvidence> {
   try {
     const history = await chain.outputsHistory(opts.toAddress);
-    const outputs = normalizeOutputs(history.filter((output) => output.hashHex === opts.txHash && output.confirmed === true));
+    const outputs = normalizeOutputs(
+      history.filter(
+        (output) => output.hashHex === opts.txHash && output.confirmed === true,
+      ),
+    );
     const check = verifySettlement(outputs, {
       toAddress: opts.toAddress,
       token: opts.token,
       amount: opts.amount,
     });
-    return check.ok ? { ok: true } : { ok: false, reason: check.error ?? "no confirmed output at the recipient" };
+    return check.ok
+      ? { ok: true }
+      : {
+          ok: false,
+          reason: check.error ?? "no confirmed output at the recipient",
+        };
   } catch (e) {
     return { ok: false, reason: `L0 unreachable (${String(e).slice(0, 100)})` };
   }
@@ -266,10 +323,18 @@ export async function verifyPaymentOutput(
  * Check the submitted transaction in the recipient's address index when the
  * direct status endpoint lags. Other confirmed address history is not proof.
  */
-export async function confirmedTxToAddress(chain: ChainClient, toAddress: string, expectedTxHash: string): Promise<string | null> {
+export async function confirmedTxToAddress(
+  chain: ChainClient,
+  toAddress: string,
+  expectedTxHash: string,
+): Promise<string | null> {
   try {
     const txs = await chain.transactionsStatusByAddress(toAddress);
-    const hit = txs.find((t) => t.txHash === expectedTxHash && (t.status ?? "").toUpperCase() === "CONFIRMED");
+    const hit = txs.find(
+      (t) =>
+        t.txHash === expectedTxHash &&
+        (t.status ?? "").toUpperCase() === "CONFIRMED",
+    );
     return hit?.txHash ?? null;
   } catch {
     return null;

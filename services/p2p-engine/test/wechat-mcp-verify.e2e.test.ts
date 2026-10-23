@@ -46,7 +46,12 @@ let clock = T_ORDER;
 const store = new MemSettlementStore();
 
 function signed(key: Ed25519Key, did: string, fields: Record<string, unknown>) {
-  const payload = { ...fields, did, nonce: randomBytes(8).toString("hex"), timestamp: clock };
+  const payload = {
+    ...fields,
+    did,
+    nonce: randomBytes(8).toString("hex"),
+    timestamp: clock,
+  };
   return { ...payload, signature: signPayload(payload, key.getPrivHex()!) };
 }
 const bump = () => {
@@ -64,10 +69,42 @@ type TestApp = Awaited<ReturnType<typeof buildApp>>;
 function wechatScreenTsv(): string {
   const rows = [
     ["node_b1", "TextView", "¥715.00", "-", "-", "40,600,1040,660", "on"],
-    ["node_b2", "TextView", "转账收款方 张三", "-", "-", "40,700,1040,760", "on"],
-    ["node_b3", "TextView", "到账时间 2026-10-13 14:32", "-", "-", "40,800,1040,860", "on"],
-    ["node_b4", "TextView", `备注 ${REMARK}`, "-", "-", "40,900,1040,960", "on"],
-    ["node_b5", "TextView", `微信支付交易单号 ${TX_ID}`, "-", "-", "40,1000,1040,1060", "on"],
+    [
+      "node_b2",
+      "TextView",
+      "转账收款方 张三",
+      "-",
+      "-",
+      "40,700,1040,760",
+      "on",
+    ],
+    [
+      "node_b3",
+      "TextView",
+      "到账时间 2026-10-13 14:32",
+      "-",
+      "-",
+      "40,800,1040,860",
+      "on",
+    ],
+    [
+      "node_b4",
+      "TextView",
+      `备注 ${REMARK}`,
+      "-",
+      "-",
+      "40,900,1040,960",
+      "on",
+    ],
+    [
+      "node_b5",
+      "TextView",
+      `微信支付交易单号 ${TX_ID}`,
+      "-",
+      "-",
+      "40,1000,1040,1060",
+      "on",
+    ],
     ["node_b6", "TextView", "支付成功", "-", "-", "40,1100,1040,1160", "on"],
   ];
   return [
@@ -86,25 +123,48 @@ let screenOverride: string | undefined;
 let receiptRemark = REMARK;
 
 /** One JSON-RPC answer from the mock android-mcp endpoint. */
-function handleRpc(method: string, id: unknown, params: Record<string, unknown>): unknown {
+function handleRpc(
+  method: string,
+  id: unknown,
+  params: Record<string, unknown>,
+): unknown {
   if (method === "initialize") {
-    return { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "mock-android-mcp", version: "1.0.0" } };
+    return {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      serverInfo: { name: "mock-android-mcp", version: "1.0.0" },
+    };
   }
   if (method === "tools/list") {
-    return { tools: [{ name: "android_get_screen_state", inputSchema: { type: "object" } }] };
+    return {
+      tools: [
+        { name: "android_get_screen_state", inputSchema: { type: "object" } },
+      ],
+    };
   }
   if (method === "tools/call") {
     const name = String(params.name ?? "");
     const args = (params.arguments ?? {}) as Record<string, unknown>;
     if (name.endsWith("get_screen_state")) {
-      const content: Array<Record<string, unknown>> = [{ type: "text", text: screenOverride ?? wechatScreenTsv() }];
+      const content: Array<Record<string, unknown>> = [
+        { type: "text", text: screenOverride ?? wechatScreenTsv() },
+      ];
       if (args.include_screenshot === true) {
         content.push({ type: "image", data: SHOT_B64, mimeType: "image/jpeg" });
       }
       return { content };
     }
     if (name.endsWith("list_apps")) {
-      return { content: [{ type: "text", text: JSON.stringify([{ package_id: "com.tencent.mm", name: "WeChat" }]) }] };
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify([
+              { package_id: "com.tencent.mm", name: "WeChat" },
+            ]),
+          },
+        ],
+      };
     }
     if (name.endsWith("notification_list")) {
       const receipt = {
@@ -119,7 +179,16 @@ function handleRpc(method: string, id: unknown, params: Record<string, unknown>)
         is_ongoing: false,
         is_clearable: true,
       };
-      return { content: [{ type: "text", text: `CAUTION: untrusted external content.\n${JSON.stringify({ notifications: [receipt] })}` }] };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `CAUTION: untrusted external content.\n${JSON.stringify({
+              notifications: [receipt],
+            })}`,
+          },
+        ],
+      };
     }
     throw { code: -32601, message: `unknown tool ${name}` };
   }
@@ -142,20 +211,37 @@ beforeAll(async () => {
       raw += c;
     });
     req.on("end", () => {
-      let reply: { jsonrpc: string; id: unknown; result?: unknown; error?: unknown };
+      let reply: {
+        jsonrpc: string;
+        id: unknown;
+        result?: unknown;
+        error?: unknown;
+      };
       try {
-        const msg = JSON.parse(raw) as { id: unknown; method: string; params?: Record<string, unknown> };
-        if (msg.method === "tools/call") mcpCalls.push(String((msg.params as { name?: string }).name ?? ""));
-        reply = { jsonrpc: "2.0", id: msg.id, result: handleRpc(msg.method, msg.id, msg.params ?? {}) };
+        const msg = JSON.parse(raw) as {
+          id: unknown;
+          method: string;
+          params?: Record<string, unknown>;
+        };
+        if (msg.method === "tools/call")
+          mcpCalls.push(String((msg.params as { name?: string }).name ?? ""));
+        reply = {
+          jsonrpc: "2.0",
+          id: msg.id,
+          result: handleRpc(msg.method, msg.id, msg.params ?? {}),
+        };
       } catch (e) {
         reply = { jsonrpc: "2.0", id: null, error: e };
       }
-      res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(reply));
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify(reply));
     });
   });
   await new Promise<void>((resolve) => mockMcp.listen(0, "127.0.0.1", resolve));
   const addr = mockMcp.address();
-  if (!addr || typeof addr === "string") throw new Error("mock MCP did not bind");
+  if (!addr || typeof addr === "string")
+    throw new Error("mock MCP did not bind");
   mockMcpUrl = `http://127.0.0.1:${addr.port}`;
 });
 
@@ -207,14 +293,22 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
       wantCurrency: "CNY",
       wantAmount: "715",
       wantRail: "wechat",
-      validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
+      validUntil: Math.floor(clock / 1000) + 3600,
+      requestMethod: "POST",
+      requestPath: "/orders",
+    }),
   });
   expect(r1.statusCode).toBe(201);
   bump();
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
+    payload: signed(buyer, buyerDid, {
+      buyerDid,
+      receiveAddress: RECEIVE_ADDRESS,
+      requestMethod: "POST",
+      requestPath: `/orders/${r1.json().orderId}/match`,
+    }),
   });
   expect(r2.statusCode).toBe(201);
   const swapId = r2.json().swapId as string;
@@ -222,7 +316,12 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: swapId.slice(5).padEnd(64, "f"), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
+    payload: signed(seller, sellerDid, {
+      action: "escrow_lock",
+      txHash: swapId.slice(5).padEnd(64, "f"),
+      requestMethod: "POST",
+      requestPath: `/swaps/${swapId}/transitions`,
+    }),
   });
   expect(lock.statusCode).toBe(200);
   bump();
@@ -230,7 +329,12 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
 }
 
 /** DID-signed grant pointing at the mock MCP endpoint (the "phone"). */
-async function pair(a: TestApp, key: Ed25519Key, did: string, swapId: string): Promise<string> {
+async function pair(
+  a: TestApp,
+  key: Ed25519Key,
+  did: string,
+  swapId: string,
+): Promise<string> {
   const pairingId = `pr-${randomBytes(12).toString("hex")}`;
   const r = await a.inject({
     method: "POST",
@@ -242,7 +346,10 @@ async function pair(a: TestApp, key: Ed25519Key, did: string, swapId: string): P
       token: "tok_" + randomBytes(4).toString("hex"),
       swapId,
       issuedAt: clock,
-      expiresAt: clock + 24 * 60 * 60 * 1000, requestMethod: "POST", requestPath: "/pairings" }),
+      expiresAt: clock + 24 * 60 * 60 * 1000,
+      requestMethod: "POST",
+      requestPath: "/pairings",
+    }),
   });
   expect(r.statusCode).toBe(201);
   return pairingId;
@@ -259,7 +366,11 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(buyer, buyerDid, { pairingId, requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
+      payload: signed(buyer, buyerDid, {
+        pairingId,
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/device-read`,
+      }),
     });
 
     // The read went through MCP: the mock endpoint served android_get_screen_state.
@@ -267,7 +378,11 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     expect(mcpCalls.every((n) => n.endsWith("get_screen_state"))).toBe(true);
 
     expect(read.statusCode).toBe(200);
-    const body = read.json() as { side: string; verdict: Record<string, unknown>; check: { ok: boolean } };
+    const body = read.json() as {
+      side: string;
+      verdict: Record<string, unknown>;
+      check: { ok: boolean };
+    };
     expect(body.side).toBe("buyer");
     expect(body.check.ok).toBe(true);
     expect(body.verdict).toMatchObject({
@@ -278,7 +393,9 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
       amount: "715.00",
       remark: REMARK,
     });
-    expect(new Date(body.verdict.paidAt as number).toISOString()).toBe(new Date(2026, 9, 13, 14, 32).toISOString());
+    expect(new Date(body.verdict.paidAt as number).toISOString()).toBe(
+      new Date(2026, 9, 13, 14, 32).toISOString(),
+    );
   });
 
   it("a screenshot capture hash is included, and the wallet-signed verdict is accepted by /verify", async () => {
@@ -290,13 +407,19 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(buyer, buyerDid, { pairingId, requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
+      payload: signed(buyer, buyerDid, {
+        pairingId,
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/device-read`,
+      }),
     });
     expect(read.statusCode).toBe(200);
     const verdict = read.json().verdict as Record<string, unknown>;
 
     // The verdict carries the capture sha256 the wallet signs (bytes stay on the device).
-    const expectedCapture = createHash("sha256").update(Buffer.from("fake-wechat-screenshot-bytes")).digest("hex");
+    const expectedCapture = createHash("sha256")
+      .update(Buffer.from("fake-wechat-screenshot-bytes"))
+      .digest("hex");
     expect(verdict.captures).toEqual([expectedCapture]);
 
     // The wallet signs exactly the verdict the read produced, per §12.
@@ -311,7 +434,10 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
         amount: verdict.amount,
         remark: verdict.remark,
         paidAt: verdict.paidAt,
-        captures: verdict.captures, requestMethod: "POST", requestPath: `/swaps/${swapId}/verify` }),
+        captures: verdict.captures,
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/verify`,
+      }),
     });
     expect(verify.statusCode).toBe(200);
     expect(verify.json()).toMatchObject({ stored: true, side: "buyer" });
@@ -328,7 +454,11 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(buyer, buyerDid, { pairingId, requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
+      payload: signed(buyer, buyerDid, {
+        pairingId,
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/device-read`,
+      }),
     });
 
     // The read succeeds over MCP, but the check flags the amount mismatch.
@@ -346,11 +476,20 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(seller, sellerDid, { pairingId, via: "notification", requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
+      payload: signed(seller, sellerDid, {
+        pairingId,
+        via: "notification",
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/device-read`,
+      }),
     });
 
     expect(read.statusCode).toBe(200);
-    const body = read.json() as { side: string; verdict: Record<string, unknown>; check: { ok: boolean } };
+    const body = read.json() as {
+      side: string;
+      verdict: Record<string, unknown>;
+      check: { ok: boolean };
+    };
     expect(body.side).toBe("seller");
     expect(body.check.ok).toBe(true);
     expect(body.verdict).toMatchObject({
@@ -371,7 +510,13 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const profile = await a.inject({
       method: "POST",
       url: "/profiles",
-      payload: signed(seller, sellerDid, { method: "wechat", accountName: "Zhang San", account: "wxid_pay888", requestMethod: "POST", requestPath: "/profiles" }),
+      payload: signed(seller, sellerDid, {
+        method: "wechat",
+        accountName: "Zhang San",
+        account: "wxid_pay888",
+        requestMethod: "POST",
+        requestPath: "/profiles",
+      }),
     });
     expect(profile.statusCode).toBe(200);
     bump();
@@ -380,7 +525,10 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const ins = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
+      payload: signed(buyer, buyerDid, {
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/payment-instructions`,
+      }),
     });
     expect(ins.statusCode).toBe(201);
     const remark = ins.json().remark as string;
@@ -391,7 +539,13 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const proof = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/proof`,
-      payload: signed(buyer, buyerDid, { txId: TX_ID, remark, receipt, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
+      payload: signed(buyer, buyerDid, {
+        txId: TX_ID,
+        remark,
+        receipt,
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/proof`,
+      }),
     });
     expect(proof.statusCode).toBe(200);
     expect(proof.json().status).toBe("PAYMENT_CLAIMED");
@@ -405,11 +559,21 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
     const read = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/device-read`,
-      payload: signed(seller, sellerDid, { pairingId, via: "notification", requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }),
+      payload: signed(seller, sellerDid, {
+        pairingId,
+        via: "notification",
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/device-read`,
+      }),
     });
     expect(read.statusCode).toBe(200);
     const verdict = read.json().verdict as Record<string, unknown>;
-    expect(verdict).toMatchObject({ side: "seller", observed: "received", txId: TX_ID, remark });
+    expect(verdict).toMatchObject({
+      side: "seller",
+      observed: "received",
+      txId: TX_ID,
+      remark,
+    });
 
     // the wallet signs the verdict; the engine stores it and machine-confirms
     const verify = await a.inject({
@@ -422,10 +586,17 @@ describe("WeChat CNY p2p payment verified over MCP (docs/p2p.md §12)", () => {
         txId: verdict.txId,
         amount: verdict.amount,
         remark: verdict.remark,
-        paidAt: verdict.paidAt, requestMethod: "POST", requestPath: `/swaps/${swapId}/verify` }),
+        paidAt: verdict.paidAt,
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/verify`,
+      }),
     });
     expect(verify.statusCode).toBe(200);
-    expect(verify.json()).toMatchObject({ stored: true, machineConfirmed: true, advanced: true });
+    expect(verify.json()).toMatchObject({
+      stored: true,
+      machineConfirmed: true,
+      advanced: true,
+    });
     expect((await store.getSwap(swapId))!.status).toBe("PAYMENT_VERIFIED");
   });
 });

@@ -1,15 +1,35 @@
 import { describe, it, expect } from "vitest";
 import { ECKey } from "bigtangle-ts";
-import { HttpChainClient, confirmedTxToAddress, verifyChainLock, verifyChainPayment, verifyPaymentOutput, type ChainClient } from "../src/chain.js";
+import {
+  HttpChainClient,
+  confirmedTxToAddress,
+  verifyChainLock,
+  verifyChainPayment,
+  verifyPaymentOutput,
+  type ChainClient,
+} from "../src/chain.js";
 import { escrowAddress } from "../src/escrow.js";
 
-const escrow = escrowAddress([ECKey.createNewKey(), ECKey.createNewKey(), ECKey.createNewKey()], 2);
+const escrow = escrowAddress(
+  [ECKey.createNewKey(), ECKey.createNewKey(), ECKey.createNewKey()],
+  2,
+);
 
-function client(status: string, address: string, balances: { token: string; amount: string }[] = []): ChainClient {
+function client(
+  status: string,
+  address: string,
+  balances: { token: string; amount: string }[] = [],
+): ChainClient {
   return {
     transactionStatus: async () => ({ status, address }),
     balances: async () =>
-      balances.map((b) => ({ address, token: b.token, amount: b.amount, confirmed: true, spent: false })),
+      balances.map((b) => ({
+        address,
+        token: b.token,
+        amount: b.amount,
+        confirmed: true,
+        spent: false,
+      })),
     // verifyChainLock proves the lock from getOutputsHistory (getBalances cannot
     // see a P2SH escrow output), so the fake must expose the locked balance in
     // the raw UTXO shape — token on `tokenId`, amount on `value.value`.
@@ -32,8 +52,22 @@ describe("chain evidence", () => {
     const chain = client("DROPPED", escrow);
     let hashHex = "old";
     let confirmed = true;
-    chain.outputsHistory = async () => [{ address: escrow, hashHex, confirmed, tokenId: "USDT", value: "100", spent: false }];
-    const expected = { txHash: "release", toAddress: escrow, token: "USDT", amount: "100" };
+    chain.outputsHistory = async () => [
+      {
+        address: escrow,
+        hashHex,
+        confirmed,
+        tokenId: "USDT",
+        value: "100",
+        spent: false,
+      },
+    ];
+    const expected = {
+      txHash: "release",
+      toAddress: escrow,
+      token: "USDT",
+      amount: "100",
+    };
     expect((await verifyPaymentOutput(chain, expected)).ok).toBe(false);
     hashHex = "release";
     confirmed = false;
@@ -43,36 +77,73 @@ describe("chain evidence", () => {
   });
 
   it("accepts a CONFIRMED lock that pays the escrow with enough of the token", async () => {
-    const res = await verifyChainLock(client("CONFIRMED", escrow, [{ token: "USDT", amount: "100" }]), {
-      txHash: "tx",
-      escrowAddress: escrow,
-      token: "USDT",
-      amount: "100",
-    });
+    const res = await verifyChainLock(
+      client("CONFIRMED", escrow, [{ token: "USDT", amount: "100" }]),
+      {
+        txHash: "tx",
+        escrowAddress: escrow,
+        token: "USDT",
+        amount: "100",
+      },
+    );
     expect(res.ok).toBe(true);
   });
 
   it("counts only the lock tx's own outputs, never other deposits at a shared vault address", async () => {
     const chain = client("CONFIRMED", escrow);
     chain.outputsHistory = async () => [
-      { address: escrow, hashHex: "other", tokenId: "USDT", value: "100", spent: false, confirmed: true },
-      { address: escrow, hashHex: "tx", tokenId: "USDT", value: "1", spent: false, confirmed: true },
+      {
+        address: escrow,
+        hashHex: "other",
+        tokenId: "USDT",
+        value: "100",
+        spent: false,
+        confirmed: true,
+      },
+      {
+        address: escrow,
+        hashHex: "tx",
+        tokenId: "USDT",
+        value: "1",
+        spent: false,
+        confirmed: true,
+      },
     ];
-    const res = await verifyChainLock(chain, { txHash: "tx", escrowAddress: escrow, token: "USDT", amount: "100" });
-    expect(res.ok).toBe(false);
-  });
-
-  it("fails closed on unconfirmed / wrong address / short amount", async () => {
-    expect((await verifyChainLock(client("MEMPOOL", escrow), { txHash: "tx", escrowAddress: escrow })).ok).toBe(false);
-    expect(
-      (await verifyChainLock(client("CONFIRMED", "elsewhere"), { txHash: "tx", escrowAddress: escrow })).ok,
-    ).toBe(false);
-    const short = await verifyChainLock(client("CONFIRMED", escrow, [{ token: "USDT", amount: "99" }]), {
+    const res = await verifyChainLock(chain, {
       txHash: "tx",
       escrowAddress: escrow,
       token: "USDT",
       amount: "100",
     });
+    expect(res.ok).toBe(false);
+  });
+
+  it("fails closed on unconfirmed / wrong address / short amount", async () => {
+    expect(
+      (
+        await verifyChainLock(client("MEMPOOL", escrow), {
+          txHash: "tx",
+          escrowAddress: escrow,
+        })
+      ).ok,
+    ).toBe(false);
+    expect(
+      (
+        await verifyChainLock(client("CONFIRMED", "elsewhere"), {
+          txHash: "tx",
+          escrowAddress: escrow,
+        })
+      ).ok,
+    ).toBe(false);
+    const short = await verifyChainLock(
+      client("CONFIRMED", escrow, [{ token: "USDT", amount: "99" }]),
+      {
+        txHash: "tx",
+        escrowAddress: escrow,
+        token: "USDT",
+        amount: "100",
+      },
+    );
     expect(short.ok).toBe(false);
     expect(short.reason).toMatch(/insufficient/);
   });
@@ -85,14 +156,31 @@ describe("chain evidence", () => {
       balances: async () => [],
       outputsHistory: async () => [],
     };
-    const res = await verifyChainLock(broken, { txHash: "tx", escrowAddress: escrow });
+    const res = await verifyChainLock(broken, {
+      txHash: "tx",
+      escrowAddress: escrow,
+    });
     expect(res.ok).toBe(false);
     expect(res.reason).toMatch(/unreachable/);
   });
 
   it("verifies a release to the receive address", async () => {
-    expect((await verifyChainPayment(client("CONFIRMED", "1Receive"), { txHash: "tx", toAddress: "1Receive" })).ok).toBe(true);
-    expect((await verifyChainPayment(client("CONFIRMED", "1Other"), { txHash: "tx", toAddress: "1Receive" })).ok).toBe(false);
+    expect(
+      (
+        await verifyChainPayment(client("CONFIRMED", "1Receive"), {
+          txHash: "tx",
+          toAddress: "1Receive",
+        })
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await verifyChainPayment(client("CONFIRMED", "1Other"), {
+          txHash: "tx",
+          toAddress: "1Receive",
+        })
+      ).ok,
+    ).toBe(false);
   });
 });
 
@@ -105,7 +193,11 @@ describe("HttpChainClient.outputsHistory", () => {
     const bodies: string[] = [];
     const fetchImpl: typeof fetch = async (_url, init) => {
       bodies.push(String(init?.body ?? ""));
-      return { ok: true, status: 200, json: async () => ({ outputs: [] }) } as Response;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ outputs: [] }),
+      } as Response;
     };
     const http = new HttpChainClient("http://l0", fetchImpl);
     await http.outputsHistory(escrow);
@@ -128,13 +220,18 @@ describe("confirmedTxToAddress", () => {
         { txHash: "b".repeat(64), status: "CONFIRMED" },
       ],
     } as ChainClient;
-    expect(await confirmedTxToAddress(c, escrow, "b".repeat(64))).toBe("b".repeat(64));
+    expect(await confirmedTxToAddress(c, escrow, "b".repeat(64))).toBe(
+      "b".repeat(64),
+    );
     expect(await confirmedTxToAddress(c, escrow, "a".repeat(64))).toBeNull();
     expect(await confirmedTxToAddress(c, escrow, "c".repeat(64))).toBeNull();
   });
 
   it("returns null when nothing is confirmed or the query fails (never throws)", async () => {
-    const none = { ...client("CONFIRMED", escrow), transactionsStatusByAddress: async () => [] } as ChainClient;
+    const none = {
+      ...client("CONFIRMED", escrow),
+      transactionsStatusByAddress: async () => [],
+    } as ChainClient;
     expect(await confirmedTxToAddress(none, escrow, "b".repeat(64))).toBeNull();
     const down = {
       ...client("CONFIRMED", escrow),

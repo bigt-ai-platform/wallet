@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { Ed25519Key, didFromEd25519Key } from "did";
-import { buildApp, type DeviceReadArgs, type DeviceReadResult } from "../src/server.js";
+import {
+  buildApp,
+  type DeviceReadArgs,
+  type DeviceReadResult,
+} from "../src/server.js";
 import { RECEIVE_ADDRESS } from "./address.js";
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
@@ -23,7 +27,12 @@ let clock = 1_700_000_000_000;
 const store = new MemSettlementStore();
 
 function signed(key: Ed25519Key, did: string, fields: Record<string, unknown>) {
-  const payload = { ...fields, did, nonce: randomBytes(8).toString("hex"), timestamp: clock };
+  const payload = {
+    ...fields,
+    did,
+    nonce: randomBytes(8).toString("hex"),
+    timestamp: clock,
+  };
   return { ...payload, signature: signPayload(payload, key.getPrivHex()!) };
 }
 
@@ -33,7 +42,12 @@ const reads: DeviceReadArgs[] = [];
 async function app(extraEnv: NodeJS.ProcessEnv = {}) {
   return buildApp({
     store,
-    env: { SETTLEMENT_ENGINE_DID: engineDid, SETTLEMENT_ADMIN_TOKEN: "adm", SETTLEMENT_PAIRING_ALLOW_PRIVATE: "1", ...extraEnv } as NodeJS.ProcessEnv,
+    env: {
+      SETTLEMENT_ENGINE_DID: engineDid,
+      SETTLEMENT_ADMIN_TOKEN: "adm",
+      SETTLEMENT_PAIRING_ALLOW_PRIVATE: "1",
+      ...extraEnv,
+    } as NodeJS.ProcessEnv,
     guard: new ReplayGuard(() => clock),
     chain: null,
     now: () => clock,
@@ -48,12 +62,19 @@ async function app(extraEnv: NodeJS.ProcessEnv = {}) {
         amount: args.expected.amount,
         ...(args.expected.remark ? { remark: args.expected.remark } : {}),
       };
-      return { verdict, check: { ok: true }, captures: [], entry: null } as unknown as DeviceReadResult;
+      return {
+        verdict,
+        check: { ok: true },
+        captures: [],
+        entry: null,
+      } as unknown as DeviceReadResult;
     },
   });
 }
 
-const bump = () => { clock += 1; };
+const bump = () => {
+  clock += 1;
+};
 type TestApp = Awaited<ReturnType<typeof buildApp>>;
 
 async function toEscrowLocked(a: TestApp): Promise<string> {
@@ -61,15 +82,30 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
     method: "POST",
     url: "/orders",
     payload: signed(seller, sellerDid, {
-      type: "limit_sell", sellerDid, giveToken: "USDT", giveAmount: "100", giveChain: "L0",
-      wantCurrency: "CNY", wantAmount: "715", wantRail: "wechat", validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
+      type: "limit_sell",
+      sellerDid,
+      giveToken: "USDT",
+      giveAmount: "100",
+      giveChain: "L0",
+      wantCurrency: "CNY",
+      wantAmount: "715",
+      wantRail: "wechat",
+      validUntil: Math.floor(clock / 1000) + 3600,
+      requestMethod: "POST",
+      requestPath: "/orders",
+    }),
   });
   expect(r1.statusCode).toBe(201);
   bump();
   const r2 = await a.inject({
     method: "POST",
     url: `/orders/${r1.json().orderId}/match`,
-    payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
+    payload: signed(buyer, buyerDid, {
+      buyerDid,
+      receiveAddress: RECEIVE_ADDRESS,
+      requestMethod: "POST",
+      requestPath: `/orders/${r1.json().orderId}/match`,
+    }),
   });
   expect(r2.statusCode).toBe(201);
   const swapId = r2.json().swapId as string;
@@ -77,7 +113,12 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: swapId.slice(5).padEnd(64, "f"), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
+    payload: signed(seller, sellerDid, {
+      action: "escrow_lock",
+      txHash: swapId.slice(5).padEnd(64, "f"),
+      requestMethod: "POST",
+      requestPath: `/swaps/${swapId}/transitions`,
+    }),
   });
   expect(lock.statusCode).toBe(200);
   bump();
@@ -88,7 +129,12 @@ function pairingId(): string {
   return `pr-${randomBytes(12).toString("hex")}`;
 }
 
-async function pair(a: TestApp, key: Ed25519Key, did: string, opts: { swapId?: string; ttlMs?: number } = {}) {
+async function pair(
+  a: TestApp,
+  key: Ed25519Key,
+  did: string,
+  opts: { swapId?: string; ttlMs?: number } = {},
+) {
   const id = pairingId();
   const r = await a.inject({
     method: "POST",
@@ -100,13 +146,30 @@ async function pair(a: TestApp, key: Ed25519Key, did: string, opts: { swapId?: s
       token: "tok_" + randomBytes(4).toString("hex"),
       ...(opts.swapId ? { swapId: opts.swapId } : {}),
       issuedAt: clock,
-      expiresAt: clock + (opts.ttlMs ?? 24 * 60 * 60 * 1000), requestMethod: "POST", requestPath: "/pairings" }),
+      expiresAt: clock + (opts.ttlMs ?? 24 * 60 * 60 * 1000),
+      requestMethod: "POST",
+      requestPath: "/pairings",
+    }),
   });
   return { id, status: r.statusCode, json: () => r.json() };
 }
 
-function deviceRead(a: TestApp, key: Ed25519Key, did: string, swapId: string, extra: Record<string, unknown> = {}) {
-  return a.inject({ method: "POST", url: `/swaps/${swapId}/device-read`, payload: signed(key, did, { ...extra, requestMethod: "POST", requestPath: `/swaps/${swapId}/device-read` }) });
+function deviceRead(
+  a: TestApp,
+  key: Ed25519Key,
+  did: string,
+  swapId: string,
+  extra: Record<string, unknown> = {},
+) {
+  return a.inject({
+    method: "POST",
+    url: `/swaps/${swapId}/device-read`,
+    payload: signed(key, did, {
+      ...extra,
+      requestMethod: "POST",
+      requestPath: `/swaps/${swapId}/device-read`,
+    }),
+  });
 }
 
 beforeEach(() => {
@@ -126,11 +189,23 @@ describe("device pairing + engine read (docs/p2p.md §12)", () => {
     const p = await pair(a, buyer, buyerDid);
     expect(p.status).toBe(201);
 
-    const mine = await a.inject({ method: "POST", url: "/pairings/mine", payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: "/pairings/mine" }) });
+    const mine = await a.inject({
+      method: "POST",
+      url: "/pairings/mine",
+      payload: signed(buyer, buyerDid, {
+        requestMethod: "POST",
+        requestPath: "/pairings/mine",
+      }),
+    });
     expect(mine.statusCode).toBe(200);
     const list = mine.json().pairings as Array<Record<string, unknown>>;
     expect(list).toHaveLength(1);
-    expect(list[0]).toMatchObject({ pairingId: p.id, deviceId: "self", tokenSet: true, revoked: false });
+    expect(list[0]).toMatchObject({
+      pairingId: p.id,
+      deviceId: "self",
+      tokenSet: true,
+      revoked: false,
+    });
     expect(list[0]).not.toHaveProperty("token");
   });
 
@@ -140,7 +215,15 @@ describe("device pairing + engine read (docs/p2p.md §12)", () => {
       method: "POST",
       url: "/pairings",
       payload: signed(buyer, buyerDid, {
-        pairingId: pairingId(), endpoint: "", deviceId: "self", token: "t", issuedAt: clock, expiresAt: clock + 1000, requestMethod: "POST", requestPath: "/pairings" }),
+        pairingId: pairingId(),
+        endpoint: "",
+        deviceId: "self",
+        token: "t",
+        issuedAt: clock,
+        expiresAt: clock + 1000,
+        requestMethod: "POST",
+        requestPath: "/pairings",
+      }),
     });
     expect(bad.statusCode).toBe(422);
   });
@@ -151,7 +234,12 @@ describe("device pairing + engine read (docs/p2p.md §12)", () => {
     await pair(a, buyer, buyerDid, { swapId });
 
     const stranger = Ed25519Key.createNewKey();
-    const outsider = await deviceRead(a, stranger, didFromEd25519Key(stranger), swapId);
+    const outsider = await deviceRead(
+      a,
+      stranger,
+      didFromEd25519Key(stranger),
+      swapId,
+    );
     expect(outsider.statusCode).toBe(403);
     expect(reads).toHaveLength(0);
   });
@@ -162,14 +250,18 @@ describe("device pairing + engine read (docs/p2p.md §12)", () => {
     const buyerPair = await pair(a, buyer, buyerDid, { swapId });
     const sellerPair = await pair(a, seller, sellerDid, { swapId });
 
-    const b = await deviceRead(a, buyer, buyerDid, swapId, { pairingId: buyerPair.id });
+    const b = await deviceRead(a, buyer, buyerDid, swapId, {
+      pairingId: buyerPair.id,
+    });
     expect(b.statusCode).toBe(200);
     expect(b.json().side).toBe("buyer");
     expect(b.json().verdict).toMatchObject({ side: "buyer", observed: "sent" });
     expect(reads[0].grant.endpoint).toBe("http://192.168.1.20:8080");
     expect(reads[0].side).toBe("buyer");
 
-    const s = await deviceRead(a, seller, sellerDid, swapId, { pairingId: sellerPair.id });
+    const s = await deviceRead(a, seller, sellerDid, swapId, {
+      pairingId: sellerPair.id,
+    });
     expect(s.statusCode).toBe(200);
     expect(s.json().side).toBe("seller");
     expect(reads[1].side).toBe("seller");
@@ -197,11 +289,19 @@ describe("device pairing + engine read (docs/p2p.md §12)", () => {
     const p = await pair(a, buyer, buyerDid, { swapId });
 
     const rev = await a.inject({
-      method: "POST", url: "/pairings/revoke", payload: signed(buyer, buyerDid, { pairingId: p.id, requestMethod: "POST", requestPath: "/pairings/revoke" }),
+      method: "POST",
+      url: "/pairings/revoke",
+      payload: signed(buyer, buyerDid, {
+        pairingId: p.id,
+        requestMethod: "POST",
+        requestPath: "/pairings/revoke",
+      }),
     });
     expect(rev.statusCode).toBe(200);
 
-    const after = await deviceRead(a, buyer, buyerDid, swapId, { pairingId: p.id });
+    const after = await deviceRead(a, buyer, buyerDid, swapId, {
+      pairingId: p.id,
+    });
     expect(after.statusCode).toBe(409);
     expect(reads).toHaveLength(0);
   });

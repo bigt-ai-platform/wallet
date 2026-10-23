@@ -55,7 +55,11 @@ export function vaultFor(
   }
   try {
     keys.push(PQKey.fromPrefixedPublicKey(Utils.HEX.decode(enginePubkeyHex)));
-    return Escrow.twoOfThree({ seller: keys[0], buyer: keys[1], engine: keys[2] });
+    return Escrow.twoOfThree({
+      seller: keys[0],
+      buyer: keys[1],
+      engine: keys[2],
+    });
   } catch {
     return null;
   }
@@ -68,12 +72,17 @@ export function keyFromDid(did: string): PQKey {
 
 /** The current escrow seed: a dedicated `SETTLEMENT_ESCROW_KEY`, else the shared engine/anchor seed. */
 function escrowSeed(env: NodeJS.ProcessEnv): string {
-  return env.SETTLEMENT_ESCROW_KEY?.trim() || env.SETTLEMENT_ENGINE_KEY?.trim() || "";
+  return (
+    env.SETTLEMENT_ESCROW_KEY?.trim() || env.SETTLEMENT_ENGINE_KEY?.trim() || ""
+  );
 }
 
 export function engineSigner(env: NodeJS.ProcessEnv): PQKey {
   const keyHex = escrowSeed(env);
-  if (!keyHex) throw new Error("SETTLEMENT_ESCROW_KEY / SETTLEMENT_ENGINE_KEY is not configured");
+  if (!keyHex)
+    throw new Error(
+      "SETTLEMENT_ESCROW_KEY / SETTLEMENT_ENGINE_KEY is not configured",
+    );
   const key = PQKey.fromPrivateKeyHex(keyHex);
   const pubHex = env.SETTLEMENT_ENGINE_PUBKEY?.trim() || "";
   if (pubHex && Utils.HEX.encode(key.getPrefixedPublicKeyBytes()) !== pubHex) {
@@ -114,7 +123,10 @@ export function engineKeyring(env: NodeJS.ProcessEnv): Map<string, PQKey> {
  * Returns null when the pinned key is not held — the engine fails closed rather
  * than sign with the wrong key (docs/p2p.md §27.3).
  */
-export function engineSignerFor(env: NodeJS.ProcessEnv, pubkeyHex: string | undefined): PQKey | null {
+export function engineSignerFor(
+  env: NodeJS.ProcessEnv,
+  pubkeyHex: string | undefined,
+): PQKey | null {
   const want = (pubkeyHex ?? "").trim();
   if (!want) {
     try {
@@ -153,7 +165,8 @@ export async function escrowOutpoint(
       o.spent !== true &&
       (!o.address || String(o.address) === escrowAddress),
   );
-  if (!raw || typeof raw.scriptHex !== "string" || !raw.blockHashHex) return null;
+  if (!raw || typeof raw.scriptHex !== "string" || !raw.blockHashHex)
+    return null;
   const params = settlementParams();
   const utxo = UTXO.fromJSONObject(raw);
   const blockHash = utxo.getBlockHash();
@@ -186,7 +199,11 @@ export async function buildSkeleton(opts: {
   escrowTxHash: string;
   to: Address;
 }): Promise<Skeleton | null> {
-  const outpoint = await escrowOutpoint(opts.chain, opts.escrowAddress, opts.escrowTxHash);
+  const outpoint = await escrowOutpoint(
+    opts.chain,
+    opts.escrowAddress,
+    opts.escrowTxHash,
+  );
   if (!outpoint) return null;
   const amount = escrowSpendAmount(outpoint.value);
   const tx = opts.vault.createSpend({
@@ -196,15 +213,28 @@ export async function buildSkeleton(opts: {
     to: opts.to,
     amount,
   });
-  const sighash = tx.hashForSignature(0, opts.vault.redeemScript.getProgram(), SigHash.ALL, false);
+  const sighash = tx.hashForSignature(
+    0,
+    opts.vault.redeemScript.getProgram(),
+    SigHash.ALL,
+    false,
+  );
   return { tx, sighash, outpoint, amount };
 }
 
 /** Verify a hex SignatureBundle against one vault participant. Fails closed. */
-export function verifyParticipantSig(sighash: Sha256Hash, sigHex: string, pubkey: PQKey): boolean {
+export function verifyParticipantSig(
+  sighash: Sha256Hash,
+  sigHex: string,
+  pubkey: PQKey,
+): boolean {
   if (!sigHex || sigHex.length > 20_000) return false;
   try {
-    return PQKey.verify(sighash, SignatureBundle.deserialize(Utils.HEX.decode(sigHex)), pubkey.getPubKey());
+    return PQKey.verify(
+      sighash,
+      SignatureBundle.deserialize(Utils.HEX.decode(sigHex)),
+      pubkey.getPubKey(),
+    );
   } catch {
     return false;
   }
@@ -214,15 +244,26 @@ export function verifyParticipantSig(sighash: Sha256Hash, sigHex: string, pubkey
  * Write the assembled scriptSig: `OP_0 <sig…> <redeemProgram>` with the
  * signatures in redeem-script order (OP_CHECKMULTISIG pops them in order).
  */
-export function assembleSpend(vault: Escrow, tx: Transaction, sigHexByIndex: Map<number, string>): number {
+export function assembleSpend(
+  vault: Escrow,
+  tx: Transaction,
+  sigHexByIndex: Map<number, string>,
+): number {
   const ordered = [...sigHexByIndex.entries()]
     .sort((a, b) => a[0] - b[0])
     .slice(0, vault.threshold)
     .map(([, hex]) => Utils.HEX.decode(hex));
   if (ordered.length < vault.threshold) {
-    throw new Error(`need ${vault.threshold} signatures, got ${ordered.length}`);
+    throw new Error(
+      `need ${vault.threshold} signatures, got ${ordered.length}`,
+    );
   }
-  tx.getInput(0).setScriptSig(ScriptBuilder.createMultiSigInputScript(ordered, vault.redeemScript.getProgram()));
+  tx.getInput(0).setScriptSig(
+    ScriptBuilder.createMultiSigInputScript(
+      ordered,
+      vault.redeemScript.getProgram(),
+    ),
+  );
   return ordered.length;
 }
 
@@ -235,7 +276,10 @@ export interface SpendOutcome {
 }
 
 /** Broadcast raw bytes; throws when the mempool rejects the transaction. */
-export async function broadcastSpend(chain: ChainClient, tx: Transaction): Promise<void> {
+export async function broadcastSpend(
+  chain: ChainClient,
+  tx: Transaction,
+): Promise<void> {
   await chain.submitTransaction(Utils.HEX.encode(tx.bitcoinSerialize()));
 }
 
@@ -259,12 +303,22 @@ export async function awaitConfirmed(
       status = st.status ?? "";
       if (status === "CONFIRMED") {
         if (st.address && st.address !== toAddress.toBase58()) {
-          return { txHash, confirmed: false, status, reason: `pays ${st.address}, expected ${toAddress.toBase58()}` };
+          return {
+            txHash,
+            confirmed: false,
+            status,
+            reason: `pays ${st.address}, expected ${toAddress.toBase58()}`,
+          };
         }
         return { txHash, confirmed: true, status };
       }
       if (status === "DROPPED") {
-        return { txHash, confirmed: false, status, reason: "transaction was dropped from the chain" };
+        return {
+          txHash,
+          confirmed: false,
+          status,
+          reason: "transaction was dropped from the chain",
+        };
       }
     } catch (e) {
       status = `L0 unreachable (${String(e).slice(0, 80)})`;
@@ -272,7 +326,12 @@ export async function awaitConfirmed(
     if (Date.now() >= deadline) break;
     await new Promise((r) => setTimeout(r, opts.intervalMs));
   }
-  return { txHash, confirmed: false, status: status || undefined, reason: "not confirmed before timeout" };
+  return {
+    txHash,
+    confirmed: false,
+    status: status || undefined,
+    reason: "not confirmed before timeout",
+  };
 }
 
 /** Parse a base58 destination, failing closed on anything unparseable. */

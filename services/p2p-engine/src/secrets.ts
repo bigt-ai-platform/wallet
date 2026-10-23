@@ -14,11 +14,15 @@ export const SECRET_VARS = [
  * Resolve `<VAR>_FILE` into `<VAR>` in-process. The value then never appears in
  * `/proc/<pid>/environ` or `docker inspect`, only in this process's memory.
  */
-export function loadSecretFiles(env: NodeJS.ProcessEnv, read: (path: string) => string = (p) => readFileSync(p, "utf8")): void {
+export function loadSecretFiles(
+  env: NodeJS.ProcessEnv,
+  read: (path: string) => string = (p) => readFileSync(p, "utf8"),
+): void {
   for (const name of SECRET_VARS) {
     const path = env[`${name}_FILE`]?.trim();
     if (!path) continue;
-    if (env[name]?.trim()) throw new Error(`set ${name} or ${name}_FILE, not both`);
+    if (env[name]?.trim())
+      throw new Error(`set ${name} or ${name}_FILE, not both`);
     const value = read(path).trim();
     if (!value) throw new Error(`${name}_FILE (${path}) is empty`);
     env[name] = value;

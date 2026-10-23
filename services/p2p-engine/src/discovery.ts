@@ -51,31 +51,57 @@ export interface DiscoverySources {
 
 /** Comma-list env → normalized base URLs (no trailing slash, deduped). */
 export function splitUrls(raw: string | undefined | null): string[] {
-  return [...new Set(
-    (raw ?? "")
-      .split(",")
-      .map((s) => s.trim().replace(/\/+$/, ""))
-      .filter(Boolean),
-  )];
+  return [
+    ...new Set(
+      (raw ?? "")
+        .split(",")
+        .map((s) => s.trim().replace(/\/+$/, ""))
+        .filter(Boolean),
+    ),
+  ];
 }
 
 /** Resolve the DNS-published seed list for the pool's role (TXT + SRV). */
-export async function fetchDnsSeedUrls(sources: DiscoverySources, fetchImpl: typeof fetch = fetch): Promise<string[]> {
+export async function fetchDnsSeedUrls(
+  sources: DiscoverySources,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string[]> {
   if (!sources.dohUrl) return [];
   const timeoutMs = sources.probeTimeoutMs ?? 5_000;
   const [txt, srv] = await Promise.all([
-    dohQueryVia(fetchImpl, sources.dohUrl, dnsTxtName(sources.role, sources.seedsDomain), "TXT", timeoutMs),
-    dohQueryVia(fetchImpl, sources.dohUrl, dnsSrvName(sources.role, sources.seedsDomain), "SRV", timeoutMs),
+    dohQueryVia(
+      fetchImpl,
+      sources.dohUrl,
+      dnsTxtName(sources.role, sources.seedsDomain),
+      "TXT",
+      timeoutMs,
+    ),
+    dohQueryVia(
+      fetchImpl,
+      sources.dohUrl,
+      dnsSrvName(sources.role, sources.seedsDomain),
+      "SRV",
+      timeoutMs,
+    ),
   ]);
   return [...new Set([...parseDohSeeds(txt), ...parseDohSeeds(srv)])];
 }
 
-async function dohQueryVia(fetchImpl: typeof fetch, dohUrl: string, name: string, type: "TXT" | "SRV", timeoutMs: number): Promise<DohResponse | null> {
+async function dohQueryVia(
+  fetchImpl: typeof fetch,
+  dohUrl: string,
+  name: string,
+  type: "TXT" | "SRV",
+  timeoutMs: number,
+): Promise<DohResponse | null> {
   try {
-    const res = await fetchImpl(`${dohUrl}?name=${encodeURIComponent(name)}&type=${type}`, {
-      headers: { Accept: "application/dns-json" },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    const res = await fetchImpl(
+      `${dohUrl}?name=${encodeURIComponent(name)}&type=${type}`,
+      {
+        headers: { Accept: "application/dns-json" },
+        signal: AbortSignal.timeout(timeoutMs),
+      },
+    );
     if (!res.ok) return null;
     return (await res.json()) as DohResponse;
   } catch {
@@ -84,14 +110,23 @@ async function dohQueryVia(fetchImpl: typeof fetch, dohUrl: string, name: string
 }
 
 /** Candidate endpoints: static + DNS + registry, deduped, onion last. */
-export async function gatherCandidates(sources: DiscoverySources, fetchImpl: typeof fetch = fetch): Promise<string[]> {
+export async function gatherCandidates(
+  sources: DiscoverySources,
+  fetchImpl: typeof fetch = fetch,
+): Promise<string[]> {
   const [dns, registry] = await Promise.all([
     fetchDnsSeedUrls(sources, fetchImpl),
     sources.registryUrls.length
-      ? fetchRegistryNodes(sources.registryUrls, REGISTRY_CHAIN[sources.role], fetchImpl)
+      ? fetchRegistryNodes(
+          sources.registryUrls,
+          REGISTRY_CHAIN[sources.role],
+          fetchImpl,
+        )
       : Promise.resolve([]),
   ]);
-  return orderOnionLast([...new Set([...sources.staticUrls, ...dns, ...registry])]);
+  return orderOnionLast([
+    ...new Set([...sources.staticUrls, ...dns, ...registry]),
+  ]);
 }
 
 /**
@@ -101,7 +136,11 @@ export async function gatherCandidates(sources: DiscoverySources, fetchImpl: typ
  */
 export async function probeCandidates(
   urls: readonly string[],
-  opts: { fetchImpl?: typeof fetch; timeoutMs?: number; now?: () => number } = {},
+  opts: {
+    fetchImpl?: typeof fetch;
+    timeoutMs?: number;
+    now?: () => number;
+  } = {},
 ): Promise<RankedEndpoint[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const timeoutMs = opts.timeoutMs ?? 5_000;
@@ -143,7 +182,11 @@ export class EndpointPool {
 
   constructor(
     private readonly sources: DiscoverySources,
-    private readonly opts: { refreshMs?: number; fetchImpl?: typeof fetch; now?: () => number } = {},
+    private readonly opts: {
+      refreshMs?: number;
+      fetchImpl?: typeof fetch;
+      now?: () => number;
+    } = {},
   ) {}
 
   get role(): ChainRole {
@@ -167,9 +210,14 @@ export class EndpointPool {
    * alone can never satisfy a quorum.
    */
   quorumUrls(n: number): string[] | null {
-    const pinned = new Set(this.sources.staticUrls.map((u) => u.replace(/\/+$/, "")));
+    const pinned = new Set(
+      this.sources.staticUrls.map((u) => u.replace(/\/+$/, "")),
+    );
     const healthy = this.healthy().map((r) => r.url);
-    const picked = [...healthy.filter((u) => pinned.has(u)), ...healthy.filter((u) => !pinned.has(u))].slice(0, n);
+    const picked = [
+      ...healthy.filter((u) => pinned.has(u)),
+      ...healthy.filter((u) => !pinned.has(u)),
+    ].slice(0, n);
     if (picked.length < n || !picked.some((u) => pinned.has(u))) return null;
     return picked;
   }
@@ -187,7 +235,10 @@ export class EndpointPool {
 
   /** Gather + probe; on a fully failed refresh keep the last known-good set. */
   async refresh(): Promise<void> {
-    const urls = await gatherCandidates(this.sources, this.opts.fetchImpl ?? fetch);
+    const urls = await gatherCandidates(
+      this.sources,
+      this.opts.fetchImpl ?? fetch,
+    );
     const ranked = await probeCandidates(urls, {
       fetchImpl: this.opts.fetchImpl ?? fetch,
       timeoutMs: this.sources.probeTimeoutMs ?? 5_000,
@@ -229,9 +280,12 @@ export class PooledChainClient implements ChainClient {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  private async route<T>(fn: (client: HttpChainClient) => Promise<T>): Promise<T> {
+  private async route<T>(
+    fn: (client: HttpChainClient) => Promise<T>,
+  ): Promise<T> {
     const url = this.pool.best();
-    if (!url) throw new Error(`no healthy ${this.pool.role} endpoint (discovery)`);
+    if (!url)
+      throw new Error(`no healthy ${this.pool.role} endpoint (discovery)`);
     try {
       return await fn(new HttpChainClient(url, this.fetchImpl));
     } catch (e) {
@@ -262,10 +316,16 @@ export class PooledChainClient implements ChainClient {
  * "no chain" shape). `SETTLEMENT_L0_URLS` / `SETTLEMENT_L1_SOCIAL_URLS` are
  * comma lists; the singular legacy vars stay supported.
  */
-export function poolFromEnv(env: NodeJS.ProcessEnv, role: ChainRole): EndpointPool | null {
+export function poolFromEnv(
+  env: NodeJS.ProcessEnv,
+  role: ChainRole,
+): EndpointPool | null {
   const staticUrls =
     role === "l0"
-      ? [...splitUrls(env.SETTLEMENT_L0_URLS), ...splitUrls(env.SETTLEMENT_L0_URL)]
+      ? [
+          ...splitUrls(env.SETTLEMENT_L0_URLS),
+          ...splitUrls(env.SETTLEMENT_L0_URL),
+        ]
       : [
           ...splitUrls(env.SETTLEMENT_L1_SOCIAL_URLS),
           ...splitUrls(env.SETTLEMENT_L1_URL),
@@ -274,7 +334,9 @@ export function poolFromEnv(env: NodeJS.ProcessEnv, role: ChainRole): EndpointPo
         ];
   const registryUrls = splitUrls(env.SETTLEMENT_SEEDS_URLS);
   const dnsEnabled = env.SETTLEMENT_DISCOVERY_DNS === "1";
-  const dohUrl = dnsEnabled ? env.SETTLEMENT_DOH_URL?.trim() || "https://dns.google/resolve" : "";
+  const dohUrl = dnsEnabled
+    ? env.SETTLEMENT_DOH_URL?.trim() || "https://dns.google/resolve"
+    : "";
   if (!staticUrls.length && !registryUrls.length && !dohUrl) return null;
   const sources: DiscoverySources = {
     role,
@@ -282,7 +344,8 @@ export function poolFromEnv(env: NodeJS.ProcessEnv, role: ChainRole): EndpointPo
     dohUrl,
     seedsDomain: env.SETTLEMENT_DNS_SEEDS_DOMAIN?.trim() || "bigtangle.org",
     registryUrls,
-    probeTimeoutMs: Number(env.SETTLEMENT_DISCOVERY_TIMEOUT_MS ?? "5000") || 5_000,
+    probeTimeoutMs:
+      Number(env.SETTLEMENT_DISCOVERY_TIMEOUT_MS ?? "5000") || 5_000,
   };
   const refreshMs = Number(env.SETTLEMENT_DISCOVERY_MS ?? "300000") || 0;
   return new EndpointPool(sources, { refreshMs });

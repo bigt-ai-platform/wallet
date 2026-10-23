@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { PQKey, Utils } from "bigtangle-ts";
-import { engineKeyring, engineSigner, engineSignerFor } from "../src/escrowSpend.js";
+import {
+  engineKeyring,
+  engineSigner,
+  engineSignerFor,
+} from "../src/escrowSpend.js";
 import { loadSecretFiles } from "../src/secrets.js";
 
 const pub = (k: PQKey) => Utils.HEX.encode(k.getPrefixedPublicKeyBytes());
@@ -11,7 +15,9 @@ function envWith(keys: PQKey[]): NodeJS.ProcessEnv {
   return {
     SETTLEMENT_ENGINE_KEY: primary.getPrivateKeySeedAsHex() ?? "",
     SETTLEMENT_ENGINE_PUBKEY: pub(primary),
-    SETTLEMENT_ENGINE_KEYS: rest.map((k) => k.getPrivateKeySeedAsHex() ?? "").join(","),
+    SETTLEMENT_ENGINE_KEYS: rest
+      .map((k) => k.getPrivateKeySeedAsHex() ?? "")
+      .join(","),
   };
 }
 
@@ -55,12 +61,25 @@ describe("engine keyring (rotation)", () => {
 
 describe("loadSecretFiles", () => {
   it("reads <VAR>_FILE into <VAR> and refuses both or an empty file", () => {
-    const files: Record<string, string> = { "/s/escrow": "abc\n", "/s/empty": "  " };
+    const files: Record<string, string> = {
+      "/s/escrow": "abc\n",
+      "/s/empty": "  ",
+    };
     const read = (p: string) => files[p];
     const env: NodeJS.ProcessEnv = { SETTLEMENT_ESCROW_KEY_FILE: "/s/escrow" };
     loadSecretFiles(env, read);
     expect(env.SETTLEMENT_ESCROW_KEY).toBe("abc");
-    expect(() => loadSecretFiles({ SETTLEMENT_ADMIN_TOKEN: "x", SETTLEMENT_ADMIN_TOKEN_FILE: "/s/escrow" }, read)).toThrow(/not both/);
-    expect(() => loadSecretFiles({ SETTLEMENT_BLOB_KEY_FILE: "/s/empty" }, read)).toThrow(/empty/);
+    expect(() =>
+      loadSecretFiles(
+        {
+          SETTLEMENT_ADMIN_TOKEN: "x",
+          SETTLEMENT_ADMIN_TOKEN_FILE: "/s/escrow",
+        },
+        read,
+      ),
+    ).toThrow(/not both/);
+    expect(() =>
+      loadSecretFiles({ SETTLEMENT_BLOB_KEY_FILE: "/s/empty" }, read),
+    ).toThrow(/empty/);
   });
 });

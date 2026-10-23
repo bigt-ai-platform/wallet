@@ -24,26 +24,44 @@ async function main(): Promise<number> {
   const { PgSettlementStore, MemSettlementStore } = await import("./store.js");
   const { BlobSettlementStore } = await import("./storeBlob.js");
   const { blobStoreFromEnv } = await import("./blob.js");
-  const { syncOnce, replayVerify, HttpSocialSource, pgCursorStore, MemCursorStore, ensureWatchSchema } = await import(
-    "./replay.js"
-  );
+  const {
+    syncOnce,
+    replayVerify,
+    HttpSocialSource,
+    pgCursorStore,
+    MemCursorStore,
+    ensureWatchSchema,
+  } = await import("./replay.js");
 
-  const storeMode = env.SETTLEMENT_STORE === "mem" || env.SETTLEMENT_STORE === "blob"
-    ? env.SETTLEMENT_STORE
-    : env.POSTGRES_URL
+  const storeMode =
+    env.SETTLEMENT_STORE === "mem" || env.SETTLEMENT_STORE === "blob"
+      ? env.SETTLEMENT_STORE
+      : env.POSTGRES_URL
       ? "pg"
       : "mem";
-  const pool = storeMode === "pg" ? new Pool({ connectionString: env.POSTGRES_URL! }) : null;
+  const pool =
+    storeMode === "pg"
+      ? new Pool({ connectionString: env.POSTGRES_URL! })
+      : null;
   if (pool) await ensureWatchSchema(pool);
-  const receiptBlobs = env.SETTLEMENT_BLOB_URL?.trim() || env.SETTLEMENT_BLOB_DIR?.trim() ? blobStoreFromEnv(env) : null;
+  const receiptBlobs =
+    env.SETTLEMENT_BLOB_URL?.trim() || env.SETTLEMENT_BLOB_DIR?.trim()
+      ? blobStoreFromEnv(env)
+      : null;
   const store =
     storeMode === "pg"
       ? new PgSettlementStore(pool!, receiptBlobs)
       : storeMode === "blob"
-        ? new BlobSettlementStore(blobStoreFromEnv(env))
-        : new MemSettlementStore();
+      ? new BlobSettlementStore(blobStoreFromEnv(env))
+      : new MemSettlementStore();
 
-  const l1Urls = (env.SETTLEMENT_L1_SOCIAL_URLS ?? env.SETTLEMENT_L1_SOCIAL_URL ?? "").split(",").map((s) => s.trim());
+  const l1Urls = (
+    env.SETTLEMENT_L1_SOCIAL_URLS ??
+    env.SETTLEMENT_L1_SOCIAL_URL ??
+    ""
+  )
+    .split(",")
+    .map((s) => s.trim());
   const l1Url = l1Urls.find(Boolean);
   if (!l1Url) {
     console.error("replay-cli: SETTLEMENT_L1_SOCIAL_URL(_S) is required");
@@ -51,11 +69,15 @@ async function main(): Promise<number> {
   }
   const src = new HttpSocialSource(l1Url);
   const cursors = pool ? pgCursorStore(pool) : new MemCursorStore();
-  const maxWalk = Number(env.SETTLEMENT_WATCH_MAX_WALK ?? (mode === "sync" ? 2000 : 50_000));
+  const maxWalk = Number(
+    env.SETTLEMENT_WATCH_MAX_WALK ?? (mode === "sync" ? 2000 : 50_000),
+  );
 
   if (mode === "rebuild") {
     if (!pool && env.FORCE !== "1") {
-      console.error("replay-cli: rebuild needs POSTGRES_URL (mem projection is already chain-derived; FORCE=1 to run anyway)");
+      console.error(
+        "replay-cli: rebuild needs POSTGRES_URL (mem projection is already chain-derived; FORCE=1 to run anyway)",
+      );
       return 2;
     }
     if (pool) {
@@ -72,7 +94,11 @@ async function main(): Promise<number> {
     console.log(`scanned blocks: ${report.scanned}`);
     for (const m of report.missing) console.log(`missing: ${m}`);
     for (const e of report.extra) console.log(`extra:   ${e}`);
-    console.log(report.ok ? "verify: OK" : `verify: DRIFT (${report.missing.length} missing)`);
+    console.log(
+      report.ok
+        ? "verify: OK"
+        : `verify: DRIFT (${report.missing.length} missing)`,
+    );
     return report.ok ? 0 : 1;
   }
 
@@ -93,7 +119,10 @@ async function main(): Promise<number> {
   return r.error ? 1 : 0;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().then(
     (code) => process.exit(code),
     (e) => {

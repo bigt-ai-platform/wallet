@@ -28,7 +28,10 @@ import { p2pSwapRecord, type P2pSwapRecord } from "p2p-protocol";
 import { settlementParams } from "./escrow.js";
 import type { P2pSwapEvent } from "./types.js";
 
-export type SignedSwapRecord = P2pSwapRecord & { sig: string; sigScheme: string };
+export type SignedSwapRecord = P2pSwapRecord & {
+  sig: string;
+  sigScheme: string;
+};
 
 export interface L1Anchor {
   l1Url: string;
@@ -47,11 +50,13 @@ const BIG = NetworkParameters.getBIGTANGLE_TOKENID();
  * match the derived did:key.
  */
 export function anchorFromEnv(env: NodeJS.ProcessEnv): L1Anchor | null {
-  const l1Url = (env.SETTLEMENT_L1_SOCIAL_URLS?.split(",")[0]?.trim()
-    || env.SETTLEMENT_L1_URL?.trim()
-    || env.SETTLEMENT_L1_SOCIAL_URL?.trim()
-    || env.L1_SOCIAL_URL?.trim()
-    || "").replace(/\/+$/, "");
+  const l1Url = (
+    env.SETTLEMENT_L1_SOCIAL_URLS?.split(",")[0]?.trim() ||
+    env.SETTLEMENT_L1_URL?.trim() ||
+    env.SETTLEMENT_L1_SOCIAL_URL?.trim() ||
+    env.L1_SOCIAL_URL?.trim() ||
+    ""
+  ).replace(/\/+$/, "");
   const keyHex = env.SETTLEMENT_ENGINE_KEY?.trim() || "";
   if (!l1Url || !keyHex) return null;
   let pqKey: PQKey;
@@ -67,7 +72,10 @@ export function anchorFromEnv(env: NodeJS.ProcessEnv): L1Anchor | null {
 }
 
 /** The `social.p2p-swap` record for one swap event (fiat PII stays off chain). */
-export function swapEventRecord(event: P2pSwapEvent, from: string): P2pSwapRecord {
+export function swapEventRecord(
+  event: P2pSwapEvent,
+  from: string,
+): P2pSwapRecord {
   return p2pSwapRecord({
     from,
     to: event.swapId,
@@ -98,25 +106,48 @@ export function swapEventRecord(event: P2pSwapEvent, from: string): P2pSwapRecor
       ? {
           verifySide: event.verify.side,
           verifyObserved: event.verify.observed,
-          ...(event.verify.txId !== undefined ? { verifyTxId: event.verify.txId } : {}),
-          ...(event.verify.amount !== undefined ? { verifyAmount: event.verify.amount } : {}),
-          ...(event.verify.remark !== undefined ? { verifyRemark: event.verify.remark } : {}),
-          ...(event.verify.paidAt !== undefined ? { verifyPaidAt: event.verify.paidAt } : {}),
+          ...(event.verify.txId !== undefined
+            ? { verifyTxId: event.verify.txId }
+            : {}),
+          ...(event.verify.amount !== undefined
+            ? { verifyAmount: event.verify.amount }
+            : {}),
+          ...(event.verify.remark !== undefined
+            ? { verifyRemark: event.verify.remark }
+            : {}),
+          ...(event.verify.paidAt !== undefined
+            ? { verifyPaidAt: event.verify.paidAt }
+            : {}),
           verifyEvidence: event.verify.evidenceKind,
-          ...(event.verify.receiptVerified !== undefined ? { verifyReceipt: event.verify.receiptVerified } : {}),
-          ...(event.verify.captures?.length ? { verifyCaptures: event.verify.captures.join(",") } : {}),
+          ...(event.verify.receiptVerified !== undefined
+            ? { verifyReceipt: event.verify.receiptVerified }
+            : {}),
+          ...(event.verify.captures?.length
+            ? { verifyCaptures: event.verify.captures.join(",") }
+            : {}),
         }
       : {}),
     // A machine confirm anchors how it was obtained (§12 provenance).
-    ...(event.eventType === "payment_confirm" && event.verifySource ? { verifyEvidence: event.verifySource } : {}),
-    ...(event.eventType === "dispute_resolve" && event.arbiterDid ? { arbiterDid: event.arbiterDid } : {}),
+    ...(event.eventType === "payment_confirm" && event.verifySource
+      ? { verifyEvidence: event.verifySource }
+      : {}),
+    ...(event.eventType === "dispute_resolve" && event.arbiterDid
+      ? { arbiterDid: event.arbiterDid }
+      : {}),
     ts: event.at,
   });
 }
 
 /** Author-sign the record with the engine's PQ key (mldsa scheme). */
-export function signSwapRecord(record: P2pSwapRecord, pqKey: PQKey): SignedSwapRecord {
-  return { ...record, sigScheme: "mldsa", sig: signChallengePQ(pqKey, recordDigest(record)) };
+export function signSwapRecord(
+  record: P2pSwapRecord,
+  pqKey: PQKey,
+): SignedSwapRecord {
+  return {
+    ...record,
+    sigScheme: "mldsa",
+    sig: signChallengePQ(pqKey, recordDigest(record)),
+  };
 }
 
 function arraysEqual(a: Uint8Array | string, b: Uint8Array | string): boolean {
@@ -150,12 +181,18 @@ export async function submitSocialRecord(
   let beneficiary: unknown = null;
   let amount = Coin.valueOf(0n, BIG).negate();
   if ((wallet as unknown as { getFee(): boolean }).getFee()) {
-    amount = amount.add((Coin as unknown as { FEE_DEFAULT: Coin }).FEE_DEFAULT.negate());
+    amount = amount.add(
+      (Coin as unknown as { FEE_DEFAULT: Coin }).FEE_DEFAULT.negate(),
+    );
   }
   for (const spendable of coinList) {
     const utxo = spendable.getUTXO();
     if (!utxo || !arraysEqual(utxo.getValue().getTokenid(), BIG)) continue;
-    beneficiary = await (wallet as unknown as { getECKey(a: unknown, b: unknown): Promise<unknown> }).getECKey(null, utxo.getAddress());
+    beneficiary = await (
+      wallet as unknown as {
+        getECKey(a: unknown, b: unknown): Promise<unknown>;
+      }
+    ).getECKey(null, utxo.getAddress());
     amount = amount.add(utxo.getValue());
     tx.addInput2(utxo.getBlockHash(), spendable);
     if (!amount.isNegative()) {
@@ -167,15 +204,26 @@ export async function submitSocialRecord(
     throw new Error("insufficient spendable outputs for social tx");
   }
 
-  await (wallet as unknown as { signTransaction(t: Transaction, a: unknown, m: string): Promise<void> }).signTransaction(tx, null, "THROW");
+  await (
+    wallet as unknown as {
+      signTransaction(t: Transaction, a: unknown, m: string): Promise<void>;
+    }
+  ).signTransaction(tx, null, "THROW");
   await wallet.submitTransaction(tx);
   return tx.getHash().toString();
 }
 
-export type SubmitRecord = (l1Url: string, pqKey: PQKey, record: unknown) => Promise<string>;
+export type SubmitRecord = (
+  l1Url: string,
+  pqKey: PQKey,
+  record: unknown,
+) => Promise<string>;
 
 /** Build the `deps.anchor` hook: sign the record and submit it to L1-SOCIAL. */
-export function l1Anchor(cfg: L1Anchor, submit: SubmitRecord = submitSocialRecord): (event: P2pSwapEvent) => Promise<{ txid?: string }> {
+export function l1Anchor(
+  cfg: L1Anchor,
+  submit: SubmitRecord = submitSocialRecord,
+): (event: P2pSwapEvent) => Promise<{ txid?: string }> {
   return async (event: P2pSwapEvent) => {
     // Discovery pool when present: the configured `l1Url` is only the boot
     // candidate, and a pool that has gone dark fails closed (transition

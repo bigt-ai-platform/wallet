@@ -6,7 +6,12 @@
  * event and a replay is deterministic. Amounts are decimal strings so no float
  * rounding can make a settlement check pass or fail by accident.
  */
-import type { P2pSwapStatus, PairingGrant, PaymentVerdict, VerifyEvidenceKind } from "p2p-protocol";
+import type {
+  P2pSwapStatus,
+  PairingGrant,
+  PaymentVerdict,
+  VerifyEvidenceKind,
+} from "p2p-protocol";
 
 export type { P2pSwapStatus };
 export type { PairingGrant, PaymentVerdict, VerifyEvidenceKind };

@@ -41,7 +41,11 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { pathToFileURL } from "node:url";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { isNonPublicLiteral, nonPublicEndpointReason, publicOnlyFetch } from "./netguard.js";
+import {
+  isNonPublicLiteral,
+  nonPublicEndpointReason,
+  publicOnlyFetch,
+} from "./netguard.js";
 import { hexToBytes } from "did";
 import { pqPubFromDid } from "did/pq";
 import { PQKey, Utils } from "bigtangle-ts";
@@ -63,14 +67,26 @@ import {
   type VerdictExpectation,
 } from "p2p-protocol";
 import { verifyRecordSig } from "record-sig";
-import { ACTION_STATUS, DEDICATED_ACTIONS, canTransition, statusForAction } from "./state.js";
+import {
+  ACTION_STATUS,
+  DEDICATED_ACTIONS,
+  canTransition,
+  statusForAction,
+} from "./state.js";
 import {
   reputationDetail,
   reputationForDid,
   reputationFromEvents,
   type ReputationReport,
 } from "./reputation.js";
-import { RATE_LIMIT, RATE_LIMIT_READ, RATE_WINDOW_MS, ReplayGuard, validateSignedRequest, type RateLimits } from "./sign.js";
+import {
+  RATE_LIMIT,
+  RATE_LIMIT_READ,
+  RATE_WINDOW_MS,
+  ReplayGuard,
+  validateSignedRequest,
+  type RateLimits,
+} from "./sign.js";
 import { PgNonceStore, type NonceStore } from "./nonceStore.js";
 import { escrowAddress, settlementParams } from "./escrow.js";
 import {
@@ -86,7 +102,15 @@ import {
   vaultFor,
   type EscrowKind,
 } from "./escrowSpend.js";
-import { HttpChainClient, confirmedTxToAddress, verifyChainLock, verifyChainPayment, verifyPaymentOutput, type ChainClient, type ChainEvidence } from "./chain.js";
+import {
+  HttpChainClient,
+  confirmedTxToAddress,
+  verifyChainLock,
+  verifyChainPayment,
+  verifyPaymentOutput,
+  type ChainClient,
+  type ChainEvidence,
+} from "./chain.js";
 import {
   CNY_RAILS,
   isCnyRail,
@@ -172,7 +196,9 @@ export interface SettlementDeps {
    * carries the exact `social.p2p-order` record the request claims (author =
    * seller, orderId, status, terms). Preferred over `verifyTx` when present.
    */
-  verifyOrderTx?: (check: OrderTxCheck) => Promise<{ ok: boolean; error?: string }>;
+  verifyOrderTx?: (
+    check: OrderTxCheck,
+  ) => Promise<{ ok: boolean; error?: string }>;
   /** Bounded polls for verifyTx before 409 (default 4; tests set 1). */
   orderTxTries?: number;
   /**
@@ -182,7 +208,12 @@ export interface SettlementDeps {
    */
   readDevice?: (args: DeviceReadArgs) => Promise<DeviceReadResult>;
   /** Mutable watch-loop state surfaced by /capabilities (replay.ts sync). */
-  watchState?: { height: number | null; hash: string | null; lastRunAt: number | null; lastError: string | null };
+  watchState?: {
+    height: number | null;
+    hash: string | null;
+    lastRunAt: number | null;
+    lastError: string | null;
+  };
 }
 
 const ORDER_ID_RE = P2P_ORDER_ID_RE;
@@ -202,12 +233,17 @@ const TXID_RE = /^[0-9a-f]{64}$/i;
  */
 export type AnchorMode = "required" | "best-effort" | "off";
 
-export function normalizeAnchorMode(v: string | undefined, store?: string): AnchorMode {
+export function normalizeAnchorMode(
+  v: string | undefined,
+  store?: string,
+): AnchorMode {
   const m = (v ?? "").trim().toLowerCase();
   if (store === "blob") {
     // Blob mode keeps swap events only in memory; L1-SOCIAL is their sole durable copy.
     if (m && m !== "required") {
-      throw new Error(`SETTLEMENT_ANCHOR_MODE=${m} is unsafe with SETTLEMENT_STORE=blob: unanchored swap events are lost on restart`);
+      throw new Error(
+        `SETTLEMENT_ANCHOR_MODE=${m} is unsafe with SETTLEMENT_STORE=blob: unanchored swap events are lost on restart`,
+      );
     }
     return "required";
   }
@@ -253,7 +289,10 @@ function receiptBytes(receipt: string): Buffer | null {
   if (!bytes.length) return null;
   // Buffer.from is lenient — round-trip to reject payloads that were not
   // actually base64 (URL-safe alphabets, truncated padding, garbage).
-  if (bytes.toString("base64").replace(/=+$/, "") !== payload.replace(/=+$/, "")) return null;
+  if (
+    bytes.toString("base64").replace(/=+$/, "") !== payload.replace(/=+$/, "")
+  )
+    return null;
   return bytes;
 }
 
@@ -277,15 +316,23 @@ function escrowKeyFromDid(did: string | undefined): PQKey | null {
  * paired endpoint. Imported lazily — an engine without the worker, or a test
  * injecting a fake reader, never loads it.
  */
-async function defaultDeviceRead(args: DeviceReadArgs): Promise<DeviceReadResult> {
-  const { connectFromGrant, verifyPayment, verifyPaymentViaNotification } = await import("p2p-verify");
-  const gateway = await connectFromGrant(args.grant, args.fetchImpl ? { fetchImpl: args.fetchImpl } : {});
+async function defaultDeviceRead(
+  args: DeviceReadArgs,
+): Promise<DeviceReadResult> {
+  const { connectFromGrant, verifyPayment, verifyPaymentViaNotification } =
+    await import("p2p-verify");
+  const gateway = await connectFromGrant(
+    args.grant,
+    args.fetchImpl ? { fetchImpl: args.fetchImpl } : {},
+  );
   const spec = {
     side: args.side,
     rail: args.rail as "wechat" | "alipay" | "bank",
     expected: args.expected,
     ...(args.evidenceKind ? { evidenceKind: args.evidenceKind } : {}),
-    ...(args.receiptVerified !== undefined ? { receiptVerified: args.receiptVerified } : {}),
+    ...(args.receiptVerified !== undefined
+      ? { receiptVerified: args.receiptVerified }
+      : {}),
   };
   try {
     // WeChat hides its accessibility tree, so the payee's receipt notification
@@ -301,7 +348,12 @@ async function defaultDeviceRead(args: DeviceReadArgs): Promise<DeviceReadResult
 export { isNonPublicIp, nonPublicEndpointReason } from "./netguard.js";
 
 /** Swap states in which a buyer's claim can hold the seller's escrow hostage. */
-const OPEN_SWAP_STATUSES = new Set(["MATCHED", "ESCROW_LOCKED", "PAYMENT_PENDING", "PAYMENT_CLAIMED"]);
+const OPEN_SWAP_STATUSES = new Set([
+  "MATCHED",
+  "ESCROW_LOCKED",
+  "PAYMENT_PENDING",
+  "PAYMENT_CLAIMED",
+]);
 
 /**
  * Per-IP sliding-window cap. The per-DID caps are a throttle, not a sybil
@@ -336,7 +388,9 @@ export function trustProxyFromEnv(raw: string | undefined): boolean | string {
 }
 
 /** Unknown values keep disputes open — never auto-settle by typo. */
-export function normalizeDisputeDefault(raw: string | undefined): "none" | "refund" | "release" {
+export function normalizeDisputeDefault(
+  raw: string | undefined,
+): "none" | "refund" | "release" {
   const v = raw?.trim();
   return v === "refund" || v === "release" ? v : "none";
 }
@@ -344,7 +398,8 @@ export function normalizeDisputeDefault(raw: string | undefined): "none" | "refu
 export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   const env = deps.env ?? process.env;
   const now = deps.now ?? Date.now;
-  const guard = deps.guard ?? new ReplayGuard(now, rateLimitsFromEnv(env), deps.nonceStore);
+  const guard =
+    deps.guard ?? new ReplayGuard(now, rateLimitsFromEnv(env), deps.nonceStore);
   // Hydrate the nonce set before serving, so a nonce accepted before a restart
   // is still rejected (docs/p2p.md §18.1).
   if (!deps.guard && deps.nonceStore) {
@@ -352,7 +407,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   }
   // Trust the deploy's reverse proxy (Caddy) for the client IP; the engine binds
   // loopback. SETTLEMENT_TRUST_PROXY=0 when exposed directly.
-  const app = Fastify({ logger: deps.log ?? env.SETTLEMENT_LOG === "1", trustProxy: trustProxyFromEnv(env.SETTLEMENT_TRUST_PROXY) });
+  const app = Fastify({
+    logger: deps.log ?? env.SETTLEMENT_LOG === "1",
+    trustProxy: trustProxyFromEnv(env.SETTLEMENT_TRUST_PROXY),
+  });
 
   // Per-IP cap (docs/p2p.md §27.4): bounds floods the per-DID throttle cannot.
   const ipLimit = Number(env.SETTLEMENT_IP_RATE_LIMIT ?? 600);
@@ -360,36 +418,53 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const allowIp = makeIpLimiter(ipLimit, RATE_WINDOW_MS, now);
     app.addHook("onRequest", async (request, reply) => {
       if (request.url === "/healthz") return;
-      if (!allowIp(request.ip)) return reply.code(429).send({ error: "rate limit exceeded (ip)" });
+      if (!allowIp(request.ip))
+        return reply.code(429).send({ error: "rate limit exceeded (ip)" });
     });
   }
 
-  app.addContentTypeParser("application/json", { parseAs: "string" }, (req, body, done) => {
-    (req as { rawBody?: string }).rawBody = body as string;
-    try {
-      done(null, JSON.parse(body as string));
-    } catch (e) {
-      done(e as Error, undefined);
-    }
-  });
+  app.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (req, body, done) => {
+      (req as { rawBody?: string }).rawBody = body as string;
+      try {
+        done(null, JSON.parse(body as string));
+      } catch (e) {
+        done(e as Error, undefined);
+      }
+    },
+  );
 
   const corsOrigins = new Set(
-    (env.CORS_ORIGIN ?? "http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1")
+    (
+      env.CORS_ORIGIN ??
+      "http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1"
+    )
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
   );
   // Any https subdomain of CORS_ORIGIN_DOMAIN (default bigt.ai) is allowed; empty disables it.
-  const corsDomain = (env.CORS_ORIGIN_DOMAIN ?? "bigt.ai").trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const corsDomainRe = corsDomain ? new RegExp("^https://([a-z0-9-]+\\.)*" + corsDomain + "$") : null;
+  const corsDomain = (env.CORS_ORIGIN_DOMAIN ?? "bigt.ai")
+    .trim()
+    .toLowerCase()
+    .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const corsDomainRe = corsDomain
+    ? new RegExp("^https://([a-z0-9-]+\\.)*" + corsDomain + "$")
+    : null;
   app.addHook("onRequest", async (req, reply) => {
     const origin = req.headers.origin;
-    if (!origin || !(corsOrigins.has(origin) || corsDomainRe?.test(origin))) return;
+    if (!origin || !(corsOrigins.has(origin) || corsDomainRe?.test(origin)))
+      return;
     reply.header("access-control-allow-origin", origin);
     reply.header("vary", "origin");
     if (req.method === "OPTIONS") {
       reply.header("access-control-allow-methods", "GET,HEAD,POST,OPTIONS");
-      reply.header("access-control-allow-headers", String(req.headers["access-control-request-headers"] ?? "*"));
+      reply.header(
+        "access-control-allow-headers",
+        String(req.headers["access-control-request-headers"] ?? "*"),
+      );
       reply.header("access-control-max-age", "600");
       return reply.code(204).send();
     }
@@ -417,18 +492,22 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     // The ad's payment window (timeLimit → payWindowSec) wins over the engine
     // default, so the buyer gets the time the seller advertised (docs/p2p.md).
     const envTtl = Number(env.SETTLEMENT_CNY_REMARK_TTL ?? "900");
-    return (
-      swap.payWindowSec && swap.payWindowSec > 0
-        ? Math.floor(swap.payWindowSec)
-        : Number.isFinite(envTtl) && envTtl > 0
-          ? Math.floor(envTtl)
-          : 900
-    );
+    return swap.payWindowSec && swap.payWindowSec > 0
+      ? Math.floor(swap.payWindowSec)
+      : Number.isFinite(envTtl) && envTtl > 0
+      ? Math.floor(envTtl)
+      : 900;
   }
 
   async function paymentDeadline(swap: P2pSwapEvent): Promise<number> {
-    const instructions = (await deps.store.events(swap.swapId)).find((event) => event.eventType === "instructions");
-    return (Math.floor((instructions?.at ?? swap.at) / 1000) + paymentWindowSec(swap)) * 1000;
+    const instructions = (await deps.store.events(swap.swapId)).find(
+      (event) => event.eventType === "instructions",
+    );
+    return (
+      (Math.floor((instructions?.at ?? swap.at) / 1000) +
+        paymentWindowSec(swap)) *
+      1000
+    );
   }
 
   async function expiryDeadline(swap: P2pSwapEvent): Promise<number | null> {
@@ -437,7 +516,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return duration > 0 ? swap.at + duration : null;
   }
 
-  async function instructionsView(swap: P2pSwapEvent, profile: PaymentProfile, remark: string) {
+  async function instructionsView(
+    swap: P2pSwapEvent,
+    profile: PaymentProfile,
+    remark: string,
+  ) {
     return {
       method: profile.method,
       rail: swap.wantRail,
@@ -452,10 +535,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     };
   }
 
-  function escrowFor(sellerDid?: string, buyerDid?: string, engineHexOverride?: string): string | undefined {
+  function escrowFor(
+    sellerDid?: string,
+    buyerDid?: string,
+    engineHexOverride?: string,
+  ): string | undefined {
     const seller = escrowKeyFromDid(sellerDid);
     const buyer = escrowKeyFromDid(buyerDid);
-    const engineHex = (engineHexOverride ?? "").trim() || env.SETTLEMENT_ENGINE_PUBKEY?.trim();
+    const engineHex =
+      (engineHexOverride ?? "").trim() || env.SETTLEMENT_ENGINE_PUBKEY?.trim();
     if (!seller || !buyer || !engineHex) return undefined;
     try {
       const engine = PQKey.fromPrefixedPublicKey(hexToBytes(engineHex));
@@ -465,7 +553,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     }
   }
 
-  async function persist(event: P2pSwapEvent, prepared?: () => void): Promise<P2pSwapEvent> {
+  async function persist(
+    event: P2pSwapEvent,
+    prepared?: () => void,
+  ): Promise<P2pSwapEvent> {
     let stored = event;
     await deps.store.appendEvent(event, async () => {
       let txid: string | undefined;
@@ -481,7 +572,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
           // the fail-closed default (docs/p2p.md §8/§14).
           if (!deps.anchorBestEffort) throw e;
           console.warn(
-            `p2p-engine: anchor failed (best-effort — storing without chain record): ${e instanceof Error ? e.message : String(e)}`,
+            `p2p-engine: anchor failed (best-effort — storing without chain record): ${
+              e instanceof Error ? e.message : String(e)
+            }`,
           );
         }
       }
@@ -502,8 +595,14 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 
   /** May this swap's escrow address still hold (or be about to hold) funds? */
   function holdsEscrow(s: P2pSwapEvent): boolean {
-    if (s.status === "ESCROW_RELEASED" || s.status === "COMPLETED" || s.status === "ESCROW_REFUNDED") return false;
-    if ((s.status === "CANCELLED" || s.status === "EXPIRED") && !s.escrowTxHash) return false;
+    if (
+      s.status === "ESCROW_RELEASED" ||
+      s.status === "COMPLETED" ||
+      s.status === "ESCROW_REFUNDED"
+    )
+      return false;
+    if ((s.status === "CANCELLED" || s.status === "EXPIRED") && !s.escrowTxHash)
+      return false;
     return true;
   }
 
@@ -513,7 +612,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   function takeCosignSlot(): boolean {
     if (!Number.isFinite(cosignMax) || cosignMax <= 0) return true;
     const t = now();
-    while (cosignTimes.length && t - cosignTimes[0] >= 3_600_000) cosignTimes.shift();
+    while (cosignTimes.length && t - cosignTimes[0] >= 3_600_000)
+      cosignTimes.shift();
     if (cosignTimes.length >= cosignMax) return false;
     cosignTimes.push(t);
     return true;
@@ -548,7 +648,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * key must be a participant and the derived address must be the one the
    * seller funded — anything else is a key/config mismatch, never a spend.
    */
-  function escrowContext(swap: P2pSwapEvent): EscrowContext | { code: number; reason: string } {
+  function escrowContext(
+    swap: P2pSwapEvent,
+  ): EscrowContext | { code: number; reason: string } {
     // Prefer the swap's PINNED engine key (rotation-safe, docs/p2p.md §26/§27);
     // legacy/unpinned swaps fall back to the current key.
     const declared = enginePubkeyHex();
@@ -558,7 +660,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       return { code: 503, reason: "engine escrow key not configured" };
     }
     const vault = vaultFor(swap.sellerDid, swap.buyerDid, pubHex);
-    if (!vault) return { code: 409, reason: "swap has no escrow vault (non-PQ party key)" };
+    if (!vault)
+      return {
+        code: 409,
+        reason: "swap has no escrow vault (non-PQ party key)",
+      };
     let engineKey: PQKey | null;
     if (!pinned || pinned === declared) {
       // The current key — engineSigner also validates KEY against PUBKEY so a
@@ -573,31 +679,52 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       engineKey = engineSignerFor(env, pinned);
     }
     if (!engineKey) {
-      return { code: 503, reason: "engine holds no key for this swap's pinned enginePubkey (a retired key must be in SETTLEMENT_ENGINE_KEYS)" };
+      return {
+        code: 503,
+        reason:
+          "engine holds no key for this swap's pinned enginePubkey (a retired key must be in SETTLEMENT_ENGINE_KEYS)",
+      };
     }
     if (vault.indexOf(engineKey) < 0) {
       return { code: 503, reason: "engine key is not an escrow participant" };
     }
-    if (!swap.escrowAddress || vault.address(settlementParams(env)).toBase58() !== swap.escrowAddress) {
-      return { code: 409, reason: "escrow address does not match the vault keys" };
+    if (
+      !swap.escrowAddress ||
+      vault.address(settlementParams(env)).toBase58() !== swap.escrowAddress
+    ) {
+      return {
+        code: 409,
+        reason: "escrow address does not match the vault keys",
+      };
     }
     return { vault, engineKey };
   }
 
   /** Persist the spend's tx hash (and the signature that made it) before waiting —
    *  the restart path: a crash after broadcast must still find the transaction. */
-  async function rememberSpend(swap: P2pSwapEvent, fields: Partial<EscrowSigning>): Promise<void> {
+  async function rememberSpend(
+    swap: P2pSwapEvent,
+    fields: Partial<EscrowSigning>,
+  ): Promise<void> {
     const existing = await deps.store.getEscrowSigning(swap.swapId);
     await deps.store.putEscrowSigning({
       swapId: swap.swapId,
       refundAddress: fields.refundAddress || existing?.refundAddress || "",
       releaseSig: fields.releaseSig || existing?.releaseSig || "",
       refundSig: fields.refundSig || existing?.refundSig || "",
-      releaseSignerDid: fields.releaseSignerDid || existing?.releaseSignerDid || "",
-      refundSignerDid: fields.refundSignerDid || existing?.refundSignerDid || "",
+      releaseSignerDid:
+        fields.releaseSignerDid || existing?.releaseSignerDid || "",
+      refundSignerDid:
+        fields.refundSignerDid || existing?.refundSignerDid || "",
       sellerDid: existing?.sellerDid || swap.sellerDid || "",
-      releaseTxHash: fields.releaseTxHash !== undefined ? fields.releaseTxHash : (existing?.releaseTxHash ?? null),
-      refundTxHash: fields.refundTxHash !== undefined ? fields.refundTxHash : (existing?.refundTxHash ?? null),
+      releaseTxHash:
+        fields.releaseTxHash !== undefined
+          ? fields.releaseTxHash
+          : existing?.releaseTxHash ?? null,
+      refundTxHash:
+        fields.refundTxHash !== undefined
+          ? fields.refundTxHash
+          : existing?.refundTxHash ?? null,
       createdAt: existing?.createdAt ?? now(),
       updatedAt: now(),
     });
@@ -613,13 +740,21 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const target = kind === "release" ? "ESCROW_RELEASED" : "ESCROW_REFUNDED";
     const latest = (await deps.store.getSwap(swap.swapId)) ?? swap;
     if (latest.status !== target && !canTransition(latest.status, target)) {
-      if (latest.status === "ESCROW_REFUNDED" || latest.status === "COMPLETED") {
+      if (
+        latest.status === "ESCROW_REFUNDED" ||
+        latest.status === "COMPLETED"
+      ) {
         // Already settled by a previous attempt — idempotent success.
         return { ok: true, status: latest.status, txHash, pending: false };
       }
-      return { ok: false, code: 409, reason: `cannot ${latest.status} → ${target}` };
+      return {
+        ok: false,
+        code: 409,
+        reason: `cannot ${latest.status} → ${target}`,
+      };
     }
-    if (latest.status === target) return { ok: true, status: latest.status, txHash, pending: false };
+    if (latest.status === target)
+      return { ok: true, status: latest.status, txHash, pending: false };
     const evidence: Partial<P2pSwapEvent> =
       kind === "release" ? { releaseTxHash: txHash } : { refundTxHash: txHash };
     let stored = await persist({
@@ -633,7 +768,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     });
     // CNY rails have no fiat payout step — the seller already got the CNY,
     // so `complete` closes the loop while the engine is the acting signer.
-    if (kind === "release" && isCnyRail(stored.wantRail) && canTransition(stored.status, "COMPLETED")) {
+    if (
+      kind === "release" &&
+      isCnyRail(stored.wantRail) &&
+      canTransition(stored.status, "COMPLETED")
+    ) {
       stored = await persist({
         ...stored,
         seq: stored.seq + 1,
@@ -667,7 +806,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const { swap, kind } = opts;
     const target = kind === "release" ? "ESCROW_RELEASED" : "ESCROW_REFUNDED";
     const row = await deps.store.getEscrowSigning(swap.swapId);
-    const priorTx = kind === "release" ? row?.releaseTxHash ?? null : row?.refundTxHash ?? null;
+    const priorTx =
+      kind === "release"
+        ? row?.releaseTxHash ?? null
+        : row?.refundTxHash ?? null;
     if (!canTransition(swap.status, target)) {
       // A retry after a finished spend (client lost the response, hook raced a
       // cosign): report the stored outcome instead of a spurious conflict.
@@ -675,12 +817,23 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         (kind === "release" &&
           (swap.status === "ESCROW_RELEASED" || swap.status === "COMPLETED")) ||
         (kind === "refund" && swap.status === "ESCROW_REFUNDED");
-      if (settled) return { ok: true, status: swap.status, txHash: priorTx, pending: false };
-      return { ok: false, code: 409, reason: `cannot ${swap.status} → ${target}` };
+      if (settled)
+        return {
+          ok: true,
+          status: swap.status,
+          txHash: priorTx,
+          pending: false,
+        };
+      return {
+        ok: false,
+        code: 409,
+        reason: `cannot ${swap.status} → ${target}`,
+      };
     }
     if (kind === "release") {
       const reason = frozen(swap);
-      if (reason) return { ok: false, code: 422, reason: `swap frozen: ${reason}` };
+      if (reason)
+        return { ok: false, code: 422, reason: `swap frozen: ${reason}` };
     }
     if (!deps.chain) {
       const stored = await persist({
@@ -699,24 +852,37 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!swap.escrowTxHash || !swap.escrowAddress) {
       return { ok: false, code: 409, reason: "swap has no locked escrow" };
     }
-    const toBase58 = kind === "release" ? swap.receiveAddress ?? "" : opts.refundAddress ?? "";
+    const toBase58 =
+      kind === "release" ? swap.receiveAddress ?? "" : opts.refundAddress ?? "";
     const to = toBase58 ? destAddress(toBase58) : null;
     if (!to) {
       return {
         ok: false,
         code: kind === "release" ? 409 : 400,
-        reason: kind === "release" ? "swap has no receive address" : "refundAddress required",
+        reason:
+          kind === "release"
+            ? "swap has no receive address"
+            : "refundAddress required",
       };
     }
 
-    const submitted = kind === "release" ? row?.releaseTxHash : row?.refundTxHash;
-    const sigHex = opts.sigHex ?? (kind === "release" ? row?.releaseSig || null : row?.refundSig || null);
+    const submitted =
+      kind === "release" ? row?.releaseTxHash : row?.refundTxHash;
+    const sigHex =
+      opts.sigHex ??
+      (kind === "release" ? row?.releaseSig || null : row?.refundSig || null);
 
     // A transaction we already broadcast: wait on it instead of rebuilding —
     // the same skeleton would produce the same bytes anyway (idempotent).
     if (submitted) {
-      const out = await awaitConfirmed(deps.chain, submitted, to, escrowPollOpts());
-      if (out.confirmed) return finishSettle(swap, kind, out.txHash, opts.actorDid);
+      const out = await awaitConfirmed(
+        deps.chain,
+        submitted,
+        to,
+        escrowPollOpts(),
+      );
+      if (out.confirmed)
+        return finishSettle(swap, kind, out.txHash, opts.actorDid);
       // The status endpoint can lag the output/address indexes. Both fallback
       // proofs must still identify the exact transaction we broadcast.
       const proof = await verifyPaymentOutput(deps.chain, {
@@ -726,26 +892,48 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         amount: swap.giveAmount ?? "",
       });
       if (proof.ok) {
-        app.log.info({ swapId: swap.swapId, kind, txHash: submitted, via: "output" }, "escrow settled");
+        app.log.info(
+          { swapId: swap.swapId, kind, txHash: submitted, via: "output" },
+          "escrow settled",
+        );
         return finishSettle(swap, kind, submitted, opts.actorDid);
       }
       // Check the same transaction in the recipient's address index.
-      const nodeTx = await confirmedTxToAddress(deps.chain, toBase58, submitted);
+      const nodeTx = await confirmedTxToAddress(
+        deps.chain,
+        toBase58,
+        submitted,
+      );
       if (nodeTx) {
-        app.log.info({ swapId: swap.swapId, kind, txHash: nodeTx, via: "index" }, "escrow settled");
+        app.log.info(
+          { swapId: swap.swapId, kind, txHash: nodeTx, via: "index" },
+          "escrow settled",
+        );
         return finishSettle(swap, kind, nodeTx, opts.actorDid);
       }
       if (out.status !== "DROPPED") {
         app.log.warn(
-          { swapId: swap.swapId, kind, status: out.status, reason: out.reason, output: proof.reason },
+          {
+            swapId: swap.swapId,
+            kind,
+            status: out.status,
+            reason: out.reason,
+            output: proof.reason,
+          },
           "escrow hook: settlement deferred",
         );
-        return { ok: true, status: swap.status, txHash: out.txHash, pending: true };
+        return {
+          ok: true,
+          status: swap.status,
+          txHash: out.txHash,
+          pending: true,
+        };
       }
       // Dropped (reorg/conflict): rebuild below and resubmit the same bytes.
     }
 
-    if (!sigHex) return { ok: false, code: 409, reason: `no stored ${kind} signature` };
+    if (!sigHex)
+      return { ok: false, code: 409, reason: `no stored ${kind} signature` };
     let signerKey = opts.signerKey;
     for (const did of [opts.signerDid, swap.sellerDid ?? ""]) {
       if (signerKey || !did) break;
@@ -759,7 +947,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const signerIdx = ctx.vault.indexOf(signerKey);
     const engineIdx = ctx.vault.indexOf(ctx.engineKey);
     if (signerIdx < 0 || signerIdx === engineIdx) {
-      return { ok: false, code: 409, reason: "signer is not an escrow participant" };
+      return {
+        ok: false,
+        code: 409,
+        reason: "signer is not an escrow participant",
+      };
     }
 
     const skeleton = await buildSkeleton({
@@ -770,21 +962,47 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       to,
     });
     if (!skeleton) {
-      return { ok: false, code: 409, reason: "escrow output not found (lock unconfirmed or already spent)" };
+      return {
+        ok: false,
+        code: 409,
+        reason: "escrow output not found (lock unconfirmed or already spent)",
+      };
     }
     if (!verifyParticipantSig(skeleton.sighash, sigHex, signerKey)) {
-      return { ok: false, code: 422, reason: `${kind} signature does not verify` };
+      return {
+        ok: false,
+        code: 422,
+        reason: `${kind} signature does not verify`,
+      };
     }
     if (!takeCosignSlot()) {
-      return { ok: false, code: 429, reason: "engine co-sign cap reached (SETTLEMENT_COSIGN_MAX_PER_HOUR); settlement deferred" };
+      return {
+        ok: false,
+        code: 429,
+        reason:
+          "engine co-sign cap reached (SETTLEMENT_COSIGN_MAX_PER_HOUR); settlement deferred",
+      };
     }
-    const engineSig = Utils.HEX.encode(ctx.engineKey.sign(skeleton.sighash).serialize());
-    assembleSpend(ctx.vault, skeleton.tx, new Map([[signerIdx, sigHex], [engineIdx, engineSig]]));
+    const engineSig = Utils.HEX.encode(
+      ctx.engineKey.sign(skeleton.sighash).serialize(),
+    );
+    assembleSpend(
+      ctx.vault,
+      skeleton.tx,
+      new Map([
+        [signerIdx, sigHex],
+        [engineIdx, engineSig],
+      ]),
+    );
     const txHash = skeleton.tx.getHash().toString();
     try {
       await broadcastSpend(deps.chain, skeleton.tx);
     } catch (e) {
-      return { ok: false, code: 502, reason: `broadcast failed: ${String(e).slice(0, 160)}` };
+      return {
+        ok: false,
+        code: 502,
+        reason: `broadcast failed: ${String(e).slice(0, 160)}`,
+      };
     }
     auditCosign({
       swapId: swap.swapId,
@@ -799,8 +1017,17 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     await rememberSpend(
       swap,
       kind === "release"
-        ? { releaseSig: sigHex, releaseSignerDid: opts.signerDid, releaseTxHash: txHash }
-        : { refundSig: sigHex, refundSignerDid: opts.signerDid, refundAddress: toBase58, refundTxHash: txHash },
+        ? {
+            releaseSig: sigHex,
+            releaseSignerDid: opts.signerDid,
+            releaseTxHash: txHash,
+          }
+        : {
+            refundSig: sigHex,
+            refundSignerDid: opts.signerDid,
+            refundAddress: toBase58,
+            refundTxHash: txHash,
+          },
     );
     const out = await awaitConfirmed(deps.chain, txHash, to, escrowPollOpts());
     if (out.confirmed) return finishSettle(swap, kind, txHash, opts.actorDid);
@@ -812,16 +1039,28 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       amount: swap.giveAmount ?? "",
     });
     if (proof.ok) {
-      app.log.info({ swapId: swap.swapId, kind, txHash, via: "output" }, "escrow settled");
+      app.log.info(
+        { swapId: swap.swapId, kind, txHash, via: "output" },
+        "escrow settled",
+      );
       return finishSettle(swap, kind, txHash, opts.actorDid);
     }
     const nodeTx = await confirmedTxToAddress(deps.chain, toBase58, txHash);
     if (nodeTx) {
-      app.log.info({ swapId: swap.swapId, kind, txHash: nodeTx, via: "index" }, "escrow settled");
+      app.log.info(
+        { swapId: swap.swapId, kind, txHash: nodeTx, via: "index" },
+        "escrow settled",
+      );
       return finishSettle(swap, kind, nodeTx, opts.actorDid);
     }
     app.log.warn(
-      { swapId: swap.swapId, kind, status: out.status, reason: out.reason, output: proof.reason },
+      {
+        swapId: swap.swapId,
+        kind,
+        status: out.status,
+        reason: out.reason,
+        output: proof.reason,
+      },
       "escrow hook: settlement deferred",
     );
     return { ok: true, status: swap.status, txHash, pending: true };
@@ -845,20 +1084,24 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       return;
     }
     for (const swap of swaps) {
-      const refundable = swap.status === "EXPIRED" || swap.status === "CANCELLED";
+      const refundable =
+        swap.status === "EXPIRED" || swap.status === "CANCELLED";
       if (swap.status !== "PAYMENT_VERIFIED" && !refundable) continue;
       if (inFlight.has(swap.swapId)) continue;
       const row = await deps.store.getEscrowSigning(swap.swapId);
       if (!row) continue;
-      const kind: EscrowKind = swap.status === "PAYMENT_VERIFIED" ? "release" : "refund";
+      const kind: EscrowKind =
+        swap.status === "PAYMENT_VERIFIED" ? "release" : "refund";
       const hasSig = kind === "release" ? !!row.releaseSig : !!row.refundSig;
-      const hasTx = kind === "release" ? !!row.releaseTxHash : !!row.refundTxHash;
+      const hasTx =
+        kind === "release" ? !!row.releaseTxHash : !!row.refundTxHash;
       if (!hasSig && !hasTx) continue;
       if (kind === "release" && !swap.receiveAddress) continue;
       if (kind === "refund" && !row.refundAddress) continue;
       inFlight.add(swap.swapId);
       try {
-        const signerDid = kind === "release" ? row.releaseSignerDid : row.refundSignerDid;
+        const signerDid =
+          kind === "release" ? row.releaseSignerDid : row.refundSignerDid;
         let signerKey: PQKey | null = null;
         if (signerDid) {
           try {
@@ -874,13 +1117,22 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
           signerDid: signerDid || swap.sellerDid || "",
           signerKey,
           refundAddress: row.refundAddress,
-          actorDid: kind === "release" ? engineDid() || swap.sellerDid || "" : swap.sellerDid || "",
+          actorDid:
+            kind === "release"
+              ? engineDid() || swap.sellerDid || ""
+              : swap.sellerDid || "",
         });
         if (!res.ok) {
-          app.log.warn({ swapId: swap.swapId, kind, reason: res.reason }, "escrow hook: settlement deferred");
+          app.log.warn(
+            { swapId: swap.swapId, kind, reason: res.reason },
+            "escrow hook: settlement deferred",
+          );
         }
       } catch (e) {
-        app.log.warn({ swapId: swap.swapId, kind, err: String(e) }, "escrow hook: settlement failed");
+        app.log.warn(
+          { swapId: swap.swapId, kind, err: String(e) },
+          "escrow hook: settlement failed",
+        );
       } finally {
         inFlight.delete(swap.swapId);
       }
@@ -893,7 +1145,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   if (hookMs > 0) {
     const timer = setInterval(() => void escrowHookTick(), hookMs);
     timer.unref?.();
-    const boot = setTimeout(() => void escrowHookTick(), Math.min(hookMs, 5_000));
+    const boot = setTimeout(
+      () => void escrowHookTick(),
+      Math.min(hookMs, 5_000),
+    );
     boot.unref?.();
     app.addHook("onClose", async () => {
       clearInterval(timer);
@@ -902,7 +1157,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   }
 
   /** Apply an arbitration outcome and settle the escrow from the stored presign. */
-  async function resolveDispute(swap: P2pSwapEvent, outcome: "release" | "refund", arbiterDid?: string) {
+  async function resolveDispute(
+    swap: P2pSwapEvent,
+    outcome: "release" | "refund",
+    arbiterDid?: string,
+  ) {
     let stored = await persist({
       ...swap,
       seq: swap.seq + 1,
@@ -914,7 +1173,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       disputeOutcome: outcome,
       at: now(),
     });
-    if (outcome === "refund" && stored.status !== "EXPIRED" && canTransition(stored.status, "EXPIRED")) {
+    if (
+      outcome === "refund" &&
+      stored.status !== "EXPIRED" &&
+      canTransition(stored.status, "EXPIRED")
+    ) {
       // An arbitration refund unwinds the payment states: expire (the engine's
       // act, ordered by the arbiter) then the refund spend brings the tokens
       // home — the seller does not have to be online to be made whole.
@@ -933,7 +1196,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       kind: outcome,
       sigHex: null,
       signerDid:
-        (outcome === "release" ? row?.releaseSignerDid : row?.refundSignerDid) || swap.sellerDid || "",
+        (outcome === "release"
+          ? row?.releaseSignerDid
+          : row?.refundSignerDid) ||
+        swap.sellerDid ||
+        "",
       signerKey: null,
       refundAddress: row?.refundAddress || "",
       actorDid: engineDid() || swap.sellerDid || "",
@@ -980,18 +1247,37 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const confirmMs = secondsMs(env.SETTLEMENT_CNY_CONFIRM_TIMEOUT, 900);
     // Unarbitrated disputes past SETTLEMENT_DISPUTE_TTL (s) take SETTLEMENT_DISPUTE_DEFAULT; `none` keeps them open.
     const disputeTtlMs = secondsMs(env.SETTLEMENT_DISPUTE_TTL, 259_200);
-    const disputeDefault = normalizeDisputeDefault(env.SETTLEMENT_DISPUTE_DEFAULT);
+    const disputeDefault = normalizeDisputeDefault(
+      env.SETTLEMENT_DISPUTE_DEFAULT,
+    );
     for (const swap of swaps) {
       if (sweepInFlight.has(swap.swapId)) continue;
       if (swap.dispute && swap.dispute !== "RESOLVED") {
-        const due = disputeDefault !== "none" && disputeTtlMs > 0 && now() - swap.at >= disputeTtlMs;
-        if (due && (disputeDefault === "refund" || canTransition(swap.status, "PAYMENT_VERIFIED"))) {
+        const due =
+          disputeDefault !== "none" &&
+          disputeTtlMs > 0 &&
+          now() - swap.at >= disputeTtlMs;
+        if (
+          due &&
+          (disputeDefault === "refund" ||
+            canTransition(swap.status, "PAYMENT_VERIFIED"))
+        ) {
           sweepInFlight.add(swap.swapId);
           try {
             const res = await resolveDispute(swap, disputeDefault);
-            app.log.warn({ swapId: swap.swapId, outcome: disputeDefault, settled: res.settled }, "sweep: dispute timed out");
+            app.log.warn(
+              {
+                swapId: swap.swapId,
+                outcome: disputeDefault,
+                settled: res.settled,
+              },
+              "sweep: dispute timed out",
+            );
           } catch (e) {
-            app.log.warn({ swapId: swap.swapId, err: String(e) }, "sweep: dispute default failed");
+            app.log.warn(
+              { swapId: swap.swapId, err: String(e) },
+              "sweep: dispute default failed",
+            );
           } finally {
             sweepInFlight.delete(swap.swapId);
           }
@@ -1009,18 +1295,28 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
               eventType: "dispute_open",
               actorDid: engineDid() || undefined,
               dispute: "OPEN",
-              disputeReason: `auto: payment claim unconfirmed for ${Math.round(confirmMs / 1000)}s`,
+              disputeReason: `auto: payment claim unconfirmed for ${Math.round(
+                confirmMs / 1000,
+              )}s`,
               at: now(),
             });
           } catch (e) {
-            app.log.warn({ swapId: swap.swapId, err: String(e) }, "sweep: auto-dispute failed");
+            app.log.warn(
+              { swapId: swap.swapId, err: String(e) },
+              "sweep: auto-dispute failed",
+            );
           } finally {
             sweepInFlight.delete(swap.swapId);
           }
         }
         continue;
       }
-      if (swap.status !== "MATCHED" && swap.status !== "ESCROW_LOCKED" && swap.status !== "PAYMENT_PENDING") continue;
+      if (
+        swap.status !== "MATCHED" &&
+        swap.status !== "ESCROW_LOCKED" &&
+        swap.status !== "PAYMENT_PENDING"
+      )
+        continue;
       const deadline = await expiryDeadline(swap);
       if (deadline === null || now() < deadline) continue;
       sweepInFlight.add(swap.swapId);
@@ -1047,10 +1343,17 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
             refundAddress: row?.refundAddress || "",
             actorDid: swap.sellerDid || "",
           });
-          if (!res.ok) app.log.warn({ swapId: swap.swapId, reason: res.reason }, "sweep: refund deferred");
+          if (!res.ok)
+            app.log.warn(
+              { swapId: swap.swapId, reason: res.reason },
+              "sweep: refund deferred",
+            );
         }
       } catch (e) {
-        app.log.warn({ swapId: swap.swapId, err: String(e) }, "sweep: auto-expire failed");
+        app.log.warn(
+          { swapId: swap.swapId, err: String(e) },
+          "sweep: auto-expire failed",
+        );
       } finally {
         sweepInFlight.delete(swap.swapId);
       }
@@ -1071,13 +1374,14 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     });
   }
 
-
   /** Trust-model freeze: an open dispute or a refund arbitration pauses
    *  progress. expire/refund/cancel stay available so locked tokens can still
    *  come home. */
   function frozen(swap: P2pSwapEvent): string | null {
-    if (swap.disputeOutcome === "refund") return "dispute resolved: refund ordered";
-    if (swap.dispute && swap.dispute !== "RESOLVED") return `dispute ${swap.dispute}`;
+    if (swap.disputeOutcome === "refund")
+      return "dispute resolved: refund ordered";
+    if (swap.dispute && swap.dispute !== "RESOLVED")
+      return `dispute ${swap.dispute}`;
     return null;
   }
 
@@ -1088,7 +1392,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       .filter(Boolean),
   );
 
-  function requireAdmin(req: { headers: Record<string, unknown>; ip?: string }, reply: { code: (n: number) => any }): boolean {
+  function requireAdmin(
+    req: { headers: Record<string, unknown>; ip?: string },
+    reply: { code: (n: number) => any },
+  ): boolean {
     const token = adminToken();
     const given = req.headers["x-settlement-admin-token"];
     const a = Buffer.from(typeof given === "string" ? given : "");
@@ -1108,9 +1415,14 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       .map((s) => s.trim())
       .filter(Boolean),
   );
-  const secondApprovalAbove = Number(env.SETTLEMENT_DISPUTE_2ND_APPROVAL_ABOVE ?? "");
+  const secondApprovalAbove = Number(
+    env.SETTLEMENT_DISPUTE_2ND_APPROVAL_ABOVE ?? "",
+  );
   const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
-  const pendingApprovals = new Map<string, { did: string; outcome: "release" | "refund"; at: number }>();
+  const pendingApprovals = new Map<
+    string,
+    { did: string; outcome: "release" | "refund"; at: number }
+  >();
 
   /**
    * The arbiter behind a money-moving admin act. With `SETTLEMENT_ADMIN_DIDS`
@@ -1122,7 +1434,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     reply: { code: (n: number) => any },
     body: Record<string, unknown>,
   ): string | null {
-    if (!adminDids.size) return requireAdmin(request, reply) ? "admin-token" : null;
+    if (!adminDids.size)
+      return requireAdmin(request, reply) ? "admin-token" : null;
     if (adminIps.size && !(request.ip && adminIps.has(request.ip))) {
       reply.code(403).send({ error: "arbiter signature required" });
       return null;
@@ -1132,7 +1445,13 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       reply.code(403).send({ error: "arbiter signature required" });
       return null;
     }
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
+    const signed = validateSignedRequest(
+      body,
+      did,
+      guard,
+      "write",
+      request.url.split("?")[0],
+    );
     if (!signed.ok) {
       reply.code(signed.status ?? 400).send({ error: signed.error });
       return null;
@@ -1142,15 +1461,27 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 
   /** Large disputes need two distinct arbiters agreeing on the outcome. */
   function needsSecondApproval(swap: P2pSwapEvent): boolean {
-    if (!adminDids.size || !Number.isFinite(secondApprovalAbove) || secondApprovalAbove <= 0) return false;
+    if (
+      !adminDids.size ||
+      !Number.isFinite(secondApprovalAbove) ||
+      secondApprovalAbove <= 0
+    )
+      return false;
     return Number(swap.wantAmount ?? 0) > secondApprovalAbove;
   }
 
   /** Run a party-submitted proof on the quorum when configured, else on the routed chain client. */
-  async function proveOnChain(fn: (c: ChainClient) => Promise<ChainEvidence>): Promise<ChainEvidence> {
+  async function proveOnChain(
+    fn: (c: ChainClient) => Promise<ChainEvidence>,
+  ): Promise<ChainEvidence> {
     if (!deps.proofChains) return fn(deps.chain!);
     const clients = deps.proofChains();
-    if (!clients) return { ok: false, reason: "L0 proof quorum unavailable (needs enough healthy nodes incl. a pinned one)" };
+    if (!clients)
+      return {
+        ok: false,
+        reason:
+          "L0 proof quorum unavailable (needs enough healthy nodes incl. a pinned one)",
+      };
     const results = await Promise.all(clients.map(fn));
     return results.find((r) => !r.ok) ?? { ok: true };
   }
@@ -1172,10 +1503,16 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     escrowPubkey: env.SETTLEMENT_ENGINE_PUBKEY?.trim() || null,
     /** Chain clients wired: l0 = escrow proof/broadcast, l1 = social anchor,
      *  orderTxVerify = the engine confirms order/cancel txids before indexing. */
-    chain: { l0: !!deps.chain, l1: !!deps.anchor, orderTxVerify: !!(deps.verifyTx || deps.verifyOrderTx) },
+    chain: {
+      l0: !!deps.chain,
+      l1: !!deps.anchor,
+      orderTxVerify: !!(deps.verifyTx || deps.verifyOrderTx),
+    },
     /** CNY device-verification auto-release policy (`SETTLEMENT_CNY_AUTO_RELEASE_ON`):
      *  whether a qualifying phone read may act as the confirm. Unknown/absent = off. */
-    autoReleaseOn: normalizeAutoReleasePolicy(env.SETTLEMENT_CNY_AUTO_RELEASE_ON),
+    autoReleaseOn: normalizeAutoReleasePolicy(
+      env.SETTLEMENT_CNY_AUTO_RELEASE_ON,
+    ),
     /** Chain-scan projector position (null until the watcher has run). */
     watch: deps.watchState ? { ...deps.watchState } : null,
   }));
@@ -1186,7 +1523,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * `verifyOrderTx` (full record match) wins over `verifyTx` (confirmation
    * only); with neither there is no chain check (mock/dev).
    */
-  async function orderTxVerified(check: OrderTxCheck): Promise<{ ok: boolean; error?: string }> {
+  async function orderTxVerified(
+    check: OrderTxCheck,
+  ): Promise<{ ok: boolean; error?: string }> {
     if (!deps.verifyOrderTx && !deps.verifyTx) return { ok: true };
     const tries = Math.max(1, deps.orderTxTries ?? 4);
     let error = "txid not confirmed on L1-SOCIAL";
@@ -1194,8 +1533,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       const r = deps.verifyOrderTx
         ? await deps.verifyOrderTx(check)
         : (await deps.verifyTx!(check.txid))
-          ? { ok: true }
-          : { ok: false, error: "txid not confirmed on L1-SOCIAL" };
+        ? { ok: true }
+        : { ok: false, error: "txid not confirmed on L1-SOCIAL" };
       if (r.ok) return { ok: true };
       error = r.error ?? error;
       if (i < tries - 1) await new Promise((r) => setTimeout(r, 500));
@@ -1205,88 +1544,197 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
 
   app.post("/orders", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
-    const { sellerDid, giveToken, giveAmount, giveChain, wantCurrency, wantAmount, wantRail, validUntil } = body as any;
-    if (typeof sellerDid !== "string" || !sellerDid) return reply.code(400).send({ error: "sellerDid required" });
-    for (const [k, v] of Object.entries({ giveToken, giveAmount, giveChain, wantCurrency, wantAmount, wantRail })) {
-      if (typeof v !== "string" || !v) return reply.code(400).send({ error: `${k} required` });
+    const {
+      sellerDid,
+      giveToken,
+      giveAmount,
+      giveChain,
+      wantCurrency,
+      wantAmount,
+      wantRail,
+      validUntil,
+    } = body as any;
+    if (typeof sellerDid !== "string" || !sellerDid)
+      return reply.code(400).send({ error: "sellerDid required" });
+    for (const [k, v] of Object.entries({
+      giveToken,
+      giveAmount,
+      giveChain,
+      wantCurrency,
+      wantAmount,
+      wantRail,
+    })) {
+      if (typeof v !== "string" || !v)
+        return reply.code(400).send({ error: `${k} required` });
     }
-    if (!/^\d+(\.\d+)?$/.test(String(giveAmount)) || !/^\d+(\.\d+)?$/.test(String(wantAmount)) ||
-      giveAmount.length > 100 || wantAmount.length > 100 ||
-      compareAmounts(giveAmount, "0") <= 0 || compareAmounts(wantAmount, "0") <= 0) {
+    if (
+      !/^\d+(\.\d+)?$/.test(String(giveAmount)) ||
+      !/^\d+(\.\d+)?$/.test(String(wantAmount)) ||
+      giveAmount.length > 100 ||
+      wantAmount.length > 100 ||
+      compareAmounts(giveAmount, "0") <= 0 ||
+      compareAmounts(wantAmount, "0") <= 0
+    ) {
       return reply.code(400).send({ error: "amounts must be decimal strings" });
     }
     // rail must be one of the CNY methods configured for this engine
     if (!cnyRails().includes(String(wantRail))) {
-      return reply.code(400).send({ error: `wantRail not enabled (one of: ${cnyRails().join(", ")})` });
+      return reply
+        .code(400)
+        .send({
+          error: `wantRail not enabled (one of: ${cnyRails().join(", ")})`,
+        });
     }
     if (typeof validUntil !== "number" || validUntil * 1000 <= now()) {
-      return reply.code(400).send({ error: "validUntil must be in the future (unix seconds)" });
+      return reply
+        .code(400)
+        .send({ error: "validUntil must be in the future (unix seconds)" });
     }
     // Order side (docs/p2p.md): `limit_buy` is a bid — the poster (buyer) pays
     // fiat and must say where the tokens go; the taker (seller) funds the escrow.
     const type = body.type === "limit_buy" ? "limit_buy" : "limit_sell";
-    const buyerReceiveAddress = type === "limit_buy" ? String(body.receiveAddress ?? "").trim() : "";
-    if (type === "limit_buy" && (!buyerReceiveAddress || buyerReceiveAddress.length > 128)) {
-      return reply.code(400).send({ error: "buy order requires receiveAddress (1..128)" });
+    const buyerReceiveAddress =
+      type === "limit_buy" ? String(body.receiveAddress ?? "").trim() : "";
+    if (
+      type === "limit_buy" &&
+      (!buyerReceiveAddress || buyerReceiveAddress.length > 128)
+    ) {
+      return reply
+        .code(400)
+        .send({ error: "buy order requires receiveAddress (1..128)" });
     }
     if (type === "limit_buy" && !destAddress(buyerReceiveAddress)) {
-      return reply.code(400).send({ error: "receiveAddress is not a valid address" });
+      return reply
+        .code(400)
+        .send({ error: "receiveAddress is not a valid address" });
     }
     // Binance-style ad fields: per-order fiat min/max, payment window, terms.
-    const dec = (v: unknown) => (typeof v === "string" && v.length <= 100 && /^\d+(\.\d+)?$/.test(v) ? v : undefined);
+    const dec = (v: unknown) =>
+      typeof v === "string" && v.length <= 100 && /^\d+(\.\d+)?$/.test(v)
+        ? v
+        : undefined;
     const minOrder = dec(body.minOrder);
     const maxOrder = dec(body.maxOrder);
-    if (body.minOrder !== undefined && !minOrder) return reply.code(400).send({ error: "invalid minOrder (decimal string)" });
-    if (body.maxOrder !== undefined && !maxOrder) return reply.code(400).send({ error: "invalid maxOrder (decimal string)" });
-    if ((minOrder && (compareAmounts(minOrder, "0") <= 0 || compareAmounts(minOrder, wantAmount) > 0)) ||
-        (maxOrder && (compareAmounts(maxOrder, "0") <= 0 || (minOrder && compareAmounts(maxOrder, minOrder) < 0)))) {
+    if (body.minOrder !== undefined && !minOrder)
+      return reply
+        .code(400)
+        .send({ error: "invalid minOrder (decimal string)" });
+    if (body.maxOrder !== undefined && !maxOrder)
+      return reply
+        .code(400)
+        .send({ error: "invalid maxOrder (decimal string)" });
+    if (
+      (minOrder &&
+        (compareAmounts(minOrder, "0") <= 0 ||
+          compareAmounts(minOrder, wantAmount) > 0)) ||
+      (maxOrder &&
+        (compareAmounts(maxOrder, "0") <= 0 ||
+          (minOrder && compareAmounts(maxOrder, minOrder) < 0)))
+    ) {
       return reply.code(400).send({ error: "invalid order limits" });
     }
-    const timeLimit = body.timeLimit === undefined ? undefined : Math.floor(Number(body.timeLimit));
-    if (timeLimit !== undefined && (!Number.isFinite(timeLimit) || timeLimit < 5 || timeLimit > 1440)) {
-      return reply.code(400).send({ error: "invalid timeLimit (minutes 5..1440)" });
+    const timeLimit =
+      body.timeLimit === undefined
+        ? undefined
+        : Math.floor(Number(body.timeLimit));
+    if (
+      timeLimit !== undefined &&
+      (!Number.isFinite(timeLimit) || timeLimit < 5 || timeLimit > 1440)
+    ) {
+      return reply
+        .code(400)
+        .send({ error: "invalid timeLimit (minutes 5..1440)" });
     }
-    const remarks = typeof body.remarks === "string" && body.remarks.trim() ? body.remarks.trim().slice(0, 256) : undefined;
+    const remarks =
+      typeof body.remarks === "string" && body.remarks.trim()
+        ? body.remarks.trim().slice(0, 256)
+        : undefined;
     // Multiple payment methods (Binance allows several): a non-empty subset of
     // the engine's enabled rails.
     const wantRails = Array.isArray(body.wantRails)
-      ? (body.wantRails as unknown[]).filter((r): r is string => typeof r === "string" && cnyRails().includes(r))
+      ? (body.wantRails as unknown[]).filter(
+          (r): r is string => typeof r === "string" && cnyRails().includes(r),
+        )
       : undefined;
-    if (body.wantRails !== undefined && (!wantRails || wantRails.length === 0)) {
-      return reply.code(400).send({ error: `wantRails must be a non-empty subset of: ${cnyRails().join(", ")}` });
+    if (
+      body.wantRails !== undefined &&
+      (!wantRails || wantRails.length === 0)
+    ) {
+      return reply
+        .code(400)
+        .send({
+          error: `wantRails must be a non-empty subset of: ${cnyRails().join(
+            ", ",
+          )}`,
+        });
     }
     // Seller-anchored orders carry the orderId the record already committed to
     // and the L1-SOCIAL txid that landed it; both are optional so the legacy
     // engine-intake path (mock / no chain) keeps working.
-    const orderId = body.orderId === undefined ? `ord-${randomBytes(8).toString("hex")}` : String(body.orderId);
-    if (!ORDER_ID_RE.test(orderId)) return reply.code(400).send({ error: "invalid orderId" });
+    const orderId =
+      body.orderId === undefined
+        ? `ord-${randomBytes(8).toString("hex")}`
+        : String(body.orderId);
+    if (!ORDER_ID_RE.test(orderId))
+      return reply.code(400).send({ error: "invalid orderId" });
     const txid = body.txid === undefined ? undefined : String(body.txid);
-    if (txid !== undefined && !TXID_RE.test(txid)) return reply.code(400).send({ error: "invalid txid" });
-    const signed = validateSignedRequest(body, sellerDid, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    if (txid !== undefined && !TXID_RE.test(txid))
+      return reply.code(400).send({ error: "invalid txid" });
+    const signed = validateSignedRequest(
+      body,
+      sellerDid,
+      guard,
+      "write",
+      request.url.split("?")[0],
+    );
+    if (!signed.ok)
+      return reply.code(signed.status ?? 400).send({ error: signed.error });
     if (txid !== undefined) {
       const gate = await orderTxVerified({
         txid,
         sellerDid,
         orderId,
         status: "OPEN",
-        terms: { giveToken, giveAmount, giveChain, wantCurrency, wantAmount, wantRail, validUntil },
+        terms: {
+          giveToken,
+          giveAmount,
+          giveChain,
+          wantCurrency,
+          wantAmount,
+          wantRail,
+          validUntil,
+        },
       });
-      if (!gate.ok) return reply.code(409).send({ error: gate.error ?? "txid not confirmed on L1-SOCIAL" });
+      if (!gate.ok)
+        return reply
+          .code(409)
+          .send({ error: gate.error ?? "txid not confirmed on L1-SOCIAL" });
     }
     const existing = await deps.store.getOrder(orderId);
     if (existing) {
       // Idempotent re-register of the same order (app retry after a dropped
       // response); a different seller/order collision is a hard conflict.
-      if (existing.sellerDid !== sellerDid) return reply.code(409).send({ error: "orderId already in use" });
-      return reply.code(200).send({ orderId, status: existing.status, txid: existing.txid ?? txid ?? null });
+      if (existing.sellerDid !== sellerDid)
+        return reply.code(409).send({ error: "orderId already in use" });
+      return reply
+        .code(200)
+        .send({
+          orderId,
+          status: existing.status,
+          txid: existing.txid ?? txid ?? null,
+        });
     }
 
     // The escrow participant this order is pinned to (docs/p2p.md §26): the
     // seller's copy when supplied, else the current engine key (legacy intake).
-    const enginePin = body.enginePubkey === undefined ? enginePubkeyHex() : String(body.enginePubkey).trim();
+    const enginePin =
+      body.enginePubkey === undefined
+        ? enginePubkeyHex()
+        : String(body.enginePubkey).trim();
     if (enginePin && !/^[0-9a-f]{64,6000}$/.test(enginePin)) {
-      return reply.code(400).send({ error: "invalid enginePubkey (prefixed PQ pubkey hex)" });
+      return reply
+        .code(400)
+        .send({ error: "invalid enginePubkey (prefixed PQ pubkey hex)" });
     }
 
     const order: P2pOrder = {
@@ -1313,33 +1761,65 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       createdAt: now(),
     };
     await deps.store.createOrder(order);
-    return reply.code(201).send({ orderId: order.orderId, status: order.status, txid: order.txid ?? null });
+    return reply
+      .code(201)
+      .send({
+        orderId: order.orderId,
+        status: order.status,
+        txid: order.txid ?? null,
+      });
   });
 
-  app.post<{ Params: { orderId: string } }>("/orders/:orderId/cancel", async (request, reply) => {
-    const { orderId } = request.params;
-    if (!ORDER_ID_RE.test(orderId)) return reply.code(400).send({ error: "invalid orderId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const sellerDid = body.sellerDid;
-    if (typeof sellerDid !== "string" || !sellerDid) return reply.code(400).send({ error: "sellerDid required" });
-    const order = await deps.store.getOrder(orderId);
-    if (!order) return reply.code(404).send({ error: "unknown order" });
-    if (order.sellerDid !== sellerDid) return reply.code(403).send({ error: "not the seller" });
-    const txid = body.txid === undefined ? undefined : String(body.txid);
-    if (txid !== undefined && !TXID_RE.test(txid)) return reply.code(400).send({ error: "invalid txid" });
-    const signed = validateSignedRequest(body, sellerDid, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    if (order.status === "CANCELLED") return reply.code(200).send({ orderId, status: "CANCELLED" });
-    if (order.status !== "ACTIVE") return reply.code(409).send({ error: `order is ${order.status}` });
-    if (txid !== undefined) {
-      const gate = await orderTxVerified({ txid, sellerDid, orderId, status: "CANCELLED" });
-      if (!gate.ok) return reply.code(409).send({ error: gate.error ?? "txid not confirmed on L1-SOCIAL" });
-    }
-    if (!(await deps.store.markOrderCancelled(orderId))) {
-      return reply.code(409).send({ error: "order is no longer active" });
-    }
-    return reply.code(200).send({ orderId, status: "CANCELLED", txid: txid ?? null });
-  });
+  app.post<{ Params: { orderId: string } }>(
+    "/orders/:orderId/cancel",
+    async (request, reply) => {
+      const { orderId } = request.params;
+      if (!ORDER_ID_RE.test(orderId))
+        return reply.code(400).send({ error: "invalid orderId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const sellerDid = body.sellerDid;
+      if (typeof sellerDid !== "string" || !sellerDid)
+        return reply.code(400).send({ error: "sellerDid required" });
+      const order = await deps.store.getOrder(orderId);
+      if (!order) return reply.code(404).send({ error: "unknown order" });
+      if (order.sellerDid !== sellerDid)
+        return reply.code(403).send({ error: "not the seller" });
+      const txid = body.txid === undefined ? undefined : String(body.txid);
+      if (txid !== undefined && !TXID_RE.test(txid))
+        return reply.code(400).send({ error: "invalid txid" });
+      const signed = validateSignedRequest(
+        body,
+        sellerDid,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      if (order.status === "CANCELLED")
+        return reply.code(200).send({ orderId, status: "CANCELLED" });
+      if (order.status !== "ACTIVE")
+        return reply.code(409).send({ error: `order is ${order.status}` });
+      if (txid !== undefined) {
+        const gate = await orderTxVerified({
+          txid,
+          sellerDid,
+          orderId,
+          status: "CANCELLED",
+        });
+        if (!gate.ok)
+          return reply
+            .code(409)
+            .send({ error: gate.error ?? "txid not confirmed on L1-SOCIAL" });
+      }
+      if (!(await deps.store.markOrderCancelled(orderId))) {
+        return reply.code(409).send({ error: "order is no longer active" });
+      }
+      return reply
+        .code(200)
+        .send({ orderId, status: "CANCELLED", txid: txid ?? null });
+    },
+  );
 
   app.get("/orders", async (request, reply) => {
     if (!requireAdmin(request, reply)) return;
@@ -1355,7 +1835,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * every request. PII-free by construction (counts, rates, latencies, public
    * DIDs).
    */
-  let repCache: { at: number; map: Map<string, ReputationReport> } | null = null;
+  let repCache: { at: number; map: Map<string, ReputationReport> } | null =
+    null;
   async function reputationMap(): Promise<Map<string, ReputationReport>> {
     const ttlMs = 30_000;
     if (repCache && Date.now() - repCache.at < ttlMs) return repCache.map;
@@ -1380,17 +1861,23 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const q = (request.query as { status?: string }) ?? {};
     const status = q.status === undefined ? "ACTIVE" : q.status;
     if (!PUBLIC_ORDER_STATUSES.has(status)) {
-      return reply.code(400).send({ error: "status must be ACTIVE, MATCHED or CANCELLED" });
+      return reply
+        .code(400)
+        .send({ error: "status must be ACTIVE, MATCHED or CANCELLED" });
     }
     const orders = await deps.store.listOrders(status);
     const map = await reputationMap();
     return {
-      orders: orders.map(({ signature: _s, buyerReceiveAddress: _b, ...o }) => ({
-        // `buyerReceiveAddress` stays engine-side: the taker does not need it
-        // (the engine uses it as the release destination at match).
-        ...o,
-        sellerReputation: compactReputation(reputationForDid(o.sellerDid, map)),
-      })),
+      orders: orders.map(
+        ({ signature: _s, buyerReceiveAddress: _b, ...o }) => ({
+          // `buyerReceiveAddress` stays engine-side: the taker does not need it
+          // (the engine uses it as the release destination at match).
+          ...o,
+          sellerReputation: compactReputation(
+            reputationForDid(o.sellerDid, map),
+          ),
+        }),
+      ),
     };
   });
 
@@ -1400,279 +1887,464 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * (pair-capped). Unknown DIDs get zeroed roles so badges render without a
    * 404.
    */
-  app.get<{ Params: { did: string } }>("/public/reputation/:did", async (request, reply) => {
-    const { did } = request.params;
-    if (!did || did.length > 512) return reply.code(400).send({ error: "invalid did" });
-    return reputationForDid(did, await reputationMap());
-  });
+  app.get<{ Params: { did: string } }>(
+    "/public/reputation/:did",
+    async (request, reply) => {
+      const { did } = request.params;
+      if (!did || did.length > 512)
+        return reply.code(400).send({ error: "invalid did" });
+      return reputationForDid(did, await reputationMap());
+    },
+  );
 
   /** Admin: the per-swap attribution behind the public summary. */
-  app.get<{ Params: { did: string } }>("/admin/reputation/:did", async (request, reply) => {
-    if (!requireAdmin(request, reply)) return;
-    const { did } = request.params;
-    if (!did || did.length > 512) return reply.code(400).send({ error: "invalid did" });
-    return reputationDetail(await deps.store.allEvents(), did);
-  });
+  app.get<{ Params: { did: string } }>(
+    "/admin/reputation/:did",
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      const { did } = request.params;
+      if (!did || did.length > 512)
+        return reply.code(400).send({ error: "invalid did" });
+      return reputationDetail(await deps.store.allEvents(), did);
+    },
+  );
 
-  app.post<{ Params: { orderId: string } }>("/orders/:orderId/match", async (request, reply) => {
-    const { orderId } = request.params;
-    if (!ORDER_ID_RE.test(orderId)) return reply.code(400).send({ error: "invalid orderId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const signerDid = body.buyerDid;
-    if (typeof signerDid !== "string" || !signerDid) return reply.code(400).send({ error: "buyerDid required" });
-    const order = await deps.store.getOrder(orderId);
-    if (!order) return reply.code(404).send({ error: "unknown order" });
-    if (order.status !== "ACTIVE") return reply.code(409).send({ error: `order is ${order.status}` });
-    if (order.validUntil * 1000 <= now()) return reply.code(410).send({ error: "order expired" });
-    if (order.sellerDid === signerDid) return reply.code(409).send({ error: "cannot match your own order" });
+  app.post<{ Params: { orderId: string } }>(
+    "/orders/:orderId/match",
+    async (request, reply) => {
+      const { orderId } = request.params;
+      if (!ORDER_ID_RE.test(orderId))
+        return reply.code(400).send({ error: "invalid orderId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const signerDid = body.buyerDid;
+      if (typeof signerDid !== "string" || !signerDid)
+        return reply.code(400).send({ error: "buyerDid required" });
+      const order = await deps.store.getOrder(orderId);
+      if (!order) return reply.code(404).send({ error: "unknown order" });
+      if (order.status !== "ACTIVE")
+        return reply.code(409).send({ error: `order is ${order.status}` });
+      if (order.validUntil * 1000 <= now())
+        return reply.code(410).send({ error: "order expired" });
+      if (order.sellerDid === signerDid)
+        return reply.code(409).send({ error: "cannot match your own order" });
 
-    // Roles (docs/p2p.md): the token giver funds the escrow and is `sellerDid` on
-    // the swap; the buyer pays fiat and is `buyerDid`. A `limit_sell` order has
-    // the poster as the giver and the taker as the buyer; a `limit_buy` bid is
-    // the reverse — the poster (buyer) pays and the taker (seller) funds.
-    const isBuy = order.type === "limit_buy";
-    const sellerDid = isBuy ? signerDid : order.sellerDid;
-    const buyerDid = isBuy ? order.sellerDid : signerDid;
-    const receiveAddress = isBuy ? order.buyerReceiveAddress ?? "" : String(body.receiveAddress ?? "");
-    if (!receiveAddress) {
-      return reply.code(400).send({ error: isBuy ? "order has no buyer receive address" : "receiveAddress required" });
-    }
-    // Release pays this address; reject it before the seller funds an unspendable escrow.
-    if (receiveAddress.length > 128 || !destAddress(receiveAddress)) {
-      return reply.code(400).send({ error: "receiveAddress is not a valid address" });
-    }
-    const signed = validateSignedRequest(body, signerDid, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+      // Roles (docs/p2p.md): the token giver funds the escrow and is `sellerDid` on
+      // the swap; the buyer pays fiat and is `buyerDid`. A `limit_sell` order has
+      // the poster as the giver and the taker as the buyer; a `limit_buy` bid is
+      // the reverse — the poster (buyer) pays and the taker (seller) funds.
+      const isBuy = order.type === "limit_buy";
+      const sellerDid = isBuy ? signerDid : order.sellerDid;
+      const buyerDid = isBuy ? order.sellerDid : signerDid;
+      const receiveAddress = isBuy
+        ? order.buyerReceiveAddress ?? ""
+        : String(body.receiveAddress ?? "");
+      if (!receiveAddress) {
+        return reply
+          .code(400)
+          .send({
+            error: isBuy
+              ? "order has no buyer receive address"
+              : "receiveAddress required",
+          });
+      }
+      // Release pays this address; reject it before the seller funds an unspendable escrow.
+      if (receiveAddress.length > 128 || !destAddress(receiveAddress)) {
+        return reply
+          .code(400)
+          .send({ error: "receiveAddress is not a valid address" });
+      }
+      const signed = validateSignedRequest(
+        body,
+        signerDid,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
 
-    // Anti-griefing: a taking buyer may hold only a few sellers' escrows open at once.
-    if (!isBuy) {
-      const maxOpen = Number(env.SETTLEMENT_MAX_OPEN_SWAPS ?? 5);
-      if (Number.isFinite(maxOpen) && maxOpen > 0) {
-        const mine = await deps.store.listSwapsForDid(buyerDid, 1000);
-        const open = mine.filter((s) => s.buyerDid === buyerDid && OPEN_SWAP_STATUSES.has(s.status)).length;
-        if (open >= maxOpen) {
-          return reply.code(429).send({ error: `too many open swaps (max ${maxOpen}); finish or cancel one first` });
+      // Anti-griefing: a taking buyer may hold only a few sellers' escrows open at once.
+      if (!isBuy) {
+        const maxOpen = Number(env.SETTLEMENT_MAX_OPEN_SWAPS ?? 5);
+        if (Number.isFinite(maxOpen) && maxOpen > 0) {
+          const mine = await deps.store.listSwapsForDid(buyerDid, 1000);
+          const open = mine.filter(
+            (s) => s.buyerDid === buyerDid && OPEN_SWAP_STATUSES.has(s.status),
+          ).length;
+          if (open >= maxOpen) {
+            return reply
+              .code(429)
+              .send({
+                error: `too many open swaps (max ${maxOpen}); finish or cancel one first`,
+              });
+          }
         }
       }
-    }
 
-    // A PINNED order can only be matched by a deployment that holds its engine
-    // key (docs/p2p.md §26/§27); the escrow address is then derived from the
-    // pin. Unpinned/legacy orders keep the previous behavior (current key).
-    const pinned = order.enginePubkey?.trim() || "";
-    if (pinned && !engineSignerFor(env, pinned)) {
-      return reply.code(409).send({ error: "order is pinned to an engine this deployment does not hold" });
-    }
-    // Retained keys only settle existing swaps; a new swap never forms on a retired key.
-    const currentPub = enginePubkeyHex();
-    if (pinned && currentPub && pinned !== currentPub) {
-      return reply.code(409).send({ error: "order is pinned to an engine key retired for new swaps; re-post the order" });
-    }
-    const enginePin = pinned || enginePubkeyHex();
-
-    // Partial fill (Binance's order limit): the taker may take part of the order.
-    // `fillAmount` is crypto; the default is the whole remaining amount.
-    const total = order.giveAmount;
-    const remaining = order.remainingGive ?? total;
-    const fill = body.fillAmount === undefined ? remaining : String(body.fillAmount).trim();
-    if (!fill) {
-      return reply.code(400).send({ error: `fillAmount must be 0 < x <= ${remaining}` });
-    }
-    const check = checkP2pFill(order, fill);
-    if (!check.ok) {
-      const errors = {
-        amount: `fillAmount must be 0 < x <= ${remaining}`,
-        min: `order minimum is ${order.minOrder} ${order.wantCurrency}`,
-        max: `order maximum is ${order.maxOrder} ${order.wantCurrency}`,
-        remainder: `remaining order would be below minimum ${order.minOrder} ${order.wantCurrency}`,
-        precision: "fill must have an exact fiat value within 8 decimal places",
-      };
-      return reply.code(check.reason === "amount" || check.reason === "precision" ? 400 : 409).send({ error: errors[check.reason] });
-    }
-    const fillFiat = check.fiat;
-    const nextRemaining = subtractAmounts(remaining, fill);
-
-    // The taker picks one of the ad's payment methods (Binance multi-rail).
-    const rails = order.wantRails && order.wantRails.length ? order.wantRails : [order.wantRail];
-    const chosenRail = body.rail === undefined ? rails[0] ?? order.wantRail : String(body.rail);
-    if (!rails.includes(chosenRail)) {
-      return reply.code(400).send({ error: `rail must be one of: ${rails.join(", ")}` });
-    }
-
-    const swapId = `swap-${randomBytes(8).toString("hex")}`;
-    // The vault is f(seller, buyer, engine) — no per-swap salt — so one unsettled
-    // swap per address, or a single lock could back two swaps.
-    const swapEscrowAddress = escrowFor(sellerDid, buyerDid, pinned || undefined);
-    if (swapEscrowAddress) {
-      const sellerSwaps = await deps.store.listSwapsForDid(sellerDid, 1000);
-      if (sellerSwaps.some((s) => s.escrowAddress === swapEscrowAddress && holdsEscrow(s))) {
-        return reply.code(409).send({ error: "an unsettled swap between these parties already uses this escrow address; settle it first" });
+      // A PINNED order can only be matched by a deployment that holds its engine
+      // key (docs/p2p.md §26/§27); the escrow address is then derived from the
+      // pin. Unpinned/legacy orders keep the previous behavior (current key).
+      const pinned = order.enginePubkey?.trim() || "";
+      if (pinned && !engineSignerFor(env, pinned)) {
+        return reply
+          .code(409)
+          .send({
+            error: "order is pinned to an engine this deployment does not hold",
+          });
       }
-    }
-    const event: P2pSwapEvent = {
-      swapId,
-      seq: 0,
-      status: "MATCHED",
-      eventType: "match",
-      actorDid: signerDid,
-      orderId,
-      sellerDid,
-      buyerDid,
-      giveChain: order.giveChain,
-      giveToken: order.giveToken,
-      giveAmount: fill,
-      wantAmount: fillFiat,
-      wantRail: chosenRail,
-      wantCurrency: order.wantCurrency,
-      escrowAddress: swapEscrowAddress,
-      ...(enginePin ? { enginePubkey: enginePin } : {}),
-      ...(order.timeLimit ? { payWindowSec: order.timeLimit * 60 } : {}),
-      receiveAddress,
-      at: now(),
-    };
-    // Conditional ACTIVE→(MATCHED | ACTIVE with reduced remaining): concurrent
-    // matches race here and the first claim wins (a loser never double-fills).
-    if (!(await deps.store.markOrderMatched(orderId, swapId, nextRemaining, remaining))) {
-      return reply.code(409).send({ error: "order is no longer active" });
-    }
-    let stored: P2pSwapEvent;
-    let prepared = false;
-    try {
-      stored = await persist(event, () => { prepared = true; });
-    } catch (e) {
-      if (!prepared) await deps.store.reopenOrder(orderId, swapId);
-      throw e;
-    }
-    return reply.code(201).send({ swapId, status: stored.status, escrowAddress: stored.escrowAddress ?? null });
-  });
+      // Retained keys only settle existing swaps; a new swap never forms on a retired key.
+      const currentPub = enginePubkeyHex();
+      if (pinned && currentPub && pinned !== currentPub) {
+        return reply
+          .code(409)
+          .send({
+            error:
+              "order is pinned to an engine key retired for new swaps; re-post the order",
+          });
+      }
+      const enginePin = pinned || enginePubkeyHex();
 
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/transitions", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const action = body.action;
-    if (typeof action !== "string") return reply.code(400).send({ error: "action required" });
-    const target = statusForAction(action);
-    if (!target) return reply.code(400).send({ error: `unknown action ${action}` });
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    // The CNY-rail actions have dedicated routes with their own input validation
-    // (docs/p2p.md §11); the generic transitions route must not bypass it.
-    if (DEDICATED_ACTIONS.has(action)) {
-      return reply.code(400).send({
-        error: `action ${action} has a dedicated route (/swaps/:swapId/payment-instructions | proof | confirm)`,
-      });
-    }
-    // Who must sign this transition? release/complete are the ENGINE's act
-    // (the old engine let the buyer self-assert them).
-    const did = typeof body.did === "string" ? body.did : "";
-    if (!did) return reply.code(400).send({ error: "did required" });
-    if (action === "cancel") {
-      if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
-      // Conflict policy (docs/p2p.md §9): the seller may walk away only before
-      // payment instructions exist. Once the buyer may have paid
-      // (PAYMENT_PENDING), only the buyer — the only party who knows whether
-      // they paid — may cancel, and a claim or a confirmed payment bars cancel
-      // entirely: those unwind only through the dispute path.
-      if (did === swap.sellerDid && swap.status !== "MATCHED" && swap.status !== "ESCROW_LOCKED") {
-        return reply.code(409).send({
-          error: `seller cancel requires MATCHED or ESCROW_LOCKED (swap is ${swap.status}) — after instructions the refund paths are expire or dispute`,
+      // Partial fill (Binance's order limit): the taker may take part of the order.
+      // `fillAmount` is crypto; the default is the whole remaining amount.
+      const total = order.giveAmount;
+      const remaining = order.remainingGive ?? total;
+      const fill =
+        body.fillAmount === undefined
+          ? remaining
+          : String(body.fillAmount).trim();
+      if (!fill) {
+        return reply
+          .code(400)
+          .send({ error: `fillAmount must be 0 < x <= ${remaining}` });
+      }
+      const check = checkP2pFill(order, fill);
+      if (!check.ok) {
+        const errors = {
+          amount: `fillAmount must be 0 < x <= ${remaining}`,
+          min: `order minimum is ${order.minOrder} ${order.wantCurrency}`,
+          max: `order maximum is ${order.maxOrder} ${order.wantCurrency}`,
+          remainder: `remaining order would be below minimum ${order.minOrder} ${order.wantCurrency}`,
+          precision:
+            "fill must have an exact fiat value within 8 decimal places",
+        };
+        return reply
+          .code(
+            check.reason === "amount" || check.reason === "precision"
+              ? 400
+              : 409,
+          )
+          .send({ error: errors[check.reason] });
+      }
+      const fillFiat = check.fiat;
+      const nextRemaining = subtractAmounts(remaining, fill);
+
+      // The taker picks one of the ad's payment methods (Binance multi-rail).
+      const rails =
+        order.wantRails && order.wantRails.length
+          ? order.wantRails
+          : [order.wantRail];
+      const chosenRail =
+        body.rail === undefined
+          ? rails[0] ?? order.wantRail
+          : String(body.rail);
+      if (!rails.includes(chosenRail)) {
+        return reply
+          .code(400)
+          .send({ error: `rail must be one of: ${rails.join(", ")}` });
+      }
+
+      const swapId = `swap-${randomBytes(8).toString("hex")}`;
+      // The vault is f(seller, buyer, engine) — no per-swap salt — so one unsettled
+      // swap per address, or a single lock could back two swaps.
+      const swapEscrowAddress = escrowFor(
+        sellerDid,
+        buyerDid,
+        pinned || undefined,
+      );
+      if (swapEscrowAddress) {
+        const sellerSwaps = await deps.store.listSwapsForDid(sellerDid, 1000);
+        if (
+          sellerSwaps.some(
+            (s) => s.escrowAddress === swapEscrowAddress && holdsEscrow(s),
+          )
+        ) {
+          return reply
+            .code(409)
+            .send({
+              error:
+                "an unsettled swap between these parties already uses this escrow address; settle it first",
+            });
+        }
+      }
+      const event: P2pSwapEvent = {
+        swapId,
+        seq: 0,
+        status: "MATCHED",
+        eventType: "match",
+        actorDid: signerDid,
+        orderId,
+        sellerDid,
+        buyerDid,
+        giveChain: order.giveChain,
+        giveToken: order.giveToken,
+        giveAmount: fill,
+        wantAmount: fillFiat,
+        wantRail: chosenRail,
+        wantCurrency: order.wantCurrency,
+        escrowAddress: swapEscrowAddress,
+        ...(enginePin ? { enginePubkey: enginePin } : {}),
+        ...(order.timeLimit ? { payWindowSec: order.timeLimit * 60 } : {}),
+        receiveAddress,
+        at: now(),
+      };
+      // Conditional ACTIVE→(MATCHED | ACTIVE with reduced remaining): concurrent
+      // matches race here and the first claim wins (a loser never double-fills).
+      if (
+        !(await deps.store.markOrderMatched(
+          orderId,
+          swapId,
+          nextRemaining,
+          remaining,
+        ))
+      ) {
+        return reply.code(409).send({ error: "order is no longer active" });
+      }
+      let stored: P2pSwapEvent;
+      let prepared = false;
+      try {
+        stored = await persist(event, () => {
+          prepared = true;
+        });
+      } catch (e) {
+        if (!prepared) await deps.store.reopenOrder(orderId, swapId);
+        throw e;
+      }
+      return reply
+        .code(201)
+        .send({
+          swapId,
+          status: stored.status,
+          escrowAddress: stored.escrowAddress ?? null,
+        });
+    },
+  );
+
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/transitions",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const action = body.action;
+      if (typeof action !== "string")
+        return reply.code(400).send({ error: "action required" });
+      const target = statusForAction(action);
+      if (!target)
+        return reply.code(400).send({ error: `unknown action ${action}` });
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      // The CNY-rail actions have dedicated routes with their own input validation
+      // (docs/p2p.md §11); the generic transitions route must not bypass it.
+      if (DEDICATED_ACTIONS.has(action)) {
+        return reply.code(400).send({
+          error: `action ${action} has a dedicated route (/swaps/:swapId/payment-instructions | proof | confirm)`,
         });
       }
-    } else if (action === "release" || action === "complete") {
-      if (!engineDid() || did !== engineDid()) return reply.code(403).send({ error: "engine signer required" });
-    } else if (did !== swap.sellerDid) {
-      return reply.code(403).send({ error: "seller signer required" });
-    }
-    // An open dispute is arbitration's: nothing advances (release/complete,
-    // handled by frozen()) and nothing unwinds (cancel/expire) until the
-    // outcome lands — which now settles by itself (docs/p2p.md §12).
-    if ((action === "cancel" || action === "expire") && swap.dispute && swap.dispute !== "RESOLVED") {
-      return reply.code(422).send({ error: `swap frozen: dispute ${swap.dispute}` });
-    }
-    // A payment claim is an assertion that the fiat moved — a refund over it
-    // is reachable only through arbitration (docs/p2p.md §12).
-    if (action === "expire" && swap.status === "PAYMENT_CLAIMED" && swap.disputeOutcome !== "refund") {
-      return reply.code(409).send({
-        error: "payment claim in flight — expire requires PAYMENT_PENDING or a resolved refund arbitration (docs/p2p.md §12)",
-      });
-    }
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    if (!canTransition(swap.status, target)) return reply.code(409).send({ error: `cannot ${swap.status} → ${target}` });
-    if (action === "expire" && swap.disputeOutcome !== "refund") {
-      const deadline = await expiryDeadline(swap);
-      if (deadline === null || now() < deadline) {
-        return reply.code(409).send({ error: "swap expiry deadline has not elapsed" });
-      }
-    }
-    // An open dispute / refund arbitration freezes the forward path;
-    // expire/refund/cancel stay available so locked tokens can still come home.
-    if (action === "release" || action === "complete") {
-      const reason = frozen(swap);
-      if (reason) return reply.code(422).send({ error: `swap frozen: ${reason}` });
-    }
-
-    const evidence: Partial<P2pSwapEvent> = {};
-    if (action === "escrow_lock") {
-      if (typeof body.txHash !== "string" || !body.txHash) return reply.code(400).send({ error: "txHash required" });
-      const lockTx = body.txHash;
-      const sellerSwaps = await deps.store.listSwapsForDid(swap.sellerDid ?? "", 1000);
-      if (sellerSwaps.some((s) => s.swapId !== swapId && s.escrowTxHash === lockTx)) {
-        return reply.code(409).send({ error: "this lock transaction already backs another swap" });
-      }
-      if (deps.chain) {
-        if (!swap.escrowAddress) return reply.code(409).send({ error: "swap has no escrow address" });
-        const lock = { txHash: body.txHash, escrowAddress: swap.escrowAddress, token: swap.giveToken, amount: swap.giveAmount };
-        const proof = await proveOnChain((c) => verifyChainLock(c, lock));
-        if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
-      }
-      evidence.escrowTxHash = body.txHash;
-    } else if (action === "release") {
-      if (typeof body.txHash !== "string" || !body.txHash) return reply.code(400).send({ error: "txHash required" });
-      if (deps.chain) {
-        const to = swap.receiveAddress;
-        if (!to) return reply.code(409).send({ error: "swap has no receive address" });
-        const proof = await proveOnChain((c) => verifyChainPayment(c, { txHash: body.txHash as string, toAddress: to }));
-        if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
-      }
-      evidence.releaseTxHash = body.txHash;
-    } else if (action === "refund") {
-      // Same proof rule as release: a refund is only real if the spend landed.
-      if (typeof body.txHash !== "string" || !body.txHash) return reply.code(400).send({ error: "txHash required" });
-      if (deps.chain) {
-        const row = await deps.store.getEscrowSigning(swapId);
-        const refundAddress =
-          (typeof body.refundAddress === "string" && body.refundAddress.trim()) || row?.refundAddress || "";
-        if (!destAddress(refundAddress)) {
-          return reply.code(400).send({ error: "refundAddress required (body or presign)" });
+      // Who must sign this transition? release/complete are the ENGINE's act
+      // (the old engine let the buyer self-assert them).
+      const did = typeof body.did === "string" ? body.did : "";
+      if (!did) return reply.code(400).send({ error: "did required" });
+      if (action === "cancel") {
+        if (did !== swap.buyerDid && did !== swap.sellerDid)
+          return reply.code(403).send({ error: "not a swap party" });
+        // Conflict policy (docs/p2p.md §9): the seller may walk away only before
+        // payment instructions exist. Once the buyer may have paid
+        // (PAYMENT_PENDING), only the buyer — the only party who knows whether
+        // they paid — may cancel, and a claim or a confirmed payment bars cancel
+        // entirely: those unwind only through the dispute path.
+        if (
+          did === swap.sellerDid &&
+          swap.status !== "MATCHED" &&
+          swap.status !== "ESCROW_LOCKED"
+        ) {
+          return reply.code(409).send({
+            error: `seller cancel requires MATCHED or ESCROW_LOCKED (swap is ${swap.status}) — after instructions the refund paths are expire or dispute`,
+          });
         }
-        const proof = await proveOnChain((c) => verifyChainPayment(c, { txHash: body.txHash as string, toAddress: refundAddress }));
-        if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
+      } else if (action === "release" || action === "complete") {
+        if (!engineDid() || did !== engineDid())
+          return reply.code(403).send({ error: "engine signer required" });
+      } else if (did !== swap.sellerDid) {
+        return reply.code(403).send({ error: "seller signer required" });
       }
-      evidence.refundTxHash = body.txHash;
-    }
+      // An open dispute is arbitration's: nothing advances (release/complete,
+      // handled by frozen()) and nothing unwinds (cancel/expire) until the
+      // outcome lands — which now settles by itself (docs/p2p.md §12).
+      if (
+        (action === "cancel" || action === "expire") &&
+        swap.dispute &&
+        swap.dispute !== "RESOLVED"
+      ) {
+        return reply
+          .code(422)
+          .send({ error: `swap frozen: dispute ${swap.dispute}` });
+      }
+      // A payment claim is an assertion that the fiat moved — a refund over it
+      // is reachable only through arbitration (docs/p2p.md §12).
+      if (
+        action === "expire" &&
+        swap.status === "PAYMENT_CLAIMED" &&
+        swap.disputeOutcome !== "refund"
+      ) {
+        return reply.code(409).send({
+          error:
+            "payment claim in flight — expire requires PAYMENT_PENDING or a resolved refund arbitration (docs/p2p.md §12)",
+        });
+      }
+      const signed = validateSignedRequest(
+        body,
+        did,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      if (!canTransition(swap.status, target))
+        return reply
+          .code(409)
+          .send({ error: `cannot ${swap.status} → ${target}` });
+      if (action === "expire" && swap.disputeOutcome !== "refund") {
+        const deadline = await expiryDeadline(swap);
+        if (deadline === null || now() < deadline) {
+          return reply
+            .code(409)
+            .send({ error: "swap expiry deadline has not elapsed" });
+        }
+      }
+      // An open dispute / refund arbitration freezes the forward path;
+      // expire/refund/cancel stay available so locked tokens can still come home.
+      if (action === "release" || action === "complete") {
+        const reason = frozen(swap);
+        if (reason)
+          return reply.code(422).send({ error: `swap frozen: ${reason}` });
+      }
 
-    const stored = await persist({
-      ...swap,
-      ...evidence,
-      seq: swap.seq + 1,
-      status: target,
-      eventType: action as SwapAction,
-      actorDid: did,
-      at: now(),
-    });
-    return { swapId, status: stored.status, txid: stored.txid ?? null };
-  });
+      const evidence: Partial<P2pSwapEvent> = {};
+      if (action === "escrow_lock") {
+        if (typeof body.txHash !== "string" || !body.txHash)
+          return reply.code(400).send({ error: "txHash required" });
+        const lockTx = body.txHash;
+        const sellerSwaps = await deps.store.listSwapsForDid(
+          swap.sellerDid ?? "",
+          1000,
+        );
+        if (
+          sellerSwaps.some(
+            (s) => s.swapId !== swapId && s.escrowTxHash === lockTx,
+          )
+        ) {
+          return reply
+            .code(409)
+            .send({
+              error: "this lock transaction already backs another swap",
+            });
+        }
+        if (deps.chain) {
+          if (!swap.escrowAddress)
+            return reply
+              .code(409)
+              .send({ error: "swap has no escrow address" });
+          const lock = {
+            txHash: body.txHash,
+            escrowAddress: swap.escrowAddress,
+            token: swap.giveToken,
+            amount: swap.giveAmount,
+          };
+          const proof = await proveOnChain((c) => verifyChainLock(c, lock));
+          if (!proof.ok)
+            return reply
+              .code(422)
+              .send({ error: proof.reason ?? "chain verification failed" });
+        }
+        evidence.escrowTxHash = body.txHash;
+      } else if (action === "release") {
+        if (typeof body.txHash !== "string" || !body.txHash)
+          return reply.code(400).send({ error: "txHash required" });
+        if (deps.chain) {
+          const to = swap.receiveAddress;
+          if (!to)
+            return reply
+              .code(409)
+              .send({ error: "swap has no receive address" });
+          const proof = await proveOnChain((c) =>
+            verifyChainPayment(c, {
+              txHash: body.txHash as string,
+              toAddress: to,
+            }),
+          );
+          if (!proof.ok)
+            return reply
+              .code(422)
+              .send({ error: proof.reason ?? "chain verification failed" });
+        }
+        evidence.releaseTxHash = body.txHash;
+      } else if (action === "refund") {
+        // Same proof rule as release: a refund is only real if the spend landed.
+        if (typeof body.txHash !== "string" || !body.txHash)
+          return reply.code(400).send({ error: "txHash required" });
+        if (deps.chain) {
+          const row = await deps.store.getEscrowSigning(swapId);
+          const refundAddress =
+            (typeof body.refundAddress === "string" &&
+              body.refundAddress.trim()) ||
+            row?.refundAddress ||
+            "";
+          if (!destAddress(refundAddress)) {
+            return reply
+              .code(400)
+              .send({ error: "refundAddress required (body or presign)" });
+          }
+          const proof = await proveOnChain((c) =>
+            verifyChainPayment(c, {
+              txHash: body.txHash as string,
+              toAddress: refundAddress,
+            }),
+          );
+          if (!proof.ok)
+            return reply
+              .code(422)
+              .send({ error: proof.reason ?? "chain verification failed" });
+        }
+        evidence.refundTxHash = body.txHash;
+      }
 
-  app.get<{ Params: { swapId: string } }>("/swaps/:swapId", async (request, reply) => {
-    if (!requireAdmin(request, reply)) return;
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    return { swap: redact(swap) };
-  });
+      const stored = await persist({
+        ...swap,
+        ...evidence,
+        seq: swap.seq + 1,
+        status: target,
+        eventType: action as SwapAction,
+        actorDid: did,
+        at: now(),
+      });
+      return { swapId, status: stored.status, txid: stored.txid ?? null };
+    },
+  );
+
+  app.get<{ Params: { swapId: string } }>(
+    "/swaps/:swapId",
+    async (request, reply) => {
+      if (!requireAdmin(request, reply)) return;
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      return { swap: redact(swap) };
+    },
+  );
 
   // Party-scoped swap reads for wallet clients: signed with the caller's did,
   // PII redacted, and only swaps the caller is a party to are returned.
@@ -1682,15 +2354,25 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * offers the presign retry only while this is false).
    */
   async function walletView(swap: P2pSwapEvent): Promise<P2pSwapView> {
-    return { ...redact(swap), presigned: !!(await deps.store.getEscrowSigning(swap.swapId)) };
+    return {
+      ...redact(swap),
+      presigned: !!(await deps.store.getEscrowSigning(swap.swapId)),
+    };
   }
 
   app.post("/swaps/mine", async (request, reply) => {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard, "read", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    const signed = validateSignedRequest(
+      body,
+      did,
+      guard,
+      "read",
+      request.url.split("?")[0],
+    );
+    if (!signed.ok)
+      return reply.code(signed.status ?? 400).send({ error: signed.error });
     const swaps = await deps.store.listSwapsForDid(did);
     return { swaps: await Promise.all(swaps.map(walletView)) };
   });
@@ -1700,12 +2382,21 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const did = typeof body.did === "string" ? body.did : "";
     const swapId = typeof body.swapId === "string" ? body.swapId : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const signed = validateSignedRequest(body, did, guard, "read", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    if (!SWAP_ID_RE.test(swapId))
+      return reply.code(400).send({ error: "invalid swapId" });
+    const signed = validateSignedRequest(
+      body,
+      did,
+      guard,
+      "read",
+      request.url.split("?")[0],
+    );
+    if (!signed.ok)
+      return reply.code(signed.status ?? 400).send({ error: signed.error });
     const swap = await deps.store.getSwap(swapId);
     if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    if (swap.sellerDid !== did && swap.buyerDid !== did) return reply.code(403).send({ error: "not a swap party" });
+    if (swap.sellerDid !== did && swap.buyerDid !== did)
+      return reply.code(403).send({ error: "not a swap party" });
     return { swap: await walletView(swap) };
   });
 
@@ -1714,7 +2405,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!requireAdmin(request, reply)) return;
     const raw = (request.query as { limit?: string })?.limit;
     const limit = raw === undefined ? 100 : Number(raw);
-    if (!Number.isInteger(limit) || limit < 1 || limit > 500) return reply.code(400).send({ error: "invalid limit" });
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500)
+      return reply.code(400).send({ error: "invalid limit" });
     const swaps = await deps.store.listSwaps(limit);
     return { swaps: swaps.map(redact) };
   });
@@ -1732,145 +2424,244 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * their own statements — screenshots never count). Buyer-signed; idempotent
    * while PAYMENT_PENDING; the profile itself stays off the chain record.
    */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/payment-instructions", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    if (!swap.buyerDid) return reply.code(409).send({ error: "swap has no buyer" });
-    if (!swap.sellerDid) return reply.code(409).send({ error: "swap has no seller" });
-    if (!isCnyRail(swap.wantRail)) return reply.code(400).send({ error: "not a CNY swap" });
-    const buyer = typeof body.did === "string" ? body.did : "";
-    if (!buyer) return reply.code(400).send({ error: "did required" });
-    if (buyer !== swap.buyerDid) return reply.code(403).send({ error: "buyer signer required" });
-    const signed = validateSignedRequest(body, swap.buyerDid, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    const frozenReason = frozen(swap);
-    if (frozenReason) return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
-    const profile = await deps.store.getProfile(swap.sellerDid, swap.wantRail);
-    if (!profile) return reply.code(409).send({ error: "seller has no payment profile for this rail" });
-    if (swap.status === "PAYMENT_PENDING" && swap.remark) {
-      return { swapId, status: swap.status, ...(await instructionsView(swap, profile, swap.remark)) };
-    }
-    if (swap.status !== "ESCROW_LOCKED") {
-      return reply.code(409).send({ error: `instructions require ESCROW_LOCKED (swap is ${swap.status})` });
-    }
-    const remark = randomBytes(6).toString("hex");
-    const stored = await persist({
-      ...swap,
-      seq: swap.seq + 1,
-      status: "PAYMENT_PENDING",
-      eventType: "instructions",
-      actorDid: swap.buyerDid,
-      remark,
-      at: now(),
-    });
-    return reply.code(201).send({ swapId, status: stored.status, ...(await instructionsView(stored, profile, remark)) });
-  });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/payment-instructions",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      if (!swap.buyerDid)
+        return reply.code(409).send({ error: "swap has no buyer" });
+      if (!swap.sellerDid)
+        return reply.code(409).send({ error: "swap has no seller" });
+      if (!isCnyRail(swap.wantRail))
+        return reply.code(400).send({ error: "not a CNY swap" });
+      const buyer = typeof body.did === "string" ? body.did : "";
+      if (!buyer) return reply.code(400).send({ error: "did required" });
+      if (buyer !== swap.buyerDid)
+        return reply.code(403).send({ error: "buyer signer required" });
+      const signed = validateSignedRequest(
+        body,
+        swap.buyerDid,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      const frozenReason = frozen(swap);
+      if (frozenReason)
+        return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
+      const profile = await deps.store.getProfile(
+        swap.sellerDid,
+        swap.wantRail,
+      );
+      if (!profile)
+        return reply
+          .code(409)
+          .send({ error: "seller has no payment profile for this rail" });
+      if (swap.status === "PAYMENT_PENDING" && swap.remark) {
+        return {
+          swapId,
+          status: swap.status,
+          ...(await instructionsView(swap, profile, swap.remark)),
+        };
+      }
+      if (swap.status !== "ESCROW_LOCKED") {
+        return reply
+          .code(409)
+          .send({
+            error: `instructions require ESCROW_LOCKED (swap is ${swap.status})`,
+          });
+      }
+      const remark = randomBytes(6).toString("hex");
+      const stored = await persist({
+        ...swap,
+        seq: swap.seq + 1,
+        status: "PAYMENT_PENDING",
+        eventType: "instructions",
+        actorDid: swap.buyerDid,
+        remark,
+        at: now(),
+      });
+      return reply
+        .code(201)
+        .send({
+          swapId,
+          status: stored.status,
+          ...(await instructionsView(stored, profile, remark)),
+        });
+    },
+  );
 
   /**
    * Buyer claims the transfer: 流水号 (txId) required, receipt image optional
    * and stored as-is in the proof store while only its sha256 is anchored on
    * the swap event (§8: receipt bytes never reach the chain).
    */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/proof", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    if (!swap.buyerDid) return reply.code(409).send({ error: "swap has no buyer" });
-    if (!isCnyRail(swap.wantRail)) return reply.code(400).send({ error: "not a CNY swap" });
-    const buyer = typeof body.did === "string" ? body.did : "";
-    if (!buyer) return reply.code(400).send({ error: "did required" });
-    if (buyer !== swap.buyerDid) return reply.code(403).send({ error: "buyer signer required" });
-    const signed = validateSignedRequest(body, swap.buyerDid, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    const frozenReason = frozen(swap);
-    if (frozenReason) return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
-    if (swap.status !== "PAYMENT_PENDING") {
-      return reply.code(409).send({ error: `proof requires PAYMENT_PENDING (swap is ${swap.status})` });
-    }
-    const txId = typeof body.txId === "string" ? body.txId.trim() : "";
-    if (!/^[A-Za-z0-9._-]{1,64}$/.test(txId)) {
-      return reply.code(400).send({ error: "invalid txId (1..64: alnum . _ -)" });
-    }
-    if (body.remark !== undefined && body.remark !== swap.remark) {
-      return reply.code(400).send({ error: "remark does not match the instructions" });
-    }
-    const receipt = typeof body.receipt === "string" && body.receipt ? body.receipt : undefined;
-    if (receipt !== undefined && receipt.length > MAX_RECEIPT_CHARS) {
-      return reply.code(413).send({ error: `receipt too large (max ${MAX_RECEIPT_CHARS} chars)` });
-    }
-    let sha = typeof body.receiptSha256 === "string" ? body.receiptSha256 : undefined;
-    if (receipt !== undefined) {
-      if (!receipt.startsWith("data:image/")) return reply.code(400).send({ error: "receipt must be an image data URL" });
-      const bytes = receiptBytes(receipt);
-      if (!bytes) return reply.code(400).send({ error: "receipt must be base64 (data:image/…;base64,…)" });
-      // The engine hashes the decoded image bytes — a client-computed hash is
-      // advisory and is overwritten, so the anchor always matches the stored
-      // file (`sha256 <file>` reproduces it).
-      sha = createHash("sha256").update(bytes).digest("hex");
-    }
-    if (sha !== undefined && !/^[0-9a-f]{64}$/.test(sha)) return reply.code(400).send({ error: "invalid receiptSha256" });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/proof",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      if (!swap.buyerDid)
+        return reply.code(409).send({ error: "swap has no buyer" });
+      if (!isCnyRail(swap.wantRail))
+        return reply.code(400).send({ error: "not a CNY swap" });
+      const buyer = typeof body.did === "string" ? body.did : "";
+      if (!buyer) return reply.code(400).send({ error: "did required" });
+      if (buyer !== swap.buyerDid)
+        return reply.code(403).send({ error: "buyer signer required" });
+      const signed = validateSignedRequest(
+        body,
+        swap.buyerDid,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      const frozenReason = frozen(swap);
+      if (frozenReason)
+        return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
+      if (swap.status !== "PAYMENT_PENDING") {
+        return reply
+          .code(409)
+          .send({
+            error: `proof requires PAYMENT_PENDING (swap is ${swap.status})`,
+          });
+      }
+      const txId = typeof body.txId === "string" ? body.txId.trim() : "";
+      if (!/^[A-Za-z0-9._-]{1,64}$/.test(txId)) {
+        return reply
+          .code(400)
+          .send({ error: "invalid txId (1..64: alnum . _ -)" });
+      }
+      if (body.remark !== undefined && body.remark !== swap.remark) {
+        return reply
+          .code(400)
+          .send({ error: "remark does not match the instructions" });
+      }
+      const receipt =
+        typeof body.receipt === "string" && body.receipt
+          ? body.receipt
+          : undefined;
+      if (receipt !== undefined && receipt.length > MAX_RECEIPT_CHARS) {
+        return reply
+          .code(413)
+          .send({
+            error: `receipt too large (max ${MAX_RECEIPT_CHARS} chars)`,
+          });
+      }
+      let sha =
+        typeof body.receiptSha256 === "string" ? body.receiptSha256 : undefined;
+      if (receipt !== undefined) {
+        if (!receipt.startsWith("data:image/"))
+          return reply
+            .code(400)
+            .send({ error: "receipt must be an image data URL" });
+        const bytes = receiptBytes(receipt);
+        if (!bytes)
+          return reply
+            .code(400)
+            .send({ error: "receipt must be base64 (data:image/…;base64,…)" });
+        // The engine hashes the decoded image bytes — a client-computed hash is
+        // advisory and is overwritten, so the anchor always matches the stored
+        // file (`sha256 <file>` reproduces it).
+        sha = createHash("sha256").update(bytes).digest("hex");
+      }
+      if (sha !== undefined && !/^[0-9a-f]{64}$/.test(sha))
+        return reply.code(400).send({ error: "invalid receiptSha256" });
 
-    const paidAt = now();
-    await deps.store.addProof({
-      swapId,
-      txId,
-      ...(swap.remark ? { remark: swap.remark } : {}),
-      ...(sha ? { receiptSha256: sha } : {}),
-      ...(receipt !== undefined ? { receipt } : {}),
-      paidAt,
-      createdAt: paidAt,
-    });
-    const stored = await persist({
-      ...swap,
-      seq: swap.seq + 1,
-      status: "PAYMENT_CLAIMED",
-      eventType: "payment_proof",
-      actorDid: swap.buyerDid,
-      ...(sha ? { receiptSha256: sha } : {}),
-      paidAt,
-      at: paidAt,
-    });
-    return { swapId, status: stored.status, txId, receiptSha256: stored.receiptSha256 ?? null };
-  });
+      const paidAt = now();
+      await deps.store.addProof({
+        swapId,
+        txId,
+        ...(swap.remark ? { remark: swap.remark } : {}),
+        ...(sha ? { receiptSha256: sha } : {}),
+        ...(receipt !== undefined ? { receipt } : {}),
+        paidAt,
+        createdAt: paidAt,
+      });
+      const stored = await persist({
+        ...swap,
+        seq: swap.seq + 1,
+        status: "PAYMENT_CLAIMED",
+        eventType: "payment_proof",
+        actorDid: swap.buyerDid,
+        ...(sha ? { receiptSha256: sha } : {}),
+        paidAt,
+        at: paidAt,
+      });
+      return {
+        swapId,
+        status: stored.status,
+        txId,
+        receiptSha256: stored.receiptSha256 ?? null,
+      };
+    },
+  );
 
   /**
    * Seller confirms receipt on their own 流水 (§6). Seller-signed — after it
    * the engine releases tokens.
    */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/confirm", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    const did = typeof body.did === "string" ? body.did : "";
-    if (!did) return reply.code(400).send({ error: "did required" });
-    if (did !== swap.sellerDid) return reply.code(403).send({ error: "seller signer required" });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    const frozenReason = frozen(swap);
-    if (frozenReason) return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
-    // PAYMENT_PENDING is allowed too: the seller may see the transfer land
-    // before the buyer uploads proof (docs/p2p.md §9) — and a seller confirm
-    // over an unclaimed payment is what rescues it from the silent-expiry timer.
-    if (swap.status !== "PAYMENT_CLAIMED" && swap.status !== "PAYMENT_PENDING") {
-      return reply.code(409).send({ error: `confirm requires PAYMENT_CLAIMED or PAYMENT_PENDING (swap is ${swap.status})` });
-    }
-    const stored = await persist({
-      ...swap,
-      seq: swap.seq + 1,
-      status: "PAYMENT_VERIFIED",
-      eventType: "payment_confirm",
-      actorDid: did,
-      at: now(),
-    });
-    return { swapId, status: stored.status };
-  });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/confirm",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      const did = typeof body.did === "string" ? body.did : "";
+      if (!did) return reply.code(400).send({ error: "did required" });
+      if (did !== swap.sellerDid)
+        return reply.code(403).send({ error: "seller signer required" });
+      const signed = validateSignedRequest(
+        body,
+        did,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      const frozenReason = frozen(swap);
+      if (frozenReason)
+        return reply.code(422).send({ error: `swap frozen: ${frozenReason}` });
+      // PAYMENT_PENDING is allowed too: the seller may see the transfer land
+      // before the buyer uploads proof (docs/p2p.md §9) — and a seller confirm
+      // over an unclaimed payment is what rescues it from the silent-expiry timer.
+      if (
+        swap.status !== "PAYMENT_CLAIMED" &&
+        swap.status !== "PAYMENT_PENDING"
+      ) {
+        return reply
+          .code(409)
+          .send({
+            error: `confirm requires PAYMENT_CLAIMED or PAYMENT_PENDING (swap is ${swap.status})`,
+          });
+      }
+      const stored = await persist({
+        ...swap,
+        seq: swap.seq + 1,
+        status: "PAYMENT_VERIFIED",
+        eventType: "payment_confirm",
+        actorDid: did,
+        at: now(),
+      });
+      return { swapId, status: stored.status };
+    },
+  );
 
   /**
    * Device-side payment verification (docs/p2p.md §12): the caller submits the
@@ -1880,106 +2671,144 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * confirmation — under exactly the confirm's rules (payment phase, not
    * frozen), never by default.
    */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/verify", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    const did = typeof body.did === "string" ? body.did : "";
-    if (!did) return reply.code(400).send({ error: "did required" });
-    if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    if (!isCnyRail(swap.wantRail)) return reply.code(400).send({ error: "not a CNY swap" });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/verify",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      const did = typeof body.did === "string" ? body.did : "";
+      if (!did) return reply.code(400).send({ error: "did required" });
+      if (did !== swap.buyerDid && did !== swap.sellerDid)
+        return reply.code(403).send({ error: "not a swap party" });
+      const signed = validateSignedRequest(
+        body,
+        did,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      if (!isCnyRail(swap.wantRail))
+        return reply.code(400).send({ error: "not a CNY swap" });
 
-    // The verdict's side is the caller's role — a party can never file the
-    // other side's story.
-    const side = did === swap.buyerDid ? "buyer" : "seller";
-    if (body.side !== undefined && body.side !== side) {
-      return reply.code(422).send({ error: `side must be ${side} (the signer's role)` });
-    }
-    const counterpartyName =
-      typeof body.counterpartyName === "string" ? body.counterpartyName.slice(0, 128) : undefined;
-    const verdict = {
-      side,
-      observed: body.observed,
-      evidenceKind: body.evidenceKind,
-      ...(typeof body.txId === "string" ? { txId: body.txId.trim() } : {}),
-      ...(typeof body.amount === "string" ? { amount: body.amount.trim() } : {}),
-      ...(counterpartyName ? { counterpartyName } : {}),
-      ...(typeof body.remark === "string" ? { remark: body.remark } : {}),
-      ...(typeof body.paidAt === "number" ? { paidAt: body.paidAt } : {}),
-      ...(body.receiptVerified !== undefined ? { receiptVerified: !!body.receiptVerified } : {}),
-      ...(Array.isArray(body.captures) ? { captures: body.captures } : {}),
-    } as PaymentVerdict;
+      // The verdict's side is the caller's role — a party can never file the
+      // other side's story.
+      const side = did === swap.buyerDid ? "buyer" : "seller";
+      if (body.side !== undefined && body.side !== side) {
+        return reply
+          .code(422)
+          .send({ error: `side must be ${side} (the signer's role)` });
+      }
+      const counterpartyName =
+        typeof body.counterpartyName === "string"
+          ? body.counterpartyName.slice(0, 128)
+          : undefined;
+      const verdict = {
+        side,
+        observed: body.observed,
+        evidenceKind: body.evidenceKind,
+        ...(typeof body.txId === "string" ? { txId: body.txId.trim() } : {}),
+        ...(typeof body.amount === "string"
+          ? { amount: body.amount.trim() }
+          : {}),
+        ...(counterpartyName ? { counterpartyName } : {}),
+        ...(typeof body.remark === "string" ? { remark: body.remark } : {}),
+        ...(typeof body.paidAt === "number" ? { paidAt: body.paidAt } : {}),
+        ...(body.receiptVerified !== undefined
+          ? { receiptVerified: !!body.receiptVerified }
+          : {}),
+        ...(Array.isArray(body.captures) ? { captures: body.captures } : {}),
+      } as PaymentVerdict;
 
-    // The four checks (§12): amount exact, remark = the swap code, entry
-    // inside the swap window, 流水号 sane — and any claim mismatch is surfaced
-    // as arbitration evidence instead of failing the verdict.
-    const claims = await deps.store.proofs(swapId);
-    const claimedTxId = claims.length ? claims[claims.length - 1].txId : undefined;
-    const history = await deps.store.events(swapId);
-    const check = validatePaymentVerdict(verdict, {
-      amount: swap.wantAmount ?? "",
-      ...(swap.remark ? { remark: swap.remark } : {}),
-      ...(claimedTxId ? { claimedTxId } : {}),
-      paidFrom: history.length ? history[0].at : swap.at,
-      paidTo: now(),
-    });
-    if (!check.ok) return reply.code(422).send({ error: check.error });
+      // The four checks (§12): amount exact, remark = the swap code, entry
+      // inside the swap window, 流水号 sane — and any claim mismatch is surfaced
+      // as arbitration evidence instead of failing the verdict.
+      const claims = await deps.store.proofs(swapId);
+      const claimedTxId = claims.length
+        ? claims[claims.length - 1].txId
+        : undefined;
+      const history = await deps.store.events(swapId);
+      const check = validatePaymentVerdict(verdict, {
+        amount: swap.wantAmount ?? "",
+        ...(swap.remark ? { remark: swap.remark } : {}),
+        ...(claimedTxId ? { claimedTxId } : {}),
+        paidFrom: history.length ? history[0].at : swap.at,
+        paidTo: now(),
+      });
+      if (!check.ok) return reply.code(422).send({ error: check.error });
 
-    await deps.store.addVerification({ ...verdict, swapId, did, createdAt: now() } as PaymentVerification);
+      await deps.store.addVerification({
+        ...verdict,
+        swapId,
+        did,
+        createdAt: now(),
+      } as PaymentVerification);
 
-    // The verdict anchors as its own event (§12/§14): the small evidence —
-    // fields + capture hashes. The counterparty name (PII) and any bytes stay
-    // store-only; only large blobs stay off chain, as hashes.
-    const stored = await persist({
-      ...swap,
-      seq: swap.seq + 1,
-      eventType: "payment_verify",
-      actorDid: did,
-      verify: {
-        side: verdict.side,
-        observed: verdict.observed,
-        evidenceKind: verdict.evidenceKind,
-        ...(verdict.txId !== undefined ? { txId: verdict.txId } : {}),
-        ...(verdict.amount !== undefined ? { amount: verdict.amount } : {}),
-        ...(verdict.remark !== undefined ? { remark: verdict.remark } : {}),
-        ...(verdict.paidAt !== undefined ? { paidAt: verdict.paidAt } : {}),
-        ...(verdict.receiptVerified !== undefined ? { receiptVerified: verdict.receiptVerified } : {}),
-        ...(verdict.captures?.length ? { captures: verdict.captures } : {}),
-      },
-      at: now(),
-    });
-
-    // Policy-gated machine confirmation (docs/p2p.md §12). The signature on
-    // the qualifying verdict is the attestation — the engine adds no trust of
-    // its own, and a frozen swap never advances.
-    const verdicts = await deps.store.verifications(swapId);
-    const confirm = machineConfirm(env.SETTLEMENT_CNY_AUTO_RELEASE_ON, verdicts);
-    let advanced = false;
-    if (confirm && (swap.status === "PAYMENT_CLAIMED" || swap.status === "PAYMENT_PENDING") && !frozen(swap)) {
-      await persist({
-        ...stored,
-        seq: stored.seq + 1,
-        status: "PAYMENT_VERIFIED",
-        eventType: "payment_confirm",
-        actorDid: confirm.side === "seller" ? swap.sellerDid : swap.buyerDid,
-        verifySource: confirm.evidenceKind,
+      // The verdict anchors as its own event (§12/§14): the small evidence —
+      // fields + capture hashes. The counterparty name (PII) and any bytes stay
+      // store-only; only large blobs stay off chain, as hashes.
+      const stored = await persist({
+        ...swap,
+        seq: swap.seq + 1,
+        eventType: "payment_verify",
+        actorDid: did,
+        verify: {
+          side: verdict.side,
+          observed: verdict.observed,
+          evidenceKind: verdict.evidenceKind,
+          ...(verdict.txId !== undefined ? { txId: verdict.txId } : {}),
+          ...(verdict.amount !== undefined ? { amount: verdict.amount } : {}),
+          ...(verdict.remark !== undefined ? { remark: verdict.remark } : {}),
+          ...(verdict.paidAt !== undefined ? { paidAt: verdict.paidAt } : {}),
+          ...(verdict.receiptVerified !== undefined
+            ? { receiptVerified: verdict.receiptVerified }
+            : {}),
+          ...(verdict.captures?.length ? { captures: verdict.captures } : {}),
+        },
         at: now(),
       });
-      advanced = true;
-    }
-    return {
-      swapId,
-      stored: true,
-      side,
-      claimMismatch: check.claimMismatch ?? null,
-      machineConfirmed: !!confirm,
-      advanced,
-    };
-  });
+
+      // Policy-gated machine confirmation (docs/p2p.md §12). The signature on
+      // the qualifying verdict is the attestation — the engine adds no trust of
+      // its own, and a frozen swap never advances.
+      const verdicts = await deps.store.verifications(swapId);
+      const confirm = machineConfirm(
+        env.SETTLEMENT_CNY_AUTO_RELEASE_ON,
+        verdicts,
+      );
+      let advanced = false;
+      if (
+        confirm &&
+        (swap.status === "PAYMENT_CLAIMED" ||
+          swap.status === "PAYMENT_PENDING") &&
+        !frozen(swap)
+      ) {
+        await persist({
+          ...stored,
+          seq: stored.seq + 1,
+          status: "PAYMENT_VERIFIED",
+          eventType: "payment_confirm",
+          actorDid: confirm.side === "seller" ? swap.sellerDid : swap.buyerDid,
+          verifySource: confirm.evidenceKind,
+          at: now(),
+        });
+        advanced = true;
+      }
+      return {
+        swapId,
+        stored: true,
+        side,
+        claimMismatch: check.claimMismatch ?? null,
+        machineConfirmed: !!confirm,
+        advanced,
+      };
+    },
+  );
 
   /**
    * Pair a device endpoint (docs/p2p.md §12): the user's wallet submits a
@@ -1992,8 +2821,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    const signed = validateSignedRequest(
+      body,
+      did,
+      guard,
+      "write",
+      request.url.split("?")[0],
+    );
+    if (!signed.ok)
+      return reply.code(signed.status ?? 400).send({ error: signed.error });
     const grant = {
       did,
       endpoint: typeof body.endpoint === "string" ? body.endpoint.trim() : "",
@@ -2006,8 +2842,13 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     };
     const check = validatePairingGrant(grant, now());
     if (!check.ok) return reply.code(422).send({ error: check.error });
-    if (env.SETTLEMENT_PAIRING_ALLOW_PRIVATE !== "1" && isNonPublicLiteral(grant.endpoint)) {
-      return reply.code(422).send({ error: "pairing endpoint must be a public address" });
+    if (
+      env.SETTLEMENT_PAIRING_ALLOW_PRIVATE !== "1" &&
+      isNonPublicLiteral(grant.endpoint)
+    ) {
+      return reply
+        .code(422)
+        .send({ error: "pairing endpoint must be a public address" });
     }
     const existing = await deps.store.getPairing(did, grant.pairingId);
     if (existing) {
@@ -2019,10 +2860,17 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         existing.swapId === grant.swapId &&
         existing.expiresAt === grant.expiresAt;
       if (!same) return reply.code(409).send({ error: "pairingId collision" });
-      return reply.code(200).send({ did, pairingId: grant.pairingId, expiresAt: grant.expiresAt });
+      return reply
+        .code(200)
+        .send({ did, pairingId: grant.pairingId, expiresAt: grant.expiresAt });
     }
-    await deps.store.putPairing({ ...grant, createdAt: now() } as StoredPairing);
-    return reply.code(201).send({ did, pairingId: grant.pairingId, expiresAt: grant.expiresAt });
+    await deps.store.putPairing({
+      ...grant,
+      createdAt: now(),
+    } as StoredPairing);
+    return reply
+      .code(201)
+      .send({ did, pairingId: grant.pairingId, expiresAt: grant.expiresAt });
   });
 
   /** The caller's own pairings (token values never leave — `tokenSet` only). */
@@ -2030,8 +2878,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    const signed = validateSignedRequest(
+      body,
+      did,
+      guard,
+      "write",
+      request.url.split("?")[0],
+    );
+    if (!signed.ok)
+      return reply.code(signed.status ?? 400).send({ error: signed.error });
     const pairings = await deps.store.pairingsForDid(did);
     return {
       pairings: pairings.map((p) => ({
@@ -2052,10 +2907,18 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    const signed = validateSignedRequest(
+      body,
+      did,
+      guard,
+      "write",
+      request.url.split("?")[0],
+    );
+    if (!signed.ok)
+      return reply.code(signed.status ?? 400).send({ error: signed.error });
     const pairingId = typeof body.pairingId === "string" ? body.pairingId : "";
-    if (!pairingId) return reply.code(400).send({ error: "pairingId required" });
+    if (!pairingId)
+      return reply.code(400).send({ error: "pairingId required" });
     const existing = await deps.store.getPairing(did, pairingId);
     if (!existing) return reply.code(404).send({ error: "unknown pairing" });
     if (existing.revoked) return { ok: true, revoked: true };
@@ -2071,98 +2934,161 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * trusted evidence by itself (§14: the model never supplies trusted
    * evidence).
    */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/device-read", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    const did = typeof body.did === "string" ? body.did : "";
-    if (!did) return reply.code(400).send({ error: "did required" });
-    if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    if (!isCnyRail(swap.wantRail)) return reply.code(400).send({ error: "not a CNY swap" });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/device-read",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      const did = typeof body.did === "string" ? body.did : "";
+      if (!did) return reply.code(400).send({ error: "did required" });
+      if (did !== swap.buyerDid && did !== swap.sellerDid)
+        return reply.code(403).send({ error: "not a swap party" });
+      const signed = validateSignedRequest(
+        body,
+        did,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      if (!isCnyRail(swap.wantRail))
+        return reply.code(400).send({ error: "not a CNY swap" });
 
-    // The caller's own, still-valid pairing — never someone else's endpoint.
-    const wanted = typeof body.pairingId === "string" ? body.pairingId.trim() : "";
-    const pairings = await deps.store.pairingsForDid(did);
-    const grant = pairings.find(
-      (p) => !p.revoked && grantAllows(p, swapId, now()) && (!wanted || p.pairingId === wanted),
-    );
-    if (!grant) return reply.code(409).send({ error: "no active pairing for this swap (POST /pairings first)" });
+      // The caller's own, still-valid pairing — never someone else's endpoint.
+      const wanted =
+        typeof body.pairingId === "string" ? body.pairingId.trim() : "";
+      const pairings = await deps.store.pairingsForDid(did);
+      const grant = pairings.find(
+        (p) =>
+          !p.revoked &&
+          grantAllows(p, swapId, now()) &&
+          (!wanted || p.pairingId === wanted),
+      );
+      if (!grant)
+        return reply
+          .code(409)
+          .send({
+            error: "no active pairing for this swap (POST /pairings first)",
+          });
 
-    const side = did === swap.buyerDid ? "buyer" : "seller";
-    const claims = await deps.store.proofs(swapId);
-    const history = await deps.store.events(swapId);
-    const expected: VerdictExpectation = {
-      amount: swap.wantAmount ?? "",
-      ...(swap.remark ? { remark: swap.remark } : {}),
-      ...(claims.length ? { claimedTxId: claims[claims.length - 1].txId } : {}),
-      paidFrom: history.length ? history[0].at : swap.at,
-      paidTo: now(),
-    };
-    const evidenceKind = body.evidenceKind === "bank_ereceipt" ? "bank_ereceipt" : "device_read";
-    const via = body.via === "notification" ? "notification" : "screen";
-    if (env.SETTLEMENT_PAIRING_ALLOW_PRIVATE !== "1") {
-      const reason = await nonPublicEndpointReason(grant.endpoint);
-      if (reason) return reply.code(422).send({ error: `pairing endpoint rejected: ${reason}` });
-    }
-    const read = deps.readDevice ?? defaultDeviceRead;
-    let result: DeviceReadResult;
-    try {
-      result = await read({
-        grant,
+      const side = did === swap.buyerDid ? "buyer" : "seller";
+      const claims = await deps.store.proofs(swapId);
+      const history = await deps.store.events(swapId);
+      const expected: VerdictExpectation = {
+        amount: swap.wantAmount ?? "",
+        ...(swap.remark ? { remark: swap.remark } : {}),
+        ...(claims.length
+          ? { claimedTxId: claims[claims.length - 1].txId }
+          : {}),
+        paidFrom: history.length ? history[0].at : swap.at,
+        paidTo: now(),
+      };
+      const evidenceKind =
+        body.evidenceKind === "bank_ereceipt" ? "bank_ereceipt" : "device_read";
+      const via = body.via === "notification" ? "notification" : "screen";
+      if (env.SETTLEMENT_PAIRING_ALLOW_PRIVATE !== "1") {
+        const reason = await nonPublicEndpointReason(grant.endpoint);
+        if (reason)
+          return reply
+            .code(422)
+            .send({ error: `pairing endpoint rejected: ${reason}` });
+      }
+      const read = deps.readDevice ?? defaultDeviceRead;
+      let result: DeviceReadResult;
+      try {
+        result = await read({
+          grant,
+          side,
+          rail: swap.wantRail,
+          expected,
+          evidenceKind,
+          via,
+          ...(env.SETTLEMENT_PAIRING_ALLOW_PRIVATE !== "1"
+            ? { fetchImpl: publicOnlyFetch }
+            : {}),
+          ...(body.receiptVerified !== undefined
+            ? { receiptVerified: !!body.receiptVerified }
+            : {}),
+        });
+      } catch (e) {
+        request.log.warn(
+          { swapId, err: String(e).slice(0, 500) },
+          "device read failed",
+        );
+        return reply.code(502).send({ error: "device read failed" });
+      }
+      return {
+        swapId,
         side,
-        rail: swap.wantRail,
-        expected,
-        evidenceKind,
-        via,
-        ...(env.SETTLEMENT_PAIRING_ALLOW_PRIVATE !== "1" ? { fetchImpl: publicOnlyFetch } : {}),
-        ...(body.receiptVerified !== undefined ? { receiptVerified: !!body.receiptVerified } : {}),
-      });
-    } catch (e) {
-      request.log.warn({ swapId, err: String(e).slice(0, 500) }, "device read failed");
-      return reply.code(502).send({ error: "device read failed" });
-    }
-    return {
-      swapId,
-      side,
-      verdict: result.verdict,
-      check: result.check,
-      entry: result.entry ?? null,
-      next: "the wallet signs `verdict` and POSTs it to /swaps/:swapId/verify",
-    };
-  });
+        verdict: result.verdict,
+        check: result.check,
+        entry: result.entry ?? null,
+        next: "the wallet signs `verdict` and POSTs it to /swaps/:swapId/verify",
+      };
+    },
+  );
 
   /** Either party can freeze a CNY swap mid-review; tokens stay locked. */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/dispute", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    const did = typeof body.did === "string" ? body.did : "";
-    if (!did) return reply.code(400).send({ error: "did required" });
-    if (did !== swap.buyerDid && did !== swap.sellerDid) return reply.code(403).send({ error: "not a swap party" });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    if (swap.dispute && swap.dispute !== "RESOLVED") return reply.code(409).send({ error: "dispute already open" });
-    if (swap.status !== "PAYMENT_PENDING" && swap.status !== "PAYMENT_CLAIMED") {
-      return reply.code(409).send({ error: `dispute requires PAYMENT_PENDING or PAYMENT_CLAIMED (swap is ${swap.status})` });
-    }
-    const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim().slice(0, 512) : undefined;
-    const stored = await persist({
-      ...swap,
-      seq: swap.seq + 1,
-      eventType: "dispute_open",
-      actorDid: did,
-      dispute: "OPEN",
-      ...(reason ? { disputeReason: reason } : {}),
-      at: now(),
-    });
-    return { swapId, status: stored.status, dispute: stored.dispute, disputeReason: stored.disputeReason ?? null };
-  });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/dispute",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      const did = typeof body.did === "string" ? body.did : "";
+      if (!did) return reply.code(400).send({ error: "did required" });
+      if (did !== swap.buyerDid && did !== swap.sellerDid)
+        return reply.code(403).send({ error: "not a swap party" });
+      const signed = validateSignedRequest(
+        body,
+        did,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      if (swap.dispute && swap.dispute !== "RESOLVED")
+        return reply.code(409).send({ error: "dispute already open" });
+      if (
+        swap.status !== "PAYMENT_PENDING" &&
+        swap.status !== "PAYMENT_CLAIMED"
+      ) {
+        return reply
+          .code(409)
+          .send({
+            error: `dispute requires PAYMENT_PENDING or PAYMENT_CLAIMED (swap is ${swap.status})`,
+          });
+      }
+      const reason =
+        typeof body.reason === "string" && body.reason.trim()
+          ? body.reason.trim().slice(0, 512)
+          : undefined;
+      const stored = await persist({
+        ...swap,
+        seq: swap.seq + 1,
+        eventType: "dispute_open",
+        actorDid: did,
+        dispute: "OPEN",
+        ...(reason ? { disputeReason: reason } : {}),
+        at: now(),
+      });
+      return {
+        swapId,
+        status: stored.status,
+        dispute: stored.dispute,
+        disputeReason: stored.disputeReason ?? null,
+      };
+    },
+  );
 
   /**
    * Admin arbitration (§1: arbiter = the engine operator, off-platform
@@ -2173,34 +3099,53 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * armed and the winning party finishes via /escrow/cosign (buyer for a forced
    * release, seller for a refund).
    */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/dispute/resolve", async (request, reply) => {
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const arbiter = requireArbiter(request, reply, body);
-    if (arbiter === null) return;
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    if (!swap.dispute || swap.dispute === "RESOLVED") return reply.code(409).send({ error: "no active dispute" });
-    const outcome = body.outcome;
-    if (outcome !== "release" && outcome !== "refund") {
-      return reply.code(400).send({ error: "outcome must be release | refund" });
-    }
-    if (outcome === "release" && !canTransition(swap.status, "PAYMENT_VERIFIED")) {
-      return reply.code(409).send({ error: `cannot ${swap.status} → PAYMENT_VERIFIED` });
-    }
-    if (needsSecondApproval(swap)) {
-      const pending = pendingApprovals.get(swapId);
-      const live = pending && now() - pending.at < APPROVAL_TTL_MS ? pending : undefined;
-      if (!live || live.outcome !== outcome || live.did === arbiter) {
-        pendingApprovals.set(swapId, { did: arbiter, outcome, at: now() });
-        return reply.code(202).send({ swapId, outcome, approvals: 1, required: 2 });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/dispute/resolve",
+    async (request, reply) => {
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const arbiter = requireArbiter(request, reply, body);
+      if (arbiter === null) return;
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      if (!swap.dispute || swap.dispute === "RESOLVED")
+        return reply.code(409).send({ error: "no active dispute" });
+      const outcome = body.outcome;
+      if (outcome !== "release" && outcome !== "refund") {
+        return reply
+          .code(400)
+          .send({ error: "outcome must be release | refund" });
       }
-      pendingApprovals.delete(swapId);
-    }
-    app.log.warn({ swapId, outcome, arbiter }, "dispute resolved by arbiter");
-    return resolveDispute(swap, outcome, arbiter.startsWith("did:") ? arbiter : undefined);
-  });
+      if (
+        outcome === "release" &&
+        !canTransition(swap.status, "PAYMENT_VERIFIED")
+      ) {
+        return reply
+          .code(409)
+          .send({ error: `cannot ${swap.status} → PAYMENT_VERIFIED` });
+      }
+      if (needsSecondApproval(swap)) {
+        const pending = pendingApprovals.get(swapId);
+        const live =
+          pending && now() - pending.at < APPROVAL_TTL_MS ? pending : undefined;
+        if (!live || live.outcome !== outcome || live.did === arbiter) {
+          pendingApprovals.set(swapId, { did: arbiter, outcome, at: now() });
+          return reply
+            .code(202)
+            .send({ swapId, outcome, approvals: 1, required: 2 });
+        }
+        pendingApprovals.delete(swapId);
+      }
+      app.log.warn({ swapId, outcome, arbiter }, "dispute resolved by arbiter");
+      return resolveDispute(
+        swap,
+        outcome,
+        arbiter.startsWith("did:") ? arbiter : undefined,
+      );
+    },
+  );
 
   /**
    * Seller: pre-sign both escrow spend skeletons once the lock is CONFIRMED
@@ -2217,94 +3162,149 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * pull it over this signed, escrow-only endpoint instead of widening the
    * view. `presigned` mirrors the wallet-view flag for the retry flow.
    */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/escrow/context", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    const did = typeof body.did === "string" ? body.did : "";
-    if (!did) return reply.code(400).send({ error: "did required" });
-    if (did !== swap.sellerDid && did !== swap.buyerDid) return reply.code(403).send({ error: "not a swap party" });
-    const signed = validateSignedRequest(body, did, guard, "read", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    if (!swap.escrowAddress || !swap.escrowTxHash) return reply.code(409).send({ error: "swap has no locked escrow" });
-    const row = await deps.store.getEscrowSigning(swapId);
-    return {
-      swapId,
-      escrowAddress: swap.escrowAddress,
-      escrowTxHash: swap.escrowTxHash,
-      receiveAddress: swap.receiveAddress ?? "",
-      sellerDid: swap.sellerDid ?? "",
-      buyerDid: swap.buyerDid ?? "",
-      presigned: !!row,
-    };
-  });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/escrow/context",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      const did = typeof body.did === "string" ? body.did : "";
+      if (!did) return reply.code(400).send({ error: "did required" });
+      if (did !== swap.sellerDid && did !== swap.buyerDid)
+        return reply.code(403).send({ error: "not a swap party" });
+      const signed = validateSignedRequest(
+        body,
+        did,
+        guard,
+        "read",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      if (!swap.escrowAddress || !swap.escrowTxHash)
+        return reply.code(409).send({ error: "swap has no locked escrow" });
+      const row = await deps.store.getEscrowSigning(swapId);
+      return {
+        swapId,
+        escrowAddress: swap.escrowAddress,
+        escrowTxHash: swap.escrowTxHash,
+        receiveAddress: swap.receiveAddress ?? "",
+        sellerDid: swap.sellerDid ?? "",
+        buyerDid: swap.buyerDid ?? "",
+        presigned: !!row,
+      };
+    },
+  );
 
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/escrow/presign", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    const did = typeof body.did === "string" ? body.did : "";
-    if (!did) return reply.code(400).send({ error: "did required" });
-    if (did !== swap.sellerDid) return reply.code(403).send({ error: "seller signer required" });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    if (!deps.chain) return reply.code(503).send({ error: "chain not configured" });
-    if (!swap.escrowTxHash || !swap.escrowAddress) return reply.code(409).send({ error: "swap has no locked escrow" });
-    const releaseSig = typeof body.releaseSig === "string" ? body.releaseSig.trim() : "";
-    const refundSig = typeof body.refundSig === "string" ? body.refundSig.trim() : "";
-    const refundAddress = typeof body.refundAddress === "string" ? body.refundAddress.trim() : "";
-    if (!releaseSig || !refundSig) return reply.code(400).send({ error: "releaseSig and refundSig required" });
-    if (!destAddress(refundAddress)) return reply.code(400).send({ error: "refundAddress must be a base58 address" });
-    const receive = swap.receiveAddress ? destAddress(swap.receiveAddress) : null;
-    if (!receive) return reply.code(409).send({ error: "swap has no receive address" });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/escrow/presign",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      const did = typeof body.did === "string" ? body.did : "";
+      if (!did) return reply.code(400).send({ error: "did required" });
+      if (did !== swap.sellerDid)
+        return reply.code(403).send({ error: "seller signer required" });
+      const signed = validateSignedRequest(
+        body,
+        did,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      if (!deps.chain)
+        return reply.code(503).send({ error: "chain not configured" });
+      if (!swap.escrowTxHash || !swap.escrowAddress)
+        return reply.code(409).send({ error: "swap has no locked escrow" });
+      const releaseSig =
+        typeof body.releaseSig === "string" ? body.releaseSig.trim() : "";
+      const refundSig =
+        typeof body.refundSig === "string" ? body.refundSig.trim() : "";
+      const refundAddress =
+        typeof body.refundAddress === "string" ? body.refundAddress.trim() : "";
+      if (!releaseSig || !refundSig)
+        return reply
+          .code(400)
+          .send({ error: "releaseSig and refundSig required" });
+      if (!destAddress(refundAddress))
+        return reply
+          .code(400)
+          .send({ error: "refundAddress must be a base58 address" });
+      const receive = swap.receiveAddress
+        ? destAddress(swap.receiveAddress)
+        : null;
+      if (!receive)
+        return reply.code(409).send({ error: "swap has no receive address" });
 
-    const ctx = escrowContext(swap);
-    if ("code" in ctx) return reply.code(ctx.code).send({ error: ctx.reason });
-    let sellerKey: PQKey;
-    try {
-      sellerKey = keyFromDid(did);
-    } catch {
-      return reply.code(409).send({ error: "did has no PQ escrow key" });
-    }
-    if (ctx.vault.indexOf(sellerKey) < 0) {
-      return reply.code(409).send({ error: "seller key is not an escrow participant" });
-    }
-    const releaseSkel = await buildSkeleton({
-      chain: deps.chain,
-      vault: ctx.vault,
-      escrowAddress: swap.escrowAddress,
-      escrowTxHash: swap.escrowTxHash,
-      to: receive,
-    });
-    const refundSkel = await buildSkeleton({
-      chain: deps.chain,
-      vault: ctx.vault,
-      escrowAddress: swap.escrowAddress,
-      escrowTxHash: swap.escrowTxHash,
-      to: destAddress(refundAddress)!,
-    });
-    if (!releaseSkel || !refundSkel) {
-      return reply.code(409).send({ error: "escrow output not found (lock unconfirmed or already spent)" });
-    }
-    if (!verifyParticipantSig(releaseSkel.sighash, releaseSig, sellerKey)) {
-      return reply.code(422).send({ error: "releaseSig does not verify against the release skeleton" });
-    }
-    if (!verifyParticipantSig(refundSkel.sighash, refundSig, sellerKey)) {
-      return reply.code(422).send({ error: "refundSig does not verify against the refund skeleton" });
-    }
-    await rememberSpend(swap, {
-      refundAddress,
-      releaseSig,
-      refundSig,
-      releaseSignerDid: did,
-      refundSignerDid: did,
-    });
-    return { swapId, presigned: true, refundAddress };
-  });
+      const ctx = escrowContext(swap);
+      if ("code" in ctx)
+        return reply.code(ctx.code).send({ error: ctx.reason });
+      let sellerKey: PQKey;
+      try {
+        sellerKey = keyFromDid(did);
+      } catch {
+        return reply.code(409).send({ error: "did has no PQ escrow key" });
+      }
+      if (ctx.vault.indexOf(sellerKey) < 0) {
+        return reply
+          .code(409)
+          .send({ error: "seller key is not an escrow participant" });
+      }
+      const releaseSkel = await buildSkeleton({
+        chain: deps.chain,
+        vault: ctx.vault,
+        escrowAddress: swap.escrowAddress,
+        escrowTxHash: swap.escrowTxHash,
+        to: receive,
+      });
+      const refundSkel = await buildSkeleton({
+        chain: deps.chain,
+        vault: ctx.vault,
+        escrowAddress: swap.escrowAddress,
+        escrowTxHash: swap.escrowTxHash,
+        to: destAddress(refundAddress)!,
+      });
+      if (!releaseSkel || !refundSkel) {
+        return reply
+          .code(409)
+          .send({
+            error:
+              "escrow output not found (lock unconfirmed or already spent)",
+          });
+      }
+      if (!verifyParticipantSig(releaseSkel.sighash, releaseSig, sellerKey)) {
+        return reply
+          .code(422)
+          .send({
+            error: "releaseSig does not verify against the release skeleton",
+          });
+      }
+      if (!verifyParticipantSig(refundSkel.sighash, refundSig, sellerKey)) {
+        return reply
+          .code(422)
+          .send({
+            error: "refundSig does not verify against the refund skeleton",
+          });
+      }
+      await rememberSpend(swap, {
+        refundAddress,
+        releaseSig,
+        refundSig,
+        releaseSignerDid: did,
+        refundSignerDid: did,
+      });
+      return { swapId, presigned: true, refundAddress };
+    },
+  );
 
   /**
    * Party co-sign (Path A): the wallet signs the exact skeleton, the engine
@@ -2313,52 +3313,77 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * for a presigned swap with nobody watching. `kind=refund` is seller-only:
    * a refund pays the seller's `refundAddress`, which only the seller chooses.
    */
-  app.post<{ Params: { swapId: string } }>("/swaps/:swapId/escrow/cosign", async (request, reply) => {
-    const { swapId } = request.params;
-    if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
-    const swap = await deps.store.getSwap(swapId);
-    if (!swap) return reply.code(404).send({ error: "unknown swap" });
-    const did = typeof body.did === "string" ? body.did : "";
-    if (!did) return reply.code(400).send({ error: "did required" });
-    if (did !== swap.sellerDid && did !== swap.buyerDid) return reply.code(403).send({ error: "not a swap party" });
-    const kind = body.kind === "release" || body.kind === "refund" ? (body.kind as EscrowKind) : null;
-    if (!kind) return reply.code(400).send({ error: "kind must be release | refund" });
-    if (kind === "refund" && did !== swap.sellerDid) return reply.code(403).send({ error: "seller signer required for a refund" });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
-    const sigHex = typeof body.sig === "string" ? body.sig.trim() : "";
-    if (!sigHex) return reply.code(400).send({ error: "sig required" });
-    let refundAddress = "";
-    if (kind === "refund") {
-      const fromBody = typeof body.refundAddress === "string" ? body.refundAddress.trim() : "";
-      const row = fromBody ? null : await deps.store.getEscrowSigning(swapId);
-      refundAddress = fromBody || row?.refundAddress || "";
-      if (!destAddress(refundAddress)) return reply.code(400).send({ error: "refundAddress required (body or presign)" });
-    }
-    let signerKey: PQKey;
-    try {
-      signerKey = keyFromDid(did);
-    } catch {
-      return reply.code(409).send({ error: "did has no PQ escrow key" });
-    }
-    const res = await settleEscrow({
-      swap,
-      kind,
-      sigHex,
-      signerDid: did,
-      signerKey,
-      refundAddress,
-      actorDid: kind === "release" ? engineDid() || did : did,
-    });
-    if (!res.ok) return reply.code(res.code).send({ error: res.reason });
-    return reply.code(res.pending ? 202 : 200).send({
-      swapId,
-      status: res.status,
-      txHash: res.txHash,
-      pending: res.pending,
-    });
-  });
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/escrow/cosign",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      const did = typeof body.did === "string" ? body.did : "";
+      if (!did) return reply.code(400).send({ error: "did required" });
+      if (did !== swap.sellerDid && did !== swap.buyerDid)
+        return reply.code(403).send({ error: "not a swap party" });
+      const kind =
+        body.kind === "release" || body.kind === "refund"
+          ? (body.kind as EscrowKind)
+          : null;
+      if (!kind)
+        return reply.code(400).send({ error: "kind must be release | refund" });
+      if (kind === "refund" && did !== swap.sellerDid)
+        return reply
+          .code(403)
+          .send({ error: "seller signer required for a refund" });
+      const signed = validateSignedRequest(
+        body,
+        did,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      const sigHex = typeof body.sig === "string" ? body.sig.trim() : "";
+      if (!sigHex) return reply.code(400).send({ error: "sig required" });
+      let refundAddress = "";
+      if (kind === "refund") {
+        const fromBody =
+          typeof body.refundAddress === "string"
+            ? body.refundAddress.trim()
+            : "";
+        const row = fromBody ? null : await deps.store.getEscrowSigning(swapId);
+        refundAddress = fromBody || row?.refundAddress || "";
+        if (!destAddress(refundAddress))
+          return reply
+            .code(400)
+            .send({ error: "refundAddress required (body or presign)" });
+      }
+      let signerKey: PQKey;
+      try {
+        signerKey = keyFromDid(did);
+      } catch {
+        return reply.code(409).send({ error: "did has no PQ escrow key" });
+      }
+      const res = await settleEscrow({
+        swap,
+        kind,
+        sigHex,
+        signerDid: did,
+        signerKey,
+        refundAddress,
+        actorDid: kind === "release" ? engineDid() || did : did,
+      });
+      if (!res.ok) return reply.code(res.code).send({ error: res.reason });
+      return reply.code(res.pending ? 202 : 200).send({
+        swapId,
+        status: res.status,
+        txHash: res.txHash,
+        pending: res.pending,
+      });
+    },
+  );
 
   /** Seller: upsert a CNY collection profile. PII: store + instruction reveals only. */
   app.post("/profiles", async (request, reply) => {
@@ -2367,18 +3392,37 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!did) return reply.code(400).send({ error: "did required" });
     const method = typeof body.method === "string" ? body.method : "";
     if (!(CNY_RAILS as readonly string[]).includes(method)) {
-      return reply.code(400).send({ error: `method must be one of: ${CNY_RAILS.join(", ")}` });
+      return reply
+        .code(400)
+        .send({ error: `method must be one of: ${CNY_RAILS.join(", ")}` });
     }
-    const accountName = typeof body.accountName === "string" ? body.accountName.trim() : "";
-    if (!accountName || accountName.length > 64) return reply.code(400).send({ error: "invalid accountName (1..64)" });
+    const accountName =
+      typeof body.accountName === "string" ? body.accountName.trim() : "";
+    if (!accountName || accountName.length > 64)
+      return reply.code(400).send({ error: "invalid accountName (1..64)" });
     const account = typeof body.account === "string" ? body.account.trim() : "";
-    if (!account || account.length > 128) return reply.code(400).send({ error: "invalid account (1..128)" });
-    const bankName = typeof body.bankName === "string" && body.bankName.trim() ? body.bankName.trim() : undefined;
-    if (bankName && bankName.length > 64) return reply.code(400).send({ error: "invalid bankName (1..64)" });
+    if (!account || account.length > 128)
+      return reply.code(400).send({ error: "invalid account (1..128)" });
+    const bankName =
+      typeof body.bankName === "string" && body.bankName.trim()
+        ? body.bankName.trim()
+        : undefined;
+    if (bankName && bankName.length > 64)
+      return reply.code(400).send({ error: "invalid bankName (1..64)" });
     const qr = typeof body.qr === "string" && body.qr ? body.qr : undefined;
-    if (qr && qr.length > MAX_RECEIPT_CHARS) return reply.code(413).send({ error: `qr too large (max ${MAX_RECEIPT_CHARS} chars)` });
-    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    if (qr && qr.length > MAX_RECEIPT_CHARS)
+      return reply
+        .code(413)
+        .send({ error: `qr too large (max ${MAX_RECEIPT_CHARS} chars)` });
+    const signed = validateSignedRequest(
+      body,
+      did,
+      guard,
+      "write",
+      request.url.split("?")[0],
+    );
+    if (!signed.ok)
+      return reply.code(signed.status ?? 400).send({ error: signed.error });
     const profile: PaymentProfile = {
       sellerDid: did,
       method: method as CnyRail,
@@ -2397,8 +3441,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const body = (request.body ?? {}) as Record<string, unknown>;
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
-    const signed = validateSignedRequest(body, did, guard, "read", request.url.split("?")[0]);
-    if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
+    const signed = validateSignedRequest(
+      body,
+      did,
+      guard,
+      "read",
+      request.url.split("?")[0],
+    );
+    if (!signed.ok)
+      return reply.code(signed.status ?? 400).send({ error: signed.error });
     return { profiles: await deps.store.listProfiles(did) };
   });
 
@@ -2412,26 +3463,40 @@ async function main() {
   const { blobStoreFromEnv } = await import("./blob.js");
   const { anchorFromEnv, l1Anchor } = await import("./anchor.js");
   const { PooledChainClient, poolFromEnv } = await import("./discovery.js");
-  const { syncOnce, HttpSocialSource, fetchRecordByTxid, pgCursorStore, MemCursorStore, ensureWatchSchema } = await import("./replay.js");
+  const {
+    syncOnce,
+    HttpSocialSource,
+    fetchRecordByTxid,
+    pgCursorStore,
+    MemCursorStore,
+    ensureWatchSchema,
+  } = await import("./replay.js");
   const env = process.env;
   const { loadSecretFiles } = await import("./secrets.js");
   loadSecretFiles(env);
   // Store selection: pg (default when POSTGRES_URL is set), blob (no Postgres —
   // chain-derived projection in memory + confidential data in the encrypted
   // blob store), or mem (dev/e2e). A blob deploy without a blob target throws.
-  const storeMode = env.SETTLEMENT_STORE === "mem" || env.SETTLEMENT_STORE === "blob"
-    ? env.SETTLEMENT_STORE
-    : env.POSTGRES_URL
+  const storeMode =
+    env.SETTLEMENT_STORE === "mem" || env.SETTLEMENT_STORE === "blob"
+      ? env.SETTLEMENT_STORE
+      : env.POSTGRES_URL
       ? "pg"
       : "mem";
-  const pool = storeMode === "pg" ? new Pool({ connectionString: env.POSTGRES_URL! }) : null;
-  const receiptBlobs = env.SETTLEMENT_BLOB_URL?.trim() || env.SETTLEMENT_BLOB_DIR?.trim() ? blobStoreFromEnv(env) : null;
+  const pool =
+    storeMode === "pg"
+      ? new Pool({ connectionString: env.POSTGRES_URL! })
+      : null;
+  const receiptBlobs =
+    env.SETTLEMENT_BLOB_URL?.trim() || env.SETTLEMENT_BLOB_DIR?.trim()
+      ? blobStoreFromEnv(env)
+      : null;
   const store =
     storeMode === "pg"
       ? new PgSettlementStore(pool!, receiptBlobs)
       : storeMode === "blob"
-        ? new BlobSettlementStore(blobStoreFromEnv(env))
-        : new MemSettlementStore();
+      ? new BlobSettlementStore(blobStoreFromEnv(env))
+      : new MemSettlementStore();
   if (pool) await ensureWatchSchema(pool);
   // Persist signed-request nonces in pg so a restart cannot replay one (§18.1);
   // mem/blob have no database and keep the in-memory set only.
@@ -2442,7 +3507,12 @@ async function main() {
   }
   console.log(`p2p-engine: store=${storeMode}`);
   const anchorCfg = anchorFromEnv(env);
-  if ((env.SETTLEMENT_L1_URL || env.SETTLEMENT_L1_SOCIAL_URL || env.SETTLEMENT_L1_SOCIAL_URLS) && !anchorCfg) {
+  if (
+    (env.SETTLEMENT_L1_URL ||
+      env.SETTLEMENT_L1_SOCIAL_URL ||
+      env.SETTLEMENT_L1_SOCIAL_URLS) &&
+    !anchorCfg
+  ) {
     console.warn(
       "p2p-engine: L1-SOCIAL configured but SETTLEMENT_ENGINE_KEY is missing/invalid or SETTLEMENT_ENGINE_DID is mismatched — swap events will NOT be anchored",
     );
@@ -2453,28 +3523,42 @@ async function main() {
   const l0Pool = poolFromEnv(env, "l0");
   // Without L0 every escrow lock/release proof is skipped — only for mem/dev.
   if (!l0Pool && storeMode !== "mem" && env.SETTLEMENT_ALLOW_NO_CHAIN !== "1") {
-    throw new Error("no L0 endpoint configured (SETTLEMENT_L0_URL[S]/SETTLEMENT_SEEDS_URLS): escrow proofs would be skipped; set SETTLEMENT_ALLOW_NO_CHAIN=1 only for dev");
+    throw new Error(
+      "no L0 endpoint configured (SETTLEMENT_L0_URL[S]/SETTLEMENT_SEEDS_URLS): escrow proofs would be skipped; set SETTLEMENT_ALLOW_NO_CHAIN=1 only for dev",
+    );
   }
   const socialPool = poolFromEnv(env, "social");
-  const l0Quorum = Math.max(1, Math.floor(Number(env.SETTLEMENT_L0_QUORUM ?? 1)) || 1);
+  const l0Quorum = Math.max(
+    1,
+    Math.floor(Number(env.SETTLEMENT_L0_QUORUM ?? 1)) || 1,
+  );
   await Promise.all([l0Pool?.start(), socialPool?.start()]);
   const anchorMode = normalizeAnchorMode(env.SETTLEMENT_ANCHOR_MODE, storeMode);
   if (storeMode === "blob" && !anchorCfg) {
-    throw new Error("SETTLEMENT_STORE=blob needs a valid SETTLEMENT_ENGINE_KEY and L1-SOCIAL URL: swap events are only durable on chain");
+    throw new Error(
+      "SETTLEMENT_STORE=blob needs a valid SETTLEMENT_ENGINE_KEY and L1-SOCIAL URL: swap events are only durable on chain",
+    );
   }
   const anchor =
     anchorMode !== "off" && anchorCfg
-      ? l1Anchor(socialPool ? { ...anchorCfg, resolveUrl: () => socialPool.best() } : anchorCfg)
+      ? l1Anchor(
+          socialPool
+            ? { ...anchorCfg, resolveUrl: () => socialPool.best() }
+            : anchorCfg,
+        )
       : undefined;
   if (anchorMode === "off") {
-    console.log("p2p-engine: SETTLEMENT_ANCHOR_MODE=off — swap events are not anchored on L1-SOCIAL");
+    console.log(
+      "p2p-engine: SETTLEMENT_ANCHOR_MODE=off — swap events are not anchored on L1-SOCIAL",
+    );
   }
   // Seller-anchored orders land on L1-SOCIAL before the index sees them: prove
   // the confirmed block carries the exact `social.p2p-order` record the request
   // claims (docs/p2p.md §11). No social endpoint configured → no check
   // (mock/dev). Fail-closed once configured: a node that is down returns
   // `{ok:false}` (409), never a silent accept.
-  const socialUrl = () => socialPool?.best() ?? (env.SETTLEMENT_L1_SOCIAL_URL?.trim() || null);
+  const socialUrl = () =>
+    socialPool?.best() ?? (env.SETTLEMENT_L1_SOCIAL_URL?.trim() || null);
   const socialConfigured = !!(
     socialPool ||
     env.SETTLEMENT_L1_SOCIAL_URL?.trim() ||
@@ -2484,17 +3568,22 @@ async function main() {
   );
   const verifyOrderTx =
     socialConfigured && env.SETTLEMENT_ORDER_TX_VERIFY !== "0"
-      ? async (check: OrderTxCheck): Promise<{ ok: boolean; error?: string }> => {
+      ? async (
+          check: OrderTxCheck,
+        ): Promise<{ ok: boolean; error?: string }> => {
           const url = socialUrl();
-          if (!url) return { ok: false, error: "no healthy L1-SOCIAL endpoint" };
+          if (!url)
+            return { ok: false, error: "no healthy L1-SOCIAL endpoint" };
           let st;
           try {
             st = await new HttpChainClient(url).transactionStatus(check.txid);
           } catch {
             return { ok: false, error: "L1-SOCIAL unreachable" };
           }
-          if (st.status !== "CONFIRMED") return { ok: false, error: "txid not confirmed on L1-SOCIAL" };
-          if (!st.blockHash) return { ok: false, error: "confirmed tx has no block hash" };
+          if (st.status !== "CONFIRMED")
+            return { ok: false, error: "txid not confirmed on L1-SOCIAL" };
+          if (!st.blockHash)
+            return { ok: false, error: "confirmed tx has no block hash" };
           let rec: Record<string, unknown> | null;
           try {
             rec = await fetchRecordByTxid(
@@ -2505,43 +3594,93 @@ async function main() {
           } catch {
             return { ok: false, error: "L1-SOCIAL block read failed" };
           }
-          if (!rec) return { ok: false, error: "anchored order record not found in the confirmed block" };
+          if (!rec)
+            return {
+              ok: false,
+              error: "anchored order record not found in the confirmed block",
+            };
           const valid = validateP2pOrderRecord(rec as never);
-          if (!valid.ok) return { ok: false, error: `anchored order record invalid: ${valid.error}` };
-          if (!verifyRecordSig(rec as never)) return { ok: false, error: "anchored order record signature invalid" };
+          if (!valid.ok)
+            return {
+              ok: false,
+              error: `anchored order record invalid: ${valid.error}`,
+            };
+          if (!verifyRecordSig(rec as never))
+            return {
+              ok: false,
+              error: "anchored order record signature invalid",
+            };
           const r = rec as unknown as P2pOrderRecord;
-          if (r.from !== check.sellerDid) return { ok: false, error: "anchored record author is not the seller" };
-          if (r.to !== check.orderId) return { ok: false, error: "anchored record orderId mismatch" };
-          if (r.status !== check.status) return { ok: false, error: "anchored record status mismatch" };
+          if (r.from !== check.sellerDid)
+            return {
+              ok: false,
+              error: "anchored record author is not the seller",
+            };
+          if (r.to !== check.orderId)
+            return { ok: false, error: "anchored record orderId mismatch" };
+          if (r.status !== check.status)
+            return { ok: false, error: "anchored record status mismatch" };
           if (check.status === "OPEN" && check.terms) {
-            for (const field of ["giveToken", "giveAmount", "giveChain", "wantCurrency", "wantAmount", "wantRail"] as const) {
+            for (const field of [
+              "giveToken",
+              "giveAmount",
+              "giveChain",
+              "wantCurrency",
+              "wantAmount",
+              "wantRail",
+            ] as const) {
               if (String(r[field] ?? "") !== String(check.terms[field])) {
-                return { ok: false, error: `anchored record ${field} mismatch` };
+                return {
+                  ok: false,
+                  error: `anchored record ${field} mismatch`,
+                };
               }
             }
             if (Number(r.validUntil) !== check.terms.validUntil) {
-              return { ok: false, error: "anchored record validUntil mismatch" };
+              return {
+                ok: false,
+                error: "anchored record validUntil mismatch",
+              };
             }
           }
           return { ok: true };
         }
       : undefined;
-  const watchState = { height: null as number | null, hash: null as string | null, lastRunAt: null as number | null, lastError: null as string | null };
+  const watchState = {
+    height: null as number | null,
+    hash: null as string | null,
+    lastRunAt: null as number | null,
+    lastError: null as string | null,
+  };
   // Blob mode keeps its chain-derived projection in memory, so it must replay
   // from the chain at boot (the projector is not optional there).
-  const watchOn = (env.SETTLEMENT_WATCH === "1" || storeMode === "blob") && socialConfigured;
+  const watchOn =
+    (env.SETTLEMENT_WATCH === "1" || storeMode === "blob") && socialConfigured;
   if (storeMode === "blob" && !socialConfigured) {
-    console.warn("p2p-engine: store=blob without an L1-SOCIAL endpoint — the order/swap projection cannot be rebuilt");
+    console.warn(
+      "p2p-engine: store=blob without an L1-SOCIAL endpoint — the order/swap projection cannot be rebuilt",
+    );
   }
   const app = await buildApp({
     store,
     chain: l0Pool ? new PooledChainClient(l0Pool) : null,
     ...(l0Pool && l0Quorum > 1
-      ? { proofChains: () => l0Pool.quorumUrls(l0Quorum)?.map((u) => new HttpChainClient(u)) ?? null }
+      ? {
+          proofChains: () =>
+            l0Pool.quorumUrls(l0Quorum)?.map((u) => new HttpChainClient(u)) ??
+            null,
+        }
       : {}),
     ...(nonceStore ? { nonceStore } : {}),
-    ...(anchor ? { anchor, anchorBestEffort: anchorMode === "best-effort" } : {}),
-    ...(verifyOrderTx ? { verifyOrderTx, orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4) } : {}),
+    ...(anchor
+      ? { anchor, anchorBestEffort: anchorMode === "best-effort" }
+      : {}),
+    ...(verifyOrderTx
+      ? {
+          verifyOrderTx,
+          orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4),
+        }
+      : {}),
     ...(watchOn ? { watchState } : {}),
   });
   app.addHook("onClose", async () => {
@@ -2553,7 +3692,10 @@ async function main() {
   // up to SETTLEMENT_WATCH_MAX_WALK blocks over HTTP (minutes from a cold
   // cursor), and gating listen() on it left the engine unreachable — the
   // health check failed and Caddy served 502 for ~10 min after each (re)start.
-  await app.listen({ port: Number(env.PORT ?? 8108), host: env.HOST ?? "127.0.0.1" });
+  await app.listen({
+    port: Number(env.PORT ?? 8108),
+    host: env.HOST ?? "127.0.0.1",
+  });
   // Chain-scan projector (docs/p2p.md §14): on boot + every interval, walk
   // back from the head to the cursor and apply new records. Mem store replays
   // from genesis each boot (idempotent); PG resumes from p2p_watch_cursor.
@@ -2572,13 +3714,21 @@ async function main() {
       try {
         const url = socialUrl();
         if (!url) throw new Error("no healthy L1-SOCIAL endpoint");
-        const r = await syncOnce(new HttpSocialSource(url), store, cursors, { maxWalk });
+        const r = await syncOnce(new HttpSocialSource(url), store, cursors, {
+          maxWalk,
+        });
         if (r.error) watchState.lastError = r.error;
         else {
           watchState.height = r.cursor?.height ?? null;
           watchState.hash = r.cursor?.hash ?? null;
-          watchState.lastError = r.conflicts.length ? `${r.conflicts.length} conflict(s)` : null;
-          if (r.conflicts.length) console.warn("p2p-engine watch: conflicts", r.conflicts.slice(0, 5));
+          watchState.lastError = r.conflicts.length
+            ? `${r.conflicts.length} conflict(s)`
+            : null;
+          if (r.conflicts.length)
+            console.warn(
+              "p2p-engine watch: conflicts",
+              r.conflicts.slice(0, 5),
+            );
         }
       } catch (e) {
         watchState.lastError = e instanceof Error ? e.message : String(e);
@@ -2588,12 +3738,18 @@ async function main() {
       }
     };
     void tick(); // boot replay in the background — must never gate listen()
-    watchTimer = setInterval(() => void tick(), Number(env.SETTLEMENT_WATCH_INTERVAL_MS ?? 15_000));
+    watchTimer = setInterval(
+      () => void tick(),
+      Number(env.SETTLEMENT_WATCH_INTERVAL_MS ?? 15_000),
+    );
     watchTimer.unref?.();
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(process.argv[1]).href
+) {
   main().catch((e) => {
     console.error(e);
     process.exit(1);

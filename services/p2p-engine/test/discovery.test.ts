@@ -10,7 +10,14 @@ import {
 } from "../src/discovery.js";
 
 function sources(overrides: Partial<DiscoverySources> = {}): DiscoverySources {
-  return { role: "l0", staticUrls: [], dohUrl: "", seedsDomain: "bigtangle.org", registryUrls: [], ...overrides };
+  return {
+    role: "l0",
+    staticUrls: [],
+    dohUrl: "",
+    seedsDomain: "bigtangle.org",
+    registryUrls: [],
+    ...overrides,
+  };
 }
 
 type Route = Record<string, unknown> | Error;
@@ -25,16 +32,18 @@ function mockFetch(routes: Route): typeof fetch {
   }) as typeof fetch;
 }
 
-function chainNumber(chainLength: number, extra: Record<string, unknown> = {}): unknown {
+function chainNumber(
+  chainLength: number,
+  extra: Record<string, unknown> = {},
+): unknown {
   return { txReward: { chainLength, blockHashHex: "ab" }, ...extra };
 }
 
 describe("splitUrls", () => {
   it("splits comma lists, trims, strips trailing slashes, dedupes", () => {
-    expect(splitUrls(" https://a.example/ , https://b.example,, https://a.example ")).toEqual([
-      "https://a.example",
-      "https://b.example",
-    ]);
+    expect(
+      splitUrls(" https://a.example/ , https://b.example,, https://a.example "),
+    ).toEqual(["https://a.example", "https://b.example"]);
     expect(splitUrls(undefined)).toEqual([]);
   });
 });
@@ -45,7 +54,10 @@ describe("poolFromEnv", () => {
   });
 
   it("keeps the singular legacy L0 env", () => {
-    const pool = poolFromEnv({ SETTLEMENT_L0_URL: "https://eu1.example/" }, "l0");
+    const pool = poolFromEnv(
+      { SETTLEMENT_L0_URL: "https://eu1.example/" },
+      "l0",
+    );
     expect(pool).not.toBeNull();
     expect(pool!.role).toBe("l0");
     expect(pool!.best()).toBeNull(); // unverified until the first probe
@@ -53,39 +65,63 @@ describe("poolFromEnv", () => {
 
   it("accepts the comma-list env and dedupes against the singular var", () => {
     const pool = poolFromEnv(
-      { SETTLEMENT_L0_URLS: "https://a.example,https://b.example", SETTLEMENT_L0_URL: "https://a.example" },
+      {
+        SETTLEMENT_L0_URLS: "https://a.example,https://b.example",
+        SETTLEMENT_L0_URL: "https://a.example",
+      },
       "l0",
     );
-    const statics = (pool as unknown as { sources: DiscoverySources }).sources.staticUrls;
+    const statics = (pool as unknown as { sources: DiscoverySources }).sources
+      .staticUrls;
     expect(statics).toEqual(["https://a.example", "https://b.example"]);
   });
 
   it("reads the social role from the new + legacy social envs", () => {
     const pool = poolFromEnv(
-      { SETTLEMENT_L1_SOCIAL_URLS: "https://s1.example,https://s2.example", L1_SOCIAL_URL: "https://s3.example" },
+      {
+        SETTLEMENT_L1_SOCIAL_URLS: "https://s1.example,https://s2.example",
+        L1_SOCIAL_URL: "https://s3.example",
+      },
       "social",
     );
     expect(pool!.role).toBe("social");
-    const statics = (pool as unknown as { sources: DiscoverySources }).sources.staticUrls;
-    expect(statics).toEqual(["https://s1.example", "https://s2.example", "https://s3.example"]);
+    const statics = (pool as unknown as { sources: DiscoverySources }).sources
+      .staticUrls;
+    expect(statics).toEqual([
+      "https://s1.example",
+      "https://s2.example",
+      "https://s3.example",
+    ]);
   });
 
   it("enables DoH only behind SETTLEMENT_DISCOVERY_DNS=1", () => {
     const off = poolFromEnv({ SETTLEMENT_L0_URL: "https://eu1.example" }, "l0");
-    expect((off as unknown as { sources: DiscoverySources }).sources.dohUrl).toBe("");
+    expect(
+      (off as unknown as { sources: DiscoverySources }).sources.dohUrl,
+    ).toBe("");
     const on = poolFromEnv({ SETTLEMENT_DISCOVERY_DNS: "1" }, "l0");
-    expect((on as unknown as { sources: DiscoverySources }).sources.dohUrl).toBe("https://dns.google/resolve");
+    expect(
+      (on as unknown as { sources: DiscoverySources }).sources.dohUrl,
+    ).toBe("https://dns.google/resolve");
   });
 });
 
 describe("gatherCandidates", () => {
   it("unions static + DNS + registry (role-matched), deduped", async () => {
     const fetchImpl = mockFetch({
-      "https://dns.google/resolve?name=_bigtangle-social.bigtangle.org&type=TXT": {
-        Status: 0,
-        Answer: [{ name: "_bigtangle-social.bigtangle.org", type: 16, data: '"https://dns1.example"' }],
-      },
-      "https://dns.google/resolve?name=_bigtangle-social._tcp.bigtangle.org&type=SRV": { Status: 0 },
+      "https://dns.google/resolve?name=_bigtangle-social.bigtangle.org&type=TXT":
+        {
+          Status: 0,
+          Answer: [
+            {
+              name: "_bigtangle-social.bigtangle.org",
+              type: 16,
+              data: '"https://dns1.example"',
+            },
+          ],
+        },
+      "https://dns.google/resolve?name=_bigtangle-social._tcp.bigtangle.org&type=SRV":
+        { Status: 0 },
       "https://reg.example/serverinfolist": {
         serverInfoList: [
           { url: "https://soc.example", chain: "SOCIAL", status: "active" },
@@ -104,7 +140,12 @@ describe("gatherCandidates", () => {
       fetchImpl,
     );
     expect(urls).toEqual(
-      expect.arrayContaining(["https://static.example", "https://dns1.example", "https://soc.example", "https://plain.example"]),
+      expect.arrayContaining([
+        "https://static.example",
+        "https://dns1.example",
+        "https://soc.example",
+        "https://plain.example",
+      ]),
     );
     expect(urls).not.toContain("https://ord.example"); // other chain, never
   });
@@ -119,10 +160,19 @@ describe("probeCandidates", () => {
       "https://empty.example/getChainNumber": chainNumber(0),
     });
     const ranked = await probeCandidates(
-      ["https://head.example", "https://behind.example", "https://notready.example", "https://empty.example", "https://down.example"],
+      [
+        "https://head.example",
+        "https://behind.example",
+        "https://notready.example",
+        "https://empty.example",
+        "https://down.example",
+      ],
       { fetchImpl },
     );
-    expect(ranked.map((r) => r.url)).toEqual(["https://head.example", "https://behind.example"]);
+    expect(ranked.map((r) => r.url)).toEqual([
+      "https://head.example",
+      "https://behind.example",
+    ]);
     expect(ranked[0].chainLength).toBe(20);
   });
 });
@@ -134,20 +184,29 @@ describe("EndpointPool", () => {
   });
 
   it("fails closed before any probe, then serves the best healthy endpoint", async () => {
-    const pool = new EndpointPool(sources({ staticUrls: ["https://a.example", "https://b.example"] }), {
-      fetchImpl: mockFetch(routes(5, 9)),
-    });
+    const pool = new EndpointPool(
+      sources({ staticUrls: ["https://a.example", "https://b.example"] }),
+      {
+        fetchImpl: mockFetch(routes(5, 9)),
+      },
+    );
     expect(pool.best()).toBeNull();
     await pool.start();
     expect(pool.best()).toBe("https://b.example");
-    expect(pool.healthy().map((r) => r.url)).toEqual(["https://b.example", "https://a.example"]);
+    expect(pool.healthy().map((r) => r.url)).toEqual([
+      "https://b.example",
+      "https://a.example",
+    ]);
     pool.stop();
   });
 
   it("demotes a failing endpoint and clears the blocklist when everything is down", async () => {
-    const pool = new EndpointPool(sources({ staticUrls: ["https://a.example", "https://b.example"] }), {
-      fetchImpl: mockFetch(routes(5, 9)),
-    });
+    const pool = new EndpointPool(
+      sources({ staticUrls: ["https://a.example", "https://b.example"] }),
+      {
+        fetchImpl: mockFetch(routes(5, 9)),
+      },
+    );
     await pool.refresh();
     pool.reportFailure("https://b.example/");
     expect(pool.best()).toBe("https://a.example");
@@ -160,10 +219,14 @@ describe("EndpointPool", () => {
     const fetchImpl = (async (url: RequestInfo | URL) => {
       const u = String(url);
       if (!healthy) return new Response("down", { status: 503 });
-      if (u === "https://a.example/getChainNumber") return Response.json(chainNumber(7));
+      if (u === "https://a.example/getChainNumber")
+        return Response.json(chainNumber(7));
       return new Response("not found", { status: 404 });
     }) as typeof fetch;
-    const pool = new EndpointPool(sources({ staticUrls: ["https://a.example"] }), { fetchImpl });
+    const pool = new EndpointPool(
+      sources({ staticUrls: ["https://a.example"] }),
+      { fetchImpl },
+    );
     await pool.refresh();
     expect(pool.best()).toBe("https://a.example");
     healthy = false;
@@ -172,21 +235,32 @@ describe("EndpointPool", () => {
   });
 
   it("quorumUrls needs n healthy endpoints including a pinned one", async () => {
-    const pool = new EndpointPool(sources({ staticUrls: ["https://a.example", "https://b.example"] }), {
-      fetchImpl: mockFetch(routes(5, 9)),
-    });
+    const pool = new EndpointPool(
+      sources({ staticUrls: ["https://a.example", "https://b.example"] }),
+      {
+        fetchImpl: mockFetch(routes(5, 9)),
+      },
+    );
     expect(pool.quorumUrls(2)).toBeNull();
     await pool.refresh();
-    expect(pool.quorumUrls(2)?.sort()).toEqual(["https://a.example", "https://b.example"]);
+    expect(pool.quorumUrls(2)?.sort()).toEqual([
+      "https://a.example",
+      "https://b.example",
+    ]);
     expect(pool.quorumUrls(3)).toBeNull();
   });
 });
 
 describe("PooledChainClient", () => {
   it("throws when the pool has no verified endpoint", async () => {
-    const pool = new EndpointPool(sources({ staticUrls: ["https://a.example"] }), { fetchImpl: mockFetch({}) });
+    const pool = new EndpointPool(
+      sources({ staticUrls: ["https://a.example"] }),
+      { fetchImpl: mockFetch({}) },
+    );
     const client = new PooledChainClient(pool);
-    await expect(client.transactionStatus("dead")).rejects.toThrow(/no healthy l0 endpoint/);
+    await expect(client.transactionStatus("dead")).rejects.toThrow(
+      /no healthy l0 endpoint/,
+    );
   });
 
   it("routes through the best endpoint and demotes on failure", async () => {
@@ -196,17 +270,22 @@ describe("PooledChainClient", () => {
     };
     const fetchImpl = (async (url: RequestInfo | URL) => {
       const u = String(url);
-      if (u === "https://b.example/getChainNumber") return Response.json(chainNumber(50));
-      if (u === "https://a.example/getChainNumber") return Response.json(chainNumber(40));
+      if (u === "https://b.example/getChainNumber")
+        return Response.json(chainNumber(50));
+      if (u === "https://a.example/getChainNumber")
+        return Response.json(chainNumber(40));
       const hit = routes[u];
       if (hit instanceof Error) throw hit;
       if (hit) return Response.json(hit);
       return new Response("not found", { status: 404 });
     }) as typeof fetch;
-    const pool = new EndpointPool(sources({ staticUrls: ["https://a.example", "https://b.example"] }), {
-      // b ranks first (higher chain), but its requests throw
-      fetchImpl,
-    });
+    const pool = new EndpointPool(
+      sources({ staticUrls: ["https://a.example", "https://b.example"] }),
+      {
+        // b ranks first (higher chain), but its requests throw
+        fetchImpl,
+      },
+    );
     await pool.refresh();
     expect(pool.best()).toBe("https://b.example");
     const client = new PooledChainClient(pool, fetchImpl);

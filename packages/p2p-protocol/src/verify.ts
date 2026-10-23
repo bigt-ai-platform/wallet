@@ -80,14 +80,16 @@ export const MAX_VERDICT_REMARK = 128;
 export const MAX_VERDICT_CAPTURES = 16;
 
 /** Numeric amount equality — "715" and "715.00" are the same money. */
-export function sameAmount(a: string | undefined, b: string | undefined): boolean {
+export function sameAmount(
+  a: string | undefined,
+  b: string | undefined,
+): boolean {
   if (a === undefined || b === undefined) return false;
   if (!AMOUNT_RE.test(a) || !AMOUNT_RE.test(b)) return false;
   const [ai, af = ""] = a.split(".");
   const [bi, bf = ""] = b.split(".");
   return (
-    BigInt(ai) === BigInt(bi) &&
-    af.replace(/0+$/, "") === bf.replace(/0+$/, "")
+    BigInt(ai) === BigInt(bi) && af.replace(/0+$/, "") === bf.replace(/0+$/, "")
   );
 }
 
@@ -100,30 +102,67 @@ export function validatePaymentVerdict(
   verdict: PaymentVerdict,
   expected: VerdictExpectation,
 ): VerdictCheck {
-  const { side, observed, evidenceKind, txId, amount, remark, paidAt, captures } = verdict;
-  if (!(VERIFY_SIDES as readonly string[]).includes(side)) return { ok: false, error: `invalid side (${VERIFY_SIDES.join("|")})` };
-  if (!(VERIFY_OBSERVED as readonly string[]).includes(observed)) return { ok: false, error: `invalid observed (${VERIFY_OBSERVED.join("|")})` };
+  const {
+    side,
+    observed,
+    evidenceKind,
+    txId,
+    amount,
+    remark,
+    paidAt,
+    captures,
+  } = verdict;
+  if (!(VERIFY_SIDES as readonly string[]).includes(side))
+    return { ok: false, error: `invalid side (${VERIFY_SIDES.join("|")})` };
+  if (!(VERIFY_OBSERVED as readonly string[]).includes(observed))
+    return {
+      ok: false,
+      error: `invalid observed (${VERIFY_OBSERVED.join("|")})`,
+    };
   if (!(VERIFY_EVIDENCE_KINDS as readonly string[]).includes(evidenceKind)) {
-    return { ok: false, error: `invalid evidenceKind (${VERIFY_EVIDENCE_KINDS.join("|")})` };
+    return {
+      ok: false,
+      error: `invalid evidenceKind (${VERIFY_EVIDENCE_KINDS.join("|")})`,
+    };
   }
-  if (evidenceKind === "bank_ereceipt" && observed !== "none" && verdict.receiptVerified !== true) {
-    return { ok: false, error: "bank_ereceipt requires receiptVerified (run the bank's public 回单 verification)" };
+  if (
+    evidenceKind === "bank_ereceipt" &&
+    observed !== "none" &&
+    verdict.receiptVerified !== true
+  ) {
+    return {
+      ok: false,
+      error:
+        "bank_ereceipt requires receiptVerified (run the bank's public 回单 verification)",
+    };
   }
   if (captures !== undefined) {
-    if (!Array.isArray(captures) || captures.some((c) => typeof c !== "string" || !SHA256_RE.test(c))) {
+    if (
+      !Array.isArray(captures) ||
+      captures.some((c) => typeof c !== "string" || !SHA256_RE.test(c))
+    ) {
       return { ok: false, error: "captures must be sha256 hex digests" };
     }
-    if (captures.length > MAX_VERDICT_CAPTURES) return { ok: false, error: `at most ${MAX_VERDICT_CAPTURES} captures` };
+    if (captures.length > MAX_VERDICT_CAPTURES)
+      return { ok: false, error: `at most ${MAX_VERDICT_CAPTURES} captures` };
   }
-  if (remark !== undefined && (typeof remark !== "string" || remark.length > MAX_VERDICT_REMARK)) {
-    return { ok: false, error: `invalid remark (max ${MAX_VERDICT_REMARK} chars)` };
+  if (
+    remark !== undefined &&
+    (typeof remark !== "string" || remark.length > MAX_VERDICT_REMARK)
+  ) {
+    return {
+      ok: false,
+      error: `invalid remark (max ${MAX_VERDICT_REMARK} chars)`,
+    };
   }
 
   if (observed === "none") {
     // "my ledger shows nothing in the window" — no entry fields to check, but
     // whatever is stated must still agree with the swap.
-    if (txId !== undefined && !TXID_RE.test(txId)) return { ok: false, error: "invalid txId (1..64: alnum . _ -)" };
-    if (amount !== undefined && !sameAmount(amount, expected.amount)) return { ok: false, error: "amount does not match the swap" };
+    if (txId !== undefined && !TXID_RE.test(txId))
+      return { ok: false, error: "invalid txId (1..64: alnum . _ -)" };
+    if (amount !== undefined && !sameAmount(amount, expected.amount))
+      return { ok: false, error: "amount does not match the swap" };
     return {
       ok: true,
       ...(txId && expected.claimedTxId && txId !== expected.claimedTxId
@@ -132,16 +171,30 @@ export function validatePaymentVerdict(
     };
   }
 
-  if (txId === undefined || !TXID_RE.test(txId)) return { ok: false, error: "invalid txId (1..64: alnum . _ -)" };
-  if (amount === undefined || !AMOUNT_RE.test(amount)) return { ok: false, error: "invalid amount" };
-  if (!sameAmount(amount, expected.amount)) return { ok: false, error: "amount does not match the swap" };
+  if (txId === undefined || !TXID_RE.test(txId))
+    return { ok: false, error: "invalid txId (1..64: alnum . _ -)" };
+  if (amount === undefined || !AMOUNT_RE.test(amount))
+    return { ok: false, error: "invalid amount" };
+  if (!sameAmount(amount, expected.amount))
+    return { ok: false, error: "amount does not match the swap" };
   if (expected.remark !== undefined && remark !== expected.remark) {
-    return { ok: false, error: remark === undefined ? "remark missing from the entry" : "remark does not match the swap" };
+    return {
+      ok: false,
+      error:
+        remark === undefined
+          ? "remark missing from the entry"
+          : "remark does not match the swap",
+    };
   }
   if (paidAt !== undefined) {
-    if (typeof paidAt !== "number" || !Number.isFinite(paidAt)) return { ok: false, error: "invalid paidAt" };
+    if (typeof paidAt !== "number" || !Number.isFinite(paidAt))
+      return { ok: false, error: "invalid paidAt" };
     if (paidAt < expected.paidFrom || paidAt > expected.paidTo) {
-      return { ok: false, error: "entry is outside the swap window (old transfers must not be replayed)" };
+      return {
+        ok: false,
+        error:
+          "entry is outside the swap window (old transfers must not be replayed)",
+      };
     }
   }
   return {
@@ -163,7 +216,10 @@ export function verdictsAgree(a: PaymentVerdict, b: PaymentVerdict): boolean {
   const seller = a.side === "buyer" ? b : a;
   if (buyer.observed !== "sent" || seller.observed !== "received") return false;
   if (buyer.txId === undefined || buyer.txId !== seller.txId) return false;
-  return sameAmount(buyer.amount, seller.amount) && (buyer.remark ?? "") === (seller.remark ?? "");
+  return (
+    sameAmount(buyer.amount, seller.amount) &&
+    (buyer.remark ?? "") === (seller.remark ?? "")
+  );
 }
 
 /**
@@ -187,13 +243,21 @@ export function machineConfirm(
 ): PaymentVerdict | null {
   const p = normalizeAutoReleasePolicy(policy);
   if (p === "off") return null;
-  const sellerReceived = verdicts.find((v) => v.side === "seller" && v.observed === "received") ?? null;
-  const buyerSent = verdicts.find((v) => v.side === "buyer" && v.observed === "sent") ?? null;
+  const sellerReceived =
+    verdicts.find((v) => v.side === "seller" && v.observed === "received") ??
+    null;
+  const buyerSent =
+    verdicts.find((v) => v.side === "buyer" && v.observed === "sent") ?? null;
   const verifiedReceipt =
     verdicts.find(
-      (v) => v.side === "seller" && v.evidenceKind === "bank_ereceipt" && v.receiptVerified === true && v.observed === "received",
+      (v) =>
+        v.side === "seller" &&
+        v.evidenceKind === "bank_ereceipt" &&
+        v.receiptVerified === true &&
+        v.observed === "received",
     ) ?? null;
-  const twoSided = !!sellerReceived && !!buyerSent && verdictsAgree(sellerReceived, buyerSent);
+  const twoSided =
+    !!sellerReceived && !!buyerSent && verdictsAgree(sellerReceived, buyerSent);
   if (p === "seller_receipt") return sellerReceived;
   if (p === "two_sided") return twoSided ? sellerReceived : null;
   // verified_receipt
@@ -201,11 +265,20 @@ export function machineConfirm(
   return twoSided ? sellerReceived : null;
 }
 
-export const AUTO_RELEASE_POLICIES = ["off", "seller_receipt", "two_sided", "verified_receipt"] as const;
+export const AUTO_RELEASE_POLICIES = [
+  "off",
+  "seller_receipt",
+  "two_sided",
+  "verified_receipt",
+] as const;
 export type AutoReleasePolicy = (typeof AUTO_RELEASE_POLICIES)[number];
 
 /** Unknown or missing policy values disable the feature — never enable by typo. */
-export function normalizeAutoReleasePolicy(policy: string | null | undefined): AutoReleasePolicy {
+export function normalizeAutoReleasePolicy(
+  policy: string | null | undefined,
+): AutoReleasePolicy {
   const p = (policy ?? "").trim();
-  return (AUTO_RELEASE_POLICIES as readonly string[]).includes(p) ? (p as AutoReleasePolicy) : "off";
+  return (AUTO_RELEASE_POLICIES as readonly string[]).includes(p)
+    ? (p as AutoReleasePolicy)
+    : "off";
 }
