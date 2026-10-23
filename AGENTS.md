@@ -99,3 +99,30 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   lives inside Spot/trade only, `chart.spec.ts` is gone, `e2etest.sh` runs only
   `order.spec.ts` in its order part, and `capture-order.mjs` captures the chart
   from the Spot screen (`ok order-06-chart`).
+
+## Notes as of 2026-10-23
+
+- **L1 peg-in needs a test-net issuance-key override (Java)**. `0a404ee89` /
+  `daa5cbbe5` moved CROSSTANGLE mint validation from each node's
+  `bridge.issuancePubKeyHex` to a key shipped in the build
+  (`/<chainid>-issuance.pub`), whose private halves are operator-held prod
+  secrets (`helper/prod/…/issuance-*.env`). The fulltest harness signs peg-ins
+  with its deterministic `ISSUANCE_SEED=0x2222…`, so every L1 mint failed
+  `L1 CROSSTANGLE issuance signature does not verify under the chain's issuance
+  key`; the L1 genesis wallet then had **0** spend candidates and
+  `order.spec.ts` / `trade.spec.ts` died at
+  `calculateAllSpendCandidates(...)` (`Expected: > 0, Received: 0`).
+  `remote.sh` cannot be fixed on its own (no matching private key exists), so
+  `ChainIssuanceKey.resolve(params, configuredKey)` now lets an explicitly
+  configured `bridge.issuancePubKeyHex` win on `TestParams` chains only —
+  mainnet still uses the shipped key, so nodes cannot disagree on a mint there.
+  Sanity check after an infra restart: the L1 genesis wallet (ML-DSA seed
+  `0x01`) must have > 0 spend candidates before running order/trade.
+- **`E2E_AUTOCONFIRM` hides the confirm sheet**: e2e web builds auto-approve
+  `confirmImportant` (`TransactionConfirm.tsx`), so specs must not assert
+  `confirm-transaction` — a buy/order click posts its signed request straight
+  away. `p2p-page.spec.ts` now mocks `/orders/<id>/match` + `/swaps/mine` and
+  asserts the payload. It also had to follow `checkP2pFill`'s remainder rule: an
+  amount may not leave the ad below `minOrder` (20 USDT on a 25 USDT remainder
+  leaves 35 CNY < 70, so it is rejected; 15 USDT → 105 CNY is allowed).
+  `p2p-ui` part: 10/10 green.

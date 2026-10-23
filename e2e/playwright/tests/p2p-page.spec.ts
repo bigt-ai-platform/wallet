@@ -30,6 +30,13 @@ test.describe('P2P Page', () => {
       ];
       await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders } }));
       await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat', 'alipay'] } }));
+      // E2E builds auto-approve the important-transaction gate
+      // (EXPO_PUBLIC_E2E_AUTOCONFIRM), so a buy goes straight to its signed
+      // match request — mock the match and the post-match swap refresh.
+      await page.route('**/orders/search-sell/match', (route) => route.fulfill({
+        json: { swapId: 'swap-fixture', status: 'MATCHED', escrowAddress: 'fixture-escrow' },
+      }));
+      await page.route('**/swaps/mine', (route) => route.fulfill({ json: { swaps: [] } }));
       await createWallet(page, 'P2pFixturePassword123');
       await clickTab(page, 'P2P');
       const search = page.getByTestId('p2p-book-search');
@@ -55,8 +62,16 @@ test.describe('P2P Page', () => {
       await fill.fill('10');
       await expect(feedback).toHaveText('10 USDT for 70 CNY');
       await expect(confirm).toBeEnabled();
+      // 20 USDT = 140 CNY sits inside [70, 140], but it would leave only 5 USDT
+      // (35 CNY) behind — under the ad's 70 CNY minimum — so the ad cannot be
+      // split that way: the buyer must leave at least minOrder or take the whole
+      // remainder (see checkP2pFill in p2p-protocol).
       await fill.fill('20');
-      await expect(feedback).toHaveText('20 USDT for 140 CNY');
+      await expect(feedback).toHaveText('Leave at least 70 CNY or take the full remainder.');
+      await expect(confirm).toBeDisabled();
+      // 15 USDT = 105 CNY leaves exactly 10 USDT (70 CNY) behind — allowed.
+      await fill.fill('15');
+      await expect(feedback).toHaveText('15 USDT for 105 CNY');
       await expect(confirm).toBeEnabled();
       for (const invalidFiat of ['0', '-1', 'abc']) {
         await page.getByTestId('p2p-buy-fill-fiat').fill(invalidFiat);
@@ -67,13 +82,24 @@ test.describe('P2P Page', () => {
       await expect(fill).toHaveValue('12.5');
       await expect(feedback).toHaveText('12.5 USDT for 87.5 CNY');
       await page.getByTestId('p2p-buy-recv').fill('fixture-receive-address');
-      await confirm.click();
-      await expect(page.getByTestId('confirm-transaction')).toContainText('Buy: 12.5 USDT for 87.5 CNY');
-      await page.screenshot({ path: testInfo.outputPath(`p2p-fill-confirm-${width}.png`) });
-      await page.getByTestId('confirm-cancel').click();
-      await expect(page.getByTestId('confirm-transaction')).not.toBeVisible();
+      // Snapshot the fill panel while the ad is still selected.
       await feedback.scrollIntoViewIfNeeded();
       await page.screenshot({ path: testInfo.outputPath(`p2p-fill-${width}.png`) });
+      // No confirm sheet in an e2e build (the gate auto-approves), so the click
+      // posts the signed match straight away: assert the payload the engine
+      // would receive, then the success notice.
+      const matchRequest = page.waitForRequest((r) => r.url().includes('/orders/search-sell/match'));
+      await confirm.click();
+      const payload = (await matchRequest).postDataJSON();
+      expect(payload.fillAmount).toBe('12.5');
+      expect(payload.receiveAddress).toBe('fixture-receive-address');
+      expect(payload.rail).toBe('wechat');
+      await expect(page.getByTestId('p2p-notice')).toContainText('swap-fixture');
+      await page.screenshot({ path: testInfo.outputPath(`p2p-fill-confirm-${width}.png`) });
+      // A successful match leaves the screen on My Orders — go back to the book
+      // for the search assertions below.
+      await page.getByTestId('p2p-tab-open').click();
+      await expect(page.getByTestId('p2p-book-search')).toBeVisible();
       await search.fill('EUR');
       await expect(count).toHaveText('0 / 2 ads');
       await expect(page.getByTestId('p2p-book-empty')).toHaveText('No matches');
