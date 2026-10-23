@@ -189,6 +189,12 @@ the app reads WeChat's own “payment received” notification:
 
 ![The payee's own WeChat payment notification](/demo/p2p/p2p-verify-wechat-notification-en.png)
 
+**Before you verify.**
+
+- **The engine must reach your phone.** It connects to the paired endpoint itself, so the endpoint has to be a public HTTPS address (for example a tunnel to the phone). A home-network address such as `http://192.168.x.x` cannot be reached and is rejected.
+- **Alipay and bank: open the entry first.** The read takes what is on screen, so open this payment's transaction detail in the app before pressing **Read my phone**.
+- **WeChat: seller only.** Only the payee's phone gets WeChat's “payment received” notification, so a WeChat payment can be verified by the seller, not the buyer.
+
 **What it changes.** By default a read is only dispute evidence. Under the policy
 `SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt`, or the stricter `two_sided` /
 `verified_receipt`) a qualifying read **stands in for the manual confirm** and

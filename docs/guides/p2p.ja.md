@@ -146,6 +146,12 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 
 ![受取人の WeChat 入金通知](/demo/p2p/p2p-verify-wechat-notification-en.png)
 
+**検証の前に。**
+
+- **エンジンがスマートフォンに到達できる必要があります。** エンジンはペアリングしたエンドポイントに自ら接続するため、公開 HTTPS アドレス（例: スマートフォンへのトンネル）である必要があります。`http://192.168.x.x` のような家庭内ネットワークのアドレスには到達できず、拒否されます。
+- **Alipay と銀行: 先に明細を開く。** 読み取るのは画面に表示されている内容なので、**Read my phone** を押す前にアプリでこの支払いの取引詳細を開いてください。
+- **WeChat: 売り手のみ。** WeChat の「入金通知」は受取人のスマートフォンにしか届かないため、WeChat の支払いを検証できるのは売り手で、買い手はできません。
+
 **何が変わるか。** 既定では読み取りは紛争の証拠にすぎません。
 `SETTLEMENT_CNY_AUTO_RELEASE_ON` ポリシー（`seller_receipt`、またはより厳格な
 `two_sided` / `verified_receipt`）では、条件を満たす読み取りが**手動確認の代わり

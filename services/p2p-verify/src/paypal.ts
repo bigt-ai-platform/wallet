@@ -1,11 +1,11 @@
 /**
- * PayPal REST client + capture verification (standalone).
+ * PayPal REST client + capture verification (standalone operator tool).
  *
- * The wallet's P2P engine is CNY-only, so PayPal lives here in the verification
- * service rather than as an engine rail. This module is self-contained: it talks
- * to PayPal's REST API to verify a captured payment (docs/plans/ai-p2p.md
- * "Verification (MVP)" — poll PayPal instead of trusting the payer's claim),
- * check a webhook signature, or send a payout.
+ * PayPal is not a P2P rail: the engine settles CNY rails only (docs/p2p.md §7)
+ * and the wallet offers no PayPal option. This module backs the p2p-verify CLI
+ * (`--paypal-capture`): it polls PayPal's REST API to confirm a captured
+ * payment instead of trusting the payer's claim, checks a webhook signature, or
+ * sends a payout. Nothing in the engine or the wallet calls it.
  *
  * Everything is disabled until `PAYPAL_CLIENT_ID` + `PAYPAL_SECRET` are set.
  */

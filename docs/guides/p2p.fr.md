@@ -199,6 +199,12 @@ notification « paiement reçu » de WeChat :
 
 ![La notification de paiement WeChat du bénéficiaire](/demo/p2p/p2p-verify-wechat-notification-en.png)
 
+**Avant de vérifier.**
+
+- **Le moteur doit joindre votre téléphone.** Il se connecte lui-même au point de terminaison associé, qui doit donc être une adresse HTTPS publique (par exemple un tunnel vers le téléphone). Une adresse de réseau domestique comme `http://192.168.x.x` est injoignable et refusée.
+- **Alipay et banque : ouvrez d'abord l'opération.** La lecture prend ce qui est à l'écran : ouvrez le détail de la transaction de ce paiement dans l'application avant d'appuyer sur **Read my phone**.
+- **WeChat : vendeur uniquement.** Seul le téléphone du bénéficiaire reçoit la notification « paiement reçu » de WeChat, donc un paiement WeChat peut être vérifié par le vendeur, pas par l'acheteur.
+
 **Ce que cela change.** Par défaut, une lecture n'est qu'une preuve en cas de
 litige. Sous la politique `SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt`, ou
 les plus strictes `two_sided` / `verified_receipt`), une lecture qualifiée

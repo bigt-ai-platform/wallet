@@ -645,10 +645,16 @@ export interface P2pDeviceReadResult {
 export async function deviceRead(
   id: P2pIdentity,
   swapId: string,
-  input: { pairingId?: string; evidenceKind?: 'device_read' | 'bank_ereceipt'; receiptVerified?: boolean } = {},
+  input: {
+    pairingId?: string;
+    via?: 'screen' | 'notification';
+    evidenceKind?: 'device_read' | 'bank_ereceipt';
+    receiptVerified?: boolean;
+  } = {},
 ): Promise<P2pDeviceReadResult> {
   const body = signedBody(id.key, id.did, {
     ...(input.pairingId ? { pairingId: input.pairingId } : {}),
+    ...(input.via ? { via: input.via } : {}),
     ...(input.evidenceKind ? { evidenceKind: input.evidenceKind } : {}),
     ...(input.receiptVerified !== undefined ? { receiptVerified: input.receiptVerified } : {}),
     requestPath: `/swaps/${swapId}/device-read`,

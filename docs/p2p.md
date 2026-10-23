@@ -420,6 +420,12 @@ their own balance) and the engine's job shrinks from *verifying* the rail to
 *enforcing the protocol*: confirm-then-release, dispute-then-arbitrate, always
 fail closed on the chain leg.
 
+**PayPal is not a rail.** The engine and the wallet offer only the CNY rails
+(`wechat`, `alipay`, `bank`). `services/p2p-verify` ships a PayPal REST client
+for operators — `p2p-verify --paypal-capture <id> [--paypal-amount N
+--paypal-currency USD]` checks a capture against PayPal's API (needs
+`PAYPAL_CLIENT_ID` / `PAYPAL_SECRET`) — but no swap is ever settled through it.
+
 Seller's payment instructions and the per-swap remark code are delivered
 **only after `ESCROW_LOCKED`** and only to the matched buyer, through the same
 whole-body signed, party-scoped reads as `POST /swaps/mine` / `/swaps/get`

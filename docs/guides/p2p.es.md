@@ -196,6 +196,12 @@ WeChat la app lee la notificación «pago recibido» de WeChat:
 
 ![La notificación de pago de WeChat del receptor](/demo/p2p/p2p-verify-wechat-notification-en.png)
 
+**Antes de verificar.**
+
+- **El motor debe alcanzar tu teléfono.** Se conecta él mismo al endpoint emparejado, así que debe ser una dirección HTTPS pública (por ejemplo, un túnel hacia el teléfono). Una dirección de red doméstica como `http://192.168.x.x` no es alcanzable y se rechaza.
+- **Alipay y banco: abre primero el movimiento.** La lectura toma lo que hay en pantalla, así que abre el detalle de la transacción de este pago en la app antes de pulsar **Read my phone**.
+- **WeChat: solo el vendedor.** Solo el teléfono del receptor recibe la notificación «pago recibido» de WeChat, así que un pago por WeChat lo puede verificar el vendedor, no el comprador.
+
 **Qué cambia.** Por defecto, una lectura solo es prueba en caso de disputa. Bajo
 la política `SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt`, o las más
 estrictas `two_sided` / `verified_receipt`) una lectura que cumple **sustituye

@@ -31,7 +31,7 @@ import {
 type Tab = 'open' | 'mine';
 
 /** Fiat rails (docs/p2p.md §7): buyer pays seller directly; seller confirms receipt. */
-const CNY_RAILS: readonly string[] = ['wechat', 'alipay'];
+const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank'];
 /** Built-in rail list — used until the engine's /capabilities report arrives. */
 const DEFAULT_RAILS: readonly string[] = [...CNY_RAILS];
 function isCnyRail(rail?: string): boolean {
@@ -127,8 +127,7 @@ export default function P2pScreen() {
   // What this engine actually serves (GET /capabilities): the enabled CNY
   // rails (empty → DEFAULT_RAILS, older engine, see p2p.ts).
   const [caps, setCaps] = React.useState<P2pCapabilities | null>(null);
-  // The rail picker never offers `bank`; filter it out of the engine list too.
-  const enabledRails: readonly string[] = (caps ? caps.rails : DEFAULT_RAILS).filter((r) => r !== 'bank');
+  const enabledRails: readonly string[] = caps ? caps.rails : DEFAULT_RAILS;
 
   // Advisory availability for the sell form: compare `giveAmount` against the
   // seller's balance on `giveChain` (L0 vs the active L1). Unknown balance → no
@@ -147,6 +146,7 @@ export default function P2pScreen() {
   const [profileMethod, setProfileMethod] = React.useState<P2pCnyRail>('wechat');
   const [profileName, setProfileName] = React.useState('');
   const [profileAccount, setProfileAccount] = React.useState('');
+  const [profileBank, setProfileBank] = React.useState('');
 
   const keyHex = isUnlocked ? getUnlockedWallet()?.wallet.privateKey : undefined;
   const keyType = getUnlockedWallet()?.wallet.keyType;
@@ -618,6 +618,7 @@ export default function P2pScreen() {
         method: profileMethod,
         accountName: profileName.trim(),
         account: profileAccount.trim(),
+        ...(profileMethod === 'bank' && profileBank.trim() ? { bankName: profileBank.trim() } : {}),
       });
       setNotice({ ok: true, text: t('p2p.profileSaved') });
       await loadProfiles();
@@ -989,6 +990,9 @@ export default function P2pScreen() {
             </View>
             <Field label={t('p2p.profileName')} value={profileName} onChange={setProfileName} testID="p2p-profile-name" />
             <Field label={t('p2p.profileAccount')} value={profileAccount} onChange={setProfileAccount} testID="p2p-profile-account" />
+            {profileMethod === 'bank' ? (
+              <Field label={t('p2p.profileBank')} value={profileBank} onChange={setProfileBank} testID="p2p-profile-bank" />
+            ) : null}
             <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.primary }]} onPress={saveProfileForm} disabled={busy} testID="p2p-profile-save">
               <Text style={s.btnText}>{t('p2p.profileSave')}</Text>
             </TouchableOpacity>

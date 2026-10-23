@@ -6,6 +6,7 @@ import {
   createPairing, listMyPairings, revokePairing, deviceRead, submitVerdict,
   type P2pAutoReleasePolicy, type P2pIdentity, type P2pPairing, type P2pDeviceReadResult, type P2pSwap,
 } from '@/services/p2p';
+import { deviceReadMode } from '@/lib/p2pDeviceRead';
 
 /**
  * "Verify with my phone" (docs/p2p.md §12): pair the party's own phone (the
@@ -36,6 +37,8 @@ export default function PhoneVerifyCard({ id, swap, autoReleaseOn, onStatus, onC
   React.useEffect(() => { load(); }, [load]);
 
   const active = pairings.find((p) => !p.revoked && (p.swapId === null || p.swapId === swap.swapId));
+  const side = swap.sellerDid === id.did ? 'seller' : 'buyer';
+  const mode = deviceReadMode(swap.wantRail, side);
 
   async function pair() {
     if (busy || !endpoint.trim() || !token.trim()) return;
@@ -72,10 +75,11 @@ export default function PhoneVerifyCard({ id, swap, autoReleaseOn, onStatus, onC
 
   async function read() {
     if (busy || !active) { onStatus(t('p2pdev.needPair')); return; }
+    if (!mode) { onStatus(t('p2phelp.wechatBuyer')); return; }
     setBusy(true);
     setResult(null);
     try {
-      const r = await deviceRead(id, swap.swapId, { pairingId: active.pairingId });
+      const r = await deviceRead(id, swap.swapId, { pairingId: active.pairingId, via: mode });
       setResult(r);
       if (!r.check.ok) onStatus(t('p2pdev.mismatch', { e: r.check.error ?? '' }));
     } catch (e) {
@@ -118,10 +122,18 @@ export default function PhoneVerifyCard({ id, swap, autoReleaseOn, onStatus, onC
           ? t('p2pdev.policyOff')
           : t('p2pdev.policyOn', { policy: autoReleaseOn })}
       </Text>
+      <Text style={[s.policy, { color: theme.colors.text.secondary }]} testID="p2p-verify-mode-hint">
+        {mode === null
+          ? t('p2phelp.wechatBuyer')
+          : mode === 'notification'
+            ? t('p2phelp.wechatSeller')
+            : t('p2phelp.openDetail', { rail: swap.wantRail ?? '' })}
+      </Text>
 
       {pairings.filter((p) => !p.revoked).length === 0 ? (
         <View style={{ marginTop: 8, gap: 8 }}>
           <Text style={[s.label, { color: theme.colors.text.secondary }]}>{t('p2pdev.pairTitle')}</Text>
+          <Text style={[s.policy, { color: theme.colors.text.secondary }]} testID="p2p-verify-reach-hint">{t('p2phelp.reach')}</Text>
           <TextInput style={inputStyle} value={endpoint} onChangeText={setEndpoint} placeholder={t('p2pdev.endpointPh')} placeholderTextColor={theme.colors.text.secondary} autoCapitalize="none" testID="p2p-verify-endpoint" />
           <TextInput style={inputStyle} value={token} onChangeText={setToken} placeholder={t('p2pdev.tokenPh')} placeholderTextColor={theme.colors.text.secondary} autoCapitalize="none" secureTextEntry testID="p2p-verify-token" />
           <TextInput style={inputStyle} value={deviceId} onChangeText={setDeviceId} placeholder={t('p2pdev.device')} placeholderTextColor={theme.colors.text.secondary} autoCapitalize="none" testID="p2p-verify-device" />
@@ -140,7 +152,7 @@ export default function PhoneVerifyCard({ id, swap, autoReleaseOn, onStatus, onC
               </TouchableOpacity>
             </View>
           ))}
-          <Button label={busy ? t('p2pdev.reading') : t('p2pdev.read')} color={theme.colors.accent.emerald} onPress={read} disabled={busy || !active} testID="p2p-verify-read" />
+          <Button label={busy ? t('p2pdev.reading') : t('p2pdev.read')} color={theme.colors.accent.emerald} onPress={read} disabled={busy || !active || !mode} testID="p2p-verify-read" />
         </View>
       )}
 

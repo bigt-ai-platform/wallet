@@ -194,6 +194,12 @@ notifikasi "pembayaran diterima" milik WeChat:
 
 ![Notifikasi pembayaran WeChat milik penerima](/demo/p2p/p2p-verify-wechat-notification-en.png)
 
+**Sebelum memverifikasi.**
+
+- **Engine harus bisa menjangkau ponsel Anda.** Engine terhubung sendiri ke endpoint yang dipasangkan, jadi endpoint harus berupa alamat HTTPS publik (misalnya tunnel ke ponsel). Alamat jaringan rumah seperti `http://192.168.x.x` tidak terjangkau dan ditolak.
+- **Alipay dan bank: buka entrinya dulu.** Pembacaan mengambil apa yang ada di layar, jadi buka detail transaksi pembayaran ini di aplikasi sebelum menekan **Read my phone**.
+- **WeChat: hanya penjual.** Hanya ponsel penerima yang mendapat notifikasi "pembayaran diterima" WeChat, jadi pembayaran WeChat dapat diverifikasi oleh penjual, bukan pembeli.
+
 **Apa yang berubah.** Secara default, pembacaan hanya menjadi bukti sengketa. Di
 bawah kebijakan `SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt`, atau yang
 lebih ketat `two_sided` / `verified_receipt`) pembacaan yang memenuhi syarat

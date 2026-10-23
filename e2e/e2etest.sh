@@ -368,6 +368,8 @@ export EXPO_PUBLIC_E2E_AUTOCONFIRM=1
 NEED_BUILD=0
 [[ -d "$WEB_BUILD" ]] || NEED_BUILD=1
 if [[ -d "$WEB_BUILD" && "$(cat "$WEB_BUILD/.p2p-url" 2>/dev/null)" != "$P2P_ENGINE_URL|e2e" ]]; then NEED_BUILD=1; fi
+# A source edit since the last export must not be tested against the stale bundle.
+if [[ -f "$WEB_BUILD/.p2p-url" && -n "$(find "$ROOT/expo-app/sources" "$ROOT/packages" \( -name node_modules -o -name dist \) -prune -o \( -name '*.ts' -o -name '*.tsx' \) -newer "$WEB_BUILD/.p2p-url" -print -quit 2>/dev/null)" ]]; then NEED_BUILD=1; fi
 if [[ "$NEED_BUILD" == "1" ]]; then
   info "Building web app (P2P engine: $P2P_ENGINE_URL)..."
   cd "$ROOT/expo-app"

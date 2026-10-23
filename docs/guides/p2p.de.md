@@ -200,6 +200,12 @@ Oberfläche, daher liest die App für WeChat die „Zahlungseingang“-Benachric
 
 ![Die WeChat-Zahlungsbenachrichtigung des Empfängers](/demo/p2p/p2p-verify-wechat-notification-en.png)
 
+**Vor dem Prüfen.**
+
+- **Die Engine muss dein Telefon erreichen.** Sie verbindet sich selbst mit dem gekoppelten Endpunkt, daher muss dieser eine öffentliche HTTPS-Adresse sein (z. B. ein Tunnel zum Telefon). Eine Heimnetz-Adresse wie `http://192.168.x.x` ist nicht erreichbar und wird abgelehnt.
+- **Alipay und Bank: zuerst den Eintrag öffnen.** Gelesen wird, was auf dem Bildschirm steht – öffne die Transaktionsdetails dieser Zahlung in der App, bevor du **Read my phone** drückst.
+- **WeChat: nur der Verkäufer.** Nur das Telefon des Empfängers erhält die WeChat-Benachrichtigung „Zahlung erhalten“, daher kann eine WeChat-Zahlung nur der Verkäufer prüfen, nicht der Käufer.
+
 **Was sich ändert.** Standardmäßig ist ein Lesevorgang nur ein Streitbeleg.
 Unter der Richtlinie `SETTLEMENT_CNY_AUTO_RELEASE_ON` (`seller_receipt` oder die
 strengeren `two_sided` / `verified_receipt`) **ersetzt** ein qualifizierter
