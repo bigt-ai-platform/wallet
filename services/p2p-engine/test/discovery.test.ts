@@ -170,6 +170,16 @@ describe("EndpointPool", () => {
     await pool.refresh();
     expect(pool.best()).toBe("https://a.example");
   });
+
+  it("quorumUrls needs n healthy endpoints including a pinned one", async () => {
+    const pool = new EndpointPool(sources({ staticUrls: ["https://a.example", "https://b.example"] }), {
+      fetchImpl: mockFetch(routes(5, 9)),
+    });
+    expect(pool.quorumUrls(2)).toBeNull();
+    await pool.refresh();
+    expect(pool.quorumUrls(2)?.sort()).toEqual(["https://a.example", "https://b.example"]);
+    expect(pool.quorumUrls(3)).toBeNull();
+  });
 });
 
 describe("PooledChainClient", () => {

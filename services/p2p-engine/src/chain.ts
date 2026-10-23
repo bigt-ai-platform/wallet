@@ -177,8 +177,9 @@ export class HttpChainClient implements ChainClient {
 
 /**
  * Prove a lock: the funding tx must be CONFIRMED and pay `escrowAddress`, and
- * (when token/amount are supplied) a confirmed escrow UTXO of at least
- * `amount` must exist. Fails closed.
+ * (when token/amount are supplied) the lock tx's OWN confirmed, unspent escrow
+ * output(s) must cover `amount` — other deposits at a shared vault address
+ * never count. Fails closed.
  */
 export async function verifyChainLock(
   chain: ChainClient,
@@ -200,7 +201,8 @@ export async function verifyChainLock(
       // getOutputsHistory matches on `toaddress` and uses the computed
       // OUTPUTS_CONFIRMED, so it is the only path that can see a P2SH escrow
       // output (Java-first: DatabaseFullBlockStoreBase.getOutputsHistory).
-      const outputs = normalizeOutputs(await chain.outputsHistory(opts.escrowAddress));
+      const own = (await chain.outputsHistory(opts.escrowAddress)).filter((o) => String(o.hashHex ?? "") === opts.txHash);
+      const outputs = normalizeOutputs(own);
       const check = verifySettlement(outputs, {
         toAddress: opts.escrowAddress,
         token: opts.token,
@@ -227,6 +229,10 @@ export async function verifyChainPayment(
     }
     if (st.address && st.address !== opts.toAddress) {
       return { ok: false, reason: `transaction pays ${st.address}, expected ${opts.toAddress}` };
+    }
+    // No address in the status: the recipient's own index must list this tx.
+    if (!st.address && !(await confirmedTxToAddress(chain, opts.toAddress, opts.txHash))) {
+      return { ok: false, reason: `transaction not found in ${opts.toAddress}'s confirmed history` };
     }
     return { ok: true };
   } catch (e) {

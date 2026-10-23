@@ -281,6 +281,8 @@ export interface HttpMobileClientOptions {
   authHeaders?: AuthHeaderFn;
   /** Per-request timeout in ms (default 60s — screenshot on a real device is the slow call). */
   timeoutMs?: number;
+  /** Transport override (a server passes an SSRF-guarded fetch). */
+  fetchImpl?: typeof fetch;
 }
 
 /** Parse a Streamable HTTP MCP response body into the JSON-RPC message. */
@@ -379,7 +381,7 @@ export class HttpMobileClient extends BaseMobileClient {
   protected constructor(
     device: string,
     private readonly opts: Required<Pick<HttpMobileClientOptions, "baseUrl" | "timeoutMs">> &
-      Pick<HttpMobileClientOptions, "token" | "authHeaders">,
+      Pick<HttpMobileClientOptions, "token" | "authHeaders" | "fetchImpl">,
   ) {
     super(device, opts.timeoutMs);
   }
@@ -390,6 +392,7 @@ export class HttpMobileClient extends BaseMobileClient {
       baseUrl: assertSecureBaseUrl(opts.baseUrl),
       token: opts.token,
       authHeaders: opts.authHeaders,
+      fetchImpl: opts.fetchImpl,
       timeoutMs: opts.timeoutMs ?? 60_000,
     });
     await gw.request("initialize", {
@@ -418,7 +421,7 @@ export class HttpMobileClient extends BaseMobileClient {
       headers.authorization = `Bearer ${this.opts.token}`;
     }
 
-    const response = await fetch(`${this.opts.baseUrl}/mcp`, {
+    const response = await (this.opts.fetchImpl ?? fetch)(`${this.opts.baseUrl}/mcp`, {
       method: "POST",
       headers,
       body: JSON.stringify(payload),

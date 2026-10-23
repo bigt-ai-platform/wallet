@@ -33,7 +33,7 @@ const reads: DeviceReadArgs[] = [];
 async function app(extraEnv: NodeJS.ProcessEnv = {}) {
   return buildApp({
     store,
-    env: { SETTLEMENT_ENGINE_DID: engineDid, SETTLEMENT_ADMIN_TOKEN: "adm", ...extraEnv } as NodeJS.ProcessEnv,
+    env: { SETTLEMENT_ENGINE_DID: engineDid, SETTLEMENT_ADMIN_TOKEN: "adm", SETTLEMENT_PAIRING_ALLOW_PRIVATE: "1", ...extraEnv } as NodeJS.ProcessEnv,
     guard: new ReplayGuard(() => clock),
     chain: null,
     now: () => clock,
@@ -77,7 +77,7 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
+    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: swapId.slice(5).padEnd(64, "f"), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
   });
   expect(lock.statusCode).toBe(200);
   bump();

@@ -92,6 +92,8 @@ export interface P2pSwapRecord {
   verifyReceipt?: boolean;
   /** Comma-separated sha256 of the captures the agent kept on the device. */
   verifyCaptures?: string;
+  /** did:key of the signed arbiter who resolved the dispute (dispute_resolve events). */
+  arbiterDid?: string;
 }
 
 export interface P2pSwapRecordInput extends Omit<P2pSwapRecord, "type" | "ts"> {
@@ -132,6 +134,7 @@ export function p2pSwapRecord(a: P2pSwapRecordInput): P2pSwapRecord {
   if (a.verifyEvidence !== undefined) record.verifyEvidence = a.verifyEvidence;
   if (a.verifyReceipt !== undefined) record.verifyReceipt = a.verifyReceipt;
   if (a.verifyCaptures !== undefined) record.verifyCaptures = a.verifyCaptures;
+  if (a.arbiterDid !== undefined) record.arbiterDid = a.arbiterDid;
   return record;
 }
 
@@ -214,6 +217,9 @@ export function validateP2pSwapRecord(r: Partial<P2pSwapRecord>): { ok: true } |
     if (!captures.length || captures.some((c) => !/^[0-9a-f]{64}$/.test(c))) {
       return { ok: false, error: "invalid verifyCaptures (comma-separated sha256 hex)" };
     }
+  }
+  if (r.arbiterDid !== undefined && (typeof r.arbiterDid !== "string" || !/^did:key:[A-Za-z0-9]{1,512}$/.test(r.arbiterDid))) {
+    return { ok: false, error: "invalid arbiterDid (did:key)" };
   }
   if (typeof r.ts !== "number" || r.ts <= 0 || r.ts > Date.now() + MAX_SKEW_MS) {
     return { ok: false, error: "invalid ts" };

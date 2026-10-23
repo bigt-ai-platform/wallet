@@ -109,6 +109,7 @@ export function swapEventRecord(event: P2pSwapEvent, from: string): P2pSwapRecor
       : {}),
     // A machine confirm anchors how it was obtained (§12 provenance).
     ...(event.eventType === "payment_confirm" && event.verifySource ? { verifyEvidence: event.verifySource } : {}),
+    ...(event.eventType === "dispute_resolve" && event.arbiterDid ? { arbiterDid: event.arbiterDid } : {}),
     ts: event.at,
   });
 }

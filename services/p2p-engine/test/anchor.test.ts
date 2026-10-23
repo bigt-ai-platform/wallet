@@ -5,6 +5,7 @@ import { didFromPQKey } from "did/pq";
 import { verifyRecordSig } from "record-sig";
 import { anchorFromEnv, swapEventRecord, signSwapRecord, l1Anchor } from "../src/anchor.js";
 import type { P2pSwapEvent } from "../src/types.js";
+import { validateP2pSwapRecord } from "p2p-protocol";
 
 const seed = new Uint8Array(32).fill(7);
 const pqKey = PQKey.fromMLDSA(seed);
@@ -52,6 +53,15 @@ describe("L1-SOCIAL chain anchor (docs/p2p.md step 8)", () => {
     expect(ok.l1Url).toBe("http://l1");
     expect(ok.did).toBe(did);
     expect(ok.pqKey.getPrefixedPublicKeyBytes()).toEqual(pqKey.getPrefixedPublicKeyBytes());
+  });
+
+  it("anchors the signed arbiter on dispute_resolve only", () => {
+    const arbiterDid = "did:key:z6MkArbiter";
+    const resolved = swapEventRecord(event({ eventType: "dispute_resolve", status: "PAYMENT_VERIFIED", arbiterDid }), did);
+    expect(resolved.arbiterDid).toBe(arbiterDid);
+    expect(validateP2pSwapRecord(resolved)).toEqual({ ok: true });
+    expect(swapEventRecord(event({ arbiterDid }), did).arbiterDid).toBeUndefined();
+    expect(validateP2pSwapRecord({ ...resolved, arbiterDid: "not a did" })).toMatchObject({ ok: false });
   });
 
   it("maps an event to a record with no PII or store-only fields", () => {

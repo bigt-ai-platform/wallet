@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
 import { Ed25519Key, didFromEd25519Key } from "did";
-import { buildApp, normalizeAnchorMode, rateLimitsFromEnv } from "../src/server.js";
+import { buildApp, isNonPublicIp, nonPublicEndpointReason, normalizeAnchorMode, normalizeDisputeDefault, rateLimitsFromEnv, trustProxyFromEnv } from "../src/server.js";
+import { publicOnlyFetch } from "../src/netguard.js";
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, signPayload } from "../src/sign.js";
 import type { P2pSwapEvent } from "../src/types.js";
@@ -31,6 +32,8 @@ async function app() {
     env: {
       SETTLEMENT_ENGINE_DID: engineDid,
       SETTLEMENT_ADMIN_TOKEN: "adm",
+      // The suite shares one store, so the per-buyer cap is covered separately.
+      SETTLEMENT_MAX_OPEN_SWAPS: "0",
     } as NodeJS.ProcessEnv,
     guard: new ReplayGuard(() => clock),
     chain: null,
@@ -86,7 +89,7 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
+    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: swapId.slice(5).padEnd(64, "f"), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
   });
   expect(lock.statusCode).toBe(200);
   bump();
@@ -324,6 +327,38 @@ describe("settlement server", () => {
   });
 });
 
+describe("lock transaction reuse", () => {
+  it("409s an escrow_lock whose txHash already backs another swap", async () => {
+    const a = await app();
+    const first = await toEscrowLocked(a);
+    const firstLock = (await store.getSwap(first))!.escrowTxHash!;
+    const o = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, {
+        type: "limit_sell", sellerDid, giveToken: "USDT", giveAmount: "100", giveChain: "L0",
+        wantCurrency: "CNY", wantAmount: "715", wantRail: "wechat",
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
+    });
+    bump();
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${o.json().orderId}/match`,
+      payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${o.json().orderId}/match` }),
+    });
+    expect(m.statusCode).toBe(201);
+    const second = m.json().swapId as string;
+    bump();
+    const lock = await a.inject({
+      method: "POST",
+      url: `/swaps/${second}/transitions`,
+      payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: firstLock, requestMethod: "POST", requestPath: `/swaps/${second}/transitions` }),
+    });
+    expect(lock.statusCode).toBe(409);
+    expect(lock.json().error).toMatch(/already backs another swap/);
+  });
+});
+
 describe("normalizeAnchorMode", () => {
   it("defaults to best-effort so L1 never blocks the L0 settlement", () => {
     expect(normalizeAnchorMode(undefined)).toBe("best-effort");
@@ -467,7 +502,7 @@ describe("buy orders (limit_buy)", () => {
     const lock = await a.inject({
       method: "POST",
       url: `/swaps/${swapId}/transitions`,
-      payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
+      payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: swapId.slice(5).padEnd(64, "f"), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
     });
     expect(lock.statusCode).toBe(200);
     bump();
@@ -568,6 +603,81 @@ describe("buy orders (limit_buy)", () => {
       payload: signed(other, otherDid, { buyerDid: otherDid, receiveAddress: RECEIVE_ADDRESS, rail: "bank", fillAmount: "10", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
     });
     expect(bad.statusCode).toBe(400);
+  });
+});
+
+describe("pairing endpoint SSRF guard", () => {
+  it("classifies non-public addresses", () => {
+    for (const ip of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.20", "169.254.169.254", "100.64.0.1", "0.0.0.0", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:7f00:1"]) {
+      expect(isNonPublicIp(ip), ip).toBe(true);
+    }
+    for (const ip of ["8.8.8.8", "172.32.0.1", "2606:4700::1111"]) {
+      expect(isNonPublicIp(ip), ip).toBe(false);
+    }
+  });
+
+  it("rejects literal private endpoints", async () => {
+    expect(await nonPublicEndpointReason("http://169.254.169.254/latest")).toMatch(/non-public/);
+    expect(await nonPublicEndpointReason("http://[::1]:8080")).toMatch(/non-public/);
+    expect(await nonPublicEndpointReason("https://8.8.8.8")).toBeNull();
+  });
+
+  it("the guarded fetch refuses non-public hosts at connect time", async () => {
+    await expect(publicOnlyFetch("http://127.0.0.1:1/mcp", { method: "POST" })).rejects.toThrow(/non-public/);
+    await expect(publicOnlyFetch("http://localhost:1/mcp", { method: "POST" })).rejects.toThrow(/non-public/);
+  });
+});
+
+describe("env policy parsing", () => {
+  it("trustProxyFromEnv defaults to loopback + private proxies", () => {
+    expect(trustProxyFromEnv(undefined)).toBe("loopback,uniquelocal");
+    expect(trustProxyFromEnv("1")).toBe("loopback,uniquelocal");
+    expect(trustProxyFromEnv("0")).toBe(false);
+    expect(trustProxyFromEnv("all")).toBe(true);
+    expect(trustProxyFromEnv("10.0.0.5")).toBe("10.0.0.5");
+  });
+
+  it("normalizeDisputeDefault never auto-settles on a typo", () => {
+    expect(normalizeDisputeDefault(undefined)).toBe("none");
+    expect(normalizeDisputeDefault("refunds")).toBe("none");
+    expect(normalizeDisputeDefault(" refund ")).toBe("refund");
+    expect(normalizeDisputeDefault("release")).toBe("release");
+  });
+});
+
+describe("open swap cap", () => {
+  it("rejects a taking buyer past SETTLEMENT_MAX_OPEN_SWAPS", async () => {
+    const a = await buildApp({
+      store: new MemSettlementStore(),
+      env: { SETTLEMENT_ENGINE_DID: engineDid, SETTLEMENT_ADMIN_TOKEN: "adm", SETTLEMENT_MAX_OPEN_SWAPS: "2" } as NodeJS.ProcessEnv,
+      guard: new ReplayGuard(() => clock),
+      chain: null,
+      now: () => clock,
+      anchor: async () => ({ txid: "a".repeat(64) }),
+    });
+    const o = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, {
+        type: "limit_sell", sellerDid, giveToken: "USDT", giveAmount: "100", giveChain: "L0",
+        wantCurrency: "CNY", wantAmount: "715", wantRail: "wechat",
+        validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
+    });
+    expect(o.statusCode).toBe(201);
+    const orderId = o.json().orderId as string;
+    const match = () => {
+      bump();
+      return a.inject({
+        method: "POST",
+        url: `/orders/${orderId}/match`,
+        payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, fillAmount: "10", requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+      });
+    };
+    expect((await match()).statusCode).toBe(201);
+    expect((await match()).statusCode).toBe(201);
+    const third = await match();
+    expect(third.statusCode).toBe(429);
+    expect(third.json().error).toMatch(/too many open swaps/);
   });
 });
 

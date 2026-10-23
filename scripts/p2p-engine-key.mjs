@@ -4,17 +4,17 @@
  * and the per-region secrets file `deploy/env/.env.p2p.<region>` (gitignored;
  * `region.sh p2p` scps it to the VM and passes it as compose --env-file).
  *
- *   node scripts/p2p-engine-key.mjs              # fresh block on stdout
  *   node scripts/p2p-engine-key.mjs europa       # write deploy/env/.env.p2p.europa
  *   node scripts/p2p-engine-key.mjs europa --force   # overwrite (ROTATES KEYS)
+ *   node scripts/p2p-engine-key.mjs --stdout     # print the block (contains seeds!)
  *
- * One ML-DSA-87 key is the whole identity (docs/p2p.md):
- *   SETTLEMENT_ENGINE_KEY    seed hex — signs the L1-SOCIAL anchor records
- *                            (anchor.ts anchorFromEnv re-derives from it)
+ * Two ML-DSA-87 keys (docs/p2p.md §27):
+ *   SETTLEMENT_ENGINE_KEY    anchor/DID seed — signs the L1-SOCIAL records and
+ *                            funds the anchor tx (hot, used constantly)
  *   SETTLEMENT_ENGINE_DID    did:key of that key — the record signer identity
- *   SETTLEMENT_ENGINE_PUBKEY prefixed public key hex — the 2-of-3 escrow
- *                            participant the wallet co-signs with (server.ts
- *                            escrowFor); empty → escrow swaps refuse to form
+ *   SETTLEMENT_ESCROW_KEY    escrow seed — the 2-of-3 co-signer only
+ *   SETTLEMENT_ENGINE_PUBKEY prefixed public key hex of the ESCROW key — the
+ *                            participant wallets derive the vault with
  *
  * Rotating the key invalidates anchored-record verification and any in-flight
  * escrow (the 2-of-3 address changes), so treat the file like a prod secret.
@@ -30,6 +30,11 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
 const region = args.find((a) => !a.startsWith('-')) || '';
 const force = args.includes('--force');
+const toStdout = args.includes('--stdout');
+if (!region && !toStdout) {
+  console.error('usage: p2p-engine-key.mjs <region> [--force]   (or --stdout to print seeds to the terminal)');
+  process.exit(2);
+}
 
 /** Region domain from deploy/region.conf (`REGION_DOMAIN[europa]="eu.wallet.bigt.ai"`). */
 function regionDomain(name) {
@@ -43,8 +48,12 @@ const engineKey = PQKey.createNew();
 const engineKeySeed = engineKey.getPrivateKeySeedAsHex();
 if (!engineKeySeed) throw new Error('PQKey did not expose a private seed — cannot build SETTLEMENT_ENGINE_KEY');
 const engineDid = didFromPQKey(engineKey);
-/** Prefixed ML-DSA public key → lets the engine derive the 2-of-3 escrow address. */
-const enginePubHex = Utils.HEX.encode(engineKey.getPrefixedPublicKeyBytes());
+// A separate escrow key: the anchor key is hot, the escrow co-signer should not share its exposure.
+const escrowKey = PQKey.createNew();
+const escrowKeySeed = escrowKey.getPrivateKeySeedAsHex();
+if (!escrowKeySeed) throw new Error('PQKey did not expose a private seed — cannot build SETTLEMENT_ESCROW_KEY');
+/** Prefixed ML-DSA public key of the escrow key → the 2-of-3 participant. */
+const enginePubHex = Utils.HEX.encode(escrowKey.getPrefixedPublicKeyBytes());
 const engineAddrHex = engineKey.toAddress().toHex();
 
 const domain = regionDomain(region);
@@ -72,15 +81,22 @@ SETTLEMENT_BLOB_KEY=${randomBytes(32).toString('hex')}
 # _BUCKET / _REGION / _ACCESS_KEY / _SECRET_KEY.
 SETTLEMENT_BLOB_DIR=/data/blobs
 
-# ── engine identity: one ML-DSA-87 key, three views of it ──
+# ── engine identity (docs/p2p.md §27): anchor/DID key + a separate escrow key ──
+# Prefer mounted files over env values: SETTLEMENT_ESCROW_KEY_FILE etc. keep the
+# seeds out of the process environ (docker inspect, /proc/<pid>/environ).
 SETTLEMENT_ENGINE_KEY=${engineKeySeed}
 SETTLEMENT_ENGINE_DID=${engineDid}
+SETTLEMENT_ESCROW_KEY=${escrowKeySeed}
 SETTLEMENT_ENGINE_PUBKEY=${enginePubHex}
-# Retained keys (comma-separated seeds) so swaps pinned to a ROTATED key still
-# settle (docs/p2p.md §27.3). Append a new seed here when rotating; never
-# replace SETTLEMENT_ENGINE_KEY in place. Empty = current key only.
+# Retained escrow keys (comma-separated seeds) so swaps pinned to a ROTATED key
+# still settle (docs/p2p.md §27.3). Move the old SETTLEMENT_ESCROW_KEY here when
+# rotating; new swaps always pin the current key. Empty = current key only.
 # SETTLEMENT_ENGINE_KEYS=
-SETTLEMENT_ADMIN_TOKEN=${randomBytes(20).toString('hex')}
+SETTLEMENT_ADMIN_TOKEN=${randomBytes(32).toString('hex')}
+# Arbiter DIDs (scripts/p2p-admin.mjs --new-key): when set, only their signed
+# requests can resolve a dispute; the token no longer moves funds.
+# SETTLEMENT_ADMIN_DIDS=
+# SETTLEMENT_DISPUTE_2ND_APPROVAL_ABOVE=5000
 
 # ── chains (external). NEVER leave SETTLEMENT_L0_URL empty in prod: with no
 #    L0 client the engine accepts escrow_lock WITHOUT proof (server.ts). The

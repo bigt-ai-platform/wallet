@@ -162,6 +162,19 @@ export class EndpointPool {
   }
 
   /**
+   * `n` distinct healthy endpoints for a proof quorum, pinned (env) ones first;
+   * null unless there are `n` and at least one is pinned — discovered nodes
+   * alone can never satisfy a quorum.
+   */
+  quorumUrls(n: number): string[] | null {
+    const pinned = new Set(this.sources.staticUrls.map((u) => u.replace(/\/+$/, "")));
+    const healthy = this.healthy().map((r) => r.url);
+    const picked = [...healthy.filter((u) => pinned.has(u)), ...healthy.filter((u) => !pinned.has(u))].slice(0, n);
+    if (picked.length < n || !picked.some((u) => pinned.has(u))) return null;
+    return picked;
+  }
+
+  /**
    * Demote a failing endpoint (session). When every ranked endpoint is down
    * the blocklist clears: a total outage wants a fresh probe, not a permanent
    * blackhole of nodes that verified earlier.

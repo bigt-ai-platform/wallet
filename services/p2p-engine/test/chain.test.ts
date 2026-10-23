@@ -17,6 +17,7 @@ function client(status: string, address: string, balances: { token: string; amou
       addr === address
         ? balances.map((b) => ({
             address,
+            hashHex: "tx",
             tokenId: b.token,
             value: { value: b.amount, tokenHex: b.token },
             spent: false,
@@ -49,6 +50,16 @@ describe("chain evidence", () => {
       amount: "100",
     });
     expect(res.ok).toBe(true);
+  });
+
+  it("counts only the lock tx's own outputs, never other deposits at a shared vault address", async () => {
+    const chain = client("CONFIRMED", escrow);
+    chain.outputsHistory = async () => [
+      { address: escrow, hashHex: "other", tokenId: "USDT", value: "100", spent: false, confirmed: true },
+      { address: escrow, hashHex: "tx", tokenId: "USDT", value: "1", spent: false, confirmed: true },
+    ];
+    const res = await verifyChainLock(chain, { txHash: "tx", escrowAddress: escrow, token: "USDT", amount: "100" });
+    expect(res.ok).toBe(false);
   });
 
   it("fails closed on unconfirmed / wrong address / short amount", async () => {

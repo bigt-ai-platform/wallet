@@ -19,6 +19,7 @@ async function main(): Promise<number> {
     return 2;
   }
   const env = process.env;
+  (await import("./secrets.js")).loadSecretFiles(env);
   const { Pool } = await import("pg");
   const { PgSettlementStore, MemSettlementStore } = await import("./store.js");
   const { BlobSettlementStore } = await import("./storeBlob.js");

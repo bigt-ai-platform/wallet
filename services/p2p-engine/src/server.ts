@@ -40,7 +40,8 @@
  */
 import Fastify, { type FastifyInstance } from "fastify";
 import { pathToFileURL } from "node:url";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { isNonPublicLiteral, nonPublicEndpointReason, publicOnlyFetch } from "./netguard.js";
 import { hexToBytes } from "did";
 import { pqPubFromDid } from "did/pq";
 import { PQKey, Utils } from "bigtangle-ts";
@@ -85,7 +86,7 @@ import {
   vaultFor,
   type EscrowKind,
 } from "./escrowSpend.js";
-import { HttpChainClient, confirmedTxToAddress, verifyChainLock, verifyChainPayment, verifyPaymentOutput, type ChainClient } from "./chain.js";
+import { HttpChainClient, confirmedTxToAddress, verifyChainLock, verifyChainPayment, verifyPaymentOutput, type ChainClient, type ChainEvidence } from "./chain.js";
 import {
   CNY_RAILS,
   isCnyRail,
@@ -128,6 +129,8 @@ export interface DeviceReadArgs {
   receiptVerified?: boolean;
   /** Read the screen tree (default) or the payee's receipt notification (docs/p2p.md §12). */
   via?: "screen" | "notification";
+  /** Transport for the endpoint calls; the engine passes a public-only fetch. */
+  fetchImpl?: typeof fetch;
 }
 
 export interface DeviceReadResult {
@@ -144,6 +147,8 @@ export interface SettlementDeps {
   /** Persisted nonce set so a restart cannot replay a signed request (§18.1). */
   nonceStore?: NonceStore;
   chain?: ChainClient | null;
+  /** L0 clients that must all agree on a lock/payment proof (`SETTLEMENT_L0_QUORUM` > 1); null = quorum unavailable. */
+  proofChains?: () => ChainClient[] | null;
   now?: () => number;
   log?: boolean;
   /** Anchor a swap event on chain (returns the txid). Default: no-op. */
@@ -274,7 +279,7 @@ function escrowKeyFromDid(did: string | undefined): PQKey | null {
  */
 async function defaultDeviceRead(args: DeviceReadArgs): Promise<DeviceReadResult> {
   const { connectFromGrant, verifyPayment, verifyPaymentViaNotification } = await import("p2p-verify");
-  const gateway = await connectFromGrant(args.grant);
+  const gateway = await connectFromGrant(args.grant, args.fetchImpl ? { fetchImpl: args.fetchImpl } : {});
   const spec = {
     side: args.side,
     rail: args.rail as "wechat" | "alipay" | "bank",
@@ -292,6 +297,11 @@ async function defaultDeviceRead(args: DeviceReadArgs): Promise<DeviceReadResult
     gateway.close?.();
   }
 }
+
+export { isNonPublicIp, nonPublicEndpointReason } from "./netguard.js";
+
+/** Swap states in which a buyer's claim can hold the seller's escrow hostage. */
+const OPEN_SWAP_STATUSES = new Set(["MATCHED", "ESCROW_LOCKED", "PAYMENT_PENDING", "PAYMENT_CLAIMED"]);
 
 /**
  * Per-IP sliding-window cap. The per-DID caps are a throttle, not a sybil
@@ -316,6 +326,21 @@ function makeIpLimiter(limit: number, windowMs: number, now: () => number) {
   };
 }
 
+/** `0` = off, `all` = every hop, unset/`1` = loopback + private ranges (Caddy, docker bridge), else an IP/CIDR list. */
+export function trustProxyFromEnv(raw: string | undefined): boolean | string {
+  const v = raw?.trim() ?? "";
+  if (v === "0") return false;
+  if (v === "all") return true;
+  if (v === "" || v === "1") return "loopback,uniquelocal";
+  return v;
+}
+
+/** Unknown values keep disputes open — never auto-settle by typo. */
+export function normalizeDisputeDefault(raw: string | undefined): "none" | "refund" | "release" {
+  const v = raw?.trim();
+  return v === "refund" || v === "release" ? v : "none";
+}
+
 export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   const env = deps.env ?? process.env;
   const now = deps.now ?? Date.now;
@@ -327,7 +352,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   }
   // Trust the deploy's reverse proxy (Caddy) for the client IP; the engine binds
   // loopback. SETTLEMENT_TRUST_PROXY=0 when exposed directly.
-  const app = Fastify({ logger: deps.log ?? env.SETTLEMENT_LOG === "1", trustProxy: env.SETTLEMENT_TRUST_PROXY !== "0" });
+  const app = Fastify({ logger: deps.log ?? env.SETTLEMENT_LOG === "1", trustProxy: trustProxyFromEnv(env.SETTLEMENT_TRUST_PROXY) });
 
   // Per-IP cap (docs/p2p.md §27.4): bounds floods the per-DID throttle cannot.
   const ipLimit = Number(env.SETTLEMENT_IP_RATE_LIMIT ?? 600);
@@ -354,9 +379,12 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       .map((s) => s.trim())
       .filter(Boolean),
   );
+  // Any https subdomain of CORS_ORIGIN_DOMAIN (default bigt.ai) is allowed; empty disables it.
+  const corsDomain = (env.CORS_ORIGIN_DOMAIN ?? "bigt.ai").trim().toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const corsDomainRe = corsDomain ? new RegExp("^https://([a-z0-9-]+\\.)*" + corsDomain + "$") : null;
   app.addHook("onRequest", async (req, reply) => {
     const origin = req.headers.origin;
-    if (!origin || !(corsOrigins.has(origin) || /^https:\/\/([a-z0-9-]+\.)*bigt\.ai$/.test(origin))) return;
+    if (!origin || !(corsOrigins.has(origin) || corsDomainRe?.test(origin))) return;
     reply.header("access-control-allow-origin", origin);
     reply.header("vary", "origin");
     if (req.method === "OPTIONS") {
@@ -471,6 +499,37 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   // machine only after CONFIRMED. Everything fails closed before a broadcast.
 
   const enginePubkeyHex = () => env.SETTLEMENT_ENGINE_PUBKEY?.trim() || "";
+
+  /** May this swap's escrow address still hold (or be about to hold) funds? */
+  function holdsEscrow(s: P2pSwapEvent): boolean {
+    if (s.status === "ESCROW_RELEASED" || s.status === "COMPLETED" || s.status === "ESCROW_REFUNDED") return false;
+    if ((s.status === "CANCELLED" || s.status === "EXPIRED") && !s.escrowTxHash) return false;
+    return true;
+  }
+
+  // Rolling cap on engine co-signs: a stolen process cannot drain every escrow in one sweep.
+  const cosignMax = Number(env.SETTLEMENT_COSIGN_MAX_PER_HOUR ?? 120);
+  const cosignTimes: number[] = [];
+  function takeCosignSlot(): boolean {
+    if (!Number.isFinite(cosignMax) || cosignMax <= 0) return true;
+    const t = now();
+    while (cosignTimes.length && t - cosignTimes[0] >= 3_600_000) cosignTimes.shift();
+    if (cosignTimes.length >= cosignMax) return false;
+    cosignTimes.push(t);
+    return true;
+  }
+
+  function auditCosign(info: Record<string, unknown>): void {
+    app.log.warn(info, "escrow cosign");
+    const url = env.SETTLEMENT_COSIGN_ALERT_URL?.trim();
+    if (!url) return;
+    void fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ event: "escrow_cosign", ...info }),
+      signal: AbortSignal.timeout(5_000),
+    }).catch(() => {});
+  }
 
   /** Confirmation wait for one spend (SETTLEMENT_ESCROW_POLL_MS, default 25s). */
   function escrowPollOpts(): { pollMs: number; intervalMs: number } {
@@ -716,6 +775,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (!verifyParticipantSig(skeleton.sighash, sigHex, signerKey)) {
       return { ok: false, code: 422, reason: `${kind} signature does not verify` };
     }
+    if (!takeCosignSlot()) {
+      return { ok: false, code: 429, reason: "engine co-sign cap reached (SETTLEMENT_COSIGN_MAX_PER_HOUR); settlement deferred" };
+    }
     const engineSig = Utils.HEX.encode(ctx.engineKey.sign(skeleton.sighash).serialize());
     assembleSpend(ctx.vault, skeleton.tx, new Map([[signerIdx, sigHex], [engineIdx, engineSig]]));
     const txHash = skeleton.tx.getHash().toString();
@@ -724,6 +786,16 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     } catch (e) {
       return { ok: false, code: 502, reason: `broadcast failed: ${String(e).slice(0, 160)}` };
     }
+    auditCosign({
+      swapId: swap.swapId,
+      kind,
+      txHash,
+      to: toBase58,
+      token: swap.giveToken,
+      amount: swap.giveAmount,
+      signerDid: opts.signerDid,
+      actorDid: opts.actorDid,
+    });
     await rememberSpend(
       swap,
       kind === "release"
@@ -829,6 +901,55 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     });
   }
 
+  /** Apply an arbitration outcome and settle the escrow from the stored presign. */
+  async function resolveDispute(swap: P2pSwapEvent, outcome: "release" | "refund", arbiterDid?: string) {
+    let stored = await persist({
+      ...swap,
+      seq: swap.seq + 1,
+      ...(outcome === "release" ? { status: "PAYMENT_VERIFIED" as const } : {}),
+      eventType: "dispute_resolve",
+      actorDid: arbiterDid || engineDid() || undefined,
+      arbiterDid: arbiterDid || undefined,
+      dispute: "RESOLVED",
+      disputeOutcome: outcome,
+      at: now(),
+    });
+    if (outcome === "refund" && stored.status !== "EXPIRED" && canTransition(stored.status, "EXPIRED")) {
+      // An arbitration refund unwinds the payment states: expire (the engine's
+      // act, ordered by the arbiter) then the refund spend brings the tokens
+      // home — the seller does not have to be online to be made whole.
+      stored = await persist({
+        ...stored,
+        seq: stored.seq + 1,
+        status: "EXPIRED",
+        eventType: "expire",
+        actorDid: engineDid() || undefined,
+        at: now(),
+      });
+    }
+    const row = await deps.store.getEscrowSigning(swap.swapId);
+    const res = await settleEscrow({
+      swap: stored,
+      kind: outcome,
+      sigHex: null,
+      signerDid:
+        (outcome === "release" ? row?.releaseSignerDid : row?.refundSignerDid) || swap.sellerDid || "",
+      signerKey: null,
+      refundAddress: row?.refundAddress || "",
+      actorDid: engineDid() || swap.sellerDid || "",
+    });
+    return {
+      swapId: swap.swapId,
+      status: res.ok ? res.status : stored.status,
+      dispute: stored.dispute,
+      disputeOutcome: stored.disputeOutcome,
+      settled: res.ok && !res.pending,
+      txHash: res.ok ? res.txHash : null,
+      pending: res.ok ? res.pending : true,
+      ...(!res.ok ? { settleReason: res.reason } : {}),
+    };
+  }
+
   // ── conflict sweep: deterministic timers, no judgment (docs/p2p.md §12) ──
   // Two rules, both evidence-free, both fail closed:
   //  · a silent pre-payment swap (no claim ∧ no confirm ∧ no dispute) that
@@ -857,10 +978,26 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       return;
     }
     const confirmMs = secondsMs(env.SETTLEMENT_CNY_CONFIRM_TIMEOUT, 900);
+    // Unarbitrated disputes past SETTLEMENT_DISPUTE_TTL (s) take SETTLEMENT_DISPUTE_DEFAULT; `none` keeps them open.
+    const disputeTtlMs = secondsMs(env.SETTLEMENT_DISPUTE_TTL, 259_200);
+    const disputeDefault = normalizeDisputeDefault(env.SETTLEMENT_DISPUTE_DEFAULT);
     for (const swap of swaps) {
       if (sweepInFlight.has(swap.swapId)) continue;
-      // An open dispute is arbitration's; a resolved one is settled below.
-      if (swap.dispute && swap.dispute !== "RESOLVED") continue;
+      if (swap.dispute && swap.dispute !== "RESOLVED") {
+        const due = disputeDefault !== "none" && disputeTtlMs > 0 && now() - swap.at >= disputeTtlMs;
+        if (due && (disputeDefault === "refund" || canTransition(swap.status, "PAYMENT_VERIFIED"))) {
+          sweepInFlight.add(swap.swapId);
+          try {
+            const res = await resolveDispute(swap, disputeDefault);
+            app.log.warn({ swapId: swap.swapId, outcome: disputeDefault, settled: res.settled }, "sweep: dispute timed out");
+          } catch (e) {
+            app.log.warn({ swapId: swap.swapId, err: String(e) }, "sweep: dispute default failed");
+          } finally {
+            sweepInFlight.delete(swap.swapId);
+          }
+        }
+        continue;
+      }
       const idle = now() - swap.at;
       if (swap.status === "PAYMENT_CLAIMED") {
         if (confirmMs > 0 && idle >= confirmMs) {
@@ -944,13 +1081,78 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return null;
   }
 
-  function requireAdmin(req: { headers: Record<string, unknown> }, reply: { code: (n: number) => any }): boolean {
+  const adminIps = new Set(
+    (env.SETTLEMENT_ADMIN_IPS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+
+  function requireAdmin(req: { headers: Record<string, unknown>; ip?: string }, reply: { code: (n: number) => any }): boolean {
     const token = adminToken();
-    if (!token || req.headers["x-settlement-admin-token"] !== token) {
+    const given = req.headers["x-settlement-admin-token"];
+    const a = Buffer.from(typeof given === "string" ? given : "");
+    const b = Buffer.from(token);
+    const tokenOk = !!token && a.length === b.length && timingSafeEqual(a, b);
+    const ipOk = adminIps.size === 0 || (!!req.ip && adminIps.has(req.ip));
+    if (!tokenOk || !ipOk) {
       reply.code(403).send({ error: "admin token required" });
       return false;
     }
     return true;
+  }
+
+  const adminDids = new Set(
+    (env.SETTLEMENT_ADMIN_DIDS ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  );
+  const secondApprovalAbove = Number(env.SETTLEMENT_DISPUTE_2ND_APPROVAL_ABOVE ?? "");
+  const APPROVAL_TTL_MS = 24 * 60 * 60 * 1000;
+  const pendingApprovals = new Map<string, { did: string; outcome: "release" | "refund"; at: number }>();
+
+  /**
+   * The arbiter behind a money-moving admin act. With `SETTLEMENT_ADMIN_DIDS`
+   * set, only a signed request from one of those DIDs counts (the shared token
+   * cannot move funds); otherwise the legacy token. Null = already replied.
+   */
+  function requireArbiter(
+    request: { headers: Record<string, unknown>; ip?: string; url: string },
+    reply: { code: (n: number) => any },
+    body: Record<string, unknown>,
+  ): string | null {
+    if (!adminDids.size) return requireAdmin(request, reply) ? "admin-token" : null;
+    if (adminIps.size && !(request.ip && adminIps.has(request.ip))) {
+      reply.code(403).send({ error: "arbiter signature required" });
+      return null;
+    }
+    const did = typeof body.did === "string" ? body.did : "";
+    if (!adminDids.has(did)) {
+      reply.code(403).send({ error: "arbiter signature required" });
+      return null;
+    }
+    const signed = validateSignedRequest(body, did, guard, "write", request.url.split("?")[0]);
+    if (!signed.ok) {
+      reply.code(signed.status ?? 400).send({ error: signed.error });
+      return null;
+    }
+    return did;
+  }
+
+  /** Large disputes need two distinct arbiters agreeing on the outcome. */
+  function needsSecondApproval(swap: P2pSwapEvent): boolean {
+    if (!adminDids.size || !Number.isFinite(secondApprovalAbove) || secondApprovalAbove <= 0) return false;
+    return Number(swap.wantAmount ?? 0) > secondApprovalAbove;
+  }
+
+  /** Run a party-submitted proof on the quorum when configured, else on the routed chain client. */
+  async function proveOnChain(fn: (c: ChainClient) => Promise<ChainEvidence>): Promise<ChainEvidence> {
+    if (!deps.proofChains) return fn(deps.chain!);
+    const clients = deps.proofChains();
+    if (!clients) return { ok: false, reason: "L0 proof quorum unavailable (needs enough healthy nodes incl. a pinned one)" };
+    const results = await Promise.all(clients.map(fn));
+    return results.find((r) => !r.ok) ?? { ok: true };
   }
 
   app.get("/healthz", async () => ({ ok: true }));
@@ -1242,12 +1444,29 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const signed = validateSignedRequest(body, signerDid, guard, "write", request.url.split("?")[0]);
     if (!signed.ok) return reply.code(signed.status ?? 400).send({ error: signed.error });
 
+    // Anti-griefing: a taking buyer may hold only a few sellers' escrows open at once.
+    if (!isBuy) {
+      const maxOpen = Number(env.SETTLEMENT_MAX_OPEN_SWAPS ?? 5);
+      if (Number.isFinite(maxOpen) && maxOpen > 0) {
+        const mine = await deps.store.listSwapsForDid(buyerDid, 1000);
+        const open = mine.filter((s) => s.buyerDid === buyerDid && OPEN_SWAP_STATUSES.has(s.status)).length;
+        if (open >= maxOpen) {
+          return reply.code(429).send({ error: `too many open swaps (max ${maxOpen}); finish or cancel one first` });
+        }
+      }
+    }
+
     // A PINNED order can only be matched by a deployment that holds its engine
     // key (docs/p2p.md §26/§27); the escrow address is then derived from the
     // pin. Unpinned/legacy orders keep the previous behavior (current key).
     const pinned = order.enginePubkey?.trim() || "";
     if (pinned && !engineSignerFor(env, pinned)) {
       return reply.code(409).send({ error: "order is pinned to an engine this deployment does not hold" });
+    }
+    // Retained keys only settle existing swaps; a new swap never forms on a retired key.
+    const currentPub = enginePubkeyHex();
+    if (pinned && currentPub && pinned !== currentPub) {
+      return reply.code(409).send({ error: "order is pinned to an engine key retired for new swaps; re-post the order" });
     }
     const enginePin = pinned || enginePubkeyHex();
 
@@ -1281,6 +1500,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     }
 
     const swapId = `swap-${randomBytes(8).toString("hex")}`;
+    // The vault is f(seller, buyer, engine) — no per-swap salt — so one unsettled
+    // swap per address, or a single lock could back two swaps.
+    const swapEscrowAddress = escrowFor(sellerDid, buyerDid, pinned || undefined);
+    if (swapEscrowAddress) {
+      const sellerSwaps = await deps.store.listSwapsForDid(sellerDid, 1000);
+      if (sellerSwaps.some((s) => s.escrowAddress === swapEscrowAddress && holdsEscrow(s))) {
+        return reply.code(409).send({ error: "an unsettled swap between these parties already uses this escrow address; settle it first" });
+      }
+    }
     const event: P2pSwapEvent = {
       swapId,
       seq: 0,
@@ -1296,7 +1524,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       wantAmount: fillFiat,
       wantRail: chosenRail,
       wantCurrency: order.wantCurrency,
-      escrowAddress: escrowFor(sellerDid, buyerDid, pinned || undefined),
+      escrowAddress: swapEscrowAddress,
       ...(enginePin ? { enginePubkey: enginePin } : {}),
       ...(order.timeLimit ? { payWindowSec: order.timeLimit * 60 } : {}),
       receiveAddress,
@@ -1388,14 +1616,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const evidence: Partial<P2pSwapEvent> = {};
     if (action === "escrow_lock") {
       if (typeof body.txHash !== "string" || !body.txHash) return reply.code(400).send({ error: "txHash required" });
+      const lockTx = body.txHash;
+      const sellerSwaps = await deps.store.listSwapsForDid(swap.sellerDid ?? "", 1000);
+      if (sellerSwaps.some((s) => s.swapId !== swapId && s.escrowTxHash === lockTx)) {
+        return reply.code(409).send({ error: "this lock transaction already backs another swap" });
+      }
       if (deps.chain) {
         if (!swap.escrowAddress) return reply.code(409).send({ error: "swap has no escrow address" });
-        const proof = await verifyChainLock(deps.chain, {
-          txHash: body.txHash,
-          escrowAddress: swap.escrowAddress,
-          token: swap.giveToken,
-          amount: swap.giveAmount,
-        });
+        const lock = { txHash: body.txHash, escrowAddress: swap.escrowAddress, token: swap.giveToken, amount: swap.giveAmount };
+        const proof = await proveOnChain((c) => verifyChainLock(c, lock));
         if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
       }
       evidence.escrowTxHash = body.txHash;
@@ -1404,7 +1633,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       if (deps.chain) {
         const to = swap.receiveAddress;
         if (!to) return reply.code(409).send({ error: "swap has no receive address" });
-        const proof = await verifyChainPayment(deps.chain, { txHash: body.txHash, toAddress: to });
+        const proof = await proveOnChain((c) => verifyChainPayment(c, { txHash: body.txHash as string, toAddress: to }));
         if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
       }
       evidence.releaseTxHash = body.txHash;
@@ -1418,7 +1647,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         if (!destAddress(refundAddress)) {
           return reply.code(400).send({ error: "refundAddress required (body or presign)" });
         }
-        const proof = await verifyChainPayment(deps.chain, { txHash: body.txHash, toAddress: refundAddress });
+        const proof = await proveOnChain((c) => verifyChainPayment(c, { txHash: body.txHash as string, toAddress: refundAddress }));
         if (!proof.ok) return reply.code(422).send({ error: proof.reason ?? "chain verification failed" });
       }
       evidence.refundTxHash = body.txHash;
@@ -1777,6 +2006,9 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     };
     const check = validatePairingGrant(grant, now());
     if (!check.ok) return reply.code(422).send({ error: check.error });
+    if (env.SETTLEMENT_PAIRING_ALLOW_PRIVATE !== "1" && isNonPublicLiteral(grant.endpoint)) {
+      return reply.code(422).send({ error: "pairing endpoint must be a public address" });
+    }
     const existing = await deps.store.getPairing(did, grant.pairingId);
     if (existing) {
       // Idempotent re-post of the same grant; a different grant under the same
@@ -1872,6 +2104,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     };
     const evidenceKind = body.evidenceKind === "bank_ereceipt" ? "bank_ereceipt" : "device_read";
     const via = body.via === "notification" ? "notification" : "screen";
+    if (env.SETTLEMENT_PAIRING_ALLOW_PRIVATE !== "1") {
+      const reason = await nonPublicEndpointReason(grant.endpoint);
+      if (reason) return reply.code(422).send({ error: `pairing endpoint rejected: ${reason}` });
+    }
     const read = deps.readDevice ?? defaultDeviceRead;
     let result: DeviceReadResult;
     try {
@@ -1882,10 +2118,12 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         expected,
         evidenceKind,
         via,
+        ...(env.SETTLEMENT_PAIRING_ALLOW_PRIVATE !== "1" ? { fetchImpl: publicOnlyFetch } : {}),
         ...(body.receiptVerified !== undefined ? { receiptVerified: !!body.receiptVerified } : {}),
       });
     } catch (e) {
-      return reply.code(502).send({ error: `device read failed: ${String(e).slice(0, 200)}` });
+      request.log.warn({ swapId, err: String(e).slice(0, 500) }, "device read failed");
+      return reply.code(502).send({ error: "device read failed" });
     }
     return {
       swapId,
@@ -1936,10 +2174,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * release, seller for a refund).
    */
   app.post<{ Params: { swapId: string } }>("/swaps/:swapId/dispute/resolve", async (request, reply) => {
-    if (!requireAdmin(request, reply)) return;
+    const body = (request.body ?? {}) as Record<string, unknown>;
+    const arbiter = requireArbiter(request, reply, body);
+    if (arbiter === null) return;
     const { swapId } = request.params;
     if (!SWAP_ID_RE.test(swapId)) return reply.code(400).send({ error: "invalid swapId" });
-    const body = (request.body ?? {}) as Record<string, unknown>;
     const swap = await deps.store.getSwap(swapId);
     if (!swap) return reply.code(404).send({ error: "unknown swap" });
     if (!swap.dispute || swap.dispute === "RESOLVED") return reply.code(409).send({ error: "no active dispute" });
@@ -1950,50 +2189,17 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     if (outcome === "release" && !canTransition(swap.status, "PAYMENT_VERIFIED")) {
       return reply.code(409).send({ error: `cannot ${swap.status} → PAYMENT_VERIFIED` });
     }
-    let stored = await persist({
-      ...swap,
-      seq: swap.seq + 1,
-      ...(outcome === "release" ? { status: "PAYMENT_VERIFIED" as const } : {}),
-      eventType: "dispute_resolve",
-      actorDid: engineDid() || undefined,
-      dispute: "RESOLVED",
-      disputeOutcome: outcome,
-      at: now(),
-    });
-    if (outcome === "refund" && stored.status !== "EXPIRED" && canTransition(stored.status, "EXPIRED")) {
-      // An arbitration refund unwinds the payment states: expire (the engine's
-      // act, ordered by the arbiter) then the refund spend brings the tokens
-      // home — the seller does not have to be online to be made whole.
-      stored = await persist({
-        ...stored,
-        seq: stored.seq + 1,
-        status: "EXPIRED",
-        eventType: "expire",
-        actorDid: engineDid() || undefined,
-        at: now(),
-      });
+    if (needsSecondApproval(swap)) {
+      const pending = pendingApprovals.get(swapId);
+      const live = pending && now() - pending.at < APPROVAL_TTL_MS ? pending : undefined;
+      if (!live || live.outcome !== outcome || live.did === arbiter) {
+        pendingApprovals.set(swapId, { did: arbiter, outcome, at: now() });
+        return reply.code(202).send({ swapId, outcome, approvals: 1, required: 2 });
+      }
+      pendingApprovals.delete(swapId);
     }
-    const row = await deps.store.getEscrowSigning(swapId);
-    const res = await settleEscrow({
-      swap: stored,
-      kind: outcome === "release" ? "release" : "refund",
-      sigHex: null,
-      signerDid:
-        (outcome === "release" ? row?.releaseSignerDid : row?.refundSignerDid) || swap.sellerDid || "",
-      signerKey: null,
-      refundAddress: row?.refundAddress || "",
-      actorDid: engineDid() || swap.sellerDid || "",
-    });
-    return {
-      swapId,
-      status: res.ok ? res.status : stored.status,
-      dispute: stored.dispute,
-      disputeOutcome: stored.disputeOutcome,
-      settled: res.ok && !res.pending,
-      txHash: res.ok ? res.txHash : null,
-      pending: res.ok ? res.pending : true,
-      ...(!res.ok ? { settleReason: res.reason } : {}),
-    };
+    app.log.warn({ swapId, outcome, arbiter }, "dispute resolved by arbiter");
+    return resolveDispute(swap, outcome, arbiter.startsWith("did:") ? arbiter : undefined);
   });
 
   /**
@@ -2208,6 +2414,8 @@ async function main() {
   const { PooledChainClient, poolFromEnv } = await import("./discovery.js");
   const { syncOnce, HttpSocialSource, fetchRecordByTxid, pgCursorStore, MemCursorStore, ensureWatchSchema } = await import("./replay.js");
   const env = process.env;
+  const { loadSecretFiles } = await import("./secrets.js");
+  loadSecretFiles(env);
   // Store selection: pg (default when POSTGRES_URL is set), blob (no Postgres —
   // chain-derived projection in memory + confidential data in the encrypted
   // blob store), or mem (dev/e2e). A blob deploy without a blob target throws.
@@ -2243,7 +2451,12 @@ async function main() {
   // health-gated pool per role. Boot probes run before listen so the first
   // request already has a verified endpoint (or fails closed, as with no env).
   const l0Pool = poolFromEnv(env, "l0");
+  // Without L0 every escrow lock/release proof is skipped — only for mem/dev.
+  if (!l0Pool && storeMode !== "mem" && env.SETTLEMENT_ALLOW_NO_CHAIN !== "1") {
+    throw new Error("no L0 endpoint configured (SETTLEMENT_L0_URL[S]/SETTLEMENT_SEEDS_URLS): escrow proofs would be skipped; set SETTLEMENT_ALLOW_NO_CHAIN=1 only for dev");
+  }
   const socialPool = poolFromEnv(env, "social");
+  const l0Quorum = Math.max(1, Math.floor(Number(env.SETTLEMENT_L0_QUORUM ?? 1)) || 1);
   await Promise.all([l0Pool?.start(), socialPool?.start()]);
   const anchorMode = normalizeAnchorMode(env.SETTLEMENT_ANCHOR_MODE, storeMode);
   if (storeMode === "blob" && !anchorCfg) {
@@ -2323,6 +2536,9 @@ async function main() {
   const app = await buildApp({
     store,
     chain: l0Pool ? new PooledChainClient(l0Pool) : null,
+    ...(l0Pool && l0Quorum > 1
+      ? { proofChains: () => l0Pool.quorumUrls(l0Quorum)?.map((u) => new HttpChainClient(u)) ?? null }
+      : {}),
     ...(nonceStore ? { nonceStore } : {}),
     ...(anchor ? { anchor, anchorBestEffort: anchorMode === "best-effort" } : {}),
     ...(verifyOrderTx ? { verifyOrderTx, orderTxTries: Number(env.SETTLEMENT_ORDER_TX_TRIES ?? 4) } : {}),

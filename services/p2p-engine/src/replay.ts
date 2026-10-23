@@ -296,6 +296,7 @@ function eventFromSwapRecord(rec: P2pSwapRecord, txid: string): P2pSwapEvent {
       : {}),
     // A confirm record carries only the provenance — restore it (§12).
     ...(rec.verifySide === undefined && rec.verifyEvidence !== undefined ? { verifySource: rec.verifyEvidence } : {}),
+    ...(rec.arbiterDid !== undefined ? { arbiterDid: rec.arbiterDid } : {}),
     at: rec.ts,
     txid,
   };

@@ -37,12 +37,14 @@ function pqKey(seedByte: number): PQKey {
 
 const sellerKey = pqKey(21);
 const buyerKey = pqKey(22);
+const buyer2Key = pqKey(23);
 const engineKey = pqKey(23);
 const strangerKey = pqKey(24);
 const wrongEngineKey = pqKey(99);
 
 const sellerDid = didFromPQKey(sellerKey);
 const buyerDid = didFromPQKey(buyerKey);
+const buyer2Did = didFromPQKey(buyer2Key);
 const engineDidStr = didFromPQKey(engineKey);
 const strangerDid = didFromPQKey(strangerKey);
 
@@ -629,17 +631,26 @@ describe("presign (seller locks both spend paths at escrow_lock)", () => {
         validUntil: Math.floor(clock / 1000) + 3600, requestMethod: "POST", requestPath: "/orders" }),
     });
     bump();
-    const r3 = await a.inject({
+    // Same seller+buyer → same vault address: refused while the first swap is unsettled.
+    const shared = await a.inject({
       method: "POST",
       url: `/orders/${r2.json().orderId}/match`,
       payload: signed(buyerKey, buyerDid, { buyerDid, receiveAddress, requestMethod: "POST", requestPath: `/orders/${r2.json().orderId}/match` }),
+    });
+    expect(shared.statusCode).toBe(409);
+    expect(shared.json().error).toMatch(/already uses this escrow address/);
+    bump();
+    const r3 = await a.inject({
+      method: "POST",
+      url: `/orders/${r2.json().orderId}/match`,
+      payload: signed(buyer2Key, buyer2Did, { buyerDid: buyer2Did, receiveAddress, requestMethod: "POST", requestPath: `/orders/${r2.json().orderId}/match` }),
     });
     const unlocked = r3.json().swapId as string;
     bump();
     const byBuyer = await a.inject({
       method: "POST",
       url: `/swaps/${unlocked}/escrow/presign`,
-      payload: signed(buyerKey, buyerDid, { releaseSig, refundSig, refundAddress, requestMethod: "POST", requestPath: `/swaps/${unlocked}/escrow/presign` }),
+      payload: signed(buyer2Key, buyer2Did, { releaseSig, refundSig, refundAddress, requestMethod: "POST", requestPath: `/swaps/${unlocked}/escrow/presign` }),
     });
     expect(byBuyer.statusCode).toBe(403);
 
@@ -753,7 +764,7 @@ describe("escrow context (party-scoped signing reveal)", () => {
     const r2 = await a.inject({
       method: "POST",
       url: `/orders/${r1.json().orderId}/match`,
-      payload: signed(buyerKey, buyerDid, { buyerDid, receiveAddress, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
+      payload: signed(buyer2Key, buyer2Did, { buyerDid: buyer2Did, receiveAddress, requestMethod: "POST", requestPath: `/orders/${r1.json().orderId}/match` }),
     });
     const unlocked = r2.json().swapId as string;
     bump();

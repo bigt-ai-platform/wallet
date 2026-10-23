@@ -120,7 +120,10 @@ describe("device-side payment verdicts (docs/p2p.md §12)", () => {
       evidenceKind: "bank_ereceipt",
       receiptVerified: true,
     };
-    expect(machineConfirm("verified_receipt", [eReceipt])?.evidenceKind).toBe("bank_ereceipt");
+    // a buyer's self-asserted receiptVerified must never release on its own
+    expect(machineConfirm("verified_receipt", [eReceipt])).toBeNull();
+    const sellerReceipt: PaymentVerdict = { ...eReceipt, side: "seller", observed: "received" };
+    expect(machineConfirm("verified_receipt", [sellerReceipt])?.evidenceKind).toBe("bank_ereceipt");
     expect(machineConfirm("verified_receipt", [sent, received])?.side).toBe("seller");
     expect(machineConfirm("verified_receipt", [sent])).toBeNull();
   });

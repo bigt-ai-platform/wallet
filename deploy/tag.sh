@@ -38,6 +38,17 @@ export EXPO_PUBLIC_APP_VERSION="${VERSION:-$(node -p "require('./expo-app/packag
 # nginx while /p2p/<api> goes to the engine. e2e overrides this with its local
 # engine URL (e2e/e2etest.sh), so the export there is unaffected.
 export EXPO_PUBLIC_P2P_ENGINE_URL="${P2P_ENGINE_URL:-/p2p}"
+# Trusted escrow keys baked into the bundle: without them the wallet trusts the
+# engine's own /capabilities key, so a compromised engine host could swap it.
+if [ -z "${P2P_ENGINE_PUBKEYS:-}" ]; then
+  P2P_ENGINE_PUBKEYS="$(grep -h '^SETTLEMENT_ENGINE_PUBKEY=' "$SCRIPT_DIR"/env/.env.p2p.* 2>/dev/null \
+    | cut -d= -f2- | tr -d '[:space:]"' | grep -v '^$' | sort -u | paste -sd, - || true)"
+fi
+if [ -z "$P2P_ENGINE_PUBKEYS" ] && [ "${ALLOW_UNPINNED_ENGINE:-0}" != "1" ]; then
+  echo -e "${RED}no trusted engine pubkey: set P2P_ENGINE_PUBKEYS or provide deploy/env/.env.p2p.<region> (ALLOW_UNPINNED_ENGINE=1 to override)${NC}"
+  exit 1
+fi
+export EXPO_PUBLIC_P2P_ENGINE_PUBKEYS="$P2P_ENGINE_PUBKEYS"
 IMAGE_BASE="${IMAGE_BASE:-wallet-web}"
 APP_IMAGE="${APP_IMAGE:-}"
 TAR_DIR="${SCRIPT_DIR}/.image"

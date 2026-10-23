@@ -519,4 +519,19 @@ describe("pinned-order match (enginePubkey, docs/p2p.md §26)", () => {
     expect(m.statusCode).toBe(409);
     expect(m.json().error).toMatch(/pinned to an engine/);
   });
+
+  it("409s a new match on a retained (retired) key — it only settles existing swaps", async () => {
+    const retired = PQKey.createNew();
+    const retiredPub = Utils.HEX.encode(retired.getPrefixedPublicKeyBytes());
+    const a = await app({ ...pinnedEnv, SETTLEMENT_ENGINE_KEYS: retired.getPrivateKeySeedAsHex()! });
+    const orderId = await createPinned(retiredPub);
+    clock += 1;
+    const m = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, { buyerDid, receiveAddress: RECEIVE_ADDRESS, requestMethod: "POST", requestPath: `/orders/${orderId}/match` }),
+    });
+    expect(m.statusCode).toBe(409);
+    expect(m.json().error).toMatch(/retired for new swaps/);
+  });
 });

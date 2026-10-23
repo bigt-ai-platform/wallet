@@ -86,7 +86,7 @@ async function toEscrowLocked(a: TestApp): Promise<string> {
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
+    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: swapId.slice(5).padEnd(64, "f"), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
   });
   expect(lock.statusCode).toBe(200);
   bump();

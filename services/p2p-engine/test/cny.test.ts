@@ -93,7 +93,7 @@ async function toEscrowLocked(a: TestApp, wantRail = "wechat"): Promise<string> 
   const lock = await a.inject({
     method: "POST",
     url: `/swaps/${swapId}/transitions`,
-    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: "f".repeat(64), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
+    payload: signed(seller, sellerDid, { action: "escrow_lock", txHash: swapId.slice(5).padEnd(64, "f"), requestMethod: "POST", requestPath: `/swaps/${swapId}/transitions` }),
   });
   expect(lock.statusCode).toBe(200);
   expect(lock.json().status).toBe("ESCROW_LOCKED");
@@ -1021,5 +1021,83 @@ describe("CNY rails (docs/p2p.md)", () => {
     expect(after.status).toBe(before.status);
     expect(after.seq).toBe(before.seq);
     expect((await store.getSwap(verified))!.status).toBe("PAYMENT_VERIFIED");
+  });
+
+  it("signed arbiters: the token cannot resolve, a large dispute needs two distinct arbiters", async () => {
+    const arb1 = Ed25519Key.createNewKey();
+    const arb2 = Ed25519Key.createNewKey();
+    const arb1Did = didFromEd25519Key(arb1);
+    const arb2Did = didFromEd25519Key(arb2);
+    const a = await app({ SETTLEMENT_ADMIN_DIDS: `${arb1Did},${arb2Did}`, SETTLEMENT_DISPUTE_2ND_APPROVAL_ABOVE: "100" });
+    const swapId = await toEscrowLocked(a);
+    bump();
+    const ins = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/payment-instructions`,
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/proof`,
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/dispute`,
+      payload: signed(seller, sellerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/dispute` }),
+    });
+    const path = `/swaps/${swapId}/dispute/resolve`;
+    const byToken = await a.inject({ method: "POST", url: path, headers: { "x-settlement-admin-token": "adm" }, payload: { outcome: "refund" } });
+    expect(byToken.statusCode).toBe(403);
+    const byParty = await a.inject({ method: "POST", url: path, payload: signed(seller, sellerDid, { outcome: "refund", requestMethod: "POST", requestPath: path }) });
+    expect(byParty.statusCode).toBe(403);
+    bump();
+    const first = await a.inject({ method: "POST", url: path, payload: signed(arb1, arb1Did, { outcome: "refund", requestMethod: "POST", requestPath: path }) });
+    expect(first.statusCode).toBe(202);
+    bump();
+    const sameArbiter = await a.inject({ method: "POST", url: path, payload: signed(arb1, arb1Did, { outcome: "refund", requestMethod: "POST", requestPath: path }) });
+    expect(sameArbiter.statusCode).toBe(202);
+    expect((await store.getSwap(swapId))!.dispute).toBe("OPEN");
+    bump();
+    const second = await a.inject({ method: "POST", url: path, payload: signed(arb2, arb2Did, { outcome: "refund", requestMethod: "POST", requestPath: path }) });
+    expect(second.statusCode).toBe(200);
+    expect(second.json()).toMatchObject({ dispute: "RESOLVED", disputeOutcome: "refund" });
+    const resolveEvent = (await store.events(swapId)).find((e) => e.eventType === "dispute_resolve")!;
+    expect(resolveEvent.arbiterDid).toBe(arb2Did);
+    expect(anchored.some((e) => e.eventType === "dispute_resolve" && e.arbiterDid === arb2Did)).toBe(true);
+  });
+
+  it("sweep: SETTLEMENT_DISPUTE_DEFAULT settles a dispute nobody arbitrated within the TTL", async () => {
+    const a = await app({ SETTLEMENT_DISPUTE_TTL: "3600", SETTLEMENT_DISPUTE_DEFAULT: "refund" });
+    const swapId = await toEscrowLocked(a);
+    bump();
+    const ins = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/payment-instructions`,
+      payload: signed(buyer, buyerDid, { requestMethod: "POST", requestPath: `/swaps/${swapId}/payment-instructions` }),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/proof`,
+      payload: signed(buyer, buyerDid, { txId: "TX-1", remark: ins.json().remark, requestMethod: "POST", requestPath: `/swaps/${swapId}/proof` }),
+    });
+    bump();
+    await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/dispute`,
+      payload: signed(seller, sellerDid, { reason: "no money", requestMethod: "POST", requestPath: `/swaps/${swapId}/dispute` }),
+    });
+    clock += 3_599_000;
+    await sweepTick(a);
+    expect((await store.getSwap(swapId))!.dispute).toBe("OPEN");
+    clock += 2_000;
+    await sweepTick(a);
+    const stored = (await store.getSwap(swapId))!;
+    expect(stored.dispute).toBe("RESOLVED");
+    expect(stored.disputeOutcome).toBe("refund");
+    expect(stored.status).toBe("ESCROW_REFUNDED");
   });
 });

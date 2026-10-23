@@ -161,7 +161,7 @@ export class McpHttpGateway implements DeviceGateway {
  */
 export async function connectFromGrant(
   grant: PairingEndpoint,
-  opts: { timeoutMs?: number; signer?: RequestSigner } = {},
+  opts: { timeoutMs?: number; signer?: RequestSigner; fetchImpl?: typeof fetch } = {},
 ): Promise<AndroidMcpClient> {
   return AndroidMcpClient.connect({
     device: grant.deviceId,
@@ -169,5 +169,6 @@ export async function connectFromGrant(
     ...(grant.token ? { token: grant.token } : {}),
     ...(opts.signer ? { authHeaders: signerAuthHeaders(opts.signer) } : {}),
     ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+    ...(opts.fetchImpl ? { fetchImpl: opts.fetchImpl } : {}),
   });
 }

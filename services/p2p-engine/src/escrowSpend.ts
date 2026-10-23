@@ -66,20 +66,26 @@ export function keyFromDid(did: string): PQKey {
   return PQKey.fromPrefixedPublicKey(pqPubFromDid(did));
 }
 
+/** The current escrow seed: a dedicated `SETTLEMENT_ESCROW_KEY`, else the shared engine/anchor seed. */
+function escrowSeed(env: NodeJS.ProcessEnv): string {
+  return env.SETTLEMENT_ESCROW_KEY?.trim() || env.SETTLEMENT_ENGINE_KEY?.trim() || "";
+}
+
 export function engineSigner(env: NodeJS.ProcessEnv): PQKey {
-  const keyHex = env.SETTLEMENT_ENGINE_KEY?.trim() || "";
-  if (!keyHex) throw new Error("SETTLEMENT_ENGINE_KEY is not configured");
+  const keyHex = escrowSeed(env);
+  if (!keyHex) throw new Error("SETTLEMENT_ESCROW_KEY / SETTLEMENT_ENGINE_KEY is not configured");
   const key = PQKey.fromPrivateKeyHex(keyHex);
   const pubHex = env.SETTLEMENT_ENGINE_PUBKEY?.trim() || "";
   if (pubHex && Utils.HEX.encode(key.getPrefixedPublicKeyBytes()) !== pubHex) {
-    throw new Error("SETTLEMENT_ENGINE_KEY does not match SETTLEMENT_ENGINE_PUBKEY");
+    throw new Error("escrow key does not match SETTLEMENT_ENGINE_PUBKEY");
   }
   return key;
 }
 
 /**
  * The engine's escrow signing keys, keyed by prefixed-pubkey hex (docs/p2p.md
- * §27.3). The **current** key is `SETTLEMENT_ENGINE_KEY` (checked against
+ * §27.3). The **current** key is `SETTLEMENT_ESCROW_KEY` (or the shared
+ * `SETTLEMENT_ENGINE_KEY`, checked against
  * `SETTLEMENT_ENGINE_PUBKEY`); **retained** keys — kept only to settle swaps
  * pinned to them — come from `SETTLEMENT_ENGINE_KEYS` (comma-separated seeds).
  * Rotation is additive: an in-flight swap pinned to an old `enginePubkey` still
@@ -97,7 +103,7 @@ export function engineKeyring(env: NodeJS.ProcessEnv): Map<string, PQKey> {
       // ignore a bad retained seed — the current key path still validates
     }
   };
-  add(env.SETTLEMENT_ENGINE_KEY);
+  add(escrowSeed(env));
   for (const s of (env.SETTLEMENT_ENGINE_KEYS ?? "").split(",")) add(s);
   return ring;
 }

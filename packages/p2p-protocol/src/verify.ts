@@ -76,6 +76,8 @@ export interface VerdictCheck {
 const TXID_RE = /^[A-Za-z0-9._-]{1,64}$/;
 const AMOUNT_RE = /^\d+(\.\d+)?$/;
 const SHA256_RE = /^[0-9a-f]{64}$/;
+export const MAX_VERDICT_REMARK = 128;
+export const MAX_VERDICT_CAPTURES = 16;
 
 /** Numeric amount equality — "715" and "715.00" are the same money. */
 export function sameAmount(a: string | undefined, b: string | undefined): boolean {
@@ -111,6 +113,10 @@ export function validatePaymentVerdict(
     if (!Array.isArray(captures) || captures.some((c) => typeof c !== "string" || !SHA256_RE.test(c))) {
       return { ok: false, error: "captures must be sha256 hex digests" };
     }
+    if (captures.length > MAX_VERDICT_CAPTURES) return { ok: false, error: `at most ${MAX_VERDICT_CAPTURES} captures` };
+  }
+  if (remark !== undefined && (typeof remark !== "string" || remark.length > MAX_VERDICT_REMARK)) {
+    return { ok: false, error: `invalid remark (max ${MAX_VERDICT_REMARK} chars)` };
   }
 
   if (observed === "none") {
@@ -167,8 +173,10 @@ export function verdictsAgree(a: PaymentVerdict, b: PaymentVerdict): boolean {
  *  · `seller_receipt` — the seller's own ledger says received (user-authorized
  *    read, seller-signed) stands in for the confirm tap;
  *  · `two_sided` — stricter: both ledgers must agree on one 流水号 first;
- *  · `verified_receipt` — a bank 电子回单 that passed the bank's public 回单
- *    verification settles it alone; the two-sided agreement also qualifies.
+ *  · `verified_receipt` — a seller-signed bank 电子回单 that passed the bank's
+ *    public 回单 verification settles it alone; the two-sided agreement also
+ *    qualifies. `receiptVerified` is the signer's own assertion, so a buyer's
+ *    receipt never releases on its own.
  *
  * Returns the verdict that acts as the confirmation (its signature is the
  * attestation), or null when the verdicts may change nothing.
@@ -182,7 +190,9 @@ export function machineConfirm(
   const sellerReceived = verdicts.find((v) => v.side === "seller" && v.observed === "received") ?? null;
   const buyerSent = verdicts.find((v) => v.side === "buyer" && v.observed === "sent") ?? null;
   const verifiedReceipt =
-    verdicts.find((v) => v.evidenceKind === "bank_ereceipt" && v.receiptVerified === true && v.observed !== "none") ?? null;
+    verdicts.find(
+      (v) => v.side === "seller" && v.evidenceKind === "bank_ereceipt" && v.receiptVerified === true && v.observed === "received",
+    ) ?? null;
   const twoSided = !!sellerReceived && !!buyerSent && verdictsAgree(sellerReceived, buyerSent);
   if (p === "seller_receipt") return sellerReceived;
   if (p === "two_sided") return twoSided ? sellerReceived : null;

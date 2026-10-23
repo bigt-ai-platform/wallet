@@ -136,6 +136,8 @@ export interface P2pSwapEvent {
   disputeReason?: string;
   /** Admin arbitration outcome once RESOLVED: "refund" keeps the forward path frozen. */
   disputeOutcome?: "release" | "refund";
+  /** The signed arbiter who resolved the dispute (absent: legacy token or the TTL default). */
+  arbiterDid?: string;
   /** When a device-verified verdict acted as the confirm (§12): how it was obtained. */
   verifySource?: VerifyEvidenceKind;
   /**
