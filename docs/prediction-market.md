@@ -1,7 +1,12 @@
 # Predict — Kalshi/Polymarket-style Prediction Market on Bigtangle
 
-Status: proposed
-Date: 2026-10-10
+Status: implemented (design proposal of 2026-10-10 kept below for history)
+Date: 2026-10-10, updated 2026-10-23
+
+Example markets for China, Germany and the US, with the exact create-form
+values and the full lifecycle: [prediction-demo/predict.md](prediction-demo/predict.md)
+(US, English), [predict.de.md](prediction-demo/predict.de.md),
+[predict.zh.md](prediction-demo/predict.zh.md).
 
 ## Implementation safety update (2026-10-21)
 
@@ -50,12 +55,14 @@ to create, split, merge, match an order, resolve, and redeem, verifying confirme
 state and balances. Run `e2e/e2etest.sh predict` with isolated Java infrastructure
 and `E2E_PREDICTION_KEY`; UI fixtures alone do not establish live-chain success.
 
-Binary event markets ("Will X happen by date D?") with YES/NO outcome shares
+*Original MVP scope (2026-10-10):* binary event markets ("Will X happen by date D?") with YES/NO outcome shares
 priced 0–1 (displayed 0–100¢), full collateral backing (1 winning share
 redeems for exactly 1 collateral unit), traded on the order books of a
 **new dedicated L1 chain, `l1-prediction`** (derived from `l1-order-server`).
 Resolved by a 2-of-3 committee with a permissionless dispute window (v1
-oracle). Binary events only; multi-outcome and staked oracles are post-MVP.
+oracle). Since then multi-outcome markets (2–16 outcomes) and the staked
+oracle have shipped (§7 phases 4–5); the app shows prices in raw on-chain
+units, not ¢.
 
 ## Landscape: Predict vs Kalshi vs Polymarket (as of 2026-10)
 
@@ -88,9 +95,9 @@ committee-grade until phase 4. Anonymity/kyc posture: chain-level
 pseudonymity by default — the opposite of Kalshi's KYC-everything, and a
 compliance liability if real money is ever at stake (§8).
 
-## 1. Current state (verified 2026-10-10)
+## 1. Starting point (verified 2026-10-10, historical)
 
-- **No prediction-market code exists** in `wallet` or `../blockchain`
+- At design time **no prediction-market code existed** in `wallet` or `../blockchain`
   (no Kalshi/CTF/outcome/conditional primitives anywhere;
   `RemoteBinaryTests` is only a block-serialization round-trip).
 - **Primitives to build on:**
@@ -242,6 +249,14 @@ Design notes:
   is a (single, trusted) oracle — the only choice is how much
   dispute machinery surrounds it. v1 narrows trust from 1-of-1 to 2-of-3
   and makes disputes a permissionless right, not a favor.
+- *As implemented (committee mode, `PredictionContractExecutor.applyDispute`):*
+  quorum is a majority (`size/2 + 1`); a dispute (bond ≥ `disputeBond`, a
+  different outcome, inside the window) pays its bond to the resolvers,
+  clears their votes and reopens resolution **to the same committee**.
+  Disputes are not capped and the bond does not escalate, so the
+  "one dispute, larger set, cannot be its own appeal" rule above is not yet
+  enforced. Repeated paid disputes can push a market into the auto-`invalid`
+  deadline.
 
 ### 3.4 Conservation invariant
 
@@ -317,7 +332,7 @@ in v1, and deliberately keeps a compliance kill switch):
 | Consensus | inherited PoS | Same as ordermatch (`stakeDeposit`/slashing). Reality check: bigtangle L1 validator sets are young and small — consensus-grade decentralization is aspirational for all these chains equally |
 | Matching | ✅ fully on-chain | Deterministic engine in servercore, runs on every node — no operator discretion over fills |
 | Custody | ✅ non-custodial | Vault escrow + conservation asserted by every node; no operator can touch funds; `invalid` void guarantees exit |
-| Issuance | ✅ permissionless | Anyone can create events; anyone can split/merge — no gatekeeping on liquidity provision |
+| Issuance | ⚠️ permissioned creation | Market creation needs the prediction chain's domain-signing authorization (Implementation update above); split/merge and trading stay open to anyone |
 | Resolution v1 | ⚠️ committee (2-of-3) | Narrowed from single-issuer; bonded permissionless disputes; liveness rules prevent vault hostage (§3.3). Still the trust bottleneck until phase 4 |
 | Dispute window | ⚠️ optimistic | Security = "≥1 honest watcher exists"; disputes are a permissionless right with bonds, not a favor from the resolvers |
 | App / RPC | ⚠️ trusted server | App trusts its L0/L1 RPC for chain data (standard light-client limitation; bigtangle's bridge SPV machinery is an upgrade path for client-side verification) |

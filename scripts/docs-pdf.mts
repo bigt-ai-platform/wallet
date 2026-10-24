@@ -14,6 +14,7 @@
  *   npx tsx scripts/docs-pdf.mts p2p        # one guide, all languages
  *   npx tsx scripts/docs-pdf.mts p2p ja     # one guide, one language
  *   npx tsx scripts/docs-pdf.mts --md docs/p2p-demo/p2p-all.md [--out <pdf>] [--lang <code>]
+ *   npx tsx scripts/docs-pdf.mts predict-demo   # docs/prediction-demo/predict{,.de,.zh}.md → its assets/
  *
  * Guide sources are `<guide>.md` (English) and `<guide>.<lang>.md`; the output
  * is `<guide>.pdf` / `<guide>.<lang>.pdf`, the names lib/docs.ts links to.
@@ -105,13 +106,21 @@ function mdToHtml(source: string, mdDir: string = GUIDES_DIR, lang: string = "en
   const lines = source.replace(/\r\n/g, "\n").split("\n");
   const out: string[] = [];
   let list: string[] | null = null;
+  let listTag: "ul" | "ol" = "ul";
+  let para: string[] | null = null;
   let table: string[][] = [];
   let fence: string | null = null;
   let quote: string[] | null = null;
 
+  const flushPara = () => {
+    if (!para) return;
+    out.push(`<p>${para.join(" ")}</p>`);
+    para = null;
+  };
   const flushList = () => {
+    flushPara();
     if (!list) return;
-    out.push(`<ul>${list.map((li) => `<li>${li}</li>`).join("")}</ul>`);
+    out.push(`<${listTag}>${list.map((li) => `<li>${li}</li>`).join("")}</${listTag}>`);
     list = null;
   };
   const flushQuote = () => {
@@ -171,26 +180,44 @@ function mdToHtml(source: string, mdDir: string = GUIDES_DIR, lang: string = "en
     }
     flushQuote();
 
-    if (/^\s*-\s+/.test(line)) {
-      if (!list) list = [];
-      list.push(inline(line.replace(/^\s*-\s+/, "")));
+    if (/^\s*(-|\d+\.)\s+/.test(line)) {
+      flushPara();
+      const tag = /^\s*-\s+/.test(line) ? "ul" : "ol";
+      if (list && tag !== listTag && !/^\s{2,}/.test(line)) flushList();
+      if (!list) {
+        list = [];
+        listTag = tag;
+      }
+      list.push(inline(line.replace(/^\s*(-|\d+\.)\s+/, "")));
+      continue;
+    }
+    // A wrapped list item continues on an indented line.
+    if (list && /^\s{2,}\S/.test(line)) {
+      list[list.length - 1] += ` ${inline(line.trim())}`;
       continue;
     }
     flushList();
 
     if (/^\s*#{1,3}\s/.test(line)) {
+      flushPara();
       const m = line.match(/^\s*(#{1,3})\s+(.*)$/)!;
       const level = m[1].length;
       out.push(`<h${level}>${inline(m[2])}</h${level}>`);
     } else if (/^\s*$/.test(line)) {
-      // blank: nothing
+      flushPara();
     } else if (/^---+$/.test(line.trim())) {
+      flushPara();
       out.push(`<hr>`);
     } else if (/^!\[([^\]]*)\]\(([^)]+)\)$/.test(line.trim())) {
+      flushPara();
       const m = line.trim().match(/^!\[([^\]]*)\]\(([^)]+)\)$/)!;
-      out.push(`<img class="md-img" alt="${esc(m[1])}" src="${imgSrc(m[2], mdDir, lang)}">`);
+      const src = imgSrc(m[2], mdDir, lang);
+      // An uncaptured screenshot is dropped rather than printed as a broken image.
+      if (/^(https?:|data:)/.test(src)) out.push(`<img class="md-img" alt="${esc(m[1])}" src="${src}">`);
     } else {
-      out.push(`<p>${inline(line)}</p>`);
+      // Wrapped source lines of one paragraph render as one paragraph.
+      if (!para) para = [];
+      para.push(inline(line.trim()));
     }
   }
   flushList();
@@ -312,6 +339,16 @@ if (mdIdx >= 0) {
   const mdLang = langIdx >= 0 ? argv[langIdx + 1] : "en";
   mkdirSync(dirname(outPath), { recursive: true });
   renderMarkdownToPdf(mdPath, outPath, mdLang);
+  console.log("done.");
+  process.exit(0);
+}
+
+// `predict-demo`: the prediction-market demo (US/en, DE/de, CN/zh) next to its screenshots.
+if (argv[0] === "predict-demo") {
+  const demoDir = join(ROOT, "docs", "prediction-demo");
+  for (const [file, lang] of [["predict.md", "en"], ["predict.de.md", "de"], ["predict.zh.md", "zh"]]) {
+    renderMarkdownToPdf(join(demoDir, file), join(demoDir, "assets", file.replace(/\.md$/, ".pdf")), lang);
+  }
   console.log("done.");
   process.exit(0);
 }

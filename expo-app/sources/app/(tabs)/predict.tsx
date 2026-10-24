@@ -84,6 +84,15 @@ export default function PredictScreen() {
     const w = getUnlockedWallet();
     return w ? { privateKeyHex: w.wallet.privateKey, keyType: w.wallet.keyType as 'PQ' | 'EC' } : null;
   }, [isUnlocked, getUnlockedWallet]);
+  // Committee/proposer identities on the contract are PQ hex addresses, not publicInfo's base58.
+  const myContractAddress = React.useMemo(() => {
+    if (!unlocked || unlocked.keyType === 'EC') return '';
+    try {
+      return predictionService.contractAddress(unlocked.privateKeyHex, unlocked.keyType);
+    } catch {
+      return '';
+    }
+  }, [unlocked]);
 
   const load = React.useCallback(async (isRefresh = false) => {
     if (loadingRef.current) return;
@@ -346,7 +355,7 @@ export default function PredictScreen() {
     const available = predictionService.getActionAvailability(event, state, nowSec);
     const blocked = !!busy || creating || !state?.initialized || unlocked?.keyType === 'EC';
     const oracleBlocked = (action: 'resolve' | 'dispute' | 'vote', outcome: string) => blocked
-      || !!predictionService.getOracleActionError(action, event, state, outcome, publicInfo?.address ?? '', nowSec);
+      || !!predictionService.getOracleActionError(action, event, state, outcome, myContractAddress, nowSec);
     const deadline = state?.status === 'PENDING' ? state.disputeDeadlineSec : state?.status === 'VOTING' ? state.voteDeadlineSec : undefined;
     return (
       <View key={event.contractTokenid} style={s.card} testID={`predict-event-${event.contractTokenid.slice(0, 8)}`}>
@@ -641,6 +650,11 @@ export default function PredictScreen() {
             {oracle === 'committee' ? <>
               <Text style={s.fieldLabel}>{t('predictionWorkflow.committeeAddresses')}</Text>
               <TextInput style={[s.input, s.multiline]} multiline value={committee} onChangeText={setCommittee} autoCapitalize="none" testID="predict-committee" />
+              {myContractAddress ? (
+                <Text style={s.fieldLabel} selectable testID="predict-my-contract-address">
+                  {t('predicthelp.myAddress', { address: myContractAddress })}
+                </Text>
+              ) : null}
             </> : null}
             <View style={s.fieldRow}>
               <Text style={s.fieldLabel}>{t('predictionWorkflow.bond')}</Text>

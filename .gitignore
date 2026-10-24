@@ -66,6 +66,8 @@ expo-app/demo-output/
 # cwd-relative capture output when the e2e scripts are run from the repo root
 /demo-output/
 out/
+# predict demo screenshots: captured locally (e2etest.sh predict-demo), embedded in the committed PDFs
+docs/prediction-demo/assets/screenshots/
 
 # deploy: locally built web image tar (deploy/region.sh loads it onto VMs)
 deploy/.image/

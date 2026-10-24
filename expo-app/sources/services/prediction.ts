@@ -33,6 +33,9 @@ import { parseTokenAmount } from '@/lib/tokenformat';
 import { IS_DEV } from '@/constants/app';
 import { z } from 'zod';
 
+/** Token-creation fee in raw BIG units (the chain's default fee). */
+const CREATE_FEE = 1000n;
+
 export const PREDICTION_CHAIN_ID = 'prediction';
 
 /** The contract classname that marks a token as a prediction market. */
@@ -282,9 +285,17 @@ async function requireOracleAction(
 ): Promise<void> {
   if (keyType === 'EC') throw new Error('Prediction contract actions require a PQ wallet');
   const state = await getState(event.contractTokenid);
-  const address = keyFromPrivate(privateKeyHex, keyType).toAddressString(getNetParams());
+  const address = contractAddress(privateKeyHex, keyType);
   const error = getOracleActionError(action, event, state, outcome, address);
   if (error) throw new Error(error);
+}
+
+/**
+ * The address the contract records for this key (beneficiary, committee member,
+ * proposer): the PQ address **hex**, not the wallet's base58 display address.
+ */
+export function contractAddress(privateKeyHex: string, keyType?: 'PQ' | 'EC'): string {
+  return keyFromPrivate(privateKeyHex, keyType).toAddressString(getNetParams());
 }
 
 export function getRedeemableShares(
@@ -383,6 +394,24 @@ async function waitForOutcomeSupply(
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
   throw new Error('prediction: minted outcome supply never confirmed');
+}
+
+/**
+ * Each token creation pays its fee from a confirmed BIG output; the previous
+ * creation's change is unspendable until it confirms, so a wallet holding a
+ * single BIG output would fail the next create with "outputs size= 0".
+ */
+async function waitForFeeOutput(wallet: Wallet, attempts = 150): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    const candidates = await wallet.calculateAllSpendCandidates(null, false);
+    const ready = candidates.some((candidate: any) => {
+      const utxo = candidate?.getUTXO?.();
+      return utxo && utxo.getTokenId() === 'bc' && utxo.getValue().getValue() >= CREATE_FEE;
+    });
+    if (ready) return;
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  throw new Error('prediction: no confirmed BIG output to pay the next creation fee (wait for earlier transactions to confirm)');
 }
 
 export async function splitShares(params: {
@@ -713,6 +742,7 @@ export async function createEvent(params: {
     token.setAmount(supply);
     token.setTokenstop(true);
     token.setTokentype(TokenType.token);
+    await waitForFeeOutput(wallet);
     // The token's own key signs the create; the domain (issuer) key then
     // multi-signs it — signing with `issuer` while declaring `key` as the
     // token's multi-sign address desyncs the signature check.
@@ -747,6 +777,7 @@ export async function createEvent(params: {
   contractToken.setTokenstop(true);
   contractToken.setTokentype(TokenType.contract);
   contractToken.setTokenKeyValues(keyValues);
+  await waitForFeeOutput(wallet);
   await wallet.createToken(contractKey, '', false, contractToken,
     [new MultiSignAddress(contractTokenid, '', Utils.HEX.encode(contractKey.getPrefixedPublicKeyBytes()))],
     contractKey.getPubKey(), new MemoInfo('coinbase'));
@@ -780,6 +811,7 @@ export const predictionService = {
   getRedeemableShares,
   getActionAvailability,
   getOracleActionError,
+  contractAddress,
   fetchOutcomeBook,
   quoteOutcome,
   validateCreateEvent,

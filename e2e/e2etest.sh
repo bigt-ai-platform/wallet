@@ -21,11 +21,11 @@ fail()  { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
 info()  { echo -e "${YELLOW}[INFO]${NC} $1"; }
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | predict | token | blocks | p2p | p2p-ui | p2p-demo | p2p-orders | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | predict | predict-demo | token | blocks | p2p | p2p-ui | p2p-demo | p2p-orders | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" predict "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" p2p-orders "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, token, blocks, p2p, p2p-ui, p2p-demo, p2p-orders, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" predict "|" predict-demo "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" p2p-orders "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, predict-demo, token, blocks, p2p, p2p-ui, p2p-demo, p2p-orders, remaining, tests, demo";;
 esac
 
 # Independently verify the payment e2e test's result on-chain. The payment spec
@@ -350,7 +350,7 @@ if [[ "$CMD" != "p2p-ui" ]]; then
   # L1-prediction (l1-prediction-server) is a separate chain/port; fail fast
   # with a clear message when it is missing instead of letting the predict
   # specs time out. Started by remote.sh infra (step 7d/7e).
-  if [[ "$CMD" == "predict" || "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "remaining" ]]; then
+  if [[ "$CMD" == "predict" || "$CMD" == "predict-demo" || "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "remaining" ]]; then
     curl -sf "http://localhost:${L1P_PORT}/" >/dev/null 2>&1 || fail "L1-prediction not ready on :${L1P_PORT} — run ./e2e/infra.sh first"
   fi
   log "Infrastructure ready."
@@ -456,6 +456,22 @@ E2E_L1_URL="http://localhost:${L1_PORT}/" \
 E2E_L1P_URL="http://localhost:${L1P_PORT}/" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list predict.spec.ts 2>&1
 log "Predict e2e tests passed."
+fi
+
+# 4b2c. Predict demo capture: creates the US/DE/CN example markets of
+#       docs/prediction-demo/ and writes their screenshots. Needs the same
+#       funded operator key as the lifecycle test (E2E_PREDICTION_KEY).
+if [[ "$CMD" == "predict-demo" ]]; then
+[[ -n "${E2E_PREDICTION_KEY:-}" ]] || fail "predict-demo needs E2E_PREDICTION_KEY (funded prediction operator)"
+info "Capturing the predict demo markets..."
+cd "$E2E_DIR"
+E2E_PREDICT_DEMO=1 \
+APP_URL="http://localhost:${WEB_PORT}/" \
+E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
+E2E_L1_URL="http://localhost:${L1_PORT}/" \
+E2E_L1P_URL="http://localhost:${L1P_PORT}/" \
+  "$ROOT/node_modules/.bin/playwright" test --reporter=list predict-demo.spec.ts 2>&1
+log "Predict demo captured to docs/prediction-demo/assets/screenshots."
 fi
 
 # 4b3. Run the token tests (browse / search / SDK token creation).
