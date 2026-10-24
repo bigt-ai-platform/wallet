@@ -7,6 +7,19 @@ const HAS_SERVER = !!E2E_SERVER_URL;
 const L1_READY = HAS_SERVER && !!E2E_L1_URL;
 
 /**
+ * Stagger between consecutive ORDER_OPEN submissions, mirroring the Java
+ * remote order test's `ORDER_STAGGER_MS` (RemoteOrderIT): the L1 micro-batcher
+ * (`service.schedule.microbatchrate`, 100ms) drains every pending ORDER_OPEN tx
+ * into ONE block, and the order-open checks/connect only look at
+ * `transactions.get(0)` (ServiceBaseCheck.checkFullOrderOpenSolidity,
+ * ServiceBaseConnect.connectOrder). Two orders submitted inside the same
+ * micro-batch window therefore lose the second one — seen here as "the ask is
+ * open but no match ticker", because the crossing buy was the dropped tx.
+ * Space the submissions further apart than the batch rate.
+ */
+const ORDER_STAGGER_MS = Math.max(0, Number(process.env.E2E_ORDER_STAGGER_MS ?? 1200));
+
+/**
  * The rendered price chart. The web build uses the canvas-based
  * `lightweight-charts` pane (`trade-chart-pro`); the SVG `PriceChart`
  * (`trade-chart-price polyline` / `trade-chart-volume rect`) is the native /
@@ -170,6 +183,10 @@ async function setupMarket(quote: 'bc' | 'CNY' = 'bc'): Promise<{ tokenid: strin
   const issuerWallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [issuer], l1Url);
   issuerWallet.setServerURL(l1Url);
   await issuerWallet.sellOrder(null, tokenid, price, sellAmount, null, null, quoteTokenId, true);
+
+  // Let the ask land in its own micro-batch block before the crossing buy is
+  // submitted — see ORDER_STAGGER_MS (same workaround as the Java remote test).
+  if (ORDER_STAGGER_MS > 0) await new Promise((r) => setTimeout(r, ORDER_STAGGER_MS));
 
   const buyerWallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [buyer], l1Url);
   buyerWallet.setServerURL(l1Url);
