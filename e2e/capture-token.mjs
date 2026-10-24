@@ -28,6 +28,7 @@ mkdirSync(PDFS, { recursive: true });
 
 const sdk = await import('../packages/bigtangle-ts/dist/index.js');
 const bcToken = sdk.NetworkParameters.BIGTANGLE_TOKENID_STRING;
+const PWD = 'TokenPass123!';
 
 async function postJson(endpoint, body) {
   const res = await fetch(SVR + endpoint, {
@@ -70,8 +71,55 @@ async function clickNav(page, label) {
       await page.waitForTimeout(400);
     }
   }
-  await page.getByRole('button', { name: label, exact: true }).first().click();
+  // In-page click: the drawer footer (language switcher) can overlay nav rows,
+  // so a real pointer click lands on the overlay instead of the item. The
+  // handler itself closes the drawer (Sidebar.navigate -> onClose).
+  const item = page.getByRole('button', { name: label, exact: true }).first();
+  await item.evaluate((el) => el.click());
   await page.waitForTimeout(1500);
+  await closeDrawer(page);
+}
+
+/** Import a throwaway key and save it with a password. The token create form is
+ *  gated behind WalletUnlock, so the UI needs a wallet even though the token
+ *  itself is minted through the SDK below. */
+async function importKeyIntoWallet(page, privHex) {
+  await clickNav(page, 'Keys');
+  await page.getByText('Import Private Key').click();
+  await page.waitForTimeout(500);
+  await page.getByPlaceholder('Enter private key (hex or WIF)').fill(privHex);
+  await page.getByText('Import Key').click();
+  await page.waitForTimeout(1500);
+  await page.getByPlaceholder('Enter password (min 6 characters)').fill(PWD);
+  await page.getByPlaceholder('Confirm password').fill(PWD);
+  await page.getByText('Save Wallet').click();
+  await page.waitForTimeout(2000);
+}
+
+/** Reload (the encrypted wallet re-locks) and unlock it on the Payment screen.
+ *  Reloading lands on Home, which has no unlock form; tolerates an already
+ *  unlocked wallet so the capture never depends on the lock state. */
+async function unlockWallet(page) {
+  // The import flow saves the wallet with a password and leaves it unlocked, so
+  // there is normally nothing to do. Unlock in place only when a prompt is
+  // actually rendered: reloading re-locks the wallet, and the unlock form only
+  // exists on screens that need it (not on the landing screen).
+  const pwd = page.getByPlaceholder('Enter wallet password');
+  if (await pwd.isVisible().catch(() => false)) {
+    await pwd.fill(PWD);
+    await page.getByTestId('unlock-wallet-button').click();
+    await page.waitForTimeout(3000);
+  }
+}
+
+/** Dismiss the drawer if it is open. Its scrim covers the page and would
+ *  intercept any content click; tapping outside the drawer panel closes it. */
+async function closeDrawer(page) {
+  const sidebar = page.getByTestId('sidebar');
+  if (!(await sidebar.isVisible().catch(() => false))) return;
+  const vp = page.viewportSize() ?? { width: 390, height: 844 };
+  await page.mouse.click(Math.max(1, vp.width - 5), Math.floor(vp.height / 2));
+  await page.waitForTimeout(600);
 }
 
 async function main() {
@@ -173,6 +221,8 @@ async function main() {
   // a reload would hit the static server with a deep path and 404 to a blank page.
   await page.goto(APP, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2000);
+  await importKeyIntoWallet(page, sdk.PQKey.createNew().getPrivateKeyHex());
+  await unlockWallet(page);
 
   // Screenshot 1: token browse list (BIG + created token).
   await clickNav(page, 'Tokens');

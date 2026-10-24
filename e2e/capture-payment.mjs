@@ -62,8 +62,13 @@ async function clickNav(page, label) {
       await page.waitForTimeout(400);
     }
   }
-  await page.getByRole('button', { name: label, exact: true }).first().click();
+  // In-page click: the drawer footer (language switcher) can overlay nav rows,
+  // so a real pointer click lands on the overlay instead of the item. The
+  // handler itself closes the drawer (Sidebar.navigate -> onClose).
+  const item = page.getByRole('button', { name: label, exact: true }).first();
+  await item.evaluate((el) => el.click());
   await page.waitForTimeout(1500);
+  await closeDrawer(page);
 }
 
 /** Import a private key into the app wallet and save it with a password. */
@@ -86,14 +91,27 @@ async function importKeyIntoWallet(page, privHex) {
   await page.waitForTimeout(1000);
 }
 
-/** Reload the app (wallet stays locked) and unlock it via the Transaction screen. */
+/** Reload the app (wallet stays locked) and unlock it on the Payment screen.
+ *  Reloading lands on Home, which has no unlock form — the form lives on the
+ *  screens that need an unlocked wallet (Payment here). Tolerates a wallet that
+ *  is still unlocked, so the capture never depends on the lock state. */
 async function unlockWallet(page) {
+  // Reload so the screens re-read the (now confirmed) chain state.
   await page.goto(APP, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2000);
-  // The unlock form renders on the landing (Payment) screen — no tab needed.
-  await page.getByPlaceholder('Enter wallet password').fill(PWD);
-  await page.getByText('Unlock Wallet').click();
-  await page.waitForTimeout(3000);
+  const pwd = page.getByPlaceholder('Enter wallet password');
+  if (!(await pwd.isVisible().catch(() => false))) {
+    // The reload lands on Home; the unlock form and the History/Payments tabs
+    // live on the Payment screen. Close the drawer before touching the page.
+    await clickNav(page, 'Payment');
+    await page.waitForTimeout(1000);
+  }
+  if (await pwd.isVisible().catch(() => false)) {
+    await pwd.fill(PWD);
+    await page.getByTestId('unlock-wallet-button').evaluate((el) => el.click());
+    await page.waitForTimeout(3000);
+  }
+  await closeDrawer(page);
 }
 
 /**
@@ -135,6 +153,16 @@ async function waitForText(page, text, timeoutMs = 30000) {
   ).catch(() => {
     throw new Error(`Timed out waiting for text: ${text}`);
   });
+}
+
+/** Dismiss the drawer if it is open. Its scrim covers the page and would
+ *  intercept any content click; tapping outside the drawer panel closes it. */
+async function closeDrawer(page) {
+  const sidebar = page.getByTestId('sidebar');
+  if (!(await sidebar.isVisible().catch(() => false))) return;
+  const vp = page.viewportSize() ?? { width: 390, height: 844 };
+  await page.mouse.click(Math.max(1, vp.width - 5), Math.floor(vp.height / 2));
+  await page.waitForTimeout(600);
 }
 
 async function main() {
@@ -224,7 +252,7 @@ async function main() {
   ).catch(() => {
     throw new Error('Timed out waiting for a positive BIG balance on the Payment screen');
   });
-  await page.getByPlaceholder('Recipient').fill(BOB);
+  await page.getByPlaceholder('Recipient', { exact: true }).first().fill(BOB);
   await page.screenshot({ path: `${SHOTS}/04-send-form-filled.png` });
   console.log('ok 04-send-form-filled');
 
@@ -238,6 +266,9 @@ async function main() {
       { timeout: 30000 }
     )
     .catch(() => null);
+  await closeDrawer(page);
+  // The send button is a TouchableOpacity without role=button, so match by text;
+  // .last() picks the button (the screen title, also 'Send Payment', comes first).
   await page.locator('text=Send Payment').last().click();
   if (!(await submitted)) throw new Error('Send Payment did not submit a transaction');
 
