@@ -118,7 +118,6 @@ function mdToHtml(source: string, mdDir: string = GUIDES_DIR, lang: string = "en
     para = null;
   };
   const flushList = () => {
-    flushPara();
     if (!list) return;
     out.push(`<${listTag}>${list.map((li) => `<li>${li}</li>`).join("")}</${listTag}>`);
     list = null;
@@ -154,6 +153,7 @@ function mdToHtml(source: string, mdDir: string = GUIDES_DIR, lang: string = "en
       continue;
     }
     if (line.startsWith("```")) {
+      flushPara();
       flushList();
       flushTable();
       flushQuote();
@@ -163,6 +163,7 @@ function mdToHtml(source: string, mdDir: string = GUIDES_DIR, lang: string = "en
     }
 
     if (/^\s*\|/.test(line)) {
+      flushPara();
       flushList();
       flushQuote();
       const cells = line.split("|").slice(1, -1).map((c) => c.trim());
@@ -173,6 +174,7 @@ function mdToHtml(source: string, mdDir: string = GUIDES_DIR, lang: string = "en
     flushTable();
 
     if (/^\s*>\s?/.test(line)) {
+      flushPara();
       flushList();
       if (!quote) quote = [];
       quote.push(inline(line.replace(/^\s*>\s?/, "")));
@@ -220,6 +222,7 @@ function mdToHtml(source: string, mdDir: string = GUIDES_DIR, lang: string = "en
       para.push(inline(line.trim()));
     }
   }
+  flushPara();
   flushList();
   flushTable();
   flushQuote();
