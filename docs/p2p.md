@@ -1259,7 +1259,12 @@ geofencing — is an operator decision to make before shipping to users.
   round-trip and the fail-closed txid/auth paths (no chain tx, no funds);
   `E2E_PROD_P2P_SEED=<funded seller seed>` adds the real seller-anchored
   `social.p2p-order` open/cancel on prod L1-SOCIAL. Both writes are opt-in so
-  the normal suite never touches production data.
+  the normal suite never touches production data. With
+  `E2E_PROD_WALLET_URL=https://wallet.bigt.ai` it also drives the deployed web
+  build: the P2P screen must mount (no error boundary) and, with the public
+  book intercepted read-only, render a fixture order card. That last assertion
+  is the regression guard for a release bundle exported with a stale
+  workspace `dist/` (the v1.0.91 `checkP2pFill is not a function` crash).
 - **Dispute e2e**: claim → dispute → arbitration resolve `refund` → escrow
   refund verified on-chain; and the mirror `release` case where the seller won't
   sign (engine + buyer force-release).

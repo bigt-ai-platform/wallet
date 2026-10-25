@@ -509,5 +509,45 @@ test.describe('P2P production', () => {
     await expect(page.getByTestId('p2p-tab-open')).toBeVisible({ timeout: 15_000 });
     await expect(page.getByTestId('p2p-not-configured')).toHaveCount(0);
     await expect(page.getByTestId('p2p-book-count')).toContainText('ads');
+    await expect(page.getByText('Something went wrong')).toHaveCount(0);
+  });
+
+  // Regression for the v1.0.91 incident: the release bundle was exported with
+  // a stale p2p-protocol/dist that did not export checkP2pFill, so the screen
+  // mounted fine with an empty book but crashed as soon as one order rendered.
+  // Intercepting the book keeps this read-only while still exercising the
+  // deployed bundle's order-card path (and the app's error boundary).
+  test('deployed wallet renders an order card against the book', async ({ page }) => {
+    test.skip(!WALLET, 'set E2E_PROD_WALLET_URL to smoke the deployed web build');
+    test.setTimeout(120_000);
+    const now = Math.floor(Date.now() / 1000);
+    const order = {
+      orderId: 'ord-0123456789abcdef',
+      type: 'limit_sell',
+      sellerDid: 'did:pq:prod-smoke-seller',
+      giveToken: 'USDT',
+      giveAmount: '100',
+      remainingGive: '100',
+      giveChain: 'L0',
+      wantCurrency: 'CNY',
+      wantAmount: '700',
+      wantRail: 'wechat',
+      wantRails: ['wechat'],
+      validUntil: now + 3600,
+      status: 'ACTIVE',
+      createdAt: now,
+    };
+    await page.route('**/p2p/capabilities', (route) => route.fulfill({
+      json: { rails: RAILS, escrow: true, chain: { l0: true, l1: true, orderTxVerify: true } },
+    }));
+    await page.route('**/p2p/public/orders*', (route) => route.fulfill({ json: { orders: [order] } }));
+
+    await page.goto(WALLET, { waitUntil: 'load', timeout: 60_000 });
+    await page.waitForTimeout(3000);
+    await clickTab(page, 'P2P');
+    await expect(page.getByTestId('p2p-order-0')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('p2p-order-0-side')).toContainText('Sell');
+    await expect(page.getByTestId('p2p-book-count')).toContainText('1');
+    await expect(page.getByText('Something went wrong')).toHaveCount(0);
   });
 });
