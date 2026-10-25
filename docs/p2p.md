@@ -562,8 +562,9 @@ token giver's L0 balance at the DID-derived key (the same
 `RIPEMD160(SHA256(prefixedPubKey))` query the wallet uses) when a sell ad is
 posted and again when it is matched. `SETTLEMENT_ORDER_FUNDS_CHECK=reject`
 (default) refuses an ad/match whose positive balance read is below the
-advertised amount; `warn` accepts it but the public book carries
-`funds:{checked,sufficient}` so the UI can flag it; `off` disables the check.
+advertised amount; `warn` accepts the ad but the public book carries
+`funds:{checked,sufficient}` so the UI can flag it (a match still rejects a
+positive shortfall); `off` disables the check.
 An unreachable node, an unsupported DID or missing token metadata yields
 `checked:false` and **never** blocks — the confirmed escrow lock remains the
 settlement gate. The public book exposes only the booleans, never the seller's

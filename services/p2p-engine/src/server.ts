@@ -2129,7 +2129,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
           fill,
           { fresh: true },
         );
-        if (funds.checked && !funds.sufficient && fundsCheckMode === "reject") {
+        if (funds.checked && !funds.sufficient) {
           return reply.code(409).send({
             error: `counterparty has insufficient ${order.giveToken} balance for this match`,
           });
