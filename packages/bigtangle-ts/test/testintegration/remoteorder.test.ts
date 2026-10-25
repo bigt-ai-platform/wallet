@@ -34,7 +34,10 @@ class RemoteOrderTests extends RemoteTest {
   // The former "yuan" token (seed 0x03) is left to RemoteFromAddressTests,
   // which already issues 人民币 at that id, and seed 0x04 is the harness' PoS
   // validator key (remote.sh) - so CNY starts at 0x05 and the pairs at 0x06.
-  private static readonly CNY_KEY_SEED = 0x05;
+  private static readonly QUOTE_KEY_SEED = (() => {
+    const n = Number(process.env.ORDER_QUOTE_SEED || 5);
+    return Number.isInteger(n) && n > 0 && n < 256 ? n : 5;
+  })();
   private static readonly PAIR_KEY_SEED_BASE = 0x06;
   private static readonly ORDER_TOKEN_NAME = process.env.ORDER_TOKEN_NAME || "CNY";
   private static readonly PAIR_TOKEN_NAMES = (
@@ -102,7 +105,7 @@ class RemoteOrderTests extends RemoteTest {
     const bc = NetworkParameters.BIGTANGLE_TOKENID_STRING;
 
     // 1. Fixed CNY issuer (seed 0x05) + one fresh buyer per run.
-    const issuer = this.fixedKey(RemoteOrderTests.CNY_KEY_SEED);
+    const issuer = this.fixedKey(RemoteOrderTests.QUOTE_KEY_SEED);
     const tokenId = Utils.HEX.encode(issuer.getPrefixedPublicKeyBytes());
     const buyer = PQKey.createNew();
     const issuerWallet = Wallet.fromKeysURL(this.networkParameters, [issuer], this.contextRoot);
@@ -187,7 +190,7 @@ class RemoteOrderTests extends RemoteTest {
     }
     const names = RemoteOrderTests.PAIR_TOKEN_NAMES;
     const amount = RemoteOrderTests.ORDER_AMOUNT;
-    const cnyKey = this.fixedKey(RemoteOrderTests.CNY_KEY_SEED);
+    const cnyKey = this.fixedKey(RemoteOrderTests.QUOTE_KEY_SEED);
     const cnyId = Utils.HEX.encode(cnyKey.getPrefixedPublicKeyBytes());
     const cnyWallet = Wallet.fromKeysURL(this.networkParameters, [cnyKey], this.contextRoot);
     const pairKeys = names.map((_, i) => this.fixedKey(RemoteOrderTests.PAIR_KEY_SEED_BASE + i));

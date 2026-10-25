@@ -51,6 +51,29 @@ expires after 10 minutes. The normal soak is read-only.
 
 ## Write/load soak: Nvidia/USDT orders on prod L1-order
 
+### Prerequisites (order soak)
+
+The prod `Remote*IT` suite signs as the deterministic test wallets (ML-DSA seed
+`0x01` / yuan `0x03`). On the multi-validator prod chains those are not minted,
+and the order chain has no BIG genesis, so the first run fails
+`InsufficientMoneyException [1000:bc] outputs size=0`. Fund them once from the
+validator keystores:
+
+```bash
+FUND_L0=0 FUND_L1=1 FUND_UTXOS=8 \
+  bash ../blockchain/helper/prod/fund-test-wallets.sh
+```
+
+The Java helpers also need current `bigtangle-core` / `bigtangle-servercore`
+jars in the local Maven repo; if test compilation reports missing
+`AttestationSigner` / `assignedSlot`, install them:
+
+```bash
+cd ../blockchain
+JAVA_HOME=/home/jcui/.local/java-25 PATH=$JAVA_HOME/bin:$PATH \
+  mvn -q install -DskipTests -pl bigtangle-core,bigtangle-servercore -am
+```
+
 `e2e/prod-order-soak.sh` wraps the Java prod remote test
 `../blockchain/helper/prod/testorder.sh` → `RemoteOrderIT#testCnyBasedTradePairs`
 and loops it. Each iteration mints/reuses the fixed quote + pair tokens on
@@ -69,19 +92,25 @@ ORDER_SOAK_SECONDS=14400 ORDER_SOAK_INTERVAL_SEC=120 \
 DRY_RUN=1 ./e2e/prod-order-soak.sh
 ```
 
-Defaults: quote `USDT`, pair `Nvidia`, L0 `https://eu1.bigtangle.org/`, L1-order
-`https://ordereu1.bigtangle.org/`, logs under
-`e2e/test-results/order-soak-<ts>/`. Every `RemoteOrderIT` knob passes through
-(`ORDER_COUNT`, `ORDER_PRICE`, `ORDER_STAGGER_MS`, `ORDER_BINANCE_LIVE`,
-`REQUIRE_BINANCE`, `ORDER_PRICE_NVIDIA`, `EXTRA_ARGS`, …).
+Defaults: quote `USDT` (seed `12`), pair `Nvidia`, L0
+`https://eu1.bigtangle.org/`, L1-order `https://ordereu1.bigtangle.org/`, logs
+under `e2e/test-results/order-soak-<ts>/`. Every `RemoteOrderIT` knob passes
+through (`ORDER_COUNT`, `ORDER_PRICE`, `ORDER_STAGGER_MS`,
+`ORDER_BINANCE_LIVE`, `REQUIRE_BINANCE`, `ORDER_PRICE_NVIDIA`, `EXTRA_ARGS`,
+…).
+
+**Verified on prod:** the first run minted `USDT` (seed 12) and `Nvidia`
+(pair seed 0x06), then placed and matched `107 Nvidia @ 213.23 USDT`
+(`testCnyBasedTradePairs`, 24s). The market now exists, so
+`prod-soak.mjs --target order --require-market` discovers it and reads its
+book/ticker.
 
 **This writes to the target chain** (token issuance, BC funding, orders). The
-quote token id is fixed (seed `0x05`): if that id already exists as CNY,
-`ORDER_TOKEN_NAME=USDT` reuses it without renaming. Verify the first run's log
-says it minted USDT, or target a freshly reset L1-order chain. Pair ids are
-also seed-indexed (`0x06..` in list order); `ORDER_PAIR_TOKENS=Nvidia` alone
-gives Nvidia the first pair seed, while the full default list keeps its
-canonical id.
+wrapper uses quote seed `12` by default, so `USDT` is a distinct token from the
+CNY token at seed `5` and can coexist with it; pass `ORDER_QUOTE_SEED=5` to
+reuse CNY. Pair ids are also seed-indexed (`0x06..` in list order);
+`ORDER_PAIR_TOKENS=Nvidia` alone gives Nvidia the first pair seed, while the
+full default list keeps its canonical id.
 
 For raw throughput of the same class, `../blockchain/helper/prod/prodorderloop.sh`
 accepts `ORDER_COUNT`, `AMOUNT_JITTER_PCT`, `PRICE_JITTER_PCT`, `LOOP_ITERS`,
@@ -89,8 +118,24 @@ accepts `ORDER_COUNT`, `AMOUNT_JITTER_PCT`, `PRICE_JITTER_PCT`, `LOOP_ITERS`,
 
 ## L0 → L1 bridge
 
-There is **no** production remote bridge/peg-in test yet. `prod-soak.mjs`
-includes the L0 `getBridgeInfo` preflight (vault address/active) but does not
-move funds. The real bridge logic is covered by local Java integration tests
-(`CrossChainFlowTest`, `BridgeServiceTest`, `L1CrosstangleHandlerTest`) and the
-wallet `pegInToL1` path; a prod `RemoteBridgeIT` is still a separate task.
+`e2e/prod-bridge-smoke.sh` runs the opt-in `RemoteBridgeIT` against the
+deployed stack: it locks a small BIG UTXO in the L0 bridge vault with
+`PegInInfo{chainId=ordermatch}`, submits `processPegIn`, and waits for the
+L1-order `PegInWatcher` to mint the wrapped amount to the beneficiary. The
+first successful run moved **0.1 BIG** and observed **100000 sat** minted on
+`https://ordereu1.bigtangle.org/`.
+
+```bash
+# one-time: fund the deterministic L0 test wallets
+FUND_L0=1 FUND_L1=0 FUND_UTXOS=8 \
+  bash ../blockchain/helper/prod/fund-test-wallets.sh
+
+# real peg-in (moves funds; the amount stays locked in the vault)
+./e2e/prod-bridge-smoke.sh
+BRIDGE_AMOUNT_BIG=0.05 ./e2e/prod-bridge-smoke.sh
+DRY_RUN=1 ./e2e/prod-bridge-smoke.sh
+```
+
+`prod-soak.mjs` still includes the read-only L0 `getBridgeInfo` preflight as
+part of the `chain` target, so bridge health/vault availability is covered by
+the long-running soak without moving funds.

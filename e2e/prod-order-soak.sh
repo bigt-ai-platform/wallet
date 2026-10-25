@@ -36,6 +36,7 @@ ORDER_SOAK_ITERS="${ORDER_SOAK_ITERS:-$(( (ORDER_SOAK_SECONDS + ORDER_SOAK_INTER
 TARGET="${1:-testCnyBasedTradePairs}"
 
 export ORDER_TOKEN_NAME="${ORDER_TOKEN_NAME:-USDT}"
+export ORDER_QUOTE_SEED="${ORDER_QUOTE_SEED:-12}"
 export ORDER_PAIR_TOKENS="${ORDER_PAIR_TOKENS:-Nvidia}"
 export ORDER_COUNT="${ORDER_COUNT:-1}"
 export PAUSE_SEC="${ORDER_SOAK_INTERVAL_SEC}"
@@ -47,7 +48,7 @@ export PROD_L1_URL="${PROD_L1_URL:-https://ordereu1.bigtangle.org/}"
 
 echo "=== prod order soak: $TARGET ==="
 echo "duration:    ~${ORDER_SOAK_SECONDS}s (${ORDER_SOAK_ITERS} iterations, ${ORDER_SOAK_INTERVAL_SEC}s apart)"
-echo "quote/pair:  $ORDER_TOKEN_NAME / $ORDER_PAIR_TOKENS"
+echo "quote/pair:  $ORDER_TOKEN_NAME (seed $ORDER_QUOTE_SEED) / $ORDER_PAIR_TOKENS"
 echo "L0 / L1:     $PROD_URL / $PROD_L1_URL"
 echo "logs:        $LOG_DIR"
 echo ""

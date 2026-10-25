@@ -579,7 +579,16 @@ function buildReport() {
     throughputRps: round(total / elapsedSec, 3),
     steady: { requests: steadyLatencies.length, p50: round(percentile(steadyLatencies, 50)), p95: round(p95), p99: round(p99) },
     endpoints: endpointsReport,
-    market,
+    market: {
+      nvidia: market.nvidia
+        ? { tokenid: market.nvidia.tokenid, tokenname: market.nvidia.tokenname, decimals: market.nvidia.decimals }
+        : null,
+      usdt: market.usdt
+        ? { tokenid: market.usdt.tokenid, tokenname: market.usdt.tokenname, decimals: market.usdt.decimals }
+        : null,
+      pairRead: market.pairRead,
+      error: market.error,
+    },
     stability: {
       snapshots,
       chainResets,
