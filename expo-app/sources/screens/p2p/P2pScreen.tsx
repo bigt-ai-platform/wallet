@@ -345,8 +345,15 @@ export default function P2pScreen() {
       setMinOrder(''); setMaxOrder(''); setRemarks('');
       setGiveTokenId(null);
       setNotice({ ok: true, text: t('p2p.created') });
-      setTab('mine');
-      await loadSwaps();
+      // A listed order is not a swap. Show the book side where it actually
+      // appears: a sell ad is a Buy-tab listing; a buy bid is a Sell-tab
+      // listing (takers sell to it). Jumping to "My swaps" made a successful
+      // listing look empty.
+      setTab('open');
+      setBookSide(isBuy ? 'sell' : 'buy');
+      setBookQuery('');
+      setSelected(null);
+      await loadOrders();
     } catch (e) {
       setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.createFailed') });
     } finally {
