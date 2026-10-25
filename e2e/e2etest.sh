@@ -21,11 +21,11 @@ fail()  { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
 info()  { echo -e "${YELLOW}[INFO]${NC} $1"; }
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | predict | predict-demo | token | blocks | p2p | p2p-ui | p2p-demo | p2p-orders | p2p-prod | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | predict | predict-demo | token | blocks | p2p | p2p-ui | p2p-demo | p2p-orders | p2p-prod | p2p-prod-soak | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" predict "|" predict-demo "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" p2p-orders "|" p2p-prod "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, predict-demo, token, blocks, p2p, p2p-ui, p2p-demo, p2p-orders, p2p-prod, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" predict "|" predict-demo "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" p2p-orders "|" p2p-prod "|" p2p-prod-soak "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, predict-demo, token, blocks, p2p, p2p-ui, p2p-demo, p2p-orders, p2p-prod, p2p-prod-soak, remaining, tests, demo";;
 esac
 
 # Independently verify the payment e2e test's result on-chain. The payment spec
@@ -360,6 +360,24 @@ if [[ "$CMD" == "p2p-prod" ]]; then
   APP_URL="${APP_URL:-${E2E_PROD_WALLET_URL:-https://eu.wallet.bigt.ai}/}" \
     "$ROOT/node_modules/.bin/playwright" test --reporter=list p2p-prod.spec.ts 2>&1
   log "P2P production e2e passed."
+  exit 0
+fi
+
+# Bounded smoke of the long-running production soak/perf harness. The part is
+# still read-only by default; a real soak run uses e2e/prod-soak.sh for hours:
+#   E2E_PROD_SOAK_SECONDS=3600 ./e2e/prod-soak.sh --target all
+if [[ "$CMD" == "p2p-prod-soak" ]]; then
+  build_p2p_engine
+  info "Running bounded prod soak/perf pass (read-only)..."
+  cd "$E2E_DIR"
+  E2E_PROD_SOAK=1 \
+  E2E_PROD_L0_URL="${E2E_PROD_L0_URL:-https://eu1.bigtangle.org}" \
+  E2E_PROD_L1_SOCIAL_URL="${E2E_PROD_L1_SOCIAL_URL:-https://socialeu1.bigtangle.org}" \
+  E2E_PROD_L1_ORDER_URL="${E2E_PROD_L1_ORDER_URL:-https://ordereu1.bigtangle.org}" \
+  E2E_PROD_P2P_URL="${E2E_PROD_P2P_URL:-https://eu.wallet.bigt.ai/p2p}" \
+  E2E_PROD_SOAK_SECONDS="${E2E_PROD_SOAK_SECONDS:-30}" \
+    "$ROOT/node_modules/.bin/playwright" test --reporter=list p2p-prod-soak.spec.ts 2>&1
+  log "Prod soak smoke passed (full report in e2e/test-results/prod-soak-*.json)."
   exit 0
 fi
 

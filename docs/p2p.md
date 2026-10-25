@@ -1284,6 +1284,25 @@ geofencing — is an operator decision to make before shipping to users.
   book intercepted read-only, render a fixture order card. That last assertion
   is the regression guard for a release bundle exported with a stale
   workspace `dist/` (the v1.0.91 `checkP2pFill is not a function` crash).
+- **Production soak / performance** (`e2e/prod-soak.mjs`, wrapper
+  `e2e/prod-soak.sh`; bounded smoke `e2e/e2etest.sh p2p-prod-soak`): a
+  read-only long run against the deployed stack with no local infra. It
+  measures per-endpoint p50/p95/p99/max and throughput, and periodically
+  snapshots the engine watcher (`height`, `lastError`), L0/L1-SOCIAL/L1-order
+  tips and the order book. Targets:
+  `--target p2p` (public book, capabilities, health, signed `/swaps/mine`),
+  `chain` (L0 `getTips`/`getBridgeInfo`, L1-SOCIAL/L1-order tips) or `all`.
+  `--target order` also discovers an `Nvidia`/`USDT` pair on L1-order and
+  reads its book/ticker; `--require-market` turns a missing pair into a
+  failure, otherwise it is reported. Default budget: <2% errors, steady p95
+  <2.5s, p99 <8s, no watcher error/stall; all overridable. Writes are opt-in
+  (`--write`: create + cancel a no-funds bid every 5m). JSON report lands in
+  `e2e/test-results/prod-soak-*.json`; `--jsonl` also records raw samples.
+  Examples:
+  `./e2e/prod-soak.sh --duration 3600 --concurrency 4 --target all` and
+  `./e2e/prod-soak.sh --duration 0 --target all` (until Ctrl-C). The
+  write/load companion for Nvidia/USDT orders is
+  `e2e/prod-order-soak.sh`; details in [prod-soak.md](prod-soak.md).
 - **Dispute e2e**: claim → dispute → arbitration resolve `refund` → escrow
   refund verified on-chain; and the mirror `release` case where the seller won't
   sign (engine + buyer force-release).
