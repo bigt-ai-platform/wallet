@@ -1915,9 +1915,16 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         .send({ error: "status must be ACTIVE, MATCHED or CANCELLED" });
     }
     const orders = await deps.store.listOrders(status);
+    // `validUntil` is the ad's own deadline; an expired ACTIVE row is not
+    // matchable (the match route 410s) and must not look live in the book.
+    const nowMs = now();
+    const book =
+      status === "ACTIVE"
+        ? orders.filter((o) => Number(o.validUntil) * 1000 > nowMs)
+        : orders;
     const map = await reputationMap();
     const enriched = await Promise.all(
-      orders.map(async ({ signature: _s, buyerReceiveAddress: _b, ...o }) => {
+      book.map(async ({ signature: _s, buyerReceiveAddress: _b, ...o }) => {
         // Advisory balance snapshot for a sell ad (the poster is the token
         // giver). Only the boolean verdict is public — never the seller's
         // exact balance. A buy bid's taker supplies the tokens, so the book

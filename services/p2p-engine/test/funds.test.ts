@@ -222,6 +222,22 @@ describe("order funds gate", () => {
     await a.close();
   });
 
+  it("hides an expired ACTIVE ad from the public book", async () => {
+    const a = await app(fakeChain([row("100000000")]));
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    const created = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: orderPayload({ orderId }),
+    });
+    expect(created.statusCode).toBe(201);
+    clock += 2 * 3600 * 1000;
+    const book = await a.inject({ method: "GET", url: "/public/orders?status=ACTIVE" });
+    expect(book.json().orders).toEqual([]);
+    expect((await store.getOrder(orderId))?.status).toBe("ACTIVE");
+    await a.close();
+  });
+
   it("rejects a match when the token giver is short at match time", async () => {
     let rows: SettlementOutput[] = [row("100000000")];
     const a = await app(mutableChain(() => rows));
