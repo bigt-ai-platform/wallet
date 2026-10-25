@@ -561,6 +561,7 @@ test.describe('P2P production', () => {
       validUntil: now + 3600,
       status: 'ACTIVE',
       createdAt: now,
+      funds: { checked: true, sufficient: false },
     };
     await page.route('**/p2p/capabilities', (route) => route.fulfill({
       json: { rails: RAILS, escrow: true, chain: { l0: true, l1: true, orderTxVerify: true } },
@@ -571,6 +572,9 @@ test.describe('P2P production', () => {
     await page.waitForTimeout(3000);
     await clickTab(page, 'P2P');
     await expect(page.getByTestId('p2p-order-0')).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTestId('p2p-order-0-limit')).toContainText('Advertised: 100 USDT');
+    await expect(page.getByTestId('p2p-order-0-funds')).toHaveText('No funds at advertised address');
+    await expect(page.getByTestId('p2p-buy-0')).toHaveAttribute('aria-disabled', 'true');
     await expect(page.getByTestId('p2p-order-0-side')).toContainText('Sell');
     await expect(page.getByTestId('p2p-book-count')).toContainText('1');
     await expect(page.getByText('Something went wrong')).toHaveCount(0);
