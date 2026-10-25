@@ -187,8 +187,26 @@ const TERMS = {
   wantRail: 'wechat',
 };
 
+/** A valid mainnet receive address (the buyer's release destination). */
+const RECEIVE = '1FvyAqqELFiQyaEWdhFbWF8MZapKPZS8J7';
+
 /** Fresh validity on every use — the suite may run for minutes. */
 const terms = () => ({ ...TERMS, validUntil: Math.floor(Date.now() / 1000) + 900 });
+
+/**
+ * The opt-in write tests exercise engine intake, not the token-giver balance
+ * gate (the fresh test DIDs hold no USDT). A `limit_buy` bid's poster pays
+ * fiat, so it needs no L0 balance; the seeded anchored test also uses a bid
+ * for the same reason. The seller-funded path is covered by the engine unit
+ * tests (`funds.test.ts`) and the normal P2P e2e with a funded wallet.
+ */
+const bidTerms = () => ({
+  ...terms(),
+  type: 'limit_buy',
+  receiveAddress: RECEIVE,
+  side: 'buy',
+  buyerReceiveAddress: RECEIVE,
+});
 
 test.describe('P2P production', () => {
   test.skip(!ready, 'prod P2P part not running (e2e/e2etest.sh p2p-prod)');
@@ -243,6 +261,13 @@ test.describe('P2P production', () => {
       const orders = await publicOrders(request, status);
       for (const order of orders) {
         validateOrder(order, status);
+        if (order.type === 'limit_sell') {
+          // Advisory proof-of-balance snapshot (docs/p2p.md §11): a sell ad
+          // carries the engine's read, but an unknown read is still valid.
+          expect(order.funds).toBeTruthy();
+          expect(typeof order.funds.checked).toBe('boolean');
+          expect(typeof order.funds.sufficient).toBe('boolean');
+        }
         if (order.txid !== undefined) {
           expect(order.txid).toMatch(TXID);
           const proof = await chainPost(request, SOCIAL, 'getTransactionStatus', { txHash: order.txid });
@@ -309,7 +334,7 @@ test.describe('P2P production', () => {
 
     try {
       const signed = await signBody(seed, {
-        ...terms(),
+        ...bidTerms(),
         sellerDid: identity.did,
         requestMethod: 'POST',
         requestPath: '/orders',
@@ -326,7 +351,7 @@ test.describe('P2P production', () => {
       expect(live.txid).toBeUndefined();
 
       const repost = await signBody(seed, {
-        ...terms(),
+        ...bidTerms(),
         sellerDid: identity.did,
         orderId,
         requestMethod: 'POST',
@@ -403,7 +428,7 @@ test.describe('P2P production', () => {
 
     const match = await signBody(seed, {
       buyerDid: identity.did,
-      receiveAddress: '1FvyAqqELFiQyaEWdhFbWF8MZapKPZS8J7',
+      receiveAddress: RECEIVE,
       requestMethod: 'POST',
       requestPath: `/orders/${unknownId}/match`,
     });
@@ -424,7 +449,7 @@ test.describe('P2P production', () => {
       const open = helperJSON('anchor-order', [
         '--network', 'mainnet',
         '--orderId', orderId,
-        '--terms', JSON.stringify(terms()),
+        '--terms', JSON.stringify(bidTerms()),
       ], sellerSeed);
       expect(open.txid).toMatch(TXID);
 

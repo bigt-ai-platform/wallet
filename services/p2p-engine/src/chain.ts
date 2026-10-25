@@ -59,7 +59,11 @@ export interface RawUtxo {
 
 interface RawBalances {
   outputs?: RawUtxo[];
-  tokennames?: Record<string, { tokensymbol?: string; tokenname?: string }>;
+  tokennames?: Record<string, {
+    tokensymbol?: string;
+    tokenname?: string;
+    decimals?: number;
+  }>;
 }
 
 function amountOf(v: RawUtxo["value"]): string {
@@ -82,6 +86,10 @@ export function normalizeOutputs(
       amount: amountOf(o.value),
       spent: o.spent === true || o.spendPending === true,
       confirmed: o.confirmed !== false,
+      ...(id ? { tokenId: id } : {}),
+      ...(meta?.tokensymbol ? { symbol: meta.tokensymbol } : {}),
+      ...(meta?.tokenname ? { name: meta.tokenname } : {}),
+      ...(typeof meta?.decimals === "number" ? { decimals: meta.decimals } : {}),
     };
   });
 }

@@ -23,6 +23,14 @@ export interface SettlementOutput {
   spent?: boolean;
   /** true when the output is in a confirmed (chain-history) block */
   confirmed?: boolean;
+  /** token id as the node reports it (optional; metadata for balance reads) */
+  tokenId?: string;
+  /** token symbol from the node's token metadata, when present */
+  symbol?: string;
+  /** token name from the node's token metadata, when present */
+  name?: string;
+  /** token decimals from the node's token metadata, when present */
+  decimals?: number;
 }
 
 export interface SettlementExpectation {

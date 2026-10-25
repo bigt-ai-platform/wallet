@@ -22,11 +22,12 @@ test.describe('P2P Page', () => {
         wantCurrency: 'CNY', wantAmount: '700', wantRail: 'wechat', wantRails: ['wechat', 'alipay'],
         minOrder: '70', maxOrder: '140',
         validUntil: Math.floor(Date.now() / 1000) + 3600, status: 'ACTIVE', createdAt: 1,
+        funds: { checked: true, sufficient: true },
       };
       const orders: P2pOrder[] = [
         sell,
         { ...sell, orderId: 'other-sell', giveToken: 'BIG', sellerDid: 'did:pq:bob', wantRails: ['wechat'] },
-        { ...sell, orderId: 'search-buy', type: 'limit_buy', sellerDid: 'did:pq:carol' },
+        { ...sell, orderId: 'search-buy', type: 'limit_buy', sellerDid: 'did:pq:carol', funds: undefined },
       ];
       await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders } }));
       await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat', 'alipay'] } }));
@@ -44,7 +45,8 @@ test.describe('P2P Page', () => {
       await expect(count).toHaveText('2 / 2 ads');
       await search.fill('  usdt CNY alipay alice ');
       await expect(count).toHaveText('1 / 2 ads');
-      await expect(page.getByTestId('p2p-order-0-limit')).toContainText('Available: 25 USDT');
+      await expect(page.getByTestId('p2p-order-0-limit')).toContainText('Advertised: 25 USDT');
+      await expect(page.getByTestId('p2p-order-0-funds')).toHaveText('Funds verified');
       await expect(page.getByTestId('p2p-order-1')).toHaveCount(0);
       await page.getByTestId('p2p-buy-0').click();
       await expect(page.getByTestId('p2p-buy-fill')).toHaveValue('25');
@@ -121,6 +123,26 @@ test.describe('P2P Page', () => {
       await page.screenshot({ path: testInfo.outputPath(`p2p-search-${width}.png`) });
     });
   }
+
+  test('flags an unfunded ad and disables its buy action', async ({ page }) => {
+    test.skip(!process.env.E2E_P2P_ENGINE_URL, 'requires a P2P-enabled web build');
+    const unfunded: P2pOrder = {
+      orderId: 'unfunded-sell', type: 'limit_sell', sellerDid: 'did:pq:mallory',
+      giveToken: 'USDT', giveAmount: '100', remainingGive: '100', giveChain: 'L0',
+      wantCurrency: 'CNY', wantAmount: '700', wantRail: 'wechat', wantRails: ['wechat'],
+      minOrder: '0', maxOrder: '700',
+      validUntil: Math.floor(Date.now() / 1000) + 3600, status: 'ACTIVE', createdAt: 1,
+      funds: { checked: true, sufficient: false },
+    };
+    await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders: [unfunded] } }));
+    await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat'] } }));
+    await createWallet(page, 'P2pFixturePassword123');
+    await clickTab(page, 'P2P');
+    await expect(page.getByTestId('p2p-order-0-limit')).toContainText('Advertised: 100 USDT');
+    await expect(page.getByTestId('p2p-order-0-funds')).toHaveText('No funds at advertised address');
+    await expect(page.getByTestId('p2p-buy-0')).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.getByTestId('p2p-buy-fill')).toHaveCount(0);
+  });
 
   test('phone verification reads WeChat via the payee notification and Alipay via the screen', async ({ page }) => {
     test.skip(!process.env.E2E_P2P_ENGINE_URL, 'requires a P2P-enabled web build');

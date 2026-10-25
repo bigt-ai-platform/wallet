@@ -111,6 +111,7 @@ import {
   type ChainClient,
   type ChainEvidence,
 } from "./chain.js";
+import { checkDidTokenFunds, type FundsSnapshot } from "./funds.js";
 import {
   CNY_RAILS,
   isCnyRail,
@@ -485,6 +486,41 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       .split(",")
       .map((s) => s.trim())
       .filter((s) => (CNY_RAILS as readonly string[]).includes(s));
+  }
+
+  /**
+   * Advisory token-giver balance check (docs/p2p.md §11):
+   * `SETTLEMENT_ORDER_FUNDS_CHECK=off|warn|reject` (default reject).
+   * A positive insufficient read rejects a new sell ad / a match; an
+   * unreachable node or unknown token metadata is never a rejection — the
+   * confirmed escrow lock remains the settlement gate.
+   */
+  const fundsCheckMode = (env.SETTLEMENT_ORDER_FUNDS_CHECK ?? "reject")
+    .trim()
+    .toLowerCase();
+  const fundsCache = new Map<string, { at: number; value: FundsSnapshot }>();
+  async function giverFunds(
+    did: string,
+    token: string,
+    chainName: string,
+    amount: string,
+    opts: { fresh?: boolean } = {},
+  ): Promise<FundsSnapshot> {
+    if (!deps.chain || chainName.trim().toUpperCase() !== "L0") {
+      return {
+        checked: false,
+        sufficient: false,
+        available: "0",
+        reason: "only L0 balances are checked",
+      };
+    }
+    const key = `${did}|${token}|${chainName}|${amount}`;
+    const hit = fundsCache.get(key);
+    if (!opts.fresh && hit && now() - hit.at < 30_000) return hit.value;
+    const value = await checkDidTokenFunds(deps.chain, { did, token, amount });
+    fundsCache.set(key, { at: now(), value });
+    if (fundsCache.size > 1000) fundsCache.clear();
+    return value;
   }
 
   /** Buyer-facing payment instructions for a CNY swap (PII: party-scoped only). */
@@ -1725,6 +1761,19 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         });
     }
 
+    // Advisory proof-of-balance for a sell ad (the poster is the token giver).
+    // A buy bid's poster pays fiat, so nothing to check here; the taker is
+    // checked at match time. `warn` keeps the order but flags it in the public
+    // book; `reject` (default) stops an unfunded ad before it is indexed.
+    if (type === "limit_sell" && fundsCheckMode !== "off") {
+      const funds = await giverFunds(sellerDid, giveToken, giveChain, giveAmount);
+      if (funds.checked && !funds.sufficient && fundsCheckMode === "reject") {
+        return reply.code(409).send({
+          error: `seller balance insufficient: ${funds.available} ${giveToken} on ${giveChain} (advertised ${giveAmount})`,
+        });
+      }
+    }
+
     // The escrow participant this order is pinned to (docs/p2p.md §26): the
     // seller's copy when supplied, else the current engine key (legacy intake).
     const enginePin =
@@ -1867,18 +1916,34 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     }
     const orders = await deps.store.listOrders(status);
     const map = await reputationMap();
-    return {
-      orders: orders.map(
-        ({ signature: _s, buyerReceiveAddress: _b, ...o }) => ({
+    const enriched = await Promise.all(
+      orders.map(async ({ signature: _s, buyerReceiveAddress: _b, ...o }) => {
+        // Advisory balance snapshot for a sell ad (the poster is the token
+        // giver). Only the boolean verdict is public — never the seller's
+        // exact balance. A buy bid's taker supplies the tokens, so the book
+        // cannot judge it at listing time (the match-time check covers that).
+        let funds: { checked: boolean; sufficient: boolean } | null = null;
+        if (o.type === "limit_sell" && fundsCheckMode !== "off") {
+          const f = await giverFunds(
+            o.sellerDid,
+            o.giveToken,
+            o.giveChain,
+            o.remainingGive ?? o.giveAmount,
+          );
+          funds = { checked: f.checked, sufficient: f.sufficient };
+        }
+        return {
           // `buyerReceiveAddress` stays engine-side: the taker does not need it
           // (the engine uses it as the release destination at match).
           ...o,
           sellerReputation: compactReputation(
             reputationForDid(o.sellerDid, map),
           ),
-        }),
-      ),
-    };
+          ...(funds ? { funds } : {}),
+        };
+      }),
+    );
+    return { orders: enriched };
   });
 
   /**
@@ -2051,6 +2116,24 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         return reply
           .code(400)
           .send({ error: `rail must be one of: ${rails.join(", ")}` });
+      }
+
+      // Re-check the token giver at the moment of match (advisory): the ad may
+      // have gone stale since it was posted, and for a `limit_buy` bid the
+      // taker is the seller who must fund the escrow. Unknown → never reject.
+      if (fundsCheckMode !== "off") {
+        const funds = await giverFunds(
+          sellerDid,
+          order.giveToken,
+          order.giveChain,
+          fill,
+          { fresh: true },
+        );
+        if (funds.checked && !funds.sufficient && fundsCheckMode === "reject") {
+          return reply.code(409).send({
+            error: `counterparty has insufficient ${order.giveToken} balance for this match`,
+          });
+        }
       }
 
       const swapId = `swap-${randomBytes(8).toString("hex")}`;

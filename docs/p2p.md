@@ -556,6 +556,20 @@ Both go through the same whole-body signature check and PII-redacted view as the
 admin routes, and carry `presigned` (whether the escrow spend skeletons are
 already on file). The party-scoped reads are:
 
+An ad is an **advertisement**, not a promise: the chain proves the seller's
+asset only at `escrow_lock`. As an early quality gate, the engine reads the
+token giver's L0 balance at the DID-derived key (the same
+`RIPEMD160(SHA256(prefixedPubKey))` query the wallet uses) when a sell ad is
+posted and again when it is matched. `SETTLEMENT_ORDER_FUNDS_CHECK=reject`
+(default) refuses an ad/match whose positive balance read is below the
+advertised amount; `warn` accepts it but the public book carries
+`funds:{checked,sufficient}` so the UI can flag it; `off` disables the check.
+An unreachable node, an unsupported DID or missing token metadata yields
+`checked:false` and **never** blocks — the confirmed escrow lock remains the
+settlement gate. The public book exposes only the booleans, never the seller's
+balance; the UI labels the amount **Advertised** and disables Buy for
+`checked && !sufficient`.
+
 - `POST /swaps/:swapId/payment-instructions` — matched profile fields + exact
   amount + remark code; 403 for non-parties; only after `ESCROW_LOCKED`
   (idempotent while `PAYMENT_PENDING`).
@@ -634,6 +648,7 @@ SETTLEMENT_IP_RATE_LIMIT=600              # requests per client IP per 60s (0 = 
 SETTLEMENT_TRUST_PROXY=1                  # trust X-Forwarded-For for the client IP (behind Caddy; 0 = engine exposed directly)
 SETTLEMENT_ORDER_TX_VERIFY=0              # disable the txid check (default: on when a social URL exists)
 SETTLEMENT_ORDER_TX_TRIES=4               # bounded verifyTx polls per order/cancel (500ms apart)
+SETTLEMENT_ORDER_FUNDS_CHECK=reject       # advisory L0 balance check for sell ads/match: off|warn|reject (not the settlement gate)
 SETTLEMENT_WATCH=1                        # run the chain-scan projector loop in-process
 SETTLEMENT_WATCH_INTERVAL_MS=15000        # watcher tick
 SETTLEMENT_WATCH_MAX_WALK=2000            # max blocks walked back per tick (rebuild uses 50000)
@@ -1199,7 +1214,10 @@ geofencing — is an operator decision to make before shipping to users.
   proof/confirm/dispute happy paths, confirm before claim (allowed from
   `PAYMENT_PENDING` and `PAYMENT_CLAIMED`), confirm with open dispute (409),
   lock re-check fails closed, idempotent proof overwrite, PII never in the
-  anchored record, CNY claim transitions (`state.test.ts`).
+  anchored record, CNY claim transitions (`state.test.ts`), and the advisory
+  order-funds gate (`funds.test.ts`: DID h160 derivation, positive shortfall,
+  unknown chain/metadata never blocks, post rejection, `warn` book flag, and
+  match-time re-check for both a sell ad and a buy bid's taker).
 - **Conflict policy + automatic resolution** (`cny.test.ts`, `state.test.ts`,
   `escrowSettle.test.ts`): cancel/expire barred over a payment claim or an open
   dispute (seller cancel only pre-instructions, buyer cancel only pre-claim),

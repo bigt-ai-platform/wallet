@@ -83,6 +83,13 @@ export interface P2pOrder {
     disputes: number;
     lostDisputes: number;
   };
+  /**
+   * Advisory proof-of-balance snapshot for a sell ad (docs/p2p.md §11): the
+   * engine reads the poster's L0 balance at book time. `checked: false` means
+   * the balance could not be read (do not treat it as insufficient); the
+   * confirmed escrow lock is still the only settlement gate.
+   */
+  funds?: { checked: boolean; sufficient: boolean };
 }
 
 export interface P2pSwap {

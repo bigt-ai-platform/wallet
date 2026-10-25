@@ -842,6 +842,14 @@ export default function P2pScreen() {
             : visibleOrders.map((o, i) => {
               const unit = perUnitPrice(o.wantAmount, o.giveAmount);
               const fill = checkP2pFill(o, buyFill);
+              const fundsBad = o.funds?.checked === true && !o.funds.sufficient;
+              const fundsText = o.funds
+                ? o.funds.checked
+                  ? o.funds.sufficient
+                    ? t('p2p.fundsVerified')
+                    : t('p2p.fundsMissing')
+                  : t('p2p.fundsUnverified')
+                : null;
               return (
               <View key={o.orderId} style={s.card} testID={`p2p-order-${i}`}>
                 <View style={s.rowBetween}>
@@ -853,8 +861,16 @@ export default function P2pScreen() {
                   ) : null}
                 </View>
                 <Text style={s.sub} testID={`p2p-order-${i}-limit`}>
-                  {t('p2p.available', { amount: `${o.remainingGive ?? o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).join(', ')}
+                  {t('p2p.advertised', { amount: `${o.remainingGive ?? o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).join(', ')}
                 </Text>
+                {fundsText ? (
+                  <Text
+                    style={[s.sub, { color: fundsBad ? theme.colors.accent.red : o.funds?.checked ? theme.colors.accent.emerald : theme.colors.text.secondary }]}
+                    testID={`p2p-order-${i}-funds`}
+                  >
+                    {fundsText}
+                  </Text>
+                ) : null}
                 <Text style={s.sub} testID={`p2p-order-${i}-total`}>
                   {t('p2p.total')}: {o.wantAmount} {o.wantCurrency} · {t('p2p.giveChain')}: {o.giveChain}{o.timeLimit ? ` · ${o.timeLimit} min` : ''}
                 </Text>
@@ -941,23 +957,23 @@ export default function P2pScreen() {
                       {fill.ok ? t('p2pFill.preview', { amount: fill.fill, token: o.giveToken, fiat: fill.fiat, currency: o.wantCurrency }) : fillError(fill, o)}
                     </Text>
                     <TouchableOpacity
-                      style={[s.btn, { backgroundColor: theme.colors.accent.emerald, opacity: busy || !fill.ok ? 0.5 : 1 }]}
-                      onPress={() => submitBuy(o)} disabled={busy || !fill.ok}
-                      accessibilityRole="button" accessibilityState={{ disabled: busy || !fill.ok }}
+                      style={[s.btn, { backgroundColor: theme.colors.accent.emerald, opacity: busy || !fill.ok || fundsBad ? 0.5 : 1 }]}
+                      onPress={() => submitBuy(o)} disabled={busy || !fill.ok || fundsBad}
+                      accessibilityRole="button" accessibilityState={{ disabled: busy || !fill.ok || fundsBad }}
                       testID="p2p-buy-confirm"
                     >
                       <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
-                  <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald }]} onPress={() => {
+                  <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald, opacity: fundsBad ? 0.5 : 1 }]} onPress={() => {
                     setSelected(o); setBuyRecv('');
                     setChosenRail(o.wantRails?.[0] ?? o.wantRail);
                     const rem = o.remainingGive ?? o.giveAmount;
                     setBuyFill(rem);
                     const unit = Number(o.wantAmount) / Number(o.giveAmount);
                     setBuyFillFiat(unit > 0 ? String(Number((Number(rem) * unit).toFixed(8))) : '');
-                  }} testID={`p2p-buy-${i}`}>
+                  }} disabled={fundsBad} accessibilityRole="button" accessibilityState={{ disabled: fundsBad }} testID={`p2p-buy-${i}`}>
                     <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
                   </TouchableOpacity>
                 )}
