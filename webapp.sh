@@ -175,8 +175,20 @@ resolve_android_sdk() {
   die "Android SDK not found — set ANDROID_HOME"
 }
 
+# Every workspace package the app imports resolves to its compiled dist/
+# (gitignored), so build them before any export. A stale dist bakes an old
+# package into the bundle and a missing export only fails at runtime in the
+# browser (the v1.0.91 web build shipped `checkP2pFill is not a function`
+# because p2p-protocol/dist predated that export).
+build_workspace_packages() {
+  for pkg in bigtangle-ts chain-discovery did mobile-control p2p-protocol record-sig; do
+    ( cd "$ROOT/packages/$pkg" && npm run build >/dev/null 2>&1 ) || die "build $pkg failed"
+  done
+}
+
 build_web_export() {
   info "Exporting the wallet web build (expo export)…"
+  build_workspace_packages
   # --clear: EXPO_PUBLIC_APP_VERSION is inlined by the babel transform, but
   # Metro's cache key ignores env values, so without it the bundle keeps the
   # APP_VERSION baked the first time (Settings/About showed a stale version).
@@ -242,9 +254,7 @@ build_p2p_engine() {
   local bundle="$ROOT/services/p2p-engine/dist/server.bundle.mjs"
   if [ -f "$bundle" ] && [ "${P2P_REBUILD:-0}" != "1" ]; then return 0; fi
   info "Building the p2p engine bundle (P2P_REBUILD=1 forces this)…"
-  for pkg in bigtangle-ts chain-discovery did p2p-protocol record-sig; do
-    ( cd "$ROOT/packages/$pkg" && npm run build >/dev/null 2>&1 ) || die "build $pkg failed"
-  done
+  build_workspace_packages
   ( cd "$ROOT/services/p2p-engine" && npm run build >/dev/null 2>&1 && npm run bundle >/dev/null 2>&1 ) \
     || die "build/bundle p2p-engine failed"
 }

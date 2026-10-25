@@ -10,18 +10,23 @@
  * over the canonical body), mirroring the app's `signedBody`.
  *
  * Usage (stdout is one JSON object; `--out <file>` also writes it):
- *   node p2p-order-chain.mjs keygen
+ *   node p2p-order-chain.mjs keygen [--network testnet|mainnet]
  *   node p2p-order-chain.mjs fund --keys <hexSeed,hexSeed> [--units <bigint>]
- *   node p2p-order-chain.mjs anchor-order --key <hexSeed> --orderId ord-…
- *       [--status OPEN|CANCELLED] [--terms <json>]
- *   node p2p-order-chain.mjs sign --key <hexSeed> --fields <json>
+ *   node p2p-order-chain.mjs anchor-order [--key <hexSeed>] --orderId ord-…
+ *       [--status OPEN|CANCELLED] [--terms <json>] [--network testnet|mainnet]
+ *   node p2p-order-chain.mjs sign [--key <hexSeed>] --fields <json>
+ *
+ * The network defaults to testnet (the e2e infra). The production e2e passes
+ * `--network mainnet` so the anchor tx is built with MainNetParams. When a key
+ * is not passed on argv it is read from E2E_P2P_KEY (keeps a funded prod seed
+ * out of the process list).
  *
  * env: E2E_L1_SOCIAL_URL (default http://127.0.0.1:24091/)
  * Requires the workspace dist packages (build_p2p_engine builds them).
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
-import { PQKey, TestParams, Wallet, Address, Utils, NetworkParameters } from '../packages/bigtangle-ts/dist/index.js';
+import { PQKey, TestParams, MainNetParams, Wallet, Address, Utils, NetworkParameters } from '../packages/bigtangle-ts/dist/index.js';
 import { didFromPQKey, signChallengePQ } from '../packages/did/dist/pq.js';
 import { recordDigest } from '../packages/record-sig/dist/index.js';
 import { p2pOrderRecord } from '../packages/p2p-protocol/dist/index.js';
@@ -41,6 +46,13 @@ function arg(name, fallback) {
   return v;
 }
 
+/** Network params for the chain tx the helper builds (testnet by default). */
+function chainParams() {
+  return arg('network', process.env.E2E_P2P_NETWORK || 'testnet') === 'mainnet'
+    ? MainNetParams.get()
+    : TestParams.get();
+}
+
 function out(result) {
   const json = JSON.stringify(result);
   const file = arg('out');
@@ -51,6 +63,13 @@ function out(result) {
 function requireArg(name) {
   const v = arg(name);
   if (v === undefined) throw new Error(`missing --${name}`);
+  return v;
+}
+
+/** The signing seed: --key on argv, else E2E_P2P_KEY (prod keeps it off argv). */
+function requireKey() {
+  const v = arg('key', process.env.E2E_P2P_KEY);
+  if (!v) throw new Error('missing --key (or E2E_P2P_KEY)');
   return v;
 }
 
@@ -90,7 +109,7 @@ async function keygen() {
   return {
     key: seed,
     did: didFromPQKey(key),
-    address: Address.fromKey(TestParams.get(), key).toString(),
+    address: Address.fromKey(chainParams(), key).toString(),
   };
 }
 
@@ -133,7 +152,7 @@ async function fund() {
 }
 
 async function anchorOrder() {
-  const seed = requireArg('key');
+  const seed = requireKey();
   const orderId = requireArg('orderId');
   const status = arg('status', 'OPEN');
   const terms = JSON.parse(arg('terms', '{}'));
@@ -148,7 +167,7 @@ async function anchorOrder() {
     ts: Date.now(),
   });
   const signed = { ...record, sigScheme: 'mldsa', sig: signChallengePQ(pqKey, recordDigest(record)) };
-  const txid = await submitSocialRecord(SOCIAL_URL, pqKey, signed, TestParams.get());
+  const txid = await submitSocialRecord(SOCIAL_URL, pqKey, signed, chainParams());
   await waitConfirmed(txid);
   // The semantic fields POST /orders expects — record terms and intake body
   // are produced from one source so A (intake) and B (replay) cannot drift.
@@ -159,7 +178,7 @@ async function anchorOrder() {
 }
 
 async function sign() {
-  const pqKey = PQKey.fromPrivateKeyHex(requireArg('key'));
+  const pqKey = PQKey.fromPrivateKeyHex(requireKey());
   const fields = JSON.parse(requireArg('fields'));
   const did = didFromPQKey(pqKey);
   const payload = { ...fields, did, nonce: randomBytes(16).toString('hex'), timestamp: Date.now() };

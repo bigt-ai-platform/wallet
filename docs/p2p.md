@@ -1247,6 +1247,19 @@ geofencing — is an operator decision to make before shipping to users.
   with no errors, and intake-vs-replay order-set equality per status. The spec
   skips unless the part's env is present, so `all`/`remaining` greps stay green
   without L1-SOCIAL.
+- **Production conformance e2e** (`e2e/e2etest.sh p2p-prod` →
+  `e2e/playwright/tests/p2p-prod.spec.ts`): starts no local infra and targets
+  the deployed `../blockchain/helper/prod/prod*.sh` nodes (`E2E_PROD_L0_URL`,
+  `E2E_PROD_L1_SOCIAL_URL`, `E2E_PROD_L1_ORDER_URL`) plus the live engine
+  (`E2E_PROD_P2P_URL`). Read-only by default: chain head/block health, the
+  engine's fail-closed `/capabilities` (L0 + L1 + `orderTxVerify`) and watcher
+  cursor, the public book's filters/PII redaction/CONFIRMED anchor txids, and
+  an independent full L1-SOCIAL replay matched against the engine's anchored
+  orders. `E2E_PROD_P2P_WRITE=1` adds the legacy intake create/idempotent/cancel
+  round-trip and the fail-closed txid/auth paths (no chain tx, no funds);
+  `E2E_PROD_P2P_SEED=<funded seller seed>` adds the real seller-anchored
+  `social.p2p-order` open/cancel on prod L1-SOCIAL. Both writes are opt-in so
+  the normal suite never touches production data.
 - **Dispute e2e**: claim → dispute → arbitration resolve `refund` → escrow
   refund verified on-chain; and the mirror `release` case where the seller won't
   sign (engine + buyer force-release).

@@ -21,11 +21,11 @@ fail()  { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
 info()  { echo -e "${YELLOW}[INFO]${NC} $1"; }
 
 # Optional first arg selects which part(s) to run:
-#   payment | tracking | order | predict | predict-demo | token | blocks | p2p | p2p-ui | p2p-demo | p2p-orders | remaining | tests (all 4 greps) | demo | all (default)
+#   payment | tracking | order | predict | predict-demo | token | blocks | p2p | p2p-ui | p2p-demo | p2p-orders | p2p-prod | remaining | tests (all 4 greps) | demo | all (default)
 CMD="${1:-all}"
 case " $CMD " in
-  " all "|" payment "|" tracking "|" order "|" predict "|" predict-demo "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" p2p-orders "|" remaining "|" tests "|" demo ") ;;
-  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, predict-demo, token, blocks, p2p, p2p-ui, p2p-demo, p2p-orders, remaining, tests, demo";;
+  " all "|" payment "|" tracking "|" order "|" predict "|" predict-demo "|" token "|" blocks "|" p2p "|" p2p-ui "|" p2p-demo "|" p2p-orders "|" p2p-prod "|" remaining "|" tests "|" demo ") ;;
+  *) fail "Unknown part '$CMD'. Use one of: all, payment, tracking, order, predict, predict-demo, token, blocks, p2p, p2p-ui, p2p-demo, p2p-orders, p2p-prod, remaining, tests, demo";;
 esac
 
 # Independently verify the payment e2e test's result on-chain. The payment spec
@@ -341,6 +341,27 @@ start_p2p_engines_chain() {
   echo "$caps" | grep -q '"orderTxVerify":true' || fail "engine has no L1-SOCIAL verifyTx (capabilities: $caps)"
   log "P2P order-book engines (L1-SOCIAL, watch) ready."
 }
+
+# The production P2P conformance part runs against the DEPLOYED stack
+# (../blockchain helper/prod/prod*.sh chain nodes + the live settlement engine),
+# so it starts no local infra, web server or engine. The spec is read-only by
+# default; E2E_PROD_P2P_WRITE=1 adds the legacy intake/cancel smoke and
+# E2E_PROD_P2P_SEED=<funded seed> adds the seller-anchored chain path.
+if [[ "$CMD" == "p2p-prod" ]]; then
+  build_p2p_engine
+  info "Running P2P production e2e (deployed chain + engine)..."
+  cd "$E2E_DIR"
+  E2E_PROD_P2P=1 \
+  E2E_PROD_L0_URL="${E2E_PROD_L0_URL:-https://eu1.bigtangle.org}" \
+  E2E_PROD_L1_SOCIAL_URL="${E2E_PROD_L1_SOCIAL_URL:-https://socialeu1.bigtangle.org}" \
+  E2E_PROD_L1_ORDER_URL="${E2E_PROD_L1_ORDER_URL:-https://ordereu1.bigtangle.org}" \
+  E2E_PROD_P2P_URL="${E2E_PROD_P2P_URL:-https://eu.wallet.bigt.ai/p2p}" \
+  E2E_PROD_WALLET_URL="${E2E_PROD_WALLET_URL:-https://eu.wallet.bigt.ai}" \
+  APP_URL="${APP_URL:-${E2E_PROD_WALLET_URL:-https://eu.wallet.bigt.ai}/}" \
+    "$ROOT/node_modules/.bin/playwright" test --reporter=list p2p-prod.spec.ts 2>&1
+  log "P2P production e2e passed."
+  exit 0
+fi
 
 # The P2P UI flow (p2p-ui) is self-contained: it never touches L0/L1, so the
 # infra gate is skipped for it.

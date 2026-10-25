@@ -70,10 +70,13 @@ fi
 echo -e "${GREEN}--- network guard: pin mainnet defaults ---${NC}"
 assert_mainnet_default
 
-# The app imports the workspace packages below, whose runtime entry is their
-# compiled dist/ (gitignored, like bigtangle-ts). Build them here so the Metro
-# export below resolves them.
-for pkg in chain-discovery mobile-control; do
+# Every workspace package the app imports resolves to its compiled dist/
+# (gitignored). Build ALL of them on every release: a stale dist silently bakes
+# an old package into the bundle, and a missing export then only fails at
+# runtime in the browser (the v1.0.91 wallet shipped `checkP2pFill is not a
+# function` because p2p-protocol/dist predated the export while
+# p2pOrderBook.ts re-exported it). Order is dependency-first.
+for pkg in bigtangle-ts chain-discovery did mobile-control p2p-protocol record-sig; do
   echo -e "${GREEN}--- build $pkg ---${NC}"
   ( cd "packages/$pkg" && yarn build )
 done
