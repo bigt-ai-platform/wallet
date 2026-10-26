@@ -258,24 +258,18 @@ ${dom}, www.${dom} {
     # Same-origin chain APIs: the browser bundle calls the relative /l0/* and
     # /l1/* paths (an HTTPS page cannot call the plain-http MainNetParams
     # seeds, and the chain nodes have CORS disabled). The default /l0/, /l1/
-    # map to the primary node; the per-node paths (/l0/eu1|eu2|eu3|eu4|eu5,
-    # /l1/ordereu1|ordereu2|ordereu3|ordereu4|ordereu5) let the Chains page
-    # list every node. Keep in sync with PROD_WEB_L0_NODES / PROD_WEB_L1_NODES
-    # in app.ts and with the location blocks in nginx.conf.
+    # map to the primary node; the per-node paths (/l0/eu1|eu2|hk1,
+    # /l1/ordereu1|ordereu2|orderhk1) let the Chains page probe every node.
+    # Keep in sync with MAINNET_NODES in expo-app/sources/lib/chainstatus.ts
+    # and with the location blocks in nginx.conf.
     handle_path /l0/eu1/* {
         reverse_proxy ${L0_API}
     }
     handle_path /l0/eu2/* {
         reverse_proxy https://eu2.bigtangle.org
     }
-    handle_path /l0/eu3/* {
-        reverse_proxy https://eu3.bigtangle.org
-    }
-    handle_path /l0/eu4/* {
-        reverse_proxy https://eu4.bigtangle.org
-    }
-    handle_path /l0/eu5/* {
-        reverse_proxy https://eu5.bigtangle.org
+    handle_path /l0/hk1/* {
+        reverse_proxy https://hk1.bigtangle.org
     }
     handle_path /l0/* {
         reverse_proxy ${L0_API}
@@ -286,14 +280,8 @@ ${dom}, www.${dom} {
     handle_path /l1/ordereu2/* {
         reverse_proxy https://ordereu2.bigtangle.org
     }
-    handle_path /l1/ordereu3/* {
-        reverse_proxy https://ordereu3.bigtangle.org
-    }
-    handle_path /l1/ordereu4/* {
-        reverse_proxy https://ordereu4.bigtangle.org
-    }
-    handle_path /l1/ordereu5/* {
-        reverse_proxy https://ordereu5.bigtangle.org
+    handle_path /l1/orderhk1/* {
+        reverse_proxy https://orderhk1.bigtangle.org
     }
     handle_path /l1/* {
         reverse_proxy ${L1_API}
@@ -343,14 +331,8 @@ ${apex}, www.${apex} {
     handle_path /l0/eu2/* {
         reverse_proxy https://eu2.bigtangle.org
     }
-    handle_path /l0/eu3/* {
-        reverse_proxy https://eu3.bigtangle.org
-    }
-    handle_path /l0/eu4/* {
-        reverse_proxy https://eu4.bigtangle.org
-    }
-    handle_path /l0/eu5/* {
-        reverse_proxy https://eu5.bigtangle.org
+    handle_path /l0/hk1/* {
+        reverse_proxy https://hk1.bigtangle.org
     }
     handle_path /l0/* {
         reverse_proxy ${L0_API}
@@ -361,14 +343,8 @@ ${apex}, www.${apex} {
     handle_path /l1/ordereu2/* {
         reverse_proxy https://ordereu2.bigtangle.org
     }
-    handle_path /l1/ordereu3/* {
-        reverse_proxy https://ordereu3.bigtangle.org
-    }
-    handle_path /l1/ordereu4/* {
-        reverse_proxy https://ordereu4.bigtangle.org
-    }
-    handle_path /l1/ordereu5/* {
-        reverse_proxy https://ordereu5.bigtangle.org
+    handle_path /l1/orderhk1/* {
+        reverse_proxy https://orderhk1.bigtangle.org
     }
     handle_path /l1/* {
         reverse_proxy ${L1_API}

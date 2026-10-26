@@ -3,11 +3,14 @@
  * then latency, cache the ranking, and hand back an ordered list the request
  * layer can fail over through.
  *
- * Candidates bootstrap from the network's seed/entry-point list
- * (`constants/app.ts`). A user-pinned URL that is one of those candidates is
- * ordered first (custom URLs outside the set are used alone, so a different
- * network is never silently substituted). Ranking is refreshed in the
- * background when stale and a failing endpoint is demoted for the session.
+ * Candidates bootstrap from the compiled seeds (`constants/app.ts`) plus the
+ * live peer/seed registry (`POST /serverinfolist`, cached 1h); the web build
+ * maps those peers onto the same-origin `/l0/`,`/l1/` per-node proxies because
+ * a browser cannot call a node directly. A user-pinned URL that is one of
+ * those candidates is ordered first (custom URLs outside the set are used
+ * alone, so a different network is never silently substituted). Ranking is
+ * refreshed in the background when stale and a failing endpoint is demoted for
+ * the session.
  *
  * Health is defined the same way as the operator-side
  * `bigtai/check/checkchain.sh`: a node serves only with HTTP 200, no
@@ -59,7 +62,7 @@ import {
   type ProbeResult,
   type RankedEndpoint,
 } from 'chain-discovery';
-import { nodeNameForUrl } from '@/lib/chainstatus';
+import { nodeNameForUrl, proxyBaseForUrl } from '@/lib/chainstatus';
 
 export { isOnionUrl };
 
@@ -253,17 +256,29 @@ async function refreshDnsSeeds(role: Role): Promise<void> {
 export const REGISTRY_TTL_MS = 60 * 60 * 1000;
 
 /**
+ * Registry bases for a role. Native/mainnet uses the configured
+ * `bigtangle-seeds` registries; the web build asks a node over its same-origin
+ * proxy (`/l0/serverinfolist`), which returns that node's live peers — the
+ * browser cannot call a registry host directly (no CORS / mixed content).
+ */
+function registrySources(role: Role): string[] {
+  const web = IS_WEB_BROWSER && !IS_DEV;
+  return [...(web ? [role === 'l0' ? PROD_WEB_L0_BASE : PROD_WEB_L1_BASE] : []), ...SEEDS_URLS];
+}
+
+/**
  * Live node URLs for a role from the `bigtangle-seeds` registries
- * (`POST /serverinfolist`), so the compiled seeds are only a fallback. Requires
- * a TLS-reachable registry (see `SEEDS_URLS`).
+ * (`POST /serverinfolist`) and, on web, the same-origin peer list. Cached 1h,
+ * so the compiled seeds are only a fallback.
  */
 export async function fetchRegistrySeeds(role: Role): Promise<string[]> {
-  if (!SEEDS_URLS.length) return [];
-  return fetchRegistryNodes(SEEDS_URLS, registryChain(role));
+  const sources = registrySources(role);
+  if (!sources.length) return [];
+  return fetchRegistryNodes(sources, registryChain(role));
 }
 
 async function refreshRegistrySeeds(role: Role): Promise<void> {
-  if (!SEEDS_URLS.length) return;
+  if (!registrySources(role).length) return;
   if (!cacheStale(readRegistryCache(role), REGISTRY_TTL_MS, Date.now())) return;
   const urls = await fetchRegistrySeeds(role);
   if (urls.length > 0) {
@@ -272,32 +287,47 @@ async function refreshRegistrySeeds(role: Role): Promise<void> {
 }
 
 /**
+ * Registry peers as bases this client can actually call. The browser build can
+ * only reach a node through its same-origin proxy, so a raw `http://ip:port`
+ * peer is mapped back to `/l0/<name>/` (lib/chainstatus node table); a peer
+ * with no known node/proxy is dropped.
+ */
+function registryCandidates(role: Role): string[] {
+  const urls = readRegistryCache(role)?.urls ?? [];
+  if (!IS_WEB_BROWSER || IS_DEV) return urls;
+  return urls
+    .map((url) => proxyBaseForUrl(url, role))
+    .filter((url): url is string => url !== null);
+}
+
+/** Refresh the live peer list behind `networkCandidates` (1h cache). */
+export async function refreshLiveCandidates(): Promise<void> {
+  await Promise.all([refreshRegistrySeeds('l0'), refreshRegistrySeeds('l1')]).catch(() => {});
+}
+
+/**
  * Candidate endpoints for a role: static seeds, DNS-published seeds (native
- * mainnet), and peers this device reached before. Learned peers make a
- * subsequently blocked seed harmless — one prior connection is enough.
+ * mainnet), the live registry peers and peers this device reached before.
+ * Learned peers make a subsequently blocked seed harmless — one prior
+ * connection is enough. On web the registry peers arrive as proxy paths.
  */
 export function candidatesFor(role: Role): string[] {
   const base = staticCandidates(role);
   const learned = learnedPeers(role);
   const dns = dnsDiscoveryEnabled() ? readSeedCache(role)?.urls ?? [] : [];
-  // The registry also works on web when SEEDS_URLS is a same-origin path.
-  const registry = SEEDS_URLS.length ? readRegistryCache(role)?.urls ?? [] : [];
+  const registry = registryCandidates(role);
   return orderOnionLast(dedupe([...base, ...dns, ...registry, ...learned]));
 }
 
 /**
- * Candidate endpoints for the sidebar "Chains" page. On the web production
- * build this expands to every mainnet node via its same-origin proxy path
- * (each `handle_path` block in the deploy Caddy/nginx routes to one node), so
- * the page lists all available chains — not just the single default `/l0/`,
- * `/l1/` upstream that the request layer uses. All other platforms share the
- * ordinary candidate set.
+ * Candidate endpoints for the sidebar "Chains" page — the same set the request
+ * layer fails over through, so the page never shows a different (compiled)
+ * node list than the one requests use. On the web production build that is the
+ * per-node same-origin proxies plus every live registry peer mapped onto one,
+ * so a peer the build's seed list missed still appears (provided the browser
+ * has a proxy path for it — see lib/chainstatus MAINNET_NODES).
  */
 export function networkCandidates(role: Role): string[] {
-  if (IS_WEB_BROWSER && !IS_DEV) {
-    const nodes = role === 'l0' ? PROD_WEB_L0_NODES : PROD_WEB_L1_NODES;
-    return nodes.map((n) => n.url);
-  }
   return candidatesFor(role);
 }
 

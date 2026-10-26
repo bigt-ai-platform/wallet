@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { hostOf, normalizeUrl, shortHash, buildChainTargets, nodeNameForUrl } from '../chainstatus';
+import {
+  hostOf, normalizeUrl, shortHash, buildChainTargets, nodeNameForUrl, proxyBaseForUrl,
+} from '../chainstatus';
 
 describe('hostOf', () => {
   it('strips scheme, path and trailing slash', () => {
@@ -111,16 +113,39 @@ describe('buildChainTargets', () => {
 
 describe('nodeNameForUrl', () => {
   it('maps web proxy paths, bare primary and native hosts', () => {
-    expect(nodeNameForUrl('/l0/eu3/', 'l0')).toBe('eu3');
+    expect(nodeNameForUrl('/l0/eu2/', 'l0')).toBe('eu2');
     expect(nodeNameForUrl('/l1/ordereu2/', 'l1')).toBe('ordereu2');
     expect(nodeNameForUrl('/l0/', 'l0')).toBe('eu1');
     expect(nodeNameForUrl('/l1/', 'l1')).toBe('ordereu1');
-    expect(nodeNameForUrl('https://eu4.bigtangle.org', 'l0')).toBe('eu4');
-    expect(nodeNameForUrl('https://ordereu5.bigtangle.org', 'l1')).toBe('ordereu5');
+    expect(nodeNameForUrl('https://hk1.bigtangle.org', 'l0')).toBe('hk1');
+    expect(nodeNameForUrl('https://orderhk1.bigtangle.org', 'l1')).toBe('orderhk1');
   });
 
-  it('returns null for unknown or empty urls', () => {
+  it('maps the raw addresses a node publishes in the live registry', () => {
+    expect(nodeNameForUrl('http://85.215.91.140:8082', 'l0')).toBe('eu2');
+    expect(nodeNameForUrl('http://43.129.198.77:8082/', 'l0')).toBe('hk1');
+    expect(nodeNameForUrl('http://85.214.37.95:8082', 'l0')).toBe('eu1');
+    expect(nodeNameForUrl('https://ordereu2.bigtangle.org', 'l1')).toBe('ordereu2');
+  });
+
+  it('returns null for retired nodes, unknown hosts and empty urls', () => {
     expect(nodeNameForUrl('', 'l0')).toBeNull();
     expect(nodeNameForUrl('https://example.com', 'l0')).toBeNull();
+    expect(nodeNameForUrl('/l0/eu3/', 'l0')).toBeNull();
+  });
+});
+
+describe('proxyBaseForUrl', () => {
+  it('turns a live registry peer into a probeable same-origin base', () => {
+    expect(proxyBaseForUrl('http://43.129.198.77:8082', 'l0')).toBe('/l0/hk1/');
+    expect(proxyBaseForUrl('https://ordereu2.bigtangle.org', 'l1')).toBe('/l1/ordereu2/');
+  });
+
+  it('keeps a node that already is a proxy path on that path', () => {
+    expect(proxyBaseForUrl('/l0/eu2/', 'l0')).toBe('/l0/eu2/');
+  });
+
+  it('returns null for a peer the browser has no proxy for', () => {
+    expect(proxyBaseForUrl('http://203.0.113.9:8082', 'l0')).toBeNull();
   });
 });

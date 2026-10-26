@@ -47,29 +47,74 @@ export function shortHash(hash: string | null | undefined, size = 8): string {
   return `${h.slice(0, size)}…${h.slice(-size)}`;
 }
 
-/** Node names (eu1…eu5 / ordereu1…ordereu5) per role; social has no UI rows. */
+/**
+ * Mainnet node names per role and every address the same node answers on: its
+ * public DNS name and the raw address it publishes in the live peer/seed
+ * registry (`POST /serverinfolist`).
+ *
+ * This is the single node table: `constants/app.ts` derives the web per-node
+ * proxy paths from it, and discovery maps a registry peer (`http://ip:port`)
+ * back to `/l0/<name>/` through it, because a browser can only reach a node
+ * through that same-origin proxy. Keep the names in sync with the `/l0|/l1`
+ * proxy blocks in deploy/region.sh + deploy/nginx.conf — a name with no proxy
+ * block probes offline on web. Social has no Chains-page rows.
+ */
+const MAINNET_NODES: Record<'l0' | 'l1', Record<string, string[]>> = {
+  l0: {
+    eu1: ['eu1.bigtangle.org', '85.214.37.95'],
+    eu2: ['eu2.bigtangle.org', '85.215.91.140'],
+    hk1: ['hk1.bigtangle.org', '43.129.198.77'],
+  },
+  l1: {
+    ordereu1: ['ordereu1.bigtangle.org', '85.214.37.95'],
+    ordereu2: ['ordereu2.bigtangle.org', '85.215.91.140'],
+    orderhk1: ['orderhk1.bigtangle.org', '43.135.48.72'],
+  },
+};
+
+/** Node names (eu1, eu2, hk1 / ordereu1, ordereu2, orderhk1) per role. */
 export function nodeNames(role: ChainRole): string[] {
-  if (role === 'l0') return ['eu1', 'eu2', 'eu3', 'eu4', 'eu5'];
-  if (role === 'l1') return ['ordereu1', 'ordereu2', 'ordereu3', 'ordereu4', 'ordereu5'];
-  return [];
+  if (role !== 'l0' && role !== 'l1') return [];
+  return Object.keys(MAINNET_NODES[role]);
+}
+
+/** Same-origin proxy path for a node (`eu2` + `l0` → `/l0/eu2/`). */
+export function proxyBaseForNode(role: ChainRole, name: string): string {
+  return `/${role}/${name}/`;
 }
 
 /**
- * The node (eu1…eu5 / ordereu1…ordereu5) a base URL refers to, or null. Handles
- * the web per-node proxy paths (`/l0/eu2/`), the bare web primary (`/l0/` →
- * eu1), and native/mainnet hosts (`https://eu2.bigtangle.org` → eu2).
+ * The node a base URL refers to, or null. Handles the web per-node proxy paths
+ * (`/l0/eu2/`), the bare web primary (`/l0/` → eu1), native/mainnet hosts
+ * (`https://eu2.bigtangle.org` → eu2) and the raw registry addresses
+ * (`http://85.215.91.140:8082` → eu2).
  */
 export function nodeNameForUrl(url: string, role: ChainRole): string | null {
   const raw = (url ?? '').trim();
   if (!raw) return null;
   const nodes = nodeNames(role);
+  if (nodes.length === 0) return null;
   for (const n of nodes) if (raw.includes(`/${n}/`)) return n;
   const trimmed = raw.replace(/\/+$/, '');
   if (role === 'l0' && trimmed === '/l0') return 'eu1';
   if (role === 'l1' && trimmed === '/l1') return 'ordereu1';
-  const host = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').split('/')[0];
+  const host = hostOf(raw).split('/')[0].split(':')[0].toLowerCase();
   const label = host.split('.')[0];
-  return nodes.includes(label) ? label : null;
+  if (nodes.includes(label)) return label;
+  const entries = MAINNET_NODES[role as 'l0' | 'l1'];
+  for (const n of nodes) {
+    if (entries[n].some((h) => h.toLowerCase() === host)) return n;
+  }
+  return null;
+}
+
+/**
+ * The same-origin proxy base for any URL of a known node, or null when the
+ * browser has no way to reach it (see MAINNET_NODES).
+ */
+export function proxyBaseForUrl(url: string, role: ChainRole): string | null {
+  const name = nodeNameForUrl(url, role);
+  return name ? proxyBaseForNode(role, name) : null;
 }
 
 /**
@@ -78,7 +123,7 @@ export function nodeNameForUrl(url: string, role: ChainRole): string | null {
  * per role; an L1 URL matching a configured chain carries that chain's name
  * (empty names fall back to "L1"). L0 rows are named "L0" unless `l0Chains`
  * supplies names (the web build passes its per-node proxies so each row shows
- * eu1…eu5).
+ * its node name).
  */
 export function buildChainTargets(
   l0Candidates: string[],

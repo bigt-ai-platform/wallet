@@ -6,7 +6,9 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
-import { networkCandidates, endpointInfo, selectedNodeName } from '@/services/discovery';
+import {
+  networkCandidates, endpointInfo, selectedNodeName, refreshLiveCandidates,
+} from '@/services/discovery';
 import { buildChainTargets, hostOf, shortHash, nodeNameForUrl, type ChainTarget, type ChainRole } from '@/lib/chainstatus';
 import type { ChainProbe } from 'chain-discovery';
 import { IS_DEV, IS_WEB_BROWSER, PROD_WEB_L0_NODES, PROD_WEB_L1_NODES } from '@/constants/app';
@@ -14,9 +16,13 @@ import { IS_DEV, IS_WEB_BROWSER, PROD_WEB_L0_NODES, PROD_WEB_L1_NODES } from '@/
 /**
  * Chains page: every L0 candidate plus every configured L1 chain / L1 candidate,
  * each probed with the same `getChainNumber` health rule the request layer uses
- * (services/discovery.`endpointInfo`). Polls every 30s while open; tap a row to
- * reveal the full chain state (length, finalized length, epochs, head/finalized
- * block) plus the node's peer count / id, fetched on demand.
+ * (services/discovery.`endpointInfo`). The rows are the same candidates the
+ * request layer fails over through — compiled nodes plus the live peer list a
+ * node publishes (`/serverinfolist`, see services/discovery.`refreshLiveCandidates`)
+ * — so the page cannot show a node list older than the one requests use. Polls
+ * every 30s while open; tap a row to reveal the full chain state (length,
+ * finalized length, epochs, head/finalized block) plus the node's peer count /
+ * id, fetched on demand.
  */
 
 const POLL_MS = 30_000;
@@ -155,33 +161,54 @@ export default function NetworkScreen() {
     });
   }, []);
 
+  const lastKeys = React.useRef('');
+  const targetsRef = React.useRef<ChainTarget[]>([]);
+
+  // On the web production build each node is a distinct same-origin proxy
+  // path; label every row by node so "all available chains" is visible.
+  const rebuild = React.useCallback(() => {
+    const web = IS_WEB_BROWSER && !IS_DEV;
+    const l1Chains = web ? PROD_WEB_L1_NODES : httpService.getL1Chains();
+    const l0Chains = web ? PROD_WEB_L0_NODES : [];
+    const list = buildChainTargets(
+      networkCandidates('l0'),
+      l1Chains,
+      networkCandidates('l1'),
+      l0Chains,
+    );
+    targetsRef.current = list;
+    setTargets(list);
+    // Probe now only when the row set changed (the live peer refresh usually
+    // just confirms the compiled set); the 30s poll re-probes separately.
+    const keys = list.map((target) => target.key).join('|');
+    if (keys === lastKeys.current) return;
+    lastKeys.current = keys;
+    void check(list);
+  }, [check]);
+
   React.useEffect(() => {
     let cancelled = false;
-    const rebuild = () => {
-      // On the web production build each node is a distinct same-origin proxy
-      // path; label every row by node so "all available chains" is visible.
-      const web = IS_WEB_BROWSER && !IS_DEV;
-      const l1Chains = web ? PROD_WEB_L1_NODES : httpService.getL1Chains();
-      const l0Chains = web ? PROD_WEB_L0_NODES : [];
-      const list = buildChainTargets(
-        networkCandidates('l0'),
-        l1Chains,
-        networkCandidates('l1'),
-        l0Chains,
-      );
-      if (cancelled) return;
-      setTargets(list);
-      void check(list);
-    };
     rebuild();
+    // The compiled seeds alone go stale: refresh the node's live peer list (1h
+    // cache, no-op once fresh) so a peer the build's seed list missed still
+    // gets a row. The rows above render immediately, so a slow registry never
+    // blanks the page.
+    void refreshLiveCandidates().then(() => {
+      if (!cancelled) rebuild();
+    });
     const unsub = httpService.subscribeL1Change(rebuild);
-    const timer = setInterval(rebuild, POLL_MS);
+    const timer = setInterval(() => {
+      const before = lastKeys.current;
+      rebuild();
+      // Periodic health refresh; rebuild() already probed when rows changed.
+      if (!cancelled && lastKeys.current === before) void check(targetsRef.current);
+    }, POLL_MS);
     return () => {
       cancelled = true;
       unsub();
       clearInterval(timer);
     };
-  }, [check]);
+  }, [rebuild, check]);
 
   const loadPeers = React.useCallback(async (target: ChainTarget) => {
     setPeers((prev) => ({ ...prev, [target.key]: 'loading' }));

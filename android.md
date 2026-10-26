@@ -254,9 +254,18 @@ and they never block a clear-net request.
 
 DNS discovery is native-mainnet only: the browser build can only reach its
 same-origin `/l0/`,`/l1/` proxy (the chain nodes send no CORS), so remote seeds
-would be unusable there. To discover *more than the seeds*, the network itself
-must return its peer list (a public `/seeds`-style RPC); `/getPeers` exists but
-returns no public URLs today.
+would be unusable there. The web build asks that proxy for the live peer list
+instead — `POST /l0|/l1 → /serverinfolist` returns the peers the node knows —
+and maps each peer back to its per-node proxy path (`http://85.215.91.140:8082`
+→ `/l0/eu2/`) through `MAINNET_NODES` in
+`expo-app/sources/lib/chainstatus.ts`. A peer whose address is not in that table
+has no browser-reachable path, so it is skipped; when the network gains a node,
+add its name + addresses there and a `/l0|/l1` proxy block in
+`deploy/region.sh` + `deploy/nginx.conf`. The Chains page (`/network`) lists the
+union of the compiled nodes and those live peers, so a node the registry knows
+is listed even when a build's seed list missed it; a brand-new *address* still
+needs the table entry and proxy block above, because the browser cannot call it
+directly.
 
 ## P2P settlement engine
 
