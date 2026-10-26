@@ -112,6 +112,24 @@ reuse CNY. Pair ids are also seed-indexed (`0x06..` in list order);
 `ORDER_PAIR_TOKENS=Nvidia` alone gives Nvidia the first pair seed, while the
 full default list keeps its canonical id.
 
+### Price walk
+
+`e2e/prod-price-walk.sh` drives the same market through a configurable price
+sequence, one matched sell+buy per step, so the wallet's last price, 24h
+high/low, chart and recent trades actually move:
+
+```bash
+./e2e/prod-price-walk.sh
+ORDER_PRICE_WALK=205,210,215,220,215,210 PRICE_WALK_PAUSE_SEC=10 \
+  ./e2e/prod-price-walk.sh
+PRICE_WALK_ROUNDS=4 ./e2e/prod-price-walk.sh
+DRY_RUN=1 ./e2e/prod-price-walk.sh
+```
+
+Verified on prod: after the six-step walk Spot showed last **210**, 24h high
+**220**, 24h low **205**, volume **886**, and the recent-trades list populated.
+It is a write test (funding/orders; tokens minted only on the first step).
+
 For raw throughput of the same class, `../blockchain/helper/prod/prodorderloop.sh`
 accepts `ORDER_COUNT`, `AMOUNT_JITTER_PCT`, `PRICE_JITTER_PCT`, `LOOP_ITERS`,
 `PAUSE_SEC`, `MAX_FAILS`.
