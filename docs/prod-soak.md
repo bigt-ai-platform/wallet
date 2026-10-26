@@ -173,3 +173,9 @@ DRY_RUN=1 ./e2e/prod-bridge-smoke.sh
 `prod-soak.mjs` still includes the read-only L0 `getBridgeInfo` preflight as
 part of the `chain` target, so bridge health/vault availability is covered by
 the long-running soak without moving funds.
+
+The beneficiary is a fresh throwaway key by default (a mint-path smoke);
+`BRIDGE_BENEFICIARY_SEED` pins it to the shared test wallet (ML-DSA seed 0x01)
+so a `Remote*IT` on that chain has BIG for its fees. That is how the prediction
+chain is funded before a write soak — see
+[prediction-prod-soak.md](prediction-prod-soak.md).
