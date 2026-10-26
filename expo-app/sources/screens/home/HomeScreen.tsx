@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
-import { decimalsFor, shortTokenId } from '@/lib/tokenformat';
+import { decimalsFor, orderPriceShift, shortTokenId } from '@/lib/tokenformat';
 import {
   ChartIcon, MarketIcon, QrScanIcon, SearchIcon, SendIcon, SwapIcon,
 } from '@/components/Icons';
@@ -27,7 +27,7 @@ interface TickerRow {
 interface MarketRow {
   tokenid: string;
   name: string;
-  /** Last price in the base token (bc). */
+  /** Last price in the quote token (BC, USDT or CNY). */
   price: number;
   /** 24h change percent, or null when the market has no day-ago price. */
   changePct: number | null;
@@ -72,7 +72,8 @@ const fmtChange = (c: number | null): string =>
  * 24h change, 24h volume). Every row opens the Spot market. Unlike Binance it
  * quotes in the native token `bc` (BIG) rather than a fiat stablecoin, and the
  * 24h figures come from the L1 ticker's `lastdayprice`/`lastdayQuantity` — one
- * `getOrdersTicker` call, no per-token series.
+ * `getOrdersTicker` call per quote base (BC plus discovered USDT/CNY), no
+ * per-token series.
  */
 export default function HomeScreen() {
   const { t } = useTranslation();
@@ -87,29 +88,48 @@ export default function HomeScreen() {
 
   const load = React.useCallback(async () => {
     try {
-      const res = await httpService.getOrdersTicker([], 'bc');
-      if (!res.success || !res.data) return;
-      const data = res.data as {
-        tickers?: TickerRow[];
-        tokennames?: Record<string, { tokenname?: string; decimals?: number }>;
-      };
-      const names = data.tokennames || {};
-      // One row per market: keep the most recent match.
-      const latest = new Map<string, TickerRow>();
-      for (const tk of data.tickers || []) {
-        if (!tk.tokenid) continue;
-        const prev = latest.get(tk.tokenid);
-        if (!prev || Number(tk.inserttime) > Number(prev.inserttime)) latest.set(tk.tokenid, tk);
+      // Quote bases: BC plus the fixed USDT/CNY tokens when the L1 has them.
+      const bases: { id: string; name: string }[] = [{ id: 'bc', name: 'BC' }];
+      for (const symbol of ['USDT', 'CNY']) {
+        const res = await httpService.searchExchangeTokens(symbol);
+        const tk = res.success && res.data
+          ? res.data.find((t) => (t.tokenname || '').trim().toUpperCase() === symbol)
+          : undefined;
+        if (tk?.tokenid && !bases.some((b) => b.id === tk.tokenid)) {
+          bases.push({ id: tk.tokenid, name: symbol });
+        }
+      }
+      const names: Record<string, { tokenname?: string; decimals?: number }> = {};
+      // One row per traded token: keep the most recent match; the quote base
+      // determines the raw price scale (tokenDecimals + priceShift).
+      const latest = new Map<string, { tk: TickerRow; quote: { id: string; name: string } }>();
+      for (const base of bases) {
+        const res = await httpService.getOrdersTicker([], base.id);
+        if (!res.success || !res.data) continue;
+        const data = res.data as {
+          tickers?: TickerRow[];
+          tokennames?: Record<string, { tokenname?: string; decimals?: number }>;
+        };
+        Object.assign(names, data.tokennames || {});
+        for (const tk of data.tickers || []) {
+          if (!tk.tokenid) continue;
+          const prev = latest.get(tk.tokenid);
+          if (!prev || Number(tk.inserttime) > Number(prev.tk.inserttime)) {
+            latest.set(tk.tokenid, { tk, quote: base });
+          }
+        }
       }
       const rows: MarketRow[] = [];
-      for (const [tokenid, tk] of latest) {
+      for (const [tokenid, { tk, quote }] of latest) {
         const meta = names[tokenid];
         const dec = decimalsFor(tokenid, meta?.decimals);
-        const price = toHuman(tk.price, dec);
-        const dayPrice = toHuman(tk.lastdayprice, dec);
+        const scale = dec + orderPriceShift(quote.id);
+        const price = toHuman(tk.price, scale);
+        const dayPrice = toHuman(tk.lastdayprice, scale);
+        const tokenName = meta?.tokenname || (tokenid === 'bc' ? 'BIG' : shortTokenId(tokenid));
         rows.push({
           tokenid,
-          name: meta?.tokenname || (tokenid === 'bc' ? 'BIG' : shortTokenId(tokenid)),
+          name: quote.id === 'bc' ? tokenName : `${tokenName}/${quote.name}`,
           price,
           changePct: dayPrice > 0 && price > 0 ? ((price - dayPrice) / dayPrice) * 100 : null,
           volume: toHuman(tk.lastdayQuantity, dec),

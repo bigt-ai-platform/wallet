@@ -32,7 +32,7 @@ const PERCENTS = [25, 50, 75, 100] as const;
  * runtime (see the quote discovery effect). Binance-style pair labels keep
  * the traded token on the left and the quote on the right, e.g. BTC/CNY.
  */
-const QUOTE_SYMBOLS = ['CNY'] as const;
+const QUOTE_SYMBOLS = ['USDT', 'CNY'] as const;
 
 /** Indicator toggles shown in the chart's indicators dialog. */
 const INDICATOR_OPTS: { key: keyof ChartIndicators; label: string }[] = [
@@ -283,21 +283,23 @@ export default function TradeScreen() {
     } catch (e) { console.error('Error loading L1 balances:', e); }
   }, [isUnlocked, publicInfo?.address, getUnlockedWallet]);
 
-  // Preselect the default market on first open: Nvidia quoted in CNY when the
-  // chain has both, falling back to the old "yuan" market; the quote falls
-  // back to BC when the chain has no CNY token.
+  // Preselect the default market on first open: Nvidia quoted in USDT when the
+  // chain has it (the new prod order market), then CNY, then BC.
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         let defaultQuote = BC_QUOTE;
-        const qres = await httpService.searchExchangeTokens('CNY');
-        if (cancelled) return;
-        const cny = qres.success && qres.data
-          ? qres.data.find((tk) => (tk.tokenname || '').trim().toUpperCase() === 'CNY')
-          : undefined;
-        if (cny && cny.tokenid !== BC_QUOTE.tokenid) {
-          defaultQuote = { tokenid: cny.tokenid, tokenname: 'CNY', decimals: cny.decimals ?? 0 };
+        for (const symbol of QUOTE_SYMBOLS) {
+          const qres = await httpService.searchExchangeTokens(symbol);
+          if (cancelled) return;
+          const q = qres.success && qres.data
+            ? qres.data.find((tk) => (tk.tokenname || '').trim().toUpperCase() === symbol)
+            : undefined;
+          if (q && q.tokenid !== BC_QUOTE.tokenid) {
+            defaultQuote = { tokenid: q.tokenid, tokenname: symbol, decimals: q.decimals ?? 0 };
+            break;
+          }
         }
         const findToken = async (name: string, firstIfNoExact = false) => {
           const res = await httpService.searchExchangeTokens(name);
