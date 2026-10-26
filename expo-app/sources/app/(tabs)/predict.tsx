@@ -260,9 +260,23 @@ export default function PredictScreen() {
     }
   };
 
-  const openInTrade = () => {
+  /**
+   * Trade this market on its own order book: Spot scoped to the prediction
+   * chain, preselected to the first outcome against the market's collateral.
+   * The inline Buy/Sell buttons place MARKET orders; Spot is where limit
+   * orders (the prediction order book) live.
+   */
+  const openInTrade = (event: PredictionEvent) => {
     httpService.setActiveL1ChainId(PREDICTION_CHAIN_ID);
-    router.push('/trade' as never);
+    router.push({
+      pathname: '/trade',
+      params: {
+        chain: PREDICTION_CHAIN_ID,
+        tokenid: event.outcomes[0],
+        tokenname: outcomeLabel(event, 0),
+        quote: event.collateralTokenid,
+      },
+    } as never);
   };
 
   const resolvePrompt = (event: PredictionEvent, outcome: PredictionOutcome) => {
@@ -357,6 +371,8 @@ export default function PredictScreen() {
     const oracleBlocked = (action: 'resolve' | 'dispute' | 'vote', outcome: string) => blocked
       || !!predictionService.getOracleActionError(action, event, state, outcome, myContractAddress, nowSec);
     const deadline = state?.status === 'PENDING' ? state.disputeDeadlineSec : state?.status === 'VOTING' ? state.voteDeadlineSec : undefined;
+    // staked markets bond a proposal; committee markets only bond a challenge.
+    const oracleBond = event.oracle === 'staked' ? event.proposalBond : event.disputeBond;
     return (
       <View key={event.contractTokenid} style={s.card} testID={`predict-event-${event.contractTokenid.slice(0, 8)}`}>
         <TouchableOpacity onPress={() => setExpanded(isOpen ? null : event.contractTokenid)}>
@@ -389,12 +405,12 @@ export default function PredictScreen() {
 
         {isOpen && isUnlocked && (
           <View style={s.detail}>
-            <Text style={s.meta}>{t(`predictionWorkflow.${event.oracle}`)} · {t('predictionWorkflow.bond')}: {(event.oracle === 'staked' ? event.proposalBond : event.disputeBond).toString()}</Text>
+            <Text style={s.meta} testID="predict-oracle">{t(`predictionWorkflow.${event.oracle}`)}{oracleBond > 0n ? ` · ${t('predictionWorkflow.bond')}: ${oracleBond.toString()}` : ''}</Text>
             {state?.proposalOutcome ? <Text style={s.meta}>{t('predictionWorkflow.proposed')}: {labelFor(event, state.proposalOutcome)}</Text> : null}
             {state?.challengeOutcome ? <Text style={s.meta}>{t('predictionWorkflow.challenged')}: {labelFor(event, state.challengeOutcome)}</Text> : null}
             {unlocked?.keyType === 'EC' ? <Text style={s.errorText}>{t('predictionWorkflow.pqRequired')}</Text> : null}
             <View style={s.actionRow}>
-              <TouchableOpacity accessibilityRole="button" style={[s.actionBtn, (blocked || !available.trade) && s.disabled]} disabled={blocked || !available.trade} onPress={openInTrade} testID="predict-trade">
+              <TouchableOpacity accessibilityRole="button" style={[s.actionBtn, (blocked || !available.trade) && s.disabled]} disabled={blocked || !available.trade} onPress={() => openInTrade(event)} testID="predict-trade">
                 <Text style={s.actionText}>{t('predict.trade')}</Text>
               </TouchableOpacity>
               {pos && pos.redeemable > 0n && (

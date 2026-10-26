@@ -4,7 +4,7 @@ import {
   TextInput, Alert, RefreshControl, useWindowDimensions, Modal,
 } from 'react-native';
 import { useTranslation } from 'react-i18next';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import { useWallet } from '@/state/wallet';
@@ -87,6 +87,10 @@ type OrderKind = 'buy' | 'sell';
 export default function TradeScreen() {
   const { t } = useTranslation();
   const router = useRouter();
+  // Deep link from the Predict tab: `/trade?chain=prediction&tokenid=<outcome>
+  // &quote=<collateral>&tokenname=<label>` opens this market's order book
+  // instead of an empty generic Spot page.
+  const params = useLocalSearchParams<{ chain?: string; tokenid?: string; tokenname?: string; quote?: string }>();
   const { theme } = useUnistyles();
   const { isUnlocked, publicInfo, getUnlockedWallet } = useWallet();
   const confirmImportant = useTransactionConfirm();
@@ -200,6 +204,28 @@ export default function TradeScreen() {
     loadChart(next, interval, q);
     loadMarket(next, q);
   };
+
+  // Apply the Predict deep link once (and after the quote list resolves, so a
+  // non-BC collateral is picked up rather than falling back to BIG).
+  const presetRef = React.useRef(false);
+  React.useEffect(() => {
+    const tokenid = typeof params.tokenid === 'string' ? params.tokenid : '';
+    if (!tokenid || presetRef.current) return;
+    const wantedQuote = typeof params.quote === 'string' ? params.quote : '';
+    if (typeof params.chain === 'string' && params.chain) {
+      if (httpService.getActiveL1ChainId() !== params.chain) httpService.setActiveL1ChainId(params.chain);
+    }
+    if (wantedQuote && wantedQuote !== BC_QUOTE.tokenid) {
+      const q = quotes.find((x) => x.tokenid === wantedQuote);
+      if (!q) return; // quote list still loading
+      presetRef.current = true;
+      selectToken({ tokenid, tokenname: typeof params.tokenname === 'string' ? params.tokenname : undefined }, q);
+      return;
+    }
+    presetRef.current = true;
+    selectToken({ tokenid, tokenname: typeof params.tokenname === 'string' ? params.tokenname : undefined }, BC_QUOTE);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.tokenid, params.tokenname, params.quote, params.chain, quotes]);
 
   const loadChart = async (token: SelectedToken, intervalMinutes: number, q: QuoteToken = quote) => {
     try {
