@@ -154,12 +154,17 @@ export const DEFAULT_L1_MAINNET_URL = IS_WEB_BROWSER ? PROD_WEB_L1_BASE : PROD_L
 
 /**
  * Prediction-chain URL (l1-prediction-server, docs/prediction-market.md).
- * Dev uses remote.sh's L1P port (24088); production is not deployed yet, so
- * the native default falls back to the order-chain host and web to the
- * same-origin /l1/ proxy.
+ *
+ * The prediction chain is its OWN L1 node — never the L1-order node. The web
+ * build reaches it through a same-origin proxy (`/l1p/`, deployed by
+ * deploy/region.sh + deploy/nginx.conf because the nodes send no CORS); native
+ * builds use the public prediction entry point (the private relay has no
+ * prediction route). Dev keeps pointing at remote.sh's L1P port.
  */
+export const PROD_WEB_PREDICTION_BASE = '/l1p/';
+export const PROD_PREDICTION_URL = 'https://predicteu1.bigtangle.org/';
 export const DEV_PREDICTION_URL = 'http://127.0.0.1:24088/';
-export const DEFAULT_PREDICTION_URL = IS_WEB_BROWSER ? PROD_WEB_L1_BASE : PROD_L1_URL;
+export const DEFAULT_PREDICTION_URL = IS_WEB_BROWSER ? PROD_WEB_PREDICTION_BASE : PROD_PREDICTION_URL;
 
 /** Default L1 (order match) chains per network. Each has a unique on-chain id. */
 export const DEFAULT_L1_CHAINS_MAINNET = [

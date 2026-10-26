@@ -33,6 +33,7 @@ import {
 import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
 import { decimalsFor, formatTokenAmount } from '@/lib/tokenformat';
 import { collapseTokenEmissions } from '@/lib/tokenlist';
+import { resolvePredictionUrl } from '@/lib/predictionChain';
 import { withSlash } from 'chain-discovery';
 import { orderedBases, markDown, rememberPeer } from '@/services/discovery';
 import {
@@ -40,6 +41,7 @@ import {
   DEFAULT_L1_CHAINS_TESTNET,
   DEFAULT_L1_MAINNET_URL,
   DEFAULT_L1_TESTNET_URL,
+  DEFAULT_PREDICTION_URL,
   IS_DEV,
   IS_WEB_BROWSER,
   DEV_L0_URL,
@@ -296,9 +298,15 @@ export class HttpService {
 
   /**
    * Get all configured L1 chains. Older configs saved without a chainId are
-   * back-filled on read so every chain is keyable by its unique on-chain id,
-   * and configs still pinned to the legacy JSF host are migrated to the
-   * current mainnet default (/l1/ on web, the public order node on native).
+   * back-filled on read so every chain is keyable by its unique on-chain id;
+   * configs still pinned to the legacy JSF host are migrated to the current
+   * mainnet default (/l1/ on web, the public order node on native), and a
+   * `prediction` chain pointing at the ORDER base is moved to the prediction
+   * node (see lib/predictionChain).
+   *
+   * With nothing stored the network defaults are used, keeping a saved order
+   * URL for `ordermatch`: the old single-chain fallback dropped the
+   * `prediction` chain entirely, so the Predict page could never resolve it.
    */
   getL1Chains(): L1ChainConfig[] {
     const stored = device.get(STORAGE_KEYS.L1_CHAINS);
@@ -306,18 +314,30 @@ export class HttpService {
       try {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((c, i) => ({
-            chainId: typeof c?.chainId === 'string' && c.chainId ? c.chainId : (i === 0 ? 'ordermatch' : `chain-${i}`),
-            name: c?.name || '',
-            url: this.normalizeLegacyL1Url(c?.url || ''),
-          }));
+          return parsed.map((c, i) => {
+            const chainId = typeof c?.chainId === 'string' && c.chainId
+              ? c.chainId
+              : (i === 0 ? 'ordermatch' : `chain-${i}`);
+            const url = this.normalizeLegacyL1Url(c?.url || '');
+            return {
+              chainId,
+              name: c?.name || '',
+              url: chainId === 'prediction' ? resolvePredictionUrl(url, DEFAULT_PREDICTION_URL) : url,
+            };
+          });
         }
       } catch { /* fall through */ }
     }
     const savedUrl = device.get(STORAGE_KEYS.L1_URL);
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
     const singleUrl = this.normalizeLegacyL1Url(savedUrl || defaultL1Url(useTestnet));
-    return [{ chainId: 'ordermatch', name: 'Default', url: singleUrl }];
+    const defaults = useTestnet ? DEFAULT_L1_CHAINS_TESTNET : DEFAULT_L1_CHAINS_MAINNET;
+    return [
+      { chainId: 'ordermatch', name: 'Default', url: singleUrl },
+      ...defaults
+        .filter((c) => c.chainId !== 'ordermatch')
+        .map((c) => ({ chainId: c.chainId, name: c.name, url: c.url })),
+    ];
   }
 
   /**
