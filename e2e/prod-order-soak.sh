@@ -15,9 +15,9 @@
 #   - places one sell and one matching buy, then asserts both balances moved.
 #
 # WARNING: this writes to the target chain (token issuance, BC funding, orders).
-# The quote token id is fixed (seed 0x05); if that id already exists as CNY,
-# ORDER_TOKEN_NAME=USDT reuses it without renaming. Verify the first log line
-# says it minted USDT, or use a freshly reset L1-order chain.
+# The quote seed is 12 by default, so USDT is distinct from CNY at seed 5;
+# override ORDER_QUOTE_SEED=5 to reuse CNY. Pair ids are seed-indexed in list
+# order (Nvidia alone gets 0x06; the full default list keeps its canonical id).
 #
 # All RemoteOrderIT knobs pass through: ORDER_COUNT, ORDER_PRICE,
 # ORDER_STAGGER_MS, ORDER_BINANCE_LIVE, REQUIRE_BINANCE, ORDER_PRICE_NVIDIA,
