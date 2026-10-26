@@ -25,11 +25,13 @@ function totalSupply(tk: TokenItem): string | null {
   }
 }
 
+type ListedToken = TokenItem & { chain?: 'L0' | 'L1' };
+
 export default function TokensScreen() {
   const { t } = useTranslation();
   const { publicInfo, isUnlocked } = useWallet();
-  const [tokens, setTokens] = React.useState<TokenItem[]>([]);
-  const [filtered, setFiltered] = React.useState<TokenItem[]>([]);
+  const [tokens, setTokens] = React.useState<ListedToken[]>([]);
+  const [filtered, setFiltered] = React.useState<ListedToken[]>([]);
   const [search, setSearch] = React.useState('');
   const [loading, setLoading] = React.useState(true);
   const [activeTab, setActiveTab] = React.useState<'browse' | 'create'>('browse');
@@ -48,8 +50,24 @@ export default function TokensScreen() {
   const loadTokens = async () => {
     setLoading(true);
     try {
-      const res = await httpService.getTokensItemList();
-      if (res.success && res.data) { setTokens(res.data); setFiltered(res.data); }
+      // L0's token registry plus the L1 order-chain token list (Nvidia/USDT
+      // live on L1-order and are not in L0's searchTokens result). Dedupe by
+      // token id, preferring the L0 row when both chains have it.
+      const [l0, l1] = await Promise.all([
+        httpService.getTokensItemList().catch(() => null),
+        httpService.searchExchangeTokens('').catch(() => null),
+      ]);
+      const byId = new Map<string, ListedToken>();
+      const add = (tk: TokenItem, chain: 'L0' | 'L1') => {
+        const id = tk.tokenid || `${chain}:${tk.tokenname ?? ''}`;
+        if (!id || byId.has(id)) return;
+        byId.set(id, { ...tk, chain });
+      };
+      for (const tk of l0?.success && l0.data ? l0.data : []) add(tk, 'L0');
+      for (const tk of l1?.success && l1.data ? l1.data : []) add(tk, 'L1');
+      const list = [...byId.values()];
+      setTokens(list);
+      setFiltered(list);
     } catch (e) { console.error('Error loading tokens:', e); }
     finally { setLoading(false); }
   };
@@ -131,7 +149,12 @@ export default function TokensScreen() {
                   <View key={`${token.tokenid ?? ''}-${i}`} style={s.tokenCard} testID={`token-card-${i}`}>
                     <View style={s.tokenDot} />
                     <View style={s.tokenInfo}>
-                      <Text style={s.tokenName}>{token.tokenname || t('tokens.unknown')}</Text>
+                      <View style={s.tokenNameRow}>
+                        <Text style={s.tokenName}>{token.tokenname || t('tokens.unknown')}</Text>
+                        {token.chain ? (
+                          <Text style={s.chainBadge} testID={`token-chain-${i}`}>{token.chain}</Text>
+                        ) : null}
+                      </View>
                       <Text style={s.tokenId}>{token.tokenid ? token.tokenid.slice(0, 16) + '...' : ''}</Text>
                       {token.description ? <Text style={s.tokenDesc} numberOfLines={1}>{token.description}</Text> : null}
                     </View>
@@ -209,7 +232,9 @@ const s = StyleSheet.create((theme) => ({
   tokenCard: { backgroundColor: theme.colors.groupped.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 14, marginBottom: 8, flexDirection: 'row', alignItems: 'center' },
   tokenDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: theme.colors.accent.blue, marginRight: 12 },
   tokenInfo: { flex: 1 },
-  tokenName: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
+  tokenNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 2 },
+  tokenName: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary },
+  chainBadge: { fontSize: 9, fontWeight: '700', color: theme.colors.text.secondary, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 4, paddingHorizontal: 4, paddingVertical: 1 },
   tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: MONO_FONT, marginBottom: 2 },
   tokenDesc: { fontSize: 12, color: theme.colors.text.secondary },
   tokenAmount: { marginLeft: 8, fontSize: 13, fontWeight: '700', color: theme.colors.text.primary, fontFamily: MONO_FONT },
