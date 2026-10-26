@@ -112,6 +112,22 @@ reuse CNY. Pair ids are also seed-indexed (`0x06..` in list order);
 `ORDER_PAIR_TOKENS=Nvidia` alone gives Nvidia the first pair seed, while the
 full default list keeps its canonical id.
 
+### Resting maker book
+
+`e2e/prod-maker.sh` places a **resting** sell above and buy below the market
+and leaves both open (no counter-order), so Home/Spot have an actual order
+book:
+
+```bash
+./e2e/prod-maker.sh
+MAKER_PRICE=220 MAKER_SPREAD=4 MAKER_AMOUNT=25 ./e2e/prod-maker.sh
+DRY_RUN=1 ./e2e/prod-maker.sh
+```
+
+Verified on prod: the Nvidia/USDT book showed a SELL **220** and BUY **218**
+(10 each) around last **210**. It is a write test (funding/orders); running it
+again adds another pair of resting orders.
+
 ### Price walk
 
 `e2e/prod-price-walk.sh` drives the same market through a configurable price
