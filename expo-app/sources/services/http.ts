@@ -867,13 +867,7 @@ export class HttpService {
     if (index < 0 || index >= chains.length) {
       return { success: false, error: 'L1 chain not found' };
     }
-    return this.requestBases(
-      orderedBases('l1', chains[index].url),
-      'l1',
-      endpoint,
-      method,
-      body,
-    );
+    return this.requestL1OnChain(chains[index], endpoint, method, body);
   }
 
   /**
@@ -889,7 +883,28 @@ export class HttpService {
     if (!chain) {
       return { success: false, error: 'L1 chain not found' };
     }
-    return this.requestBases(orderedBases('l1', chain.url), 'l1', endpoint, method, body);
+    return this.requestL1OnChain(chain, endpoint, method, body);
+  }
+
+  /**
+   * Route one request to one configured chain. Only the ORDER chain joins the
+   * shared l1 failover pool (probe ranking, learned peers, demotion): every
+   * other chain is a DIFFERENT node on a different chain (prediction), so it is
+   * called directly. Otherwise its base would be learned into the order
+   * candidate set and — being a longer chain — rank first for order traffic,
+   * putting a failed round-trip in front of every trade.
+   */
+  private async requestL1OnChain<T>(
+    chain: L1ChainConfig,
+    endpoint: string,
+    method: 'GET' | 'POST' = 'POST',
+    body?: any,
+  ): Promise<ApiResponse<T>> {
+    if (!chain.url) return { success: false, error: 'L1 chain has no URL' };
+    if (chain.chainId === 'ordermatch') {
+      return this.requestBases(orderedBases('l1', chain.url), 'l1', endpoint, method, body);
+    }
+    return this.requestBase<T>(chain.url, endpoint, method, body);
   }
 
   /**
