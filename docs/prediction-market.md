@@ -55,6 +55,23 @@ to create, split, merge, match an order, resolve, and redeem, verifying confirme
 state and balances. Run `e2e/e2etest.sh predict` with isolated Java infrastructure
 and `E2E_PREDICTION_KEY`; UI fixtures alone do not establish live-chain success.
 
+**Endpoints.** The prediction chain is its own node (`predicteu1/2`,
+`predicthk1.bigtangle.org`), never the L1-order node: `DEFAULT_PREDICTION_URL`
+is the same-origin `/l1p/` proxy on the web build (deploy/region.sh +
+deploy/nginx.conf) and `https://predicteu1.bigtangle.org/` on native. A stored
+chain config that still points `prediction` at an order base (`/l1/`,
+`ordereuN`, the relay `/l1/`, the legacy JSF host) is migrated on read
+(`lib/predictionChain.ts`), and the prediction chain is kept out of the order
+chain's failover pool (`requestL1OnChain`). A fresh install gets both chains
+from `DEFAULT_L1_CHAINS_MAINNET`; before that the fallback returned only
+`ordermatch`, which made the Predict page report "markets are unavailable".
+
+**Long-run write soak.** `e2e/prod-prediction-soak.sh` drives
+`RemotePredictionIT` (create → split → merge, staked and multi-outcome markets)
+against the deployed chain and asserts the head advances and the markets are
+visible through `searchContractTokens` — see
+[prediction-prod-soak.md](prediction-prod-soak.md).
+
 *Original MVP scope (2026-10-10):* binary event markets ("Will X happen by date D?") with YES/NO outcome shares
 priced 0–1 (displayed 0–100¢), full collateral backing (1 winning share
 redeems for exactly 1 collateral unit), traded on the order books of a
