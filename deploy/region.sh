@@ -19,6 +19,7 @@
 #   ./deploy/region.sh health europa      # local container + public https
 #   ./deploy/region.sh logs europa        # recent container logs
 #   ./deploy/region.sh env europa         # resolved config for the region
+#   ./deploy/region.sh prune europa       # drop superseded wallet image tags
 #   ./deploy/region.sh destroy europa     # stop stack (remove Caddy vhost)
 set -uo pipefail
 
@@ -47,6 +48,9 @@ Actions:
   health   Container health + public https.
   logs     Recent container logs.
   env      Show the resolved config for the region.
+  prune    Remove superseded wallet-web / wallet-p2p-engine image tags on the
+           region (keeps the tag a running container uses; never touches other
+           tenants' images). Called by deploy.sh after each successful deploy.
   destroy  Stop the containers, remove the Caddy vhost (nothing to wipe — no data).
 EOF
   exit 1
@@ -485,6 +489,54 @@ EOF
   echo -e "${GREEN}=== $r destroyed ===${NC}"
 }
 
+# Remove superseded wallet image tags on one region, keeping the tag a running
+# container was started with. Every release pulls a new wallet-web tag and
+# compose never drops the old ones, so a VM's root fills after a dozen deploys
+# (us1001 carried v1.0.96…v1.0.101 next to the running v1.0.102 — 300+ MB, on a
+# host that was already at 83%). Runs after a successful deploy in deploy.sh and
+# is safe any time.
+#
+# Deliberately scoped: only the repos this train owns are considered, and
+# `docker image prune -a` is NEVER used — these VMs are shared with dai, minio,
+# router and postgres, whose images must survive a wallet deploy.
+prune_region() {
+  local r="$1"; require_region "$r"
+  echo -e "${GREEN}--- Prune old wallet images on $(vm_ip "$r") ---${NC}"
+  ssh_run "$r" "APP_IMAGE=${APP_IMAGE:-} P2P_IMAGE=${P2P_IMAGE:-} bash -s" <<'EOF'
+set -e
+# Repo of an image ref with any :tag stripped — a registry :port is kept
+# (ghcr.io:5000/x:v1 → ghcr.io:5000/x, ghcr.io/x/y:v1 → ghcr.io/x/y).
+repo_of() { local img="$1"; case "${img##*/}" in *:*) img="${img%:*}";; esac; echo "$img"; }
+repos=""
+add_repo() {
+  [ -n "$1" ] || return 0
+  case " $repos " in *" $1 "*) return 0;; esac
+  repos="$repos $1"
+}
+[ -n "${APP_IMAGE:-}" ] && add_repo "$(repo_of "$APP_IMAGE")"
+[ -n "${P2P_IMAGE:-}" ] && add_repo "$(repo_of "$P2P_IMAGE")"
+add_repo ghcr.io/bigt-ai-platform/wallet-web
+add_repo ghcr.io/bigt-ai-platform/wallet-p2p-engine
+add_repo ghcr.io/bigt-ai-platform/bapp-web
+removed=0
+for repo in $repos; do
+  # Whatever a running container was started with is kept: the container pins
+  # its image by ID, but the tag is what compose and a rollback reference.
+  running="$(docker ps --format '{{.Image}}' 2>/dev/null | grep -F "$repo:" | sort -u || true)"
+  for rt in $(docker images "$repo" --format '{{.Repository}}:{{.Tag}}' 2>/dev/null); do
+    echo "$running" | grep -qx "$rt" && continue
+    if docker rmi "$rt" >/dev/null 2>&1; then
+      echo "  removed $rt"; removed=$((removed + 1))
+    fi
+  done
+done
+# Untagged leftovers of the tags just replaced (dangling only — tagged images
+# of other tenants are never touched).
+docker image prune -f >/dev/null 2>&1 || true
+echo "  pruned $removed old wallet image tag(s)"
+EOF
+}
+
 main() {
   local ACTION="${1:-}"; shift || true
   local REGION="${1:-}"
@@ -497,6 +549,7 @@ main() {
     health)  [ -n "$REGION" ] && health_region "$REGION" || usage ;;
     logs)    [ -n "$REGION" ] && logs_region "$REGION" || usage ;;
     env)     [ -n "$REGION" ] && env_region "$REGION" || usage ;;
+    prune)   [ -n "$REGION" ] && prune_region "$REGION" || usage ;;
     destroy) [ -n "$REGION" ] && destroy_region "$REGION" || usage ;;
     *) usage ;;
   esac

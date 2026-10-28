@@ -15,6 +15,11 @@
 # DOCKER_PAT. To restrict the fleet:
 #   DEPLOY_REGIONS="europa asia" ./deploy/deploy.sh
 #
+# After a region deploys green, its superseded wallet-web / wallet-p2p-engine
+# image tags are pruned (region.sh prune) — only the tag the running container
+# uses is kept, and only the wallet repos are touched (these VMs are shared with
+# dai/minio/router). Unused-image accumulation otherwise fills a VM's root.
+#
 # The release train is MAINNET only: deploy.sh (and tag.sh) run
 # deploy/network.sh's assert_mainnet_default before tagging/building and abort
 # if the checked-in source no longer pins the mainnet defaults.
@@ -153,6 +158,9 @@ done
 if [ -f "$SCRIPT_DIR/env/.env.p2p.$P2P_REGION" ]; then
   echo -e "\n${GREEN}=== p2p engine → $P2P_REGION (shared by all regions) ===${NC}"
   P2P_IMAGE="$P2P_TAGGED" ./deploy/region.sh p2p "$P2P_REGION"
+  # Reclaim disk once the engine is healthy: superseded wallet-p2p-engine tags
+  # otherwise accumulate on this one shared node release after release.
+  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ./deploy/region.sh prune "$P2P_REGION" || true
 else
   echo -e "${YELLOW}skip shared p2p engine ($P2P_REGION): $SCRIPT_DIR/env/.env.p2p.$P2P_REGION missing (create it, then ./deploy/region.sh p2p $P2P_REGION)${NC}"
 fi
@@ -162,6 +170,11 @@ for r in "${ordered[@]}"; do
   # region.sh resolves the per-user working dir (/srv/wallet for root,
   # /home/<user>/wallet for ubuntu) from REMOTE_REPO being empty.
   APP_IMAGE="$TAGGED" ./deploy/region.sh deploy "$r"
+  # Deploy only once the region is green (deploy_region exits non-zero on a
+  # failed health check), then drop the superseded wallet-web tags it left
+  # behind — keeping the tag the new container runs. Scoped to the wallet repos:
+  # these VMs are shared with dai/minio/router, so no fleet-wide image prune.
+  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ./deploy/region.sh prune "$r" || true
 done
 
 echo -e "\n${GREEN}=== release v${VERSION} deployed to ${ordered[*]} ===${NC}"

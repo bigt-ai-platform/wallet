@@ -42,8 +42,8 @@ Cloudflare (DNS-only A → region VM)
 | `Dockerfile.app` | Runtime image: packages the host-built `web-build/` export under nginx; **no compile in-image** |
 | `nginx.conf` | SPA fallback (`index.html`) + hard caching of hashed Metro assets |
 | `tag.sh` | HOST build: `expo export` → docker image → registry push **or** docker-save tar (no registry needed) |
-| `deploy.sh` | Release train (analog `../dai/deploy/deploy.sh`): bump patch tag → `tag.sh` build+push `:vX.Y.Z` + `:latest` → `region.sh deploy` every region pinned to `:vX.Y.Z` |
-| `region.sh` | Provision one region VM: load image → sync repo → `compose up` → Caddy; status/health/logs/env/destroy |
+| `deploy.sh` | Release train (analog `../dai/deploy/deploy.sh`): bump patch tag → `tag.sh` build+push `:vX.Y.Z` + `:latest` → `region.sh deploy` every region pinned to `:vX.Y.Z` → `region.sh prune` (drop superseded wallet image tags) |
+| `region.sh` | Provision one region VM: load image → sync repo → `compose up` → Caddy; status/health/logs/env/**prune**/destroy |
 | `region.conf` | Region map: domain, VM IP, SSH user/key, `WEB_PORT`, `APP_IMAGE`, apex (edit before deploying) |
 | `network.sh` | Mainnet guard (`assert_mainnet_default`): fails the release if the source no longer pins mainnet defaults (sourced by `tag.sh`/`deploy.sh`) |
 
@@ -106,8 +106,15 @@ fleet, `oraclevpc.key`).
 ./deploy/region.sh health europa   # container http + public https
 ./deploy/region.sh logs europa     # recent container logs
 ./deploy/region.sh env europa      # resolved config (domain/vm/image)
+./deploy/region.sh prune europa    # drop superseded wallet image tags (keeps the running one)
 ./deploy/region.sh destroy europa  # stop container + remove Caddy vhost
 ```
+
+`deploy.sh` runs `prune` after each region goes green, so superseded
+`wallet-web` / `wallet-p2p-engine` tags never pile up (a dozen releases filled
+`us1001`'s root). Pruning is scoped to the wallet repos and always keeps the tag
+a running container uses — other tenants' images on these shared VMs are never
+touched.
 
 `deploy` is idempotent: it loads the image (registry pull, or `docker load` of
 `deploy/.image/wallet-web.latest.tar`), syncs the compose file, starts the
