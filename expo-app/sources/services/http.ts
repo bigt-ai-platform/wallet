@@ -637,6 +637,27 @@ export class HttpService {
   }
 
   /**
+   * Every open (unspent) output of one token (`outputsOfTokenid`). The server
+   * has no rich-list query, so the public balance page sums these per address
+   * itself (Java `WalletService.searchTotalNoSave`). `bc` is the base token.
+   */
+  async getOpenOutputsOfToken(tokenid: string, baseUrl?: string): Promise<ApiResponse<UTXO[]>> {
+    const response = await this.request<GetOutputsResponse>(
+      ReqCmd.OutputsOfTokenid,
+      'POST',
+      { tokenid },
+      baseUrl
+    );
+    if (response.success && response.data) {
+      return { success: true, data: response.data.outputs || [] };
+    }
+    return {
+      success: false,
+      error: response.error || 'Failed to get token outputs',
+    } as ApiResponse<UTXO[]>;
+  }
+
+  /**
    * Get the chain's justified/finalized Casper checkpoints (finalizedChainLength
    * is used to mark UTXOs as finalized on the balance screen).
    */

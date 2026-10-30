@@ -12,6 +12,7 @@ export enum ReqCmd {
   GetBalances = 'getBalances',
   GetOutputs = 'getOutputs',
   GetOutputsHistory = 'getOutputsHistory',
+  OutputsOfTokenid = 'outputsOfTokenid',
   GetOutputDetail = 'getOutputDetail',
   GetUserData = 'getUserData',
   GetTokensItemList = 'getTokensItemList',

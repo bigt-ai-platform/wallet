@@ -25,6 +25,7 @@ import {
   loadWallet,
   parseOldWalletFile,
   saveKeyToFile,
+  serializeWalletFile,
   base64ToBytes,
   type WalletFile,
 } from "./WalletHelper";
@@ -90,6 +91,9 @@ export default function KeysScreen() {
   const [oldWalletStep, setOldWalletStep] = useState<OldWalletStep>("idle");
   const [oldWalletBytes, setOldWalletBytes] = useState<Uint8Array | null>(null);
   const [oldWalletPassword, setOldWalletPassword] = useState("");
+  // The saved wallet has no password (plain JSON) — the done state must not
+  // claim it was encrypted.
+  const [savedPlain, setSavedPlain] = useState(false);
 
   // Create a new wallet
   const handleCreateWallet = useCallback(async () => {
@@ -266,6 +270,7 @@ export default function KeysScreen() {
     setOldWalletPassword("");
     setUnlockPassword("");
     setIsUnlocking(false);
+    setSavedPlain(false);
   }, []);
 
   // Unlock existing wallet
@@ -372,6 +377,7 @@ export default function KeysScreen() {
         loadFilePassword,
       );
 
+      setSavedPlain(!needsPassword);
       setWalletAddress(wallet.wallet.address);
       setLoadFileStep("done");
       Alert.alert(t("keys.successHead"), t("keys.loadSuccess"));
@@ -473,14 +479,31 @@ export default function KeysScreen() {
         if (meta.encrypted) {
           setOldWalletPassword("");
           setOldWalletStep("enterOldPassword");
-        } else {
-          const walletFile = await importOldWalletFile(bytes);
-          setImportedWallet(walletFile);
-          setWalletAddress(walletFile.wallet.address);
-          setPassword("");
-          setConfirmPassword("");
-          setOldWalletStep("enterNewPassword");
+          return;
         }
+        // Unencrypted legacy wallet: no password is needed, so import it right
+        // away. It is stored as a plain wallet JSON, which the app treats as
+        // already unlocked (same as a plain wallet file load).
+        const walletFile = await importOldWalletFile(bytes);
+        setIsLoading(true);
+        try {
+          await storeEncryptedWallet(
+            serializeWalletFile(walletFile),
+            walletFile.wallet.address,
+          );
+        } catch (error) {
+          console.error("Error saving old wallet:", error);
+          const msg = (error as Error).message;
+          setErrorMessage(t("keys.errSave", { message: msg }));
+          Alert.alert(t("keys.errorHead"), t("keys.errSave", { message: msg }));
+          return;
+        } finally {
+          setIsLoading(false);
+        }
+        setWalletAddress(walletFile.wallet.address);
+        setSavedPlain(true);
+        setOldWalletStep("done");
+        Alert.alert(t("keys.successHead"), t("keys.oldImported"));
       } catch (error) {
         console.error("Error parsing old wallet:", error);
         const msg = (error as Error).message;
@@ -522,7 +545,7 @@ export default function KeysScreen() {
       setErrorMessage(t("keys.failLoadFile", { message: msg }));
       Alert.alert(t("keys.errorHead"), t("keys.failLoadFile", { message: msg }));
     }
-  }, [t]);
+  }, [t, storeEncryptedWallet]);
 
   // Decrypt an encrypted old .wallet file with its original password
   const handleDecryptOldWallet = useCallback(async () => {
@@ -595,6 +618,35 @@ export default function KeysScreen() {
       setIsLoading(false);
     }
   }, [importedWallet, password, confirmPassword, storeEncryptedWallet, t]);
+
+  // Store an imported old wallet WITHOUT a password (plain wallet JSON). Used
+  // after decrypting an encrypted legacy file when no new password is wanted.
+  const handleSaveOldWalletWithoutPassword = useCallback(async () => {
+    if (!importedWallet) return;
+
+    setIsLoading(true);
+    setErrorMessage("");
+    setOldWalletStep("saving");
+
+    try {
+      await storeEncryptedWallet(
+        serializeWalletFile(importedWallet),
+        importedWallet.wallet.address,
+      );
+
+      setSavedPlain(true);
+      setOldWalletStep("done");
+      Alert.alert(t("keys.successHead"), t("keys.oldImported"));
+    } catch (error) {
+      console.error("Error saving old wallet:", error);
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.errSave", { message: msg }));
+      setOldWalletStep("enterNewPassword");
+      Alert.alert(t("keys.errorHead"), t("keys.errSave", { message: msg }));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [importedWallet, storeEncryptedWallet, t]);
 
   // Render functions
   const renderIdleState = () => (
@@ -804,7 +856,7 @@ export default function KeysScreen() {
       </View>
 
       <Text style={styles.description}>
-        {t("keys.savedSub")}
+        {savedPlain ? t("keys.savedPlainSub") : t("keys.savedSub")}
       </Text>
 
       <TouchableOpacity
@@ -1034,6 +1086,10 @@ export default function KeysScreen() {
         {t("keys.passwordNote")}
       </Text>
 
+      <Text style={styles.description}>
+        {t("keys.passwordOptional")}
+      </Text>
+
       <View style={styles.inputGroup}>
         <Text style={styles.inputLabel}>{t("keys.password")}</Text>
         <TextInput
@@ -1080,6 +1136,17 @@ export default function KeysScreen() {
           <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.cancel")}</Text>
         </TouchableOpacity>
       </View>
+
+      <TouchableOpacity
+        style={[styles.button, styles.buttonOutline]}
+        onPress={handleSaveOldWalletWithoutPassword}
+        disabled={isLoading}
+        testID="old-wallet-save-without-password"
+      >
+        <Text style={[styles.buttonText, styles.buttonOutlineText]}>
+          {t("keys.saveWithoutPassword")}
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 
@@ -1263,6 +1330,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   buttonFlex: {
     flex: 1,
+  },
+  buttonOutline: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+  },
+  buttonOutlineText: {
+    color: theme.colors.primary,
   },
   loadingContainer: {
     padding: theme.margins.xl,

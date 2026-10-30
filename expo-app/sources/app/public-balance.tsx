@@ -8,6 +8,8 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
 import { toBigInt, formatValue } from '@/lib/amountformat';
+import { decimalsFor } from '@/lib/tokenformat';
+import { sumByAddress, TOP_HOLDERS_LIMIT, type HolderTotal } from '@/lib/topHolders';
 import { MONO_FONT } from '@/constants/fonts';
 import type { UTXO } from '@/types/api';
 
@@ -17,7 +19,14 @@ import type { UTXO } from '@/types/api';
  * unlocked wallet. Supports the direction filter (received vs sent), a
  * history toggle (include spent outputs), an aggregated per-token view and a
  * per-UTXO list with on-demand block detail ("…" button).
+ *
+ * With no address entered the page lists the chain's 50 largest holder
+ * addresses instead (`outputsOfTokenid` summed per address — the Java
+ * `WalletService.searchTotalNoSave` rich list).
  */
+
+/** Base token ("bc" = BIG) — the rich list ranks its holders. */
+const BASE_TOKEN_ID = 'bc';
 
 interface HistoryUtxo extends UTXO {
   /** Sending address of the transaction that created this output. */
@@ -47,6 +56,9 @@ export default function PublicBalanceScreen() {
   const [fromDate, setFromDate] = React.useState('');
   const [toDate, setToDate] = React.useState('');
   const [utxos, setUtxos] = React.useState<HistoryUtxo[]>([]);
+  // Rich list of the base token when no address is entered (null = address mode).
+  const [top, setTop] = React.useState<HolderTotal[] | null>(null);
+  const [topTokenName, setTopTokenName] = React.useState('BIG');
   const [tokenDecimals, setTokenDecimals] = React.useState<Record<string, number>>({});
   const [loading, setLoading] = React.useState(false);
   const [searched, setSearched] = React.useState(false);
@@ -61,12 +73,26 @@ export default function PublicBalanceScreen() {
     return Number.isNaN(ms) ? null : Math.floor(ms / 1000);
   };
 
-  const load = async () => {
-    const addr = address.trim();
-    if (!addr) {
-      setError(t('publicBalance.errAddress'));
+  /**
+   * Rich list: every open output of the base token, summed per address and cut
+   * to the 50 largest (no server query exists for it).
+   */
+  const loadTop = async () => {
+    const res = await httpService.getOpenOutputsOfToken(BASE_TOKEN_ID);
+    if (!res.success) {
+      setTop([]);
+      setUtxos([]);
+      setError(res.error || t('publicBalance.topEmpty'));
+      setSearched(true);
       return;
     }
+    setTop(sumByAddress(res.data ?? [], TOP_HOLDERS_LIMIT));
+    setUtxos([]);
+    setSearched(true);
+  };
+
+  const load = async (overrideAddress?: string) => {
+    const addr = (overrideAddress ?? address).trim();
     setError('');
     setLoading(true);
     setExpandedKey(null);
@@ -80,6 +106,15 @@ export default function PublicBalanceScreen() {
         if (tok && tok.tokenid && tok.decimals != null) map[tok.tokenid] = Number(tok.decimals);
       });
       setTokenDecimals(map);
+      const base = (tokens?.data ?? []).find((tok: any) => tok?.tokenid === BASE_TOKEN_ID);
+      setTopTokenName(base?.tokenname || 'BIG');
+
+      // No address: show the 50 largest holder addresses of the base token.
+      if (!addr) {
+        await loadTop();
+        return;
+      }
+      setTop(null);
 
       const fromTime = parseDate(fromDate);
       const toTime = parseDate(toDate);
@@ -153,8 +188,20 @@ export default function PublicBalanceScreen() {
   // Java formats balances with the token's own metadata decimals; the base
   // token "bc" uses NetworkParameters.BIGTANGLE_DECIMAL, other tokens
   // default to 0 (Java Token default).
-  const decimalsOf = (tokenId: string): number =>
-    tokenDecimals[tokenId] ?? (tokenId === 'bc' ? 6 : 0);
+  const decimalsOf = (tokenId: string): number => decimalsFor(tokenId, tokenDecimals[tokenId]);
+
+  // Visiting the page without an address lists the 50 largest holder addresses
+  // of the base token instead of asking for one.
+  React.useEffect(() => {
+    load('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Tap a rich-list row: prefill the address and open its balance history.
+  const openAddress = (addr: string) => {
+    setAddress(addr);
+    void load(addr);
+  };
 
   const agg = React.useMemo(() => {
     const map = new Map<string, Aggregated>();
@@ -192,6 +239,7 @@ export default function PublicBalanceScreen() {
           multiline
           testID="public-balance-address"
         />
+        {address.trim() ? null : <Text style={s.hintText}>{t('publicBalance.topHint')}</Text>}
         <Text style={s.cardLabel}>{t('balance.dateRange')}</Text>
         <View style={s.dateRow}>
           <TextInput style={s.dateInput} value={fromDate} onChangeText={setFromDate}
@@ -227,11 +275,11 @@ export default function PublicBalanceScreen() {
           >
             <Text style={[s.toggleText, aggregate && s.toggleTextOn]}>{aggregate ? t('balance.aggregated') : t('balance.listUtxos')}</Text>
           </TouchableOpacity>
-          <TouchableOpacity onPress={load} style={s.refreshBtn} disabled={loading} testID="public-balance-apply">
+          <TouchableOpacity onPress={() => load()} style={s.refreshBtn} disabled={loading} testID="public-balance-apply">
             <Text style={s.refreshText}>{loading ? '...' : t('balance.applyRefresh')}</Text>
           </TouchableOpacity>
         </View>
-        {searched && !loading ? (
+        {searched && !loading && !top ? (
           <Text style={s.countText}>{t('balance.count', { count: totalCount })}</Text>
         ) : null}
         {error ? <Text style={s.errorText}>{error}</Text> : null}
@@ -240,6 +288,35 @@ export default function PublicBalanceScreen() {
       <ScrollView contentContainerStyle={s.content}>
         {loading ? (
           <ActivityIndicator size="large" color={s.loader.color} style={{ padding: 32 }} />
+        ) : top ? (
+          top.length === 0 ? (
+            <Text style={s.emptyText}>{t('publicBalance.topEmpty')}</Text>
+          ) : (
+            <View testID="public-balance-top-list">
+              <Text style={s.listTitle}>
+                {t('publicBalance.topHolders', { limit: TOP_HOLDERS_LIMIT, token: topTokenName })}
+              </Text>
+              {top.map((h, i) => (
+                <TouchableOpacity
+                  key={h.address}
+                  style={s.card}
+                  onPress={() => openAddress(h.address)}
+                  accessibilityRole="button"
+                  accessibilityLabel={t('publicBalance.viewAddress', { address: h.address })}
+                  testID={`public-balance-top-${i + 1}`}
+                >
+                  <View style={s.cardHeader}>
+                    <Text style={s.tokenName}>#{i + 1}</Text>
+                    <Text style={s.tokenValue}>
+                      {formatValue(h.total, decimalsOf(BASE_TOKEN_ID), locale)}
+                    </Text>
+                  </View>
+                  <Text style={s.tokenId}>{h.address}</Text>
+                  <Text style={s.tokenMeta}>{t('balance.metaUtxosNoLayer', { count: h.count })}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )
         ) : aggregate ? (
           agg.length === 0 ? (
             searched ? <Text style={s.emptyText}>{t('balance.empty')}</Text> : null
@@ -335,6 +412,8 @@ const s = StyleSheet.create((theme) => ({
   refreshBtn: { borderWidth: 1, borderColor: theme.colors.primary, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   refreshText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.link },
   countText: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 4 },
+  hintText: { fontSize: 12, color: theme.colors.text.secondary, marginTop: -4, marginBottom: 10 },
+  listTitle: { fontSize: 14, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 8 },
   errorText: { fontSize: 12, color: '#E5484D', marginTop: 4 },
   content: { padding: 16, paddingTop: 8 },
   loader: { color: theme.colors.primary },

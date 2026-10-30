@@ -6,6 +6,7 @@
 import i18n from '../../lib/i18n';
 import { IS_DEV } from '../../constants/app';
 import { httpService } from '../../services/http';
+import { serializePlainWallet } from '../../lib/plainWallet';
 
 import { PQKey, Utils, ECKey, Address, MainNetParams, TestParams } from 'bigtangle-ts';
 // @ts-ignore - These are not exported in index but exist in dist
@@ -94,24 +95,29 @@ export async function createWallet(): Promise<WalletFile> {
   return { wallet };
 }
 
+/**
+ * Serialize a wallet as an UNENCRYPTED wallet JSON (`SerializedWallet`).
+ * `storeEncryptedWallet` stores it as-is and the app treats it as already
+ * unlocked, so an import can finish without asking for a password.
+ */
+export function serializeWalletFile(walletFile: WalletFile): string {
+  return serializePlainWallet(
+    {
+      address: walletFile.wallet.address,
+      pubkey: walletFile.wallet.pubkey,
+      privateKey: walletFile.wallet.privateKey,
+      keyType: walletFile.wallet.keyType ?? 'PQ',
+      network: walletFile.wallet.network,
+    },
+    walletFile.credentials,
+  );
+}
+
 export async function saveKeyToFile(
   walletFile: WalletFile,
   _password: string,
 ): Promise<string> {
-  const keyEntry: SerializedWallet['keys'][number] = {
-    address: walletFile.wallet.address,
-    pubkey: walletFile.wallet.pubkey,
-    privateKey: walletFile.wallet.privateKey,
-    keyType: walletFile.wallet.keyType ?? 'PQ',
-    network: walletFile.wallet.network,
-  };
-  const serialized: SerializedWallet = { keys: [keyEntry] };
-  // wallets created without credentials (new format) keep the file credential-free
-  if (walletFile.credentials) {
-    serialized.credentials = walletFile.credentials;
-  }
-
-  const raw = JSON.stringify(serialized, null, 2);
+  const raw = serializeWalletFile(walletFile);
 
   // Convert string to Uint8Array for encryption
   const encoder = new TextEncoder();
