@@ -129,6 +129,11 @@ function netTag(): string {
  * Peers this device actually reached before, most-recent first. Persisted so a
  * subsequently blocked seed never matters: after one good connection we keep a
  * way back in without any seed or DNS.
+ *
+ * On the production web build only the compiled per-node proxies are reachable.
+ * An old deployment's `/l0/eu5` (or the bare `/l0` primary alias) must resolve
+ * to its node's canonical proxy — deduping with the compiled row — or be
+ * dropped, never listed as a chain of its own.
  */
 export function learnedPeers(role: Role): string[] {
   const raw = device.get(['discovery-learned', netTag(), role]);
@@ -136,7 +141,13 @@ export function learnedPeers(role: Role): string[] {
   try {
     const parsed = JSON.parse(raw) as LearnedCache;
     if (!parsed || !Array.isArray(parsed.urls)) return [];
-    return parsed.urls.filter((u): u is string => typeof u === 'string' && u.length > 0);
+    const urls = parsed.urls.filter((u): u is string => typeof u === 'string' && u.length > 0);
+    if (!IS_DEV && IS_WEB_BROWSER) {
+      return dedupe(
+        urls.map((u) => proxyBaseForUrl(u, role)).filter((u): u is string => u !== null),
+      );
+    }
+    return urls;
   } catch {
     return [];
   }
@@ -144,7 +155,11 @@ export function learnedPeers(role: Role): string[] {
 
 /** Record a successfully-used base as a durable fallback peer. */
 export function rememberPeer(role: Role, url: string): void {
-  const base = (url ?? '').trim().replace(/\/+$/, '');
+  const raw = (url ?? '').trim().replace(/\/+$/, '');
+  if (!raw) return;
+  // The production web build can only reach the compiled per-node proxies;
+  // remembering a retired/alias path would keep a dead row on the Chains page.
+  const base = !IS_DEV && IS_WEB_BROWSER ? proxyBaseForUrl(raw, role) : raw;
   if (!base) return;
   const urls = [base, ...learnedPeers(role).filter((u) => u !== base)].slice(0, LEARNED_MAX);
   device.set(['discovery-learned', netTag(), role], JSON.stringify({ at: Date.now(), urls } satisfies LearnedCache));

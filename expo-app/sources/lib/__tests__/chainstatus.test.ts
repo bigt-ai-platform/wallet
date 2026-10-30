@@ -148,4 +148,17 @@ describe('proxyBaseForUrl', () => {
   it('returns null for a peer the browser has no proxy for', () => {
     expect(proxyBaseForUrl('http://203.0.113.9:8082', 'l0')).toBeNull();
   });
+
+  it('normalizes the bare primary alias and retired node paths', () => {
+    // The catch-all proxy answers /l0 and /l1 with the primary node; they are
+    // aliases of eu1/ordereu1, never chains of their own.
+    expect(proxyBaseForUrl('/l0/', 'l0')).toBe('/l0/eu1/');
+    expect(proxyBaseForUrl('/l0', 'l0')).toBe('/l0/eu1/');
+    expect(proxyBaseForUrl('/l1/', 'l1')).toBe('/l1/ordereu1/');
+    // Paths from an earlier deployment that no longer carry a node.
+    expect(proxyBaseForUrl('/l0/eu3/', 'l0')).toBeNull();
+    expect(proxyBaseForUrl('/l0/eu5/', 'l0')).toBeNull();
+    expect(proxyBaseForUrl('/l1/ordereu4/', 'l1')).toBeNull();
+    expect(proxyBaseForUrl('/l1p', 'l1')).toBeNull();
+  });
 });

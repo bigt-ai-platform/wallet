@@ -80,6 +80,33 @@ test('lists every live node under its own proxy path and probes it', async ({ pa
   await expect(page.getByTestId('network-detail')).toHaveCount(6);
 });
 
+test('drops retired nodes cached as learned peers', async ({ page }) => {
+  // An earlier deployment carried eu3…eu5 / ordereu3…ordereu5 proxies; those
+  // paths were remembered as "reachable peers" in this durable list. They are
+  // not nodes any more and must not become rows — nor may the bare /l0, /l1
+  // primary aliases duplicate eu1/ordereu1.
+  await page.addInitScript(() => {
+    const seed = (role: string, urls: string[]) =>
+      localStorage.setItem(
+        `discovery-learned.main.${role}`,
+        JSON.stringify({ at: Date.now(), urls }),
+      );
+    seed('l0', ['/l0/eu2', '/l0/eu1', '/l0', '/l0/eu5', '/l0/eu3']);
+    seed('l1', ['/l1p', '/l1/ordereu1', '/l1', '/l1/ordereu4', '/l1/ordereu5', '/l1/ordereu3']);
+  });
+  await stubChain(page);
+  await openChains(page);
+
+  // Still exactly the six live nodes — no stale/alias rows.
+  await expect(page.getByTestId('network-row')).toHaveCount(6);
+  for (const retired of ['eu3', 'eu5', 'ordereu3', 'ordereu4', 'ordereu5', 'l1p']) {
+    await expect(page.getByText(retired, { exact: true })).toHaveCount(0);
+  }
+  for (const name of [...L0_NODES, ...L1_NODES]) {
+    await expect(page.getByText(name, { exact: true }).first()).toBeVisible();
+  }
+});
+
 test('collapses and re-expands a row', async ({ page }) => {
   await stubChain(page);
   await openChains(page);

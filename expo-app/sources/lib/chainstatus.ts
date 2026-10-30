@@ -110,7 +110,10 @@ export function nodeNameForUrl(url: string, role: ChainRole): string | null {
 
 /**
  * The same-origin proxy base for any URL of a known node, or null when the
- * browser has no way to reach it (see MAINNET_NODES).
+ * browser has no way to reach it (see MAINNET_NODES). Also normalizes the bare
+ * primary alias (`/l0/` → `/l0/eu1/`) and old per-node paths from an earlier
+ * deployment (eu3…eu5, ordereu3…ordereu5 → null), so callers can dedupe
+ * against the compiled node rows instead of showing a chain of their own.
  */
 export function proxyBaseForUrl(url: string, role: ChainRole): string | null {
   const name = nodeNameForUrl(url, role);
