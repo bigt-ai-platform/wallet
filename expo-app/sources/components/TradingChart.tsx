@@ -55,6 +55,20 @@ const KDJ_COLORS = ['#F0B90B', '#5B8FF9', '#B37FEB'];
 
 const T = (c: Candle): UTCTimestamp => (c.time / 1000) as UTCTimestamp;
 
+/**
+ * Pick an axis/tick precision from the traded prices. The library defaults to
+ * 2 decimals, which collapses a 0.001 BIG price onto a flat 0.00 line.
+ */
+function priceFormatFor(candles: Candle[]): { type: 'price'; precision: number; minMove: number } {
+  const minPositive = Math.min(...candles
+    .flatMap((c) => [c.open, c.high, c.low, c.close])
+    .filter((v) => Number.isFinite(v) && v > 0));
+  const precision = Number.isFinite(minPositive) && minPositive < 1
+    ? Math.min(8, Math.ceil(-Math.log10(minPositive)) + 1)
+    : 2;
+  return { type: 'price', precision, minMove: 1 / Math.pow(10, precision) };
+}
+
 /** Map an aligned indicator array (nulls = warm-up) to line points. */
 function lineData(candles: Candle[], values: Num[]): { time: UTCTimestamp; value: number }[] {
   const out: { time: UTCTimestamp; value: number }[] = [];
@@ -105,6 +119,7 @@ export default function TradingChart({
     const closes = candles.map((c) => c.close);
     const highs = candles.map((c) => c.high);
     const lows = candles.map((c) => c.low);
+    const priceFormat = priceFormatFor(candles);
 
     // --- pane 0: price ---
     const price = mode === 'candles'
@@ -112,8 +127,9 @@ export default function TradingChart({
         upColor: colors.up, downColor: colors.down,
         borderUpColor: colors.up, borderDownColor: colors.down,
         wickUpColor: colors.up, wickDownColor: colors.down,
+        priceFormat,
       }, 0)
-      : api.addSeries(LineSeries, { color: colors.line, lineWidth: 2 }, 0);
+      : api.addSeries(LineSeries, { color: colors.line, lineWidth: 2, priceFormat }, 0);
     price.setData(
       (mode === 'candles'
         ? candles.map((c) => ({ time: T(c), open: c.open, high: c.high, low: c.low, close: c.close }))
@@ -122,14 +138,14 @@ export default function TradingChart({
 
     if (indicators.ma) {
       MA_PERIODS.forEach((p, i) => {
-        const s = api.addSeries(LineSeries, { color: MA_COLORS[i], lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, 0);
+        const s = api.addSeries(LineSeries, { color: MA_COLORS[i], lineWidth: 1, priceLineVisible: false, lastValueVisible: false, priceFormat }, 0);
         s.setData(lineData(candles, sma(closes, p)) as never);
       });
     }
     if (indicators.boll) {
       const b = boll(closes, 20, 2);
       [b.upper, b.mid, b.lower].forEach((band) => {
-        const s = api.addSeries(LineSeries, { color: BOLL_COLOR, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }, 0);
+        const s = api.addSeries(LineSeries, { color: BOLL_COLOR, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, priceFormat }, 0);
         s.setData(lineData(candles, band) as never);
       });
     }
