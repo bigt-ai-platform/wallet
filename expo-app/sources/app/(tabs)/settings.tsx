@@ -60,12 +60,13 @@ function UpdatesCard() {
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
-  // Read the persisted network flag directly. Deriving it from the server URL
-  // is wrong on web testnet: the L0 default can be empty, so the switch showed
-  // off while the app was still pinned to the test order chain.
-  const [useTestnet, setUseTestnet] = React.useState(() => httpService.getUseTestnet());
+  // Network is mainnet unless a dev/e2e run sets the flag programmatically.
+  const useTestnet = httpService.getUseTestnet();
   const [serverUrl, setServerUrl] = React.useState(httpService.getServerUrl());
   const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
+  // Auto-selection owns the order/prediction chain set. Keep the manual editor
+  // folded away, and show it expanded only when there is no chain at all.
+  const [chainsOpen, setChainsOpen] = React.useState(() => httpService.getL1Chains().length === 0);
   const [activeChainId, setActiveChainId] = React.useState(() => httpService.getActiveL1ChainId());
   const [newChainId, setNewChainId] = React.useState('');
   const [newChainName, setNewChainName] = React.useState('');
@@ -99,12 +100,6 @@ export default function SettingsScreen() {
     } else {
       updateActiveEndpoints();
     }
-  };
-
-  const toggleTestnet = (val: boolean) => {
-    setUseTestnet(val);
-    httpService.setTestnet(val);
-    setServerUrl(httpService.getDefaultServerUrl());
   };
 
   const saveServer = () => {
@@ -172,18 +167,6 @@ export default function SettingsScreen() {
       <View style={s.card}>
         <View style={s.settingRow}>
           <View style={s.settingLeft}>
-            <Text style={s.settingLabel}>{t('settings.testnet')}</Text>
-            <Text style={s.settingDesc}>{t('settings.testnetDesc')}</Text>
-          </View>
-          <Switch value={useTestnet} onValueChange={toggleTestnet}
-            trackColor={{ false: s.switchOff.color, true: s.switchOn.color }}
-            thumbColor={useTestnet ? s.switchThumb.color : '#f4f3f4'} testID="testnet-toggle" />
-        </View>
-      </View>
-
-      <View style={s.card}>
-        <View style={s.settingRow}>
-          <View style={s.settingLeft}>
             <Text style={s.settingLabel}>{t('settings.autoDiscover')}</Text>
             <Text style={s.settingDesc}>{t('settings.autoDiscoverDesc')}</Text>
             {autoDiscover && !!activeEndpoints.l0 && (
@@ -211,9 +194,16 @@ export default function SettingsScreen() {
       )}
 
       <View style={s.card}>
-        <Text style={s.cardLabel}>{t('settings.l1Chains')}</Text>
-        <Text style={s.settingDesc}>{t('settings.l1ChainsDesc')}</Text>
+        <TouchableOpacity style={s.chainHeader} onPress={() => setChainsOpen((v) => !v)}
+          accessibilityRole="button" accessibilityState={{ expanded: chainsOpen }} testID="l1-chains-toggle">
+          <View style={s.settingLeft}>
+            <Text style={s.cardLabel}>{t('settings.l1Chains')}</Text>
+            <Text style={s.settingDesc}>{t('settings.l1ChainsDesc')}</Text>
+          </View>
+          <Text style={s.chainToggle}>{chainsOpen ? '−' : '+'}</Text>
+        </TouchableOpacity>
 
+        {chainsOpen && (<>
         {l1Chains.map((chain, i) => (
           <TouchableOpacity key={chain.chainId} style={[s.chainRow, activeChainId === chain.chainId && s.chainRowActive]}
             onPress={() => httpService.setActiveL1ChainId(chain.chainId)} testID={`l1-chain-row-${i}`}>
@@ -257,6 +247,7 @@ export default function SettingsScreen() {
             <Text style={s.addBtnText}>+</Text>
           </TouchableOpacity>
         </View>
+        </>)}
       </View>
 
       <View style={s.card}>
@@ -310,6 +301,8 @@ const s = StyleSheet.create((theme) => ({
   aboutValue: { fontSize: 14, fontWeight: '600', color: theme.colors.text.primary },
   updateStatus: { fontSize: 13, color: theme.colors.text.secondary, marginTop: 10, textAlign: 'center' },
   footer: { fontSize: 12, color: theme.colors.text.secondary, textAlign: 'center', marginTop: 20 },
+  chainHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  chainToggle: { fontSize: 22, fontWeight: '600', color: theme.colors.text.secondary, paddingHorizontal: 8 },
   chainRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
   chainFields: { flex: 1, gap: 4 },
   chainInput: {

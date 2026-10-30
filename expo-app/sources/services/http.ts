@@ -139,7 +139,12 @@ const l1Listeners = new Set<L1Listener>();
 export class HttpService {
   private static instance: HttpService;
 
-  private constructor() {}
+  private constructor() {
+    // Testnet is no longer exposed in Settings. Migrate any stale flag left by
+    // older builds so a production install cannot silently point at the empty
+    // test order chain; development/e2e can still set it programmatically.
+    if (!IS_DEV && this.getUseTestnet()) this.setTestnet(false);
+  }
 
   static getInstance(): HttpService {
     if (!HttpService.instance) {
