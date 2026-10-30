@@ -960,16 +960,16 @@ export class HttpService {
   }
 
   /**
-   * Get the full open-order book for a market (L1 `getOrders`). The Java
-   * dispatcher filters on the singular `tokenid`; an unset token returns every
-   * open order across markets. `tokennames` carries the metadata decimals used
-   * to scale the raw long price/amount fields.
+   * Get the full open-order book for a market (L1 `getOrders`). The server
+   * expects the plural `tokenids` array; the legacy singular `tokenid` is
+   * silently treated as an empty filter. `tokennames` carries the metadata
+   * decimals used to scale the raw long price/amount fields.
    */
   async getOrderBook(tokenId?: string): Promise<ApiResponse<OrderBookData>> {
     const response = await this.requestL1<any>(
       'getOrders',
       'POST',
-      tokenId ? { tokenid: tokenId } : {},
+      tokenId ? { tokenids: [tokenId] } : {},
     );
     if (response.success && response.data) {
       return {
@@ -1096,11 +1096,16 @@ export class HttpService {
     } as ApiResponse<TokenItem[]>;
   }
 
-  /** Exact symbol/name lookup on L1, then on L0 for bridge-wrapped quotes. */
+  /**
+   * Exact symbol/name lookup for quote discovery. Prefer the L0 index: a
+   * wrapped quote keeps its L0 token id, while a same-named legacy L1 token
+   * can have different decimals and a different id (USDT@BIG is decimals 0,
+   * the wrapped USDT is decimals 6). Fall back to L1 for native quotes (CNY).
+   */
   async findExchangeToken(name: string): Promise<TokenItem | undefined> {
     return findExchangeTokenIn(name, [
-      this.searchExchangeTokens.bind(this),
       this.searchExchangeTokensOnL0.bind(this),
+      this.searchExchangeTokens.bind(this),
     ]);
   }
 
