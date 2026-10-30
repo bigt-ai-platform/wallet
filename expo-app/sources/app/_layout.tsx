@@ -183,10 +183,12 @@ export default function RootLayout() {
                             <SidebarProvider>
                                 <AppShell />
                                 <MobileSidebar />
+                                {/* Host first: its subscription effect must run
+                                    before the watchers fire their first poll. */}
+                                <SystemMessageHost />
                                 <ChainEventWatcher />
                                 <P2pEventWatcher />
                                 <PredictionEventWatcher />
-                                <SystemMessageHost />
                             </SidebarProvider>
                         </TransactionConfirmProvider>
                     </WalletProvider>
