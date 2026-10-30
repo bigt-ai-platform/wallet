@@ -60,10 +60,10 @@ function UpdatesCard() {
 
 export default function SettingsScreen() {
   const { t } = useTranslation();
-  const [useTestnet, setUseTestnet] = React.useState(() => {
-    const stored = (httpService as any).getServerUrl?.();
-    return stored?.includes('test') ?? false;
-  });
+  // Read the persisted network flag directly. Deriving it from the server URL
+  // is wrong on web testnet: the L0 default can be empty, so the switch showed
+  // off while the app was still pinned to the test order chain.
+  const [useTestnet, setUseTestnet] = React.useState(() => httpService.getUseTestnet());
   const [serverUrl, setServerUrl] = React.useState(httpService.getServerUrl());
   const [l1Chains, setL1Chains] = React.useState<L1ChainConfig[]>(() => httpService.getL1Chains());
   const [activeChainId, setActiveChainId] = React.useState(() => httpService.getActiveL1ChainId());
