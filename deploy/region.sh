@@ -305,7 +305,7 @@ ${dom}, www.${dom} {
     # served by the web container, not the engine; keep in sync with
     # nginx.conf (location = /p2p + location /p2p/).
     handle /p2p/ {
-        redir /p2p 308
+        reverse_proxy 127.0.0.1:${WEB_PORT}
     }
     ${p2p_verb} /p2p/* {
         reverse_proxy ${p2p_upstream}
@@ -375,7 +375,7 @@ ${apex}, www.${apex} {
     # served by the web container, not the engine; keep in sync with
     # nginx.conf (location = /p2p + location /p2p/).
     handle /p2p/ {
-        redir /p2p 308
+        reverse_proxy 127.0.0.1:${WEB_PORT}
     }
     ${p2p_verb} /p2p/* {
         reverse_proxy ${p2p_upstream}
