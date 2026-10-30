@@ -301,8 +301,12 @@ ${dom}, www.${dom} {
     # container and strips /p2p (the engine serves /orders…); other regions
     # forward the full /p2p/… path to the host region's vhost, which strips it.
     # Same-origin either way (EXPO_PUBLIC_P2P_ENGINE_URL=/p2p, deploy/tag.sh).
-    # The bare /p2p SPA route falls through to the web container; keep in sync
-    # with nginx.conf location /p2p/.
+    # The bare /p2p SPA route is exactly /p2p (no trailing slash) and must be
+    # served by the web container, not the engine; keep in sync with
+    # nginx.conf (location = /p2p + location /p2p/).
+    handle /p2p/ {
+        redir /p2p 308
+    }
     ${p2p_verb} /p2p/* {
         reverse_proxy ${p2p_upstream}
     }
@@ -367,8 +371,12 @@ ${apex}, www.${apex} {
     # container and strips /p2p (the engine serves /orders…); other regions
     # forward the full /p2p/… path to the host region's vhost, which strips it.
     # Same-origin either way (EXPO_PUBLIC_P2P_ENGINE_URL=/p2p, deploy/tag.sh).
-    # The bare /p2p SPA route falls through to the web container; keep in sync
-    # with nginx.conf location /p2p/.
+    # The bare /p2p SPA route is exactly /p2p (no trailing slash) and must be
+    # served by the web container, not the engine; keep in sync with
+    # nginx.conf (location = /p2p + location /p2p/).
+    handle /p2p/ {
+        redir /p2p 308
+    }
     ${p2p_verb} /p2p/* {
         reverse_proxy ${p2p_upstream}
     }

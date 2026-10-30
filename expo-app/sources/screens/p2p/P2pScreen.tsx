@@ -755,37 +755,11 @@ export default function P2pScreen() {
     return <WalletUnlock subtitle={t('p2p.unlockFirst')} testID="p2p-need-unlock" />;
   }
 
-  const myDid = identity?.did;
-
-  return (
-    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
-      <View style={s.tabs}>
-        <TabButton label={t('order.buy')} active={tab === 'open' && bookSide === 'buy'} onPress={() => { setNotice(null); setTab('open'); setBookSide('buy'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-open" />
-        <TabButton label={t('order.sell')} active={tab === 'open' && bookSide === 'sell'} onPress={() => { setNotice(null); setTab('open'); setBookSide('sell'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-sell" />
-        <TabButton label={t('p2p.tabMine')} active={tab === 'mine'} onPress={() => { setNotice(null); setTab('mine'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-mine" />
-        <TabButton label={t('p2p.tabSearch')} active={tab === 'search'} onPress={() => { setNotice(null); setTab('search'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-search" />
-        <TouchableOpacity onPress={refresh} style={s.refreshBtn} testID="p2p-refresh" accessibilityRole="button">
-          <Text style={[s.refreshText, { color: theme.colors.primary }]}>{t('p2p.refresh')}</Text>
-        </TouchableOpacity>
-        {guideLink}
-      </View>
-
-      {notice ? (
-        <View
-          style={[s.notice, { borderColor: notice.ok ? theme.colors.accent.emerald : theme.colors.accent.red }]}
-          testID="p2p-notice"
-        >
-          <Text style={[s.noticeText, { color: notice.ok ? theme.colors.accent.emerald : theme.colors.accent.red }]}>
-            {notice.text}
-          </Text>
-        </View>
-      ) : null}
-
-      {tab === 'open' || tab === 'search' ? (
-        <>
-          {tab === 'open' ? (
+  // Listing an ad lives on My swaps (the Buy/Sell tabs are pure books);
+  // the side selector inside the form picks a sell ad or a buy bid.
+  const createOrderCard = (
           <View style={s.card}>
-            <Text style={s.cardTitle}>{t('p2p.createTitle')}</Text>
+            <Text style={s.cardTitle}>{orderSide === 'sell' ? t('p2p.createTitle') : t('p2p.buyTitle')}</Text>
             <View style={s.chips} testID="p2p-order-side">
               {(['sell', 'buy'] as const).map((side) => (
                 <TouchableOpacity
@@ -882,7 +856,36 @@ export default function P2pScreen() {
               <Text style={s.btnText}>{t('p2p.create')}</Text>
             </TouchableOpacity>
           </View>
-          ) : null}
+  );
+
+  const myDid = identity?.did;
+
+  return (
+    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+      <View style={s.tabs}>
+        <TabButton label={t('order.buy')} active={tab === 'open' && bookSide === 'buy'} onPress={() => { setNotice(null); setTab('open'); setBookSide('buy'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-open" />
+        <TabButton label={t('order.sell')} active={tab === 'open' && bookSide === 'sell'} onPress={() => { setNotice(null); setTab('open'); setBookSide('sell'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-sell" />
+        <TabButton label={t('p2p.tabMine')} active={tab === 'mine'} onPress={() => { setNotice(null); setTab('mine'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-mine" />
+        <TabButton label={t('p2p.tabSearch')} active={tab === 'search'} onPress={() => { setNotice(null); setTab('search'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-search" />
+        <TouchableOpacity onPress={refresh} style={s.refreshBtn} testID="p2p-refresh" accessibilityRole="button">
+          <Text style={[s.refreshText, { color: theme.colors.primary }]}>{t('p2p.refresh')}</Text>
+        </TouchableOpacity>
+        {guideLink}
+      </View>
+
+      {notice ? (
+        <View
+          style={[s.notice, { borderColor: notice.ok ? theme.colors.accent.emerald : theme.colors.accent.red }]}
+          testID="p2p-notice"
+        >
+          <Text style={[s.noticeText, { color: notice.ok ? theme.colors.accent.emerald : theme.colors.accent.red }]}>
+            {notice.text}
+          </Text>
+        </View>
+      ) : null}
+
+      {tab === 'open' || tab === 'search' ? (
+        <>
 
           <View style={s.bookToolbar}>
             {tab === 'search' ? (
@@ -1077,6 +1080,7 @@ export default function P2pScreen() {
         <Text style={s.emptyText} testID="p2p-need-unlock">{t('p2p.unlockFirst')}</Text>
       ) : (
         <>
+          {createOrderCard}
           <View style={s.card} testID="p2p-profile-card">
             <Text style={s.cardTitle}>{t('p2p.profileTitle')}</Text>
             <Text style={s.sub}>{t('p2p.channelPrivate')}</Text>

@@ -188,6 +188,8 @@ test.describe('P2P Page', () => {
     });
     await createWallet(page, 'P2pFixturePassword123');
     await clickTab(page, 'P2P');
+    // Listing an ad lives on My swaps (the books are read-only).
+    await page.getByTestId('p2p-tab-mine').click();
     await page.getByTestId('p2p-side-buy').click();
     await page.getByTestId('p2p-give-amount').fill('7');
     await page.getByTestId('p2p-want-amount').fill('7');
@@ -276,7 +278,7 @@ test.describe('P2P Page', () => {
     // in this fresh context) or shows the tabs.
     if ((await tab.count()) > 0) {
       await expect(tab).toBeAttached();
-      await expect(await getElement(page, 'p2p-create')).toBeAttached({ timeout: 10000 });
+      await expect(await getElement(page, 'p2p-book-count')).toBeAttached({ timeout: 10000 });
     } else if ((await (await getElement(page, 'p2p-need-unlock')).count()) > 0) {
       await expect(await getElement(page, 'p2p-need-unlock')).toBeAttached();
     } else {
