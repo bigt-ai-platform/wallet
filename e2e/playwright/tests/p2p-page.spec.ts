@@ -31,6 +31,14 @@ test.describe('P2P Page', () => {
       ];
       await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders } }));
       await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat', 'alipay'] } }));
+      // A saved WeChat collection profile is required to trade through a fiat
+      // channel; the details stay private (only a matched counterparty sees them).
+      await page.route('**/profiles/mine', (route) => route.fulfill({
+        json: { profiles: [{
+          sellerDid: 'did:pq:self', method: 'wechat', accountName: 'Self',
+          account: 'self-wechat', updatedAt: 1,
+        }] },
+      }));
       // E2E builds auto-approve the important-transaction gate
       // (EXPO_PUBLIC_E2E_AUTOCONFIRM), so a buy goes straight to its signed
       // match request — mock the match and the post-match swap refresh.
@@ -43,12 +51,13 @@ test.describe('P2P Page', () => {
       const search = page.getByTestId('p2p-book-search');
       const count = page.getByTestId('p2p-book-count');
       await expect(count).toHaveText('2 / 2 ads');
-      await search.fill('  usdt CNY alipay alice ');
-      await expect(count).toHaveText('1 / 2 ads');
+      // Ads are folders: the terms and the take panel stay folded until the
+      // summary row is opened.
+      await expect(page.getByTestId('p2p-order-0-limit')).toHaveCount(0);
+      await page.getByTestId('p2p-order-0-toggle').click();
       await expect(page.getByTestId('p2p-order-0-limit')).toContainText('Advertised: 25 USDT');
       await expect(page.getByTestId('p2p-order-0-funds')).toHaveText('Funds verified');
-      await expect(page.getByTestId('p2p-order-1')).toHaveCount(0);
-      await page.getByTestId('p2p-buy-0').click();
+      await expect(page.getByTestId('p2p-order-1')).toBeVisible();
       await expect(page.getByTestId('p2p-buy-fill')).toHaveValue('25');
       const fill = page.getByTestId('p2p-buy-fill');
       const feedback = page.getByTestId('p2p-fill-feedback');
@@ -98,22 +107,26 @@ test.describe('P2P Page', () => {
       expect(payload.rail).toBe('wechat');
       await expect(page.getByTestId('p2p-notice')).toContainText('swap-fixture');
       await page.screenshot({ path: testInfo.outputPath(`p2p-fill-confirm-${width}.png`) });
-      // A successful match leaves the screen on My Orders — go back to the book
-      // for the search assertions below.
-      await page.getByTestId('p2p-tab-open').click();
-      await expect(page.getByTestId('p2p-book-search')).toBeVisible();
+      // A successful match leaves the screen on My Orders — go to the Search
+      // tab, which covers all ads (both sides) and keeps its own query.
+      await page.getByTestId('p2p-tab-search').click();
+      await expect(search).toBeVisible();
+      await expect(count).toHaveText('3 / 3 ads');
+      await search.fill('  usdt CNY alipay alice ');
+      await expect(count).toHaveText('1 / 3 ads');
       await search.fill('EUR');
-      await expect(count).toHaveText('0 / 2 ads');
+      await expect(count).toHaveText('0 / 3 ads');
       await expect(page.getByTestId('p2p-book-empty')).toHaveText('No matches');
       await page.getByTestId('p2p-book-clear').click();
       await expect(search).toHaveValue('');
-      await expect(count).toHaveText('2 / 2 ads');
+      await expect(count).toHaveText('3 / 3 ads');
       await expect(page.getByTestId('p2p-buy-fill')).toHaveCount(0);
       await page.getByTestId('p2p-tab-sell').click();
       await expect(count).toHaveText('1 / 1 ads');
       await expect(page.getByTestId('p2p-order-0-side')).toContainText('Buy');
+      await page.getByTestId('p2p-tab-search').click();
       await search.fill('alice');
-      await expect(count).toHaveText('0 / 1 ads');
+      await expect(count).toHaveText('1 / 3 ads');
       await page.getByTestId('p2p-book-clear').click();
       await page.getByTestId('p2p-order-0').scrollIntoViewIfNeeded();
       const bounds = await search.boundingBox();
@@ -136,12 +149,15 @@ test.describe('P2P Page', () => {
     };
     await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders: [unfunded] } }));
     await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat'] } }));
+    await page.route('**/profiles/mine', (route) => route.fulfill({ json: { profiles: [] } }));
     await createWallet(page, 'P2pFixturePassword123');
     await clickTab(page, 'P2P');
+    // Folded ad: open it to see why it cannot be taken.
+    await page.getByTestId('p2p-order-0-toggle').click();
     await expect(page.getByTestId('p2p-order-0-limit')).toContainText('Advertised: 100 USDT');
     await expect(page.getByTestId('p2p-order-0-funds')).toHaveText('No funds at advertised address');
-    await expect(page.getByTestId('p2p-buy-0')).toHaveAttribute('aria-disabled', 'true');
-    await expect(page.getByTestId('p2p-buy-fill')).toHaveCount(0);
+    await expect(page.getByTestId('p2p-buy-confirm')).toHaveAttribute('aria-disabled', 'true');
+    await expect(page.getByTestId('p2p-buy-fill')).toHaveValue('100');
   });
 
   test('a newly listed buy bid appears in the Sell book', async ({ page }) => {
@@ -156,6 +172,13 @@ test.describe('P2P Page', () => {
     };
     await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders: posted ? [bid] : [] } }));
     await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat'] } }));
+    // Listing a sell/buy ad requires the channel details (e.g. WeChat).
+    await page.route('**/profiles/mine', (route) => route.fulfill({
+      json: { profiles: [{
+        sellerDid: 'did:pq:self', method: 'wechat', accountName: 'Self',
+        account: 'self-wechat', updatedAt: 1,
+      }] },
+    }));
     await page.route('**/orders', (route) => {
       if (route.request().method() !== 'POST') return route.continue();
       const body = JSON.parse(route.request().postData() || '{}');
@@ -235,7 +258,12 @@ test.describe('P2P Page', () => {
   test('navigates from the sidebar and mounts the P2P screen', async ({ page }) => {
     await waitForApp(page);
     await clickTab(page, 'P2P');
-    const mounted = page.locator('[data-testid="p2p-not-configured"], [data-testid="p2p-tab-open"]').first();
+    // Configured build + no wallet -> the key-protected screen shows the unlock
+    // block; a build without an engine shows the notice; an unlocked wallet
+    // shows the tabs.
+    const mounted = page
+      .locator('[data-testid="p2p-not-configured"], [data-testid="p2p-tab-open"], [data-testid="p2p-need-unlock"]')
+      .first();
     await expect(mounted).toBeAttached({ timeout: 10000 });
   });
 
@@ -244,10 +272,13 @@ test.describe('P2P Page', () => {
     await clickTab(page, 'P2P');
     const tab = await getElement(page, 'p2p-tab-open');
     // The default e2e web build has no engine URL: assert the deterministic
-    // edge state. If a build with an engine is used, assert the tabs instead.
+    // edge state. With an engine baked in the page is either locked (no wallet
+    // in this fresh context) or shows the tabs.
     if ((await tab.count()) > 0) {
       await expect(tab).toBeAttached();
       await expect(await getElement(page, 'p2p-create')).toBeAttached({ timeout: 10000 });
+    } else if ((await (await getElement(page, 'p2p-need-unlock')).count()) > 0) {
+      await expect(await getElement(page, 'p2p-need-unlock')).toBeAttached();
     } else {
       await expect(await getElement(page, 'p2p-not-configured')).toBeAttached({ timeout: 10000 });
     }

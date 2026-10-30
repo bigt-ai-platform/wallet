@@ -28,7 +28,7 @@ import {
   type P2pPaymentInstructions, type P2pPaymentProfile, type P2pSwap, type P2pSwapAction,
 } from '@/services/p2p';
 
-type Tab = 'open' | 'mine';
+type Tab = 'open' | 'mine' | 'search';
 
 /** Fiat rails (docs/p2p.md §7): buyer pays seller directly; seller confirms receipt. */
 const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank'];
@@ -60,6 +60,9 @@ export default function P2pScreen() {
   const [swaps, setSwaps] = React.useState<P2pSwap[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [selected, setSelected] = React.useState<P2pOrder | null>(null);
+  // The ad whose folder is open: ads render as collapsed folders (a summary
+  // row); expanding one reveals the terms and the buy/sell panel for it.
+  const [expandedOrder, setExpandedOrder] = React.useState<string | null>(null);
   // The swap whose device-side verification ("Verify with my phone") is open.
   const [verifySwap, setVerifySwap] = React.useState<P2pSwap | null>(null);
   const [buyRecv, setBuyRecv] = React.useState('');
@@ -117,7 +120,13 @@ export default function P2pScreen() {
   const [bookSide, setBookSide] = React.useState<'buy' | 'sell'>('buy');
   const [bookQuery, setBookQuery] = React.useState('');
   const sideOrders = filterP2pOrders(orders, bookSide, '');
-  const visibleOrders = filterP2pOrders(sideOrders, bookSide, bookQuery);
+  // Search tab: matching ads from both sides (the query lives in that tab).
+  const searchResults = [
+    ...filterP2pOrders(orders, 'buy', bookQuery),
+    ...filterP2pOrders(orders, 'sell', bookQuery),
+  ];
+  // The Buy/Sell tabs list their own side; the Search tab lists both sides.
+  const tabOrders = tab === 'search' ? searchResults : sideOrders;
   const [validHours, setValidHours] = React.useState('24');
   const [wantRail, setWantRail] = React.useState('wechat');
   // Enabled payment methods (Binance multi-rail); `wantRail` stays the primary.
@@ -193,7 +202,7 @@ export default function P2pScreen() {
     if (!p2pConfigured()) { setLoading(false); return; }
     setLoading(true);
     try {
-      if (tab === 'open') await loadOrders();
+      if (tab === 'open' || tab === 'search') await loadOrders();
       else await loadSwaps();
     } catch (e) {
       setNotice({ ok: false, text: e instanceof Error ? e.message : String(e) });
@@ -250,8 +259,11 @@ export default function P2pScreen() {
   }, [identity]);
 
   React.useEffect(() => {
-    if (tab === 'mine' && identity && p2pConfigured()) loadProfiles();
-  }, [tab, identity, loadProfiles]);
+    // Profiles gate buying/selling through a payment channel (the collection
+    // details a counterparty sees only for a matched trade), so they must be
+    // known before the Buy/Sell forms are usable — not only on My swaps.
+    if (identity && p2pConfigured()) loadProfiles();
+  }, [identity, loadProfiles]);
 
   const pickRail = (rail: string) => {
     // Multi-select: toggle the method; never allow an empty set.
@@ -268,6 +280,26 @@ export default function P2pScreen() {
     if (!isUnlocked || !publicInfo?.address) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return null; }
     if (!identity) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return null; }
     return identity;
+  };
+
+  /** The saved collection profile for a payment rail, if the user added one. */
+  const channelFor = (rail?: string | null): P2pPaymentProfile | undefined =>
+    profiles.find((profile) => profile.method === rail);
+
+  /**
+   * A trade through a fiat channel needs the user's channel details (e.g. the
+   * WeChat account) up front. They are stored party-scoped on the engine and
+   * revealed only to the counterparty of a matched trade, never in the public
+   * book — so "private, shared on demand" is enforced here: without a profile
+   * for the rail the order/take cannot proceed, and the form sends the user to
+   * the profile editor.
+   */
+  const requireChannel = (rail: string | undefined | null): boolean => {
+    if (channelFor(rail)) return true;
+    setNotice({ ok: false, text: t('p2p.channelRequired') });
+    setProfileMethod((rail as P2pCnyRail) ?? enabledProfileMethods[0] ?? 'wechat');
+    setTab('mine');
+    return false;
   };
 
   const searchTokens = async (keyword: string) => {
@@ -313,6 +345,10 @@ export default function P2pScreen() {
       setNotice({ ok: false, text: t('p2p.overBalance', { amount: availText }) });
       return;
     }
+    // Fiat channel (e.g. WeChat): the collection details must exist before the
+    // order can be listed; they stay private and are shown only to a matched
+    // counterparty.
+    if (isCnyRail(rails[0]) && !requireChannel(rails[0])) return;
     // Important transaction (signs with the wallet key): device unlock first.
     const approved = await confirmImportant({
       subtitle: t('p2p.createTitle'),
@@ -370,6 +406,8 @@ export default function P2pScreen() {
     const id = requireIdentity();
     if (!id) return;
     const cny = isCnyRail(order.wantRail);
+    // The taker must also have channel details for the rail it trades through.
+    if (cny && !requireChannel(chosenRail || order.wantRail)) return;
     // A `limit_buy` bid is filled by a seller: no receive address is asked (the
     // poster's is used). A `limit_sell` is taken by a buyer, who gives theirs.
     const isBid = order.type === 'limit_buy';
@@ -650,6 +688,32 @@ export default function P2pScreen() {
       setNotice({ ok: false, text: t('p2p.actionFailed') });
     }
   };
+
+  /**
+   * Open/close an ad folder. Opening pre-fills the take panel (amount = the
+   * remaining size) exactly like the old per-row Buy/Sell button did; own ads
+   * only show their cancel action, never a take panel.
+   */
+  const toggleOrder = (o: P2pOrder) => {
+    if (expandedOrder === o.orderId) {
+      setExpandedOrder(null);
+      setSelected(null);
+      return;
+    }
+    setExpandedOrder(o.orderId);
+    const own = !!identity && o.sellerDid === identity.did;
+    if (own) {
+      setSelected(null);
+      return;
+    }
+    setSelected(o);
+    setBuyRecv('');
+    setChosenRail(o.wantRails?.[0] ?? o.wantRail);
+    const rem = o.remainingGive ?? o.giveAmount;
+    setBuyFill(rem);
+    const unit = Number(o.wantAmount) / Number(o.giveAmount);
+    setBuyFillFiat(unit > 0 ? String(Number((Number(rem) * unit).toFixed(8))) : '');
+  };
   // Header control: a compact "?" help symbol linking to the P2P guide PDF.
   const guideLink = (
     <TouchableOpacity
@@ -685,14 +749,21 @@ export default function P2pScreen() {
     );
   }
 
+  // Key-protected page: every P2P action (list, take, release) is signed with
+  // the wallet key, so the screen stays locked until the wallet is unlocked.
+  if (!isUnlocked) {
+    return <WalletUnlock subtitle={t('p2p.unlockFirst')} testID="p2p-need-unlock" />;
+  }
+
   const myDid = identity?.did;
 
   return (
     <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
       <View style={s.tabs}>
-        <TabButton label={t('order.buy')} active={tab === 'open' && bookSide === 'buy'} onPress={() => { setNotice(null); setTab('open'); setBookSide('buy'); }} testID="p2p-tab-open" />
-        <TabButton label={t('order.sell')} active={tab === 'open' && bookSide === 'sell'} onPress={() => { setNotice(null); setTab('open'); setBookSide('sell'); }} testID="p2p-tab-sell" />
-        <TabButton label={t('p2p.tabMine')} active={tab === 'mine'} onPress={() => { setNotice(null); setTab('mine'); }} testID="p2p-tab-mine" />
+        <TabButton label={t('order.buy')} active={tab === 'open' && bookSide === 'buy'} onPress={() => { setNotice(null); setTab('open'); setBookSide('buy'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-open" />
+        <TabButton label={t('order.sell')} active={tab === 'open' && bookSide === 'sell'} onPress={() => { setNotice(null); setTab('open'); setBookSide('sell'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-sell" />
+        <TabButton label={t('p2p.tabMine')} active={tab === 'mine'} onPress={() => { setNotice(null); setTab('mine'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-mine" />
+        <TabButton label={t('p2p.tabSearch')} active={tab === 'search'} onPress={() => { setNotice(null); setTab('search'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-search" />
         <TouchableOpacity onPress={refresh} style={s.refreshBtn} testID="p2p-refresh" accessibilityRole="button">
           <Text style={[s.refreshText, { color: theme.colors.primary }]}>{t('p2p.refresh')}</Text>
         </TouchableOpacity>
@@ -710,8 +781,9 @@ export default function P2pScreen() {
         </View>
       ) : null}
 
-      {tab === 'open' ? (
+      {tab === 'open' || tab === 'search' ? (
         <>
+          {tab === 'open' ? (
           <View style={s.card}>
             <Text style={s.cardTitle}>{t('p2p.createTitle')}</Text>
             <View style={s.chips} testID="p2p-order-side">
@@ -810,43 +882,48 @@ export default function P2pScreen() {
               <Text style={s.btnText}>{t('p2p.create')}</Text>
             </TouchableOpacity>
           </View>
+          ) : null}
 
           <View style={s.bookToolbar}>
-            <Text style={s.fieldLabel}>{t('p2pBook.search')}</Text>
-            <View style={s.bookSearchRow}>
-              <SearchIcon size={18} color={theme.colors.text.secondary} />
-              <TextInput
-                style={[s.input, s.bookSearchInput]}
-                value={bookQuery}
-                onChangeText={(value) => { setBookQuery(value); setSelected(null); }}
-                placeholder="USDT CNY WeChat"
-                placeholderTextColor={theme.colors.text.secondary}
-                accessibilityLabel={t('p2pBook.search')}
-                autoCapitalize="none"
-                autoCorrect={false}
-                testID="p2p-book-search"
-              />
-              <TouchableOpacity
-                style={s.bookClear}
-                onPress={() => { setBookQuery(''); setSelected(null); }}
-                disabled={!bookQuery}
-                accessibilityRole="button"
-                accessibilityLabel={t('p2pBook.clear')}
-                accessibilityState={{ disabled: !bookQuery }}
-                testID="p2p-book-clear"
-              >
-                <CloseIcon size={18} color={bookQuery ? theme.colors.text.primary : theme.colors.text.secondary} />
-              </TouchableOpacity>
-            </View>
+            {tab === 'search' ? (
+              <>
+                <Text style={s.fieldLabel}>{t('p2pBook.search')}</Text>
+                <View style={s.bookSearchRow}>
+                  <SearchIcon size={18} color={theme.colors.text.secondary} />
+                  <TextInput
+                    style={[s.input, s.bookSearchInput]}
+                    value={bookQuery}
+                    onChangeText={(value) => { setBookQuery(value); setSelected(null); setExpandedOrder(null); }}
+                    placeholder="USDT CNY WeChat"
+                    placeholderTextColor={theme.colors.text.secondary}
+                    accessibilityLabel={t('p2pBook.search')}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    testID="p2p-book-search"
+                  />
+                  <TouchableOpacity
+                    style={s.bookClear}
+                    onPress={() => { setBookQuery(''); setSelected(null); setExpandedOrder(null); }}
+                    disabled={!bookQuery}
+                    accessibilityRole="button"
+                    accessibilityLabel={t('p2pBook.clear')}
+                    accessibilityState={{ disabled: !bookQuery }}
+                    testID="p2p-book-clear"
+                  >
+                    <CloseIcon size={18} color={bookQuery ? theme.colors.text.primary : theme.colors.text.secondary} />
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : null}
             {!loading ? (
               <Text style={s.sub} accessibilityLiveRegion="polite" testID="p2p-book-count">
-                {t('p2pBook.count', { shown: visibleOrders.length, total: sideOrders.length })}
+                {t('p2pBook.count', { shown: tabOrders.length, total: tab === 'search' ? orders.length : tabOrders.length })}
               </Text>
             ) : null}
           </View>
           {loading ? <ActivityIndicator color={theme.colors.primary} style={s.loader} />
-            : visibleOrders.length === 0 ? <Text style={s.emptyText} testID="p2p-book-empty">{bookQuery.trim() ? t('tokens.noMatches') : bookSide === 'buy' ? t('p2p.emptyOpen') : t('p2pBook.emptyBuy')}</Text>
-            : visibleOrders.map((o, i) => {
+            : tabOrders.length === 0 ? <Text style={s.emptyText} testID="p2p-book-empty">{tab === 'search' ? t('tokens.noMatches') : bookSide === 'buy' ? t('p2p.emptyOpen') : t('p2pBook.emptyBuy')}</Text>
+            : tabOrders.map((o, i) => {
               const unit = perUnitPrice(o.wantAmount, o.giveAmount);
               const fill = checkP2pFill(o, buyFill);
               const fundsBad = o.funds?.checked === true && !o.funds.sufficient;
@@ -857,16 +934,33 @@ export default function P2pScreen() {
                     : t('p2p.fundsMissing')
                   : t('p2p.fundsUnverified')
                 : null;
+              const isExpanded = expandedOrder === o.orderId;
+              const own = !!identity && o.sellerDid === identity.did;
               return (
               <View key={o.orderId} style={s.card} testID={`p2p-order-${i}`}>
-                <View style={s.rowBetween}>
-                  <Text style={s.cardTitle} testID={`p2p-order-${i}-side`}>
-                    {o.type === 'limit_buy' ? `${t('order.buy')} ` : `${t('order.sell')} `}{o.giveAmount} {o.giveToken}
-                  </Text>
+                {/* Folder header: a one-line summary; the terms and the
+                    buy/sell panel only render when the folder is open. */}
+                <TouchableOpacity
+                  style={s.folderHeader}
+                  onPress={() => toggleOrder(o)}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: isExpanded }}
+                  accessibilityLabel={`${o.type === 'limit_buy' ? t('order.buy') : t('order.sell')} ${o.giveAmount} ${o.giveToken}`}
+                  testID={`p2p-order-${i}-toggle`}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.cardTitle} testID={`p2p-order-${i}-side`}>
+                      {o.type === 'limit_buy' ? `${t('order.buy')} ` : `${t('order.sell')} `}{o.giveAmount} {o.giveToken}
+                    </Text>
+                    <Text style={s.sub}>{t('p2p.advertised', { amount: `${o.remainingGive ?? o.giveAmount} ${o.giveToken}` })}</Text>
+                  </View>
                   {unit ? (
-                    <Text style={s.mono} testID={`p2p-order-${i}-unit`}>{unit} {o.wantCurrency}</Text>
+                    <Text style={[s.mono, { marginRight: 8 }]} testID={`p2p-order-${i}-unit`}>{unit} {o.wantCurrency}</Text>
                   ) : null}
-                </View>
+                  <Text style={s.folderChevron}>{isExpanded ? '▾' : '▸'}</Text>
+                </TouchableOpacity>
+                {isExpanded ? (
+                  <>
                 <Text style={s.sub} testID={`p2p-order-${i}-limit`}>
                   {t('p2p.advertised', { amount: `${o.remainingGive ?? o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).join(', ')}
                 </Text>
@@ -905,12 +999,12 @@ export default function P2pScreen() {
                     })}
                   </Text>
                 ) : null}
-                {identity && o.sellerDid === identity.did && o.status === 'ACTIVE' ? (
+                {own && o.status === 'ACTIVE' ? (
                   <View style={s.actions}>
                     <Action label={t('p2p.cancelOrder')} color={theme.colors.accent.red} onPress={() => submitCancel(o)} disabled={busy} testID={`p2p-cancel-order-${i}`} />
                   </View>
                 ) : null}
-                {selected?.orderId === o.orderId ? (
+                {selected?.orderId === o.orderId && !own ? (
                   <View style={s.buyPanel}>
                     <Field
                       label={t('p2p.giveAmount')}
@@ -972,30 +1066,20 @@ export default function P2pScreen() {
                       <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
                     </TouchableOpacity>
                   </View>
-                ) : (
-                  <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.accent.emerald, opacity: fundsBad ? 0.5 : 1 }]} onPress={() => {
-                    setSelected(o); setBuyRecv('');
-                    setChosenRail(o.wantRails?.[0] ?? o.wantRail);
-                    const rem = o.remainingGive ?? o.giveAmount;
-                    setBuyFill(rem);
-                    const unit = Number(o.wantAmount) / Number(o.giveAmount);
-                    setBuyFillFiat(unit > 0 ? String(Number((Number(rem) * unit).toFixed(8))) : '');
-                  }} disabled={fundsBad} accessibilityRole="button" accessibilityState={{ disabled: fundsBad }} testID={`p2p-buy-${i}`}>
-                    <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
-                  </TouchableOpacity>
-                )}
+                ) : null}
+                  </>
+                ) : null}
               </View>
               );
             })}
         </>
-      ) : !isUnlocked ? (
-        <WalletUnlock fullScreen={false} subtitle={t('p2p.unlockFirst')} testID="p2p-need-unlock" />
       ) : !identity ? (
         <Text style={s.emptyText} testID="p2p-need-unlock">{t('p2p.unlockFirst')}</Text>
       ) : (
         <>
           <View style={s.card} testID="p2p-profile-card">
             <Text style={s.cardTitle}>{t('p2p.profileTitle')}</Text>
+            <Text style={s.sub}>{t('p2p.channelPrivate')}</Text>
             <View style={s.chips}>
               {enabledProfileMethods.map((m) => (
                 <TouchableOpacity
@@ -1266,7 +1350,7 @@ const s = StyleSheet.create((theme) => ({
   bookSearchRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   bookSearchInput: { flex: 1, minWidth: 0 },
   bookClear: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  tabs: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 12 },
+  tabs: { flexDirection: 'row', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' },
   tab: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: theme.colors.border },
   tabText: { fontSize: 14, fontWeight: '600' },
   refreshBtn: { marginLeft: 'auto', paddingHorizontal: 8, paddingVertical: 8 },
@@ -1274,6 +1358,8 @@ const s = StyleSheet.create((theme) => ({
   guideRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8 },
   refreshText: { fontSize: 13, fontWeight: '600' },
   card: { backgroundColor: theme.colors.groupped.surface, borderRadius: 12, borderWidth: 1, borderColor: theme.colors.border, padding: 16, marginBottom: 12 },
+  folderHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  folderChevron: { fontSize: 16, color: theme.colors.text.secondary, paddingHorizontal: 4 },
   cardTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   mono: { fontSize: 14, fontFamily: MONO_FONT, color: theme.colors.text.primary },

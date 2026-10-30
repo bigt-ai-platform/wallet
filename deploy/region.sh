@@ -108,6 +108,9 @@ sync_repo() {
     --exclude 'expo-app/.expo' --exclude deploy/.image --exclude '*.log' \
     --exclude test-results --exclude playwright-report --exclude logs \
     --exclude '.env' --exclude 'deploy/env' \
+    --exclude out --exclude 'expo-app/dist' --exclude 'expo-app/android' \
+    --exclude 'expo-app/ios' --exclude 'webapp/android' --exclude 'webapp/dist' \
+    --exclude '*.apk' --exclude '*.aab' --exclude '.gradle' \
     "${PROJECT_DIR}/" "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/"
   # legacy rename /srv/bapp (or /home/<user>/bapp) → the resolved REMOTE_REPO:
   # drop the old default dir only after the new one has the tree, and never
