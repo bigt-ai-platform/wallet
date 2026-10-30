@@ -142,7 +142,9 @@ export default function HomeScreen() {
           tokenid,
           tokenName,
           quoteId: quote.id,
-          name: quote.id === 'bc' ? tokenName : `${tokenName}/${quote.name}`,
+          // Keep the quote suffix for every pair, including native BC:
+          // "CNY/BC", not just "CNY" (the Spot header shows CNY / BC).
+          name: `${tokenName}/${quote.name}`,
           price,
           changePct: dayPrice > 0 && price > 0 ? ((price - dayPrice) / dayPrice) * 100 : null,
           volume: toHuman(tk.lastdayQuantity, dec),
