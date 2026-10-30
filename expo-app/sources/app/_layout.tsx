@@ -14,6 +14,8 @@ import { startAutoSelection, stopAutoSelection } from '@/services/discovery';
 import Sidebar from '@/components/Sidebar';
 import BootScreen from '@/components/BootScreen';
 import BottomNav from '@/components/BottomNav';
+import SystemMessageHost from '@/components/SystemMessageHost';
+import PaymentFinalityWatcher from '@/components/PaymentFinalityWatcher';
 import { TransactionConfirmProvider } from '@/components/TransactionConfirm';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
 import { MenuIcon } from '@/components/Icons';
@@ -179,6 +181,8 @@ export default function RootLayout() {
                             <SidebarProvider>
                                 <AppShell />
                                 <MobileSidebar />
+                                <PaymentFinalityWatcher />
+                                <SystemMessageHost />
                             </SidebarProvider>
                         </TransactionConfirmProvider>
                     </WalletProvider>

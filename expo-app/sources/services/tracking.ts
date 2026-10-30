@@ -15,6 +15,8 @@
  */
 
 import { device } from '@/storage';
+import i18n from '@/lib/i18n';
+import { notifySystemMessage } from './systemMessages';
 import { httpService } from './http';
 import type { OrderInfo, TrackedRecord, TrackedStatus, TransactionStatusInfo } from '@/types/api';
 
@@ -175,6 +177,39 @@ export function mapChainTxStatus(status: string): TrackedStatus {
   }
 }
 
+/** One banner per record/status even when two pollers race. */
+const notifiedTransitions = new Set<string>();
+
+function notifyPaymentTransition(record: TrackedRecord, next: TrackedStatus): void {
+  if (next !== 'confirmed' && next !== 'failed') return;
+  const key = `${record.id}:${next}`;
+  if (notifiedTransitions.has(key)) return;
+  notifiedTransitions.add(key);
+
+  const hash = record.txHash ? `${record.txHash.slice(0, 12)}…` : '';
+  if (next === 'confirmed') {
+    notifySystemMessage({
+      tone: 'success',
+      title: i18n.t('system.paymentFinalizedTitle'),
+      body: i18n.t('system.paymentFinalizedBody', {
+        amount: record.amount,
+        token: record.tokenName,
+        hash,
+      }),
+    });
+  } else {
+    notifySystemMessage({
+      tone: 'error',
+      title: i18n.t('system.paymentFailedTitle'),
+      body: i18n.t('system.paymentFailedBody', {
+        amount: record.amount,
+        token: record.tokenName,
+        hash,
+      }),
+    });
+  }
+}
+
 /**
  * Refresh a single pending payment against the L0 transaction status API.
  *
@@ -200,6 +235,7 @@ async function refreshPayment(record: TrackedRecord): Promise<TrackedRecord> {
         statusDetail: info.status,
       });
       if (next !== 'pending') {
+        notifyPaymentTransition(record, next);
         return updated || record;
       }
     }
@@ -267,12 +303,18 @@ async function refreshOrders(address: string, l1Url?: string): Promise<TrackedRe
   return updated.length ? updated : listOrders();
 }
 
+/** Refresh only pending payments (used by the app-wide finality watcher). */
+export async function refreshPendingPayments(): Promise<TrackedRecord[]> {
+  const payments = listPayments().filter((r) => r.status === 'pending');
+  await Promise.all(payments.map((r) => refreshPayment(r)));
+  return listPayments();
+}
+
 /**
  * Refresh the status of all pending payments and orders.
  */
 export async function refreshAllStatuses(address?: string, l1Url?: string): Promise<TrackedRecord[]> {
-  const payments = listPayments().filter((r) => r.status === 'pending');
-  await Promise.all(payments.map((r) => refreshPayment(r)));
+  await refreshPendingPayments();
   if (address) {
     await refreshOrders(address, l1Url);
   }

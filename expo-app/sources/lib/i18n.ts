@@ -10,6 +10,13 @@ const resources = {
     translation: {
       boot: { start: 'Starting…', storage: 'Loading secure storage…', ready: 'Ready' },
       confirm: { cancelled: 'Transaction cancelled' },
+      system: {
+        dismiss: 'Dismiss',
+        paymentFinalizedTitle: 'Payment finalized',
+        paymentFinalizedBody: '{{amount}} {{token}} reached chain finality. Tx {{hash}}',
+        paymentFailedTitle: 'Payment failed',
+        paymentFailedBody: 'The chain dropped {{amount}} {{token}}. Tx {{hash}}',
+      },
       predictionBrowse: { search: 'Search markets', clear: 'Clear search', status: 'Market filter', all: 'All', open: 'Open', resolving: 'Resolving', final: 'Final', mine: 'My positions', count: '{{shown}} / {{total}} markets', noMatches: 'No matching markets', reset: 'Reset filters' },
       p2pBook: { search: 'Search ads', clear: 'Clear search', count: '{{shown}} / {{total}} ads', emptyBuy: 'No open buy orders' },
       p2pFill: { amount: 'Enter an amount greater than 0 and up to {{limit}} {{token}}.', min: 'Minimum trade: {{limit}} {{currency}}.', max: 'Maximum trade: {{limit}} {{currency}}.', remainder: 'Leave at least {{limit}} {{currency}} or take the full remainder.', precision: 'Choose an amount with an exact fiat value within {{limit}} decimal places.', preview: '{{amount}} {{token}} for {{fiat}} {{currency}}' },
