@@ -221,7 +221,11 @@ export default function TradeScreen() {
     const nextQuote = next.tokenid === q.tokenid
       ? (quotes.find((x) => x.tokenid !== next.tokenid) ?? q)
       : q;
-    if (nextQuote.tokenid !== q.tokenid) setQuote(nextQuote);
+    // Compare with the CURRENT quote state, not with the requested `q`.
+    // Deep links pass a quote that is not selected yet (Home BTC/CNY while the
+    // default market is still Nvidia/USDT); comparing against `q` left the
+    // header on USDT even though the data was loaded for CNY.
+    if (nextQuote.tokenid !== quote.tokenid) setQuote(nextQuote);
     setSelected(next);
     setTokenSearch(next.tokenname);
     setTokenResults([]);
