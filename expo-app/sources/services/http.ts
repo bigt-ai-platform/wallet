@@ -33,6 +33,7 @@ import {
 import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
 import { decimalsFor, formatTokenAmount } from '@/lib/tokenformat';
 import { collapseTokenEmissions } from '@/lib/tokenlist';
+import { findExchangeToken as findExchangeTokenIn } from '@/lib/exchangeToken';
 import { resolvePredictionUrl } from '@/lib/predictionChain';
 import { withSlash } from 'chain-discovery';
 import { orderedBases, markDown, rememberPeer } from '@/services/discovery';
@@ -1067,6 +1068,40 @@ export class HttpService {
       success: false,
       error: response.error || 'Failed to search exchange tokens',
     } as ApiResponse<TokenItem[]>;
+  }
+
+  /**
+   * Search the L0 token index. A token created on L0 keeps the same token id
+   * when the bridge wraps it onto an L1 order chain, but only L0 carries its
+   * metadata. Quote discovery uses this fallback for wrapped tokens such as
+   * USDT that have no L1 token-index row.
+   */
+  async searchExchangeTokensOnL0(keyword?: string): Promise<ApiResponse<TokenItem[]>> {
+    const response = await this.request<GetTokensResponse>(
+      ReqCmd.SearchExchangeTokens,
+      'POST',
+      { keyword }
+    );
+
+    if (response.success && response.data) {
+      return {
+        success: true,
+        data: collapseTokenEmissions(response.data.tokens ?? [], response.data.amountMap),
+      };
+    }
+
+    return {
+      success: false,
+      error: response.error || 'Failed to search L0 tokens',
+    } as ApiResponse<TokenItem[]>;
+  }
+
+  /** Exact symbol/name lookup on L1, then on L0 for bridge-wrapped quotes. */
+  async findExchangeToken(name: string): Promise<TokenItem | undefined> {
+    return findExchangeTokenIn(name, [
+      this.searchExchangeTokens.bind(this),
+      this.searchExchangeTokensOnL0.bind(this),
+    ]);
   }
 
   /**

@@ -170,9 +170,7 @@ export default function TradeScreen() {
       const found: QuoteToken[] = [BC_QUOTE];
       for (const symbol of QUOTE_SYMBOLS) {
         try {
-          const res = await httpService.searchExchangeTokens(symbol);
-          if (!res.success || !res.data) continue;
-          const tk = res.data.find((t) => (t.tokenname || '').trim().toUpperCase() === symbol);
+          const tk = await httpService.findExchangeToken(symbol);
           if (tk?.tokenid && tk.tokenid !== BC_QUOTE.tokenid) {
             found.push({ tokenid: tk.tokenid, tokenname: symbol, decimals: tk.decimals ?? 0 });
           }
@@ -317,11 +315,8 @@ export default function TradeScreen() {
       try {
         let defaultQuote = BC_QUOTE;
         for (const symbol of QUOTE_SYMBOLS) {
-          const qres = await httpService.searchExchangeTokens(symbol);
+          const q = await httpService.findExchangeToken(symbol);
           if (cancelled) return;
-          const q = qres.success && qres.data
-            ? qres.data.find((tk) => (tk.tokenname || '').trim().toUpperCase() === symbol)
-            : undefined;
           if (q && q.tokenid !== BC_QUOTE.tokenid) {
             defaultQuote = { tokenid: q.tokenid, tokenname: symbol, decimals: q.decimals ?? 0 };
             break;

@@ -91,10 +91,7 @@ export default function HomeScreen() {
       // Quote bases: BC plus the fixed USDT/CNY tokens when the L1 has them.
       const bases: { id: string; name: string }[] = [{ id: 'bc', name: 'BC' }];
       for (const symbol of ['USDT', 'CNY']) {
-        const res = await httpService.searchExchangeTokens(symbol);
-        const tk = res.success && res.data
-          ? res.data.find((t) => (t.tokenname || '').trim().toUpperCase() === symbol)
-          : undefined;
+        const tk = await httpService.findExchangeToken(symbol);
         if (tk?.tokenid && !bases.some((b) => b.id === tk.tokenid)) {
           bases.push({ id: tk.tokenid, name: symbol });
         }
