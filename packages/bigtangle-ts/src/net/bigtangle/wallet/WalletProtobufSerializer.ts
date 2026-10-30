@@ -194,9 +194,17 @@ export class WalletProtobufSerializer {
     switch (id) {
       case "Mainnet":
       case NetworkParameters.ID_MAINNET:
+      // Legacy ids written by the pre-rename clients: 2018 bigtangle
+      // (`net.bigtangle`) and the original bitcoinj fork
+      // (`org.bitcoin.production`). Old .wallet files still carry them.
+      case "net.bigtangle":
+      case "org.bitcoin.production":
         return MainNetParams.get();
       case "Test":
       case NetworkParameters.ID_UNITTESTNET:
+      case "net.bigtangle.unittest":
+      case "org.bitcoin.test":
+      case "org.bitcoinj.unittest":
         return TestParams.get();
       default:
         return null;

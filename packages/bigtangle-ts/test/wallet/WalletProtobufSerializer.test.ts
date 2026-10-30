@@ -204,6 +204,42 @@ describe('WalletProtobufSerializer', () => {
         expect((keys[0] as ECKey).getPrivKeyBytes()).toEqual(myKey.getPrivKeyBytes());
     });
 
+    test('accepts legacy network identifiers of old .wallet files', async () => {
+        const myKey = new ECKey();
+        const bytes = serializer.writeWallet(Wallet.fromKeys(params, myKey));
+
+        /** Replace the network_identifier (field 1, written first). */
+        function withNetworkId(id: string): Uint8Array {
+            expect(bytes[0]).toBe(0x0a);
+            let pos = 1;
+            let len = 0;
+            let shift = 0;
+            for (;;) {
+                const b = bytes[pos++];
+                len |= (b & 0x7f) << shift;
+                shift += 7;
+                if ((b & 0x80) === 0) break;
+            }
+            return concat(encodeStringField(1, id), bytes.slice(pos + len));
+        }
+
+        const legacy: Array<[string, string]> = [
+            // 2018 bigtangle and the original bitcoinj fork ids.
+            ['net.bigtangle', NetworkParameters.ID_MAINNET],
+            ['org.bitcoin.production', NetworkParameters.ID_MAINNET],
+            ['net.bigtangle.unittest', NetworkParameters.ID_UNITTESTNET],
+            ['org.bitcoin.test', NetworkParameters.ID_UNITTESTNET],
+            ['org.bitcoinj.unittest', NetworkParameters.ID_UNITTESTNET],
+        ];
+        for (const [id, expected] of legacy) {
+            const legacyBytes = withNetworkId(id);
+            expect(WalletProtobufSerializer.isWallet(legacyBytes)).toBe(true);
+            const wallet = serializer.readWallet(legacyBytes);
+            expect(wallet.getParams().getId(), id).toBe(expected);
+            expect((await wallet.walletKeysAll(null)).length).toBe(1);
+        }
+    });
+
     test('imports a real legacy .wallet file', async () => {
         const fixturePath = join(dirname(fileURLToPath(import.meta.url)), '../oldwallet/cui.wallet');
         const bytes = readFileSync(fixturePath);
