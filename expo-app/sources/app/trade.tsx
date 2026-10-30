@@ -58,6 +58,16 @@ const BC_QUOTE: QuoteToken = {
   decimals: BC_DECIMALS,
 };
 
+/** Native BIG is tradable on L1, but it has no `searchExchangeTokens` row. */
+const BIG_TOKEN: MarketPrice = {
+  tokenid: 'bc',
+  tokenname: 'BIG',
+  price: '0',
+  change: '0',
+  executedquantity: '0',
+  decimals: BC_DECIMALS,
+};
+
 interface BookLevel {
   price: number;
   amount: number;
@@ -153,11 +163,19 @@ export default function TradeScreen() {
     try {
       const res = await httpService.searchExchangeTokens(keyword.trim());
       if (res.success && res.data) {
-        setTokenResults(res.data.map((tk) => ({
+        const rows: MarketPrice[] = res.data.map((tk) => ({
           tokenid: tk.tokenid,
           tokenname: tk.tokenname || tk.tokenid?.slice(0, 8),
           price: '0', change: '0', executedquantity: '0', decimals: tk.decimals,
-        })));
+        }));
+        // BIG is the native chain token (id "bc") and has no token-index row.
+        const want = keyword.trim().toUpperCase();
+        const bigMatch = want.length > 0
+          && ('BIG'.startsWith(want) || 'BIGTANGLE'.startsWith(want) || want === 'BC');
+        if (bigMatch && !rows.some((tk) => tk.tokenid === BIG_TOKEN.tokenid)) {
+          rows.unshift(BIG_TOKEN);
+        }
+        setTokenResults(rows);
       }
     } catch (e) { console.error('Error searching tokens:', e); }
     finally { setSearching(false); }
@@ -183,6 +201,8 @@ export default function TradeScreen() {
 
   const selectQuote = (next: QuoteToken) => {
     if (next.tokenid === quote.tokenid) return;
+    // A pair cannot quote a token against itself (e.g. BIG/BC is invalid).
+    if (selected && next.tokenid === selected.tokenid) return;
     setQuote(next);
     if (selected) {
       loadChart(selected, interval, next);
@@ -196,11 +216,17 @@ export default function TradeScreen() {
       tokenname: tk.tokenname || tk.tokenid.slice(0, 8),
       decimals: decimalsFor(tk.tokenid, tk.decimals),
     };
+    // Selecting BIG while BC is the quote would be BIG/BC; move to the first
+    // available non-BIG quote instead (normally USDT).
+    const nextQuote = next.tokenid === q.tokenid
+      ? (quotes.find((x) => x.tokenid !== next.tokenid) ?? q)
+      : q;
+    if (nextQuote.tokenid !== q.tokenid) setQuote(nextQuote);
     setSelected(next);
     setTokenSearch(next.tokenname);
     setTokenResults([]);
-    loadChart(next, interval, q);
-    loadMarket(next, q);
+    loadChart(next, interval, nextQuote);
+    loadMarket(next, nextQuote);
   };
 
   // Apply the Predict deep link once (and after the quote list resolves, so a
