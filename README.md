@@ -284,6 +284,22 @@ browser (`expo-app/jackson-stub.js`, `expo-app/node-web-stub.js`).
 - `.wallet` protobuf import uses `WalletProtobufSerializer`; keys may be PQ
   (new) or EC (legacy, migrated)
 
+### Reading a legacy `.wallet` file
+
+`oldwallet.sh` prints the network, encryption parameters and keys of a legacy
+bigtangle protobuf wallet, using the same `WalletProtobufSerializer` as the app
+(it also accepts the pre-rename network ids `net.bigtangle`,
+`org.bitcoin.production`, …):
+
+```bash
+./oldwallet.sh /backup/old/cui/wallet/15112019.wallet 'the-password'
+./oldwallet.sh wallet.wallet --public      # addresses only, no secrets
+WALLET_PASSWORD=… ./oldwallet.sh w.wallet --json   # machine-readable
+```
+
+It prompts (hidden) when the file is encrypted and no password is given, and
+exits 4 (password required), 5 (wrong password) or 3 (not a wallet file).
+
 ### HTTP service layer
 
 `expo-app/sources/services/http.ts` is the singleton API client for balances,
