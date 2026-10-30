@@ -10,7 +10,7 @@ import {
   networkCandidates, endpointInfo, selectedNodeName, refreshLiveCandidates,
 } from '@/services/discovery';
 import { buildChainTargets, hostOf, shortHash, nodeNameForUrl, type ChainTarget, type ChainRole } from '@/lib/chainstatus';
-import type { ChainProbe } from 'chain-discovery';
+import { selectAndRank, RATE_WINDOW_MS, type ChainProbe, type ProbeResult } from 'chain-discovery';
 import { IS_DEV, IS_WEB_BROWSER, PROD_WEB_L0_NODES, PROD_WEB_L1_NODES } from '@/constants/app';
 
 /**
@@ -34,6 +34,18 @@ interface Health {
   status: Status;
   latencyMs: number;
   probe: ChainProbe | null;
+}
+
+/**
+ * The nodes the Chains page may show: the `checkchains.sh` selection
+ * (`selectAndRank`) keeps the ones that pass the pass criteria — responsive,
+ * within `SPREAD_MAX` of the chain head, finality lag under `FIN_LAG_MAX`, an
+ * agreeing head, and advancing within the rate window. Everything else is
+ * counted as hidden instead of being listed as a chain.
+ */
+interface SelectionView {
+  good: Set<string>;
+  hidden: number;
 }
 
 interface PeersInfo {
@@ -143,6 +155,10 @@ export default function NetworkScreen() {
   const [peers, setPeers] = React.useState<Record<string, PeersInfo | 'loading'>>({});
   // Details are shown by default; this tracks the rows the user collapsed.
   const [collapsed, setCollapsed] = React.useState<Set<string>>(() => new Set());
+  // Per-role node selection (checkchains.sh criteria) and the previous probe of
+  // each URL for its advance-rate window, which must span RATE_WINDOW_MS.
+  const [selection, setSelection] = React.useState<Partial<Record<ChainRole, SelectionView>>>({});
+  const samplesRef = React.useRef<Record<string, { at: number; chainLength: number }>>({});
 
   const check = React.useCallback(async (list: ChainTarget[]) => {
     setHealth((prev) => {
@@ -150,8 +166,21 @@ export default function NetworkScreen() {
       for (const target of list) next[target.key] = { status: 'checking', latencyMs: 0, probe: null };
       return next;
     });
+    const probes = new Map<string, ProbeResult | null>();
     await runPool(list, CONCURRENCY, async (target) => {
       const info = await endpointInfo(target.url);
+      probes.set(
+        target.key,
+        info
+          ? {
+              url: target.url,
+              chainLength: info.probe.chainLength,
+              latencyMs: info.latencyMs,
+              finalizedChainLength: info.probe.finalizedChainLength,
+              head: info.probe.head,
+            }
+          : null,
+      );
       setHealth((prev) => ({
         ...prev,
         [target.key]: info
@@ -159,6 +188,33 @@ export default function NetworkScreen() {
           : { status: 'offline', latencyMs: 0, probe: null },
       }));
     });
+    // Keep only the nodes that pass the same checks as ../pm checkchains.sh:
+    // responsive, <= SPREAD_MAX behind the head, finality lag <= FIN_LAG_MAX,
+    // agreeing head, and advancing within the rate window.
+    const now = Date.now();
+    const next: Partial<Record<ChainRole, SelectionView>> = {};
+    for (const role of ['l0', 'l1'] as ChainRole[]) {
+      const roleTargets = list.filter((target) => target.role === role);
+      if (roleTargets.length === 0) continue;
+      const results = roleTargets
+        .map((target) => probes.get(target.key))
+        .filter((probe): probe is ProbeResult => !!probe);
+      const { ranked } = selectAndRank(results, { now, prev: samplesRef.current });
+      const good = new Set(
+        roleTargets.filter((target) => ranked.some((probe) => probe.url === target.url)).map((target) => target.key),
+      );
+      next[role] = { good, hidden: roleTargets.length - good.size };
+      // Remember the probe for the stall window; refresh it only once the
+      // stored sample is older than the window so the comparison always spans
+      // it (polling every 30s would otherwise never accumulate 60s).
+      for (const probe of results) {
+        const prev = samplesRef.current[probe.url];
+        if (!prev || now - prev.at >= RATE_WINDOW_MS) {
+          samplesRef.current[probe.url] = { at: now, chainLength: probe.chainLength };
+        }
+      }
+    }
+    setSelection(next);
   }, []);
 
   const lastKeys = React.useRef('');
@@ -265,10 +321,15 @@ export default function NetworkScreen() {
         ) : roleGroups.map((role) => {
           const rows = targets.filter((target) => target.role === role);
           if (rows.length === 0) return null;
+          const view = selection[role];
+          // Only nodes that pass the chain check are listed; the rest are
+          // reported as a count (detail: ../pm checkchains.sh).
+          const good = view ? rows.filter((target) => view.good.has(target.key)) : rows;
+          const hidden = view ? rows.length - good.length : 0;
           return (
             <View key={role} style={s.section}>
               <Text style={s.sectionTitle}>{t(`network.${role}`)}</Text>
-              {rows.map((target) => (
+              {good.map((target) => (
                 <ChainRow
                   key={target.key}
                   target={target}
@@ -279,6 +340,13 @@ export default function NetworkScreen() {
                   onPress={() => toggle(target)}
                 />
               ))}
+              {hidden > 0 ? (
+                <Text style={s.excluded} testID="network-excluded">
+                  {good.length === 0
+                    ? t('network.noGoodNodes')
+                    : t('network.excluded', { count: hidden })}
+                </Text>
+              ) : null}
             </View>
           );
         })}
@@ -327,4 +395,5 @@ const s = StyleSheet.create((theme) => ({
   detailLabel: { fontSize: 11, color: theme.colors.text.secondary },
   detailValue: { fontSize: 11, color: theme.colors.text.primary, fontFamily: 'monospace', flexShrink: 1, textAlign: 'right' },
   empty: { fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', padding: 32 },
+  excluded: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 6, marginLeft: 4 },
 }));

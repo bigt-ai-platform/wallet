@@ -26,7 +26,10 @@ const PROBE = {
 };
 
 /** Serve the chain RPC the app calls under /l0|/l1 (the deploy proxy's job). */
-async function stubChain(page: Page, opts: { offline?: string[] } = {}) {
+async function stubChain(
+  page: Page,
+  opts: { offline?: string[]; chainLength?: Record<string, number> } = {},
+) {
   const offline = new Set(opts.offline ?? []);
   const handle = (role: 'l0' | 'l1') => async (route: Route) => {
     const url = route.request().url();
@@ -46,7 +49,21 @@ async function stubChain(page: Page, opts: { offline?: string[] } = {}) {
     }
     if (offline.has(node)) return route.fulfill({ status: 503, body: 'down' });
     if (url.includes('/getPeers')) return route.fulfill({ json: { count: 2, self: 'abcdef' } });
-    return route.fulfill({ json: PROBE });
+    const chainLength = opts.chainLength?.[node] ?? PROBE.txReward.chainLength;
+    return route.fulfill({
+      json: {
+        ...PROBE,
+        txReward: {
+          ...PROBE.txReward,
+          chainLength,
+          // Same height → same head (head agreement); a lagging stub gets its
+          // own hash so it is a spread/behind case, not a fork at one height.
+          blockHashHex: chainLength === PROBE.txReward.chainLength
+            ? PROBE.txReward.blockHashHex
+            : chainLength.toString(16).padStart(64, '0'),
+        },
+      },
+    });
   };
   await page.route('**/l0/**', handle('l0'));
   await page.route('**/l1/**', handle('l1'));
@@ -119,14 +136,32 @@ test('collapses and re-expands a row', async ({ page }) => {
   await expect(page.getByTestId('network-detail')).toHaveCount(6);
 });
 
-test('shows a node that stops answering as offline, not as a missing row', async ({ page }) => {
+test('shows only the nodes that pass the chain check', async ({ page }) => {
+  // checkchains.sh SPREAD_MAX is 8: eu2 lagging 100 blocks behind the head is
+  // not a usable node, so it must not be listed as a chain of its own.
+  await stubChain(page, { chainLength: { eu2: 4900 } });
+  await openChains(page);
+
+  await expect(page.getByTestId('network-row')).toHaveCount(5);
+  await expect(page.getByText('eu2', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('eu1', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('hk1', { exact: true }).first()).toBeVisible();
+  // The page still reports that a node was dropped, with a count.
+  await expect(page.getByTestId('network-excluded')).toHaveCount(1);
+  await expect(page.getByTestId('network-excluded').first()).toContainText('1 node(s)');
+});
+
+test('reports an outage as a failed check instead of an offline row', async ({ page }) => {
   await stubChain(page, { offline: ['hk1', 'orderhk1'] });
   await openChains(page);
 
-  await expect(page.getByTestId('network-row')).toHaveCount(6);
-  await expect(page.getByTestId('network-status-offline')).toHaveCount(2);
+  // Only the nodes that answered and passed remain listed.
+  await expect(page.getByTestId('network-row')).toHaveCount(4);
+  await expect(page.getByTestId('network-status-offline')).toHaveCount(0);
   await expect(page.getByTestId('network-status-online')).toHaveCount(4);
-  // The node is still listed (an outage is reported, not hidden).
-  await expect(page.getByText('hk1', { exact: true }).first()).toBeVisible();
-  await expect(page.getByText('orderhk1', { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('hk1', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('orderhk1', { exact: true })).toHaveCount(0);
+  // One hidden node per role is reported.
+  await expect(page.getByTestId('network-excluded')).toHaveCount(2);
+  await expect(page.getByTestId('network-excluded').first()).toContainText('1 node(s)');
 });
