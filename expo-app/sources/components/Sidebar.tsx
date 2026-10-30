@@ -78,12 +78,12 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
     {
       titleKey: 'sidebar.home',
       items: [
-        { label: t('notifications.title'), key: 'notifications', icon: BellIcon, route: '/notifications', badge: unreadNotices },
         { label: t('sidebar.payment'), key: 'payment', icon: SendIcon, route: '/home/payment' },
         { label: t('sidebar.balance'), key: 'balance', icon: DataIcon, route: '/balance' },
         { label: t('sidebar.tokens'), key: 'tokens', icon: TokensIcon, route: '/tokens' },
         { label: t('sidebar.keys'), key: 'keys', icon: WalletIcon, route: '/home/keys' },
         { label: t('sidebar.settings'), key: 'settings', icon: SettingsIcon, route: '/settings' },
+        { label: t('notifications.title'), key: 'notifications', icon: BellIcon, route: '/notifications', badge: unreadNotices },
       ],
     },
     {
