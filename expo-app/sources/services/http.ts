@@ -166,6 +166,11 @@ export class HttpService {
   getServerUrl(): string {
     const savedUrl = device.get(STORAGE_KEYS.SERVER_URL);
     if (savedUrl) {
+      // A saved testnet host outlives the removed toggle; never let it pin a
+      // mainnet build to the empty test network.
+      if (!this.getUseTestnet() && /(^|\.)testm\.bigtangle\.org|testnet/i.test(savedUrl)) {
+        return this.getDefaultServerUrl();
+      }
       // Values saved by older builds may name the raw network seeds
       // (http://92.5.34.128:80/ etc.) — browsers block those (mixed content),
       // so ignore them and fall back to the current network default.
@@ -297,6 +302,8 @@ export class HttpService {
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
     if (useTestnet) return url;
     if (/^https?:\/\/m\.bigtangle\.org\/?$/.test(url)) return defaultL1Url(false);
+    if (/^https?:\/\/testm\.bigtangle\.org\/?$/i.test(url)
+        || /(^|\.)testm\.bigtangle\.org|testnet/i.test(url)) return defaultL1Url(false);
     const seeds = MainNetParams.get().serverSeeds().map((s) => `http://${s}`);
     if (seeds.some((s) => url.startsWith(s))) return defaultL1Url(false);
     return url;
