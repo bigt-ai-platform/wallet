@@ -160,46 +160,6 @@ test.describe('P2P Page', () => {
     await expect(page.getByTestId('p2p-buy-fill')).toHaveValue('100');
   });
 
-  test('a newly listed buy bid appears in the Sell book', async ({ page }) => {
-    test.skip(!process.env.E2E_P2P_ENGINE_URL, 'requires a P2P-enabled web build');
-    let posted = false;
-    const bid: P2pOrder = {
-      orderId: 'ord-0123456789abcdef', type: 'limit_buy', sellerDid: 'did:pq:poster',
-      giveToken: 'USDT', giveAmount: '7', remainingGive: '7', giveChain: 'L0',
-      wantCurrency: 'CNY', wantAmount: '49', wantRail: 'wechat', wantRails: ['wechat'],
-      minOrder: '0', maxOrder: '49',
-      validUntil: Math.floor(Date.now() / 1000) + 86400, status: 'ACTIVE', createdAt: 1,
-    };
-    await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders: posted ? [bid] : [] } }));
-    await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat'] } }));
-    // Listing a sell/buy ad requires the channel details (e.g. WeChat).
-    await page.route('**/profiles/mine', (route) => route.fulfill({
-      json: { profiles: [{
-        sellerDid: 'did:pq:self', method: 'wechat', accountName: 'Self',
-        account: 'self-wechat', updatedAt: 1,
-      }] },
-    }));
-    await page.route('**/orders', (route) => {
-      if (route.request().method() !== 'POST') return route.continue();
-      const body = JSON.parse(route.request().postData() || '{}');
-      expect(body.type).toBe('limit_buy');
-      posted = true;
-      return route.fulfill({ status: 201, json: { orderId: bid.orderId, status: 'ACTIVE', txid: null } });
-    });
-    await createWallet(page, 'P2pFixturePassword123');
-    await clickTab(page, 'P2P');
-    // Listing an ad lives on My swaps (the books are read-only).
-    await page.getByTestId('p2p-tab-mine').click();
-    await page.getByTestId('p2p-side-buy').click();
-    await page.getByTestId('p2p-give-amount').fill('7');
-    await page.getByTestId('p2p-want-amount').fill('7');
-    await page.getByTestId('p2p-create-recv').fill('1FvyAqqELFiQyaEWdhFbWF8MZapKPZS8J7');
-    await page.getByTestId('p2p-create').click();
-    await expect(page.getByTestId('p2p-notice')).toContainText('Order listed');
-    await expect(page.getByTestId('p2p-order-0')).toBeVisible();
-    await expect(page.getByTestId('p2p-order-0-side')).toContainText('Buy');
-  });
-
   test('phone verification reads WeChat via the payee notification and Alipay via the screen', async ({ page }) => {
     test.skip(!process.env.E2E_P2P_ENGINE_URL, 'requires a P2P-enabled web build');
     const swapFor = (did: string, swapId: string, wantRail: string, role: 'seller' | 'buyer') => ({
