@@ -29,6 +29,7 @@ export const SearchIcon = makeIcon('M11 19a8 8 0 100-16 8 8 0 000 16zM21 21l-4.3
 export const PlusIcon = makeIcon('M12 5v14M5 12h14');
 export const MinusIcon = makeIcon('M5 12h14');
 export const HomeIcon = makeIcon('M3 10.5L12 3l9 7.5M5 9.7V21h14V9.7M10 21v-6h4v6');
+export const BellIcon = makeIcon('M18 8a6 6 0 10-12 0c0 7-3 8-3 8h18s-3-1-3-8M10 21h4');
 export const SwapIcon = makeIcon('M7 4v12m0 0l-3-3m3 3l3-3M17 20V8m0 0l3 3m-3-3l-3 3');
 export const BlocksIcon = makeIcon('M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5');
 

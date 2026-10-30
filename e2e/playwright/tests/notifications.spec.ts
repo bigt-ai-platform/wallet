@@ -40,6 +40,15 @@ test.describe('System notifications', () => {
     await expect(page.getByTestId('system-message-title')).toHaveText('Payment finalized', { timeout: 20000 });
     await expect(page.getByTestId('system-message-body')).toContainText('reached chain finality');
     await expect(page.getByTestId('system-message-dismiss')).toBeVisible();
+
+    // The same event remains in the persisted centre and carries unread state.
+    await expect(page.getByTestId('home-notifications')).toBeVisible();
+    await expect(page.getByTestId('home-notifications-unread')).toHaveText('1');
+    await page.getByTestId('home-notifications-view-all').click();
+    await expect(page.getByTestId('notifications-screen')).toBeVisible();
+    const rows = page.locator('[data-testid^="notification-row-"]');
+    await expect(rows).toHaveCount(1);
+    await expect(rows.getByText('Payment finalized')).toBeVisible();
   });
 
   test('filled trade order raises a page message', async ({ page }) => {

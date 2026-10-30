@@ -9,10 +9,12 @@ import { useUnistyles } from 'react-native-unistyles';
 import {
   WalletIcon, MarketIcon, TokensIcon, SettingsIcon, CloseIcon,
   OrderIcon, DataIcon, SendIcon, SearchIcon, BlocksIcon, NetworkIcon, DeviceIcon,
+  BellIcon,
 } from './Icons';
 import LanguageSwitcher from './LanguageSwitcher';
 import { useTranslation } from 'react-i18next';
 import { httpService } from '@/services/http';
+import { useSystemNotifications } from '@/lib/useSystemNotifications';
 
 interface NavItem {
   label: string;
@@ -20,6 +22,7 @@ interface NavItem {
   icon: React.FC<{ size?: number; color?: string }>;
   route: string;
   view?: string;
+  badge?: number;
 }
 
 interface NavSection {
@@ -52,6 +55,11 @@ function NavItemRow({ item, onPress, isActive }: { item: NavItem; onPress: () =>
       <Text style={[s.navLabel, { color: isActive ? theme.colors.primary : theme.colors.text.secondary }, isActive && { fontWeight: '600' }]}>
         {item.label}
       </Text>
+      {!!item.badge && item.badge > 0 && (
+        <View style={[s.navBadge, { backgroundColor: theme.colors.primary }]} testID={`nav-badge-${item.key}`}>
+          <Text style={s.navBadgeText}>{item.badge > 99 ? '99+' : item.badge}</Text>
+        </View>
+      )}
     </TouchableOpacity>
   );
 }
@@ -64,11 +72,13 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
   const { t } = useTranslation();
   // Testnet mode brands the title "bigT in Test" so test builds are obvious.
   const isTestnet = httpService.getUseTestnet();
+  const { unread: unreadNotices } = useSystemNotifications();
 
   const navSections: NavSection[] = [
     {
       titleKey: 'sidebar.home',
       items: [
+        { label: t('notifications.title'), key: 'notifications', icon: BellIcon, route: '/notifications', badge: unreadNotices },
         { label: t('sidebar.payment'), key: 'payment', icon: SendIcon, route: '/home/payment' },
         { label: t('sidebar.balance'), key: 'balance', icon: DataIcon, route: '/balance' },
         { label: t('sidebar.tokens'), key: 'tokens', icon: TokensIcon, route: '/tokens' },
@@ -206,7 +216,9 @@ const s = StyleSheet.create({
     position: 'absolute', left: 0, top: 4, bottom: 4, width: 3,
     borderTopRightRadius: 2, borderBottomRightRadius: 2,
   },
-  navLabel: { fontSize: 14, fontWeight: '500' },
+  navLabel: { flex: 1, fontSize: 14, fontWeight: '500' },
+  navBadge: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center' },
+  navBadgeText: { color: '#FFFFFF', fontSize: 10, fontWeight: '700' },
   footer: {
     borderTopWidth: 1, paddingVertical: 10, paddingHorizontal: 16,
   },

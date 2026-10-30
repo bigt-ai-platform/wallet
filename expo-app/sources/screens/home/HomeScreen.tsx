@@ -9,9 +9,11 @@ import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { decimalsFor, orderPriceShift, shortTokenId } from '@/lib/tokenformat';
 import {
-  ChartIcon, MarketIcon, QrScanIcon, SearchIcon, SendIcon, SwapIcon,
+  BellIcon, ChartIcon, MarketIcon, QrScanIcon, SearchIcon, SendIcon, SwapIcon,
 } from '@/components/Icons';
 import { MONO_FONT } from '@/constants/fonts';
+import { useSystemNotifications } from '@/lib/useSystemNotifications';
+import { markSystemMessagesRead } from '@/services/systemMessages';
 
 /** One raw `getOrdersTicker` match. `lastdayprice` / `lastdayQuantity` are the
  *  24h-ago price and the 24h traded quantity the L1 adds for a market row. */
@@ -65,6 +67,13 @@ function fmtCompact(v: number): string {
 const fmtChange = (c: number | null): string =>
   c == null ? '—' : `${c >= 0 ? '+' : ''}${c.toFixed(2)}%`;
 
+const fmtNoticeTime = (ms: number): string => new Date(ms).toLocaleString(undefined, {
+  month: 'short',
+  day: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
 /**
  * Market-first home, the wallet's landing page (analog of binance.com's home):
  * a branded hero with the top market and quick actions (Send / Receive / Buy /
@@ -83,6 +92,7 @@ export default function HomeScreen() {
 
   const [markets, setMarkets] = React.useState<MarketRow[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const { messages: notices, unread: unreadNotices } = useSystemNotifications();
   const [refreshing, setRefreshing] = React.useState(false);
   const [search, setSearch] = React.useState('');
 
@@ -215,6 +225,53 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {notices.length > 0 && (
+          <View style={s.noticeCard} testID="home-notifications">
+            <View style={s.noticeHeader}>
+              <View style={s.noticeTitleWrap}>
+                <BellIcon size={16} color={theme.colors.primary} />
+                <Text style={s.noticeTitle}>{t('notifications.title')}</Text>
+                {unreadNotices > 0 && (
+                  <View style={[s.noticeUnread, { backgroundColor: theme.colors.primary }]} testID="home-notifications-unread">
+                    <Text style={s.noticeUnreadText}>{unreadNotices > 99 ? '99+' : unreadNotices}</Text>
+                  </View>
+                )}
+              </View>
+              <TouchableOpacity onPress={() => router.push('/notifications' as never)} testID="home-notifications-view-all">
+                <Text style={[s.noticeLink, { color: theme.colors.text.link }]}>{t('notifications.viewAll')}</Text>
+              </TouchableOpacity>
+            </View>
+
+            {notices.slice(0, 3).map((notice) => {
+              const tone = notice.tone === 'success'
+                ? theme.colors.positive
+                : notice.tone === 'error'
+                  ? theme.colors.negative
+                  : theme.colors.primary;
+              return (
+                <View key={notice.id} style={[s.noticeRow, { borderTopColor: theme.colors.border }]} testID={`home-notice-${notice.id}`}>
+                  <View style={[s.noticeDot, { backgroundColor: tone }, notice.read && { opacity: 0.35 }]} />
+                  <View style={s.noticeCopy}>
+                    <Text style={[s.noticeRowTitle, { color: theme.colors.text.primary }, !notice.read && { fontWeight: '700' }]} numberOfLines={1}>
+                      {notice.title}
+                    </Text>
+                    {!!notice.body && (
+                      <Text style={[s.noticeBody, { color: theme.colors.text.secondary }]} numberOfLines={2}>{notice.body}</Text>
+                    )}
+                  </View>
+                  <Text style={[s.noticeTime, { color: theme.colors.text.secondary }]}>{fmtNoticeTime(notice.createdAt)}</Text>
+                </View>
+              );
+            })}
+
+            {unreadNotices > 0 && (
+              <TouchableOpacity style={s.markReadBtn} onPress={() => markSystemMessagesRead()} testID="home-notifications-mark-read">
+                <Text style={[s.noticeLink, { color: theme.colors.text.link }]}>{t('notifications.markAllRead')}</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {loading ? (
           <View style={s.loader}><ActivityIndicator size="large" color={theme.colors.primary} /></View>
         ) : markets.length === 0 ? (
@@ -305,6 +362,28 @@ const s = StyleSheet.create((theme) => ({
   quickLabel: { color: '#FFFFFF', fontSize: 11, fontWeight: '600' },
 
   loader: { paddingVertical: 48, alignItems: 'center' },
+
+  noticeCard: {
+    backgroundColor: theme.colors.groupped.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 18,
+  },
+  noticeHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  noticeTitleWrap: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  noticeTitle: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
+  noticeUnread: { minWidth: 20, height: 20, borderRadius: 10, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center' },
+  noticeUnreadText: { color: '#FFFFFF', fontSize: 11, fontWeight: '700' },
+  noticeLink: { fontSize: 12, fontWeight: '600' },
+  noticeRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8, borderTopWidth: 1, paddingTop: 10, marginTop: 10 },
+  noticeDot: { width: 7, height: 7, borderRadius: 4, marginTop: 5 },
+  noticeCopy: { flex: 1, minWidth: 0 },
+  noticeRowTitle: { fontSize: 13, fontWeight: '600' },
+  noticeBody: { fontSize: 11, lineHeight: 15, marginTop: 2 },
+  noticeTime: { fontSize: 10, marginTop: 2 },
+  markReadBtn: { alignSelf: 'flex-end', marginTop: 10, paddingVertical: 2 },
 
   section: { marginBottom: 20 },
   sectionTitle: { fontSize: 16, fontWeight: '700', color: theme.colors.text.primary, marginBottom: 10 },

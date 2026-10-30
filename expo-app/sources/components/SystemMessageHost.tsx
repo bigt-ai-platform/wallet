@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useUnistyles } from 'react-native-unistyles';
 import { useTranslation } from 'react-i18next';
 import {
+  markSystemMessagesRead,
   subscribeSystemMessages,
   type SystemMessage,
 } from '@/services/systemMessages';
@@ -24,7 +25,8 @@ export default function SystemMessageHost() {
     setQueue((prev) => [...prev, message]);
   }), []);
 
-  const dismiss = React.useCallback((id: string) => {
+  const dismiss = React.useCallback((id: string, markRead = false) => {
+    if (markRead) markSystemMessagesRead([id]);
     setQueue((prev) => prev.filter((m) => m.id !== id));
   }, []);
 
@@ -72,7 +74,7 @@ export default function SystemMessageHost() {
         <TouchableOpacity
           accessibilityRole="button"
           accessibilityLabel={t('system.dismiss')}
-          onPress={() => dismiss(current.id)}
+          onPress={() => dismiss(current.id, true)}
           style={closeStyle}
           testID="system-message-dismiss"
         >

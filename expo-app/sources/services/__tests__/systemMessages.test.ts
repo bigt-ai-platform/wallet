@@ -1,7 +1,29 @@
-import { describe, expect, it, vi } from 'vitest';
-import { notifySystemMessage, subscribeSystemMessages } from '../systemMessages';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ store: new Map<string, string>() }));
+
+vi.mock('@/storage', () => ({
+  device: {
+    get: (key: string[]) => mocks.store.get(key.join('.')),
+    set: (key: string[], value: string) => { mocks.store.set(key.join('.'), value); },
+    remove: (key: string[]) => { mocks.store.delete(key.join('.')); },
+  },
+}));
+
+import {
+  clearSystemMessages,
+  listSystemMessages,
+  markSystemMessagesRead,
+  notifySystemMessage,
+  subscribeSystemMessages,
+  unreadSystemMessageCount,
+} from '../systemMessages';
 
 describe('system message bus', () => {
+  beforeEach(() => {
+    clearSystemMessages();
+  });
+
   it('delivers a message to every current subscriber', () => {
     const a = vi.fn();
     const b = vi.fn();
@@ -43,5 +65,26 @@ describe('system message bus', () => {
     expect(good).toHaveBeenCalledTimes(1);
     offBad();
     offGood();
+  });
+
+  it('persists the newest message and tracks unread state', () => {
+    notifySystemMessage({ tone: 'success', title: 'Order filled' });
+    expect(listSystemMessages()).toHaveLength(1);
+    expect(unreadSystemMessageCount()).toBe(1);
+
+    const [message] = listSystemMessages();
+    markSystemMessagesRead([message.id]);
+    expect(unreadSystemMessageCount()).toBe(0);
+    expect(listSystemMessages()[0].read).toBe(true);
+  });
+
+  it('clears the persisted centre', () => {
+    notifySystemMessage({ tone: 'info', title: 'One' });
+    notifySystemMessage({ tone: 'info', title: 'Two' });
+    expect(listSystemMessages()).toHaveLength(2);
+
+    clearSystemMessages();
+    expect(listSystemMessages()).toHaveLength(0);
+    expect(unreadSystemMessageCount()).toBe(0);
   });
 });

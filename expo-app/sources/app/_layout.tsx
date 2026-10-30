@@ -74,6 +74,7 @@ function AppShell() {
                         <Stack.Screen name="network" options={{ headerShown: false }} />
                         <Stack.Screen name="dashboard" options={{ headerShown: false }} />
                         <Stack.Screen name="trade" options={{ headerShown: false }} />
+                        <Stack.Screen name="notifications" options={{ title: t('notifications.title') }} />
                         <Stack.Screen name="p2p" options={{ title: t('p2p.title') }} />
                         <Stack.Screen name="device" options={{ title: t('device.title') }} />
                     </Stack>
