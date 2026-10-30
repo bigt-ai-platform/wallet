@@ -36,7 +36,7 @@ import { collapseTokenEmissions } from '@/lib/tokenlist';
 import { findExchangeToken as findExchangeTokenIn } from '@/lib/exchangeToken';
 import { resolvePredictionUrl } from '@/lib/predictionChain';
 import { withSlash } from 'chain-discovery';
-import { orderedBases, markDown, rememberPeer } from '@/services/discovery';
+import { autoDiscoverEnabled, orderedBases, markDown, rememberPeer } from '@/services/discovery';
 import {
   DEFAULT_L1_CHAINS_MAINNET,
   DEFAULT_L1_CHAINS_TESTNET,
@@ -164,6 +164,11 @@ export class HttpService {
    * Get the current server URL
    */
   getServerUrl(): string {
+    // Auto-select owns endpoint choice. A URL saved by an older build (or a
+    // manual pin) must not keep overriding it, especially when it names a
+    // testnet/dead host: the request layer would use that one base alone and
+    // never fail over to the live mainnet set.
+    if (autoDiscoverEnabled()) return this.getDefaultServerUrl();
     const savedUrl = device.get(STORAGE_KEYS.SERVER_URL);
     if (savedUrl) {
       // A saved testnet host outlives the removed toggle; never let it pin a
