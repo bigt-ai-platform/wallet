@@ -28,6 +28,10 @@ interface TickerRow {
 
 interface MarketRow {
   tokenid: string;
+  /** Traded token's display name without the quote suffix. */
+  tokenName: string;
+  /** Token id of the quote base (BC, USDT or CNY). */
+  quoteId: string;
   name: string;
   /** Last price in the quote token (BC, USDT or CNY). */
   price: number;
@@ -136,6 +140,8 @@ export default function HomeScreen() {
         const tokenName = meta?.tokenname || (tokenid === 'bc' ? 'BIG' : shortTokenId(tokenid));
         rows.push({
           tokenid,
+          tokenName,
+          quoteId: quote.id,
           name: quote.id === 'bc' ? tokenName : `${tokenName}/${quote.name}`,
           price,
           changePct: dayPrice > 0 && price > 0 ? ((price - dayPrice) / dayPrice) * 100 : null,
@@ -171,6 +177,19 @@ export default function HomeScreen() {
   const top = markets[0];
   const popular = markets.slice(0, 8);
 
+  // Deep-link the exact Home row into Spot. Without these params the trade
+  // screen always opens its default market (Nvidia/USDT).
+  const openMarket = (market: MarketRow) => {
+    router.push({
+      pathname: '/trade',
+      params: {
+        tokenid: market.tokenid,
+        tokenname: market.tokenName,
+        quote: market.quoteId,
+      },
+    } as never);
+  };
+
   const actions: QuickAction[] = [
     { key: 'send', label: t('home.send'), icon: SendIcon, route: '/home/payment' },
     { key: 'receive', label: t('home.receive'), icon: QrScanIcon, route: '/receive' },
@@ -193,7 +212,7 @@ export default function HomeScreen() {
           <Text style={s.heroBrand}>{t('sidebar.bigt')}</Text>
 
           {top && (
-            <TouchableOpacity style={s.heroMarket} onPress={() => router.push('/trade')} testID="home-top-market">
+            <TouchableOpacity style={s.heroMarket} onPress={() => openMarket(top)} testID="home-top-market">
               <Text style={s.heroMarketName} numberOfLines={1}>{top.name}</Text>
               <View style={s.heroPriceRow}>
                 <Text style={s.heroPrice}>{fmtPrice(top.price)}</Text>
@@ -284,7 +303,7 @@ export default function HomeScreen() {
                 <Text style={s.sectionTitle}>{t('home.popular')}</Text>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.popularRow}>
                   {popular.map((m, i) => (
-                    <TouchableOpacity key={m.tokenid} style={s.popularCard} onPress={() => router.push('/trade')} testID={`home-popular-${i}`}>
+                    <TouchableOpacity key={m.tokenid} style={s.popularCard} onPress={() => openMarket(m)} testID={`home-popular-${i}`}>
                       <Text style={s.popularName} numberOfLines={1}>{m.name}</Text>
                       <Text style={[s.popularPrice, { fontFamily: MONO_FONT }]}>{fmtPrice(m.price)}</Text>
                       <Text style={[s.popularChange, { color: changeColor(m.changePct), fontFamily: MONO_FONT }]}>{fmtChange(m.changePct)}</Text>
@@ -321,7 +340,7 @@ export default function HomeScreen() {
               </View>
 
               {filtered.map((m, i) => (
-                <TouchableOpacity key={m.tokenid} style={s.row} onPress={() => router.push('/trade')} testID={`home-market-${i}`}>
+                <TouchableOpacity key={m.tokenid} style={s.row} onPress={() => openMarket(m)} testID={`home-market-${i}`}>
                   <View style={s.colToken}>
                     <Text style={s.rowName} numberOfLines={1}>{m.name}</Text>
                     <Text style={s.rowSub} numberOfLines={1}>{shortTokenId(m.tokenid)}</Text>
