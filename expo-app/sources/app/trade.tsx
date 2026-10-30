@@ -338,8 +338,10 @@ export default function TradeScreen() {
   }, [isUnlocked, publicInfo?.address, getUnlockedWallet]);
 
   // Preselect the default market on first open: Nvidia quoted in USDT when the
-  // chain has it (the new prod order market), then CNY, then BC.
+  // chain has it (the new prod order market), then CNY, then BC. A deep link
+  // from Home / Predict owns the selection instead.
   React.useEffect(() => {
+    if (typeof params.tokenid === 'string' && params.tokenid) return undefined;
     let cancelled = false;
     (async () => {
       try {
@@ -366,7 +368,7 @@ export default function TradeScreen() {
       } catch { /* no default market available */ }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [params.tokenid]);
 
   React.useEffect(() => { loadBalances(); }, [loadBalances]);
 
