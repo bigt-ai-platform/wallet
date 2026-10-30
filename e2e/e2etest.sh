@@ -404,16 +404,19 @@ export EXPO_PUBLIC_P2P_ENGINE_URL="$P2P_ENGINE_URL"
 # e2e-only: auto-approve the important-transaction gate (DeviceAuth/WebAuthn/
 # password) so the specs can drive pay/order/p2p flows. Absent in shipped builds.
 export EXPO_PUBLIC_E2E_AUTOCONFIRM=1
+# e2e-only: local infra runs a testnet chain; the shipped Settings toggle stays
+# hidden, but the harness can switch the exported build programmatically.
+export EXPO_PUBLIC_E2E_ALLOW_TESTNET=1
 NEED_BUILD=0
 [[ -d "$WEB_BUILD" ]] || NEED_BUILD=1
-if [[ -d "$WEB_BUILD" && "$(cat "$WEB_BUILD/.p2p-url" 2>/dev/null)" != "$P2P_ENGINE_URL|e2e" ]]; then NEED_BUILD=1; fi
+if [[ -d "$WEB_BUILD" && "$(cat "$WEB_BUILD/.p2p-url" 2>/dev/null)" != "$P2P_ENGINE_URL|e2e|testnet" ]]; then NEED_BUILD=1; fi
 # A source edit since the last export must not be tested against the stale bundle.
 if [[ -f "$WEB_BUILD/.p2p-url" && -n "$(find "$ROOT/expo-app/sources" "$ROOT/packages" \( -name node_modules -o -name dist \) -prune -o \( -name '*.ts' -o -name '*.tsx' \) -newer "$WEB_BUILD/.p2p-url" -print -quit 2>/dev/null)" ]]; then NEED_BUILD=1; fi
 if [[ "$NEED_BUILD" == "1" ]]; then
   info "Building web app (P2P engine: $P2P_ENGINE_URL)..."
   cd "$ROOT/expo-app"
   npm run web:build 2>&1 | tail -3
-  echo "$P2P_ENGINE_URL|e2e" > "$WEB_BUILD/.p2p-url"
+  echo "$P2P_ENGINE_URL|e2e|testnet" > "$WEB_BUILD/.p2p-url"
   log "Web app built."
 else
   info "Web build already exists, skipping build."

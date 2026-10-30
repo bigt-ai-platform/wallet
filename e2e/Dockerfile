@@ -8,6 +8,8 @@ COPY packages/ packages/
 RUN yarn install --frozen-lockfile --network-timeout 300000
 
 COPY expo-app/ ./expo-app/
+# The e2e image drives the local testnet infra; keep the opt-in out of shipped builds.
+ENV EXPO_PUBLIC_E2E_ALLOW_TESTNET=1
 RUN cd expo-app && npx expo export --platform web --output-dir /app/web-build
 
 FROM nginx:alpine

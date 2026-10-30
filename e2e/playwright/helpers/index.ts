@@ -62,7 +62,22 @@ export async function configureServerUrl(page: Page, serverUrl: string, l1Url?: 
     () => localStorage.getItem('settings.useTestnet') === 'true',
   );
   if (!testnetOn) {
-    await page.locator('[data-testid="testnet-toggle"]').click();
+    // The Testnet switch is intentionally hidden from Settings. The e2e build
+    // exposes a narrow test hook (EXPO_PUBLIC_E2E_ALLOW_TESTNET); fall back to
+    // storage + reload for older builds that predate the hook.
+    const switched = await page.evaluate(() => {
+      const fn = (globalThis as { __bigtangleSetTestnet?: (value: boolean) => void })
+        .__bigtangleSetTestnet;
+      if (typeof fn !== 'function') return false;
+      fn(true);
+      return true;
+    });
+    if (!switched) {
+      await page.evaluate(() => localStorage.setItem('settings.useTestnet', 'true'));
+      await page.reload({ waitUntil: 'load' });
+      await page.waitForTimeout(3000);
+      await clickTab(page, 'Settings');
+    }
     await page.waitForTimeout(800);
   }
   // Manual URL fields only render when auto-selection is off.

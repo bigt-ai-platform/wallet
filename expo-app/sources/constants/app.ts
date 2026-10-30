@@ -23,6 +23,13 @@ export const IS_DEV = typeof __DEV__ !== 'undefined' && __DEV__;
 export const E2E_AUTOCONFIRM = process.env.EXPO_PUBLIC_E2E_AUTOCONFIRM === '1';
 
 /**
+ * e2e-only: the local Playwright infrastructure runs a testnet chain while the
+ * exported web build looks like production. Allow the harness to opt into
+ * testnet programmatically, without restoring the Testnet switch in Settings.
+ */
+export const E2E_ALLOW_TESTNET = process.env.EXPO_PUBLIC_E2E_ALLOW_TESTNET === '1';
+
+/**
  * True only in a genuine browser running the static web export. Browsers
  * cannot call the public chain nodes directly (their API has CORS disabled),
  * so web production builds use the same-origin /l0/ + /l1/ paths

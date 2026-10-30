@@ -43,6 +43,7 @@ import {
   DEFAULT_L1_MAINNET_URL,
   DEFAULT_L1_TESTNET_URL,
   DEFAULT_PREDICTION_URL,
+  E2E_ALLOW_TESTNET,
   IS_DEV,
   IS_WEB_BROWSER,
   DEV_L0_URL,
@@ -142,8 +143,12 @@ export class HttpService {
   private constructor() {
     // Testnet is no longer exposed in Settings. Migrate any stale flag left by
     // older builds so a production install cannot silently point at the empty
-    // test order chain; development/e2e can still set it programmatically.
-    if (!IS_DEV && this.getUseTestnet()) this.setTestnet(false);
+    // test order chain; development/e2e builds can still set it programmatically.
+    if (!IS_DEV && !E2E_ALLOW_TESTNET && this.getUseTestnet()) this.setTestnet(false);
+    if (E2E_ALLOW_TESTNET && typeof globalThis !== 'undefined') {
+      (globalThis as { __bigtangleSetTestnet?: (value: boolean) => void })
+        .__bigtangleSetTestnet = (value: boolean) => this.setTestnet(value);
+    }
   }
 
   static getInstance(): HttpService {
