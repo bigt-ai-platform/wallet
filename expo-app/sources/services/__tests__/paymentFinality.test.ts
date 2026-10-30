@@ -38,7 +38,7 @@ vi.mock('@/lib/i18n', () => ({
   },
 }));
 
-import { recordPayment, refreshPendingPayments } from '../tracking';
+import { recordOrder, recordPayment, refreshPendingOrders, refreshPendingPayments } from '../tracking';
 
 describe('payment finality notifications', () => {
   beforeEach(() => {
@@ -96,6 +96,28 @@ describe('payment finality notifications', () => {
     expect(mocks.notifySystemMessage).toHaveBeenCalledWith(expect.objectContaining({
       tone: 'error',
       title: expect.stringContaining('system.paymentFailedTitle'),
+    }));
+  });
+
+  it('notifies when a tracked order is no longer in the open book', async () => {
+    recordOrder({
+      side: 'buy',
+      tokenId: 'nvidia',
+      tokenName: 'Nvidia',
+      baseToken: 'usdt',
+      price: '234.75',
+      amount: '1',
+      decimals: 6,
+      fromAddress: 'from',
+    });
+    mocks.getOrdersByAddress.mockResolvedValue({ success: true, data: [] });
+
+    await refreshPendingOrders('from');
+
+    expect(mocks.notifySystemMessage).toHaveBeenCalledWith(expect.objectContaining({
+      tone: 'success',
+      title: expect.stringContaining('system.orderFilledTitle'),
+      body: expect.stringContaining('system.orderFilledBody'),
     }));
   });
 });

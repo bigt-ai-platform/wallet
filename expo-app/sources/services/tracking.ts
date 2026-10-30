@@ -180,6 +180,33 @@ export function mapChainTxStatus(status: string): TrackedStatus {
 /** One banner per record/status even when two pollers race. */
 const notifiedTransitions = new Set<string>();
 
+function notifyOrderTransition(record: TrackedRecord, next: TrackedStatus): void {
+  if (next !== 'confirmed' && next !== 'cancelled' && next !== 'failed') return;
+  const key = `${record.id}:${next}`;
+  if (notifiedTransitions.has(key)) return;
+  notifiedTransitions.add(key);
+
+  if (next === 'confirmed') {
+    notifySystemMessage({
+      tone: 'success',
+      title: i18n.t('system.orderFilledTitle'),
+      body: i18n.t('system.orderFilledBody', { amount: record.amount, token: record.tokenName }),
+    });
+  } else if (next === 'cancelled') {
+    notifySystemMessage({
+      tone: 'info',
+      title: i18n.t('system.orderCancelledTitle'),
+      body: i18n.t('system.orderCancelledBody', { amount: record.amount, token: record.tokenName }),
+    });
+  } else {
+    notifySystemMessage({
+      tone: 'error',
+      title: i18n.t('system.orderFailedTitle'),
+      body: i18n.t('system.orderFailedBody', { amount: record.amount, token: record.tokenName }),
+    });
+  }
+}
+
 function notifyPaymentTransition(record: TrackedRecord, next: TrackedStatus): void {
   if (next !== 'confirmed' && next !== 'failed') return;
   const key = `${record.id}:${next}`;
@@ -273,6 +300,7 @@ async function refreshOrders(address: string, l1Url?: string): Promise<TrackedRe
         const chainStatus = txRes.data.status;
         if (chainStatus === 'DROPPED') {
           const next = updateRecord(record.id, { status: 'failed', statusDetail: 'DROPPED' });
+          notifyOrderTransition(record, 'failed');
           updated.push(next || record);
           continue;
         }
@@ -290,9 +318,11 @@ async function refreshOrders(address: string, l1Url?: string): Promise<TrackedRe
     if (!onChain) {
       // No longer in the open order book → filled/executed
       const next = updateRecord(record.id, { status: 'confirmed', statusDetail: 'FILLED' });
+      notifyOrderTransition(record, 'confirmed');
       updated.push(next || record);
     } else if (onChain.cancelPending) {
       const next = updateRecord(record.id, { status: 'cancelled', statusDetail: 'CANCELLED' });
+      notifyOrderTransition(record, 'cancelled');
       updated.push(next || record);
     } else {
       const next = updateRecord(record.id, { status: 'pending', statusDetail: 'OPEN' });
@@ -308,6 +338,14 @@ export async function refreshPendingPayments(): Promise<TrackedRecord[]> {
   const payments = listPayments().filter((r) => r.status === 'pending');
   await Promise.all(payments.map((r) => refreshPayment(r)));
   return listPayments();
+}
+
+/** Refresh only pending orders for one address. */
+export async function refreshPendingOrders(address: string, l1Url?: string): Promise<TrackedRecord[]> {
+  if (listOrders().some((r) => r.status === 'pending')) {
+    await refreshOrders(address, l1Url);
+  }
+  return listOrders();
 }
 
 /**

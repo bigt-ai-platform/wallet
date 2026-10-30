@@ -15,7 +15,9 @@ import Sidebar from '@/components/Sidebar';
 import BootScreen from '@/components/BootScreen';
 import BottomNav from '@/components/BottomNav';
 import SystemMessageHost from '@/components/SystemMessageHost';
-import PaymentFinalityWatcher from '@/components/PaymentFinalityWatcher';
+import ChainEventWatcher from '@/components/ChainEventWatcher';
+import P2pEventWatcher from '@/components/P2pEventWatcher';
+import PredictionEventWatcher from '@/components/PredictionEventWatcher';
 import { TransactionConfirmProvider } from '@/components/TransactionConfirm';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
 import { MenuIcon } from '@/components/Icons';
@@ -181,7 +183,9 @@ export default function RootLayout() {
                             <SidebarProvider>
                                 <AppShell />
                                 <MobileSidebar />
-                                <PaymentFinalityWatcher />
+                                <ChainEventWatcher />
+                                <P2pEventWatcher />
+                                <PredictionEventWatcher />
                                 <SystemMessageHost />
                             </SidebarProvider>
                         </TransactionConfirmProvider>
