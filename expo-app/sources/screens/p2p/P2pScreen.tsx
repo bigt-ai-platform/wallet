@@ -15,12 +15,13 @@ import { CloseIcon, HelpIcon, SearchIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { pqDidFromKey, pqKeyFromPrivateHex, shortDid } from '@/lib/p2pIdentity';
-import { perUnitPrice } from '@/lib/p2pBalance';
+import { exceedsBalance, findBalance, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
 import { checkP2pFill, filterP2pOrders } from '@/lib/p2pOrderBook';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
+import type { TokenItem, WalletAccountItem } from '@/types/api';
 import {
-  cancelOrder, confirmPayment, cosignEscrow, escrowContext, fetchInstructions, getCapabilities,
+  cancelOrder, confirmPayment, cosignEscrow, createOrder, escrowContext, fetchInstructions, getCapabilities,
   getMyProfiles, getSwap, listOpenOrders, matchOrder, mySwaps, openDispute, p2pConfigured, presignEscrow,
   saveProfile, submitProof, transition,
   type P2pAutoReleasePolicy, type P2pCapabilities, type P2pCnyRail, type P2pIdentity, type P2pOrder,
@@ -38,11 +39,9 @@ function isCnyRail(rail?: string): boolean {
 }
 
 /**
- * P2P trading screen: the public sell-order book (Buy), the buy bids you can
- * fill by selling (Sell), a search tab and the wallet's own swaps. Listing an
- * ad is not offered in the wallet UI; taking an ad, escrow and settlement are
- * all signed with the wallet's PQ key, and own swaps are party-scoped by the
- * engine.
+ * P2P trading screen: a public sell-order book (buy) and the wallet's own
+ * swaps (sell/list, lock, pay, expire/refund/cancel). All mutations are signed
+ * with the wallet's PQ key; reads of own swaps are party-scoped by the engine.
  */
 /** Reputation tier → language-neutral stars (docs/p2p.md §25). */
 function tierStars(tier: 'new' | 'established' | 'trusted'): number {
@@ -88,6 +87,34 @@ export default function P2pScreen() {
   }, [notice]);
   const [instructions, setInstructions] = React.useState<Record<string, P2pPaymentInstructions>>({});
 
+  // USDT is the market base (Binance-P2P style): sellers list USDT, buyers
+  // pay fiat and receive USDT. Default fiat is CNY on the WeChat rail.
+  const [giveToken, setGiveToken] = React.useState('USDT');
+  // The id of the token picked from the search list, when known — the balance
+  // check matches on it; a free-typed name falls back to a name match.
+  const [giveTokenId, setGiveTokenId] = React.useState<string | null>(null);
+  const [tokenResults, setTokenResults] = React.useState<TokenItem[]>([]);
+  const [tokenSearching, setTokenSearching] = React.useState(false);
+  // Advisory: the seller's balances on L0 and the active L1 chain, to warn when
+  // a listing exceeds what the wallet holds (the chain only enforces this at
+  // escrow_lock). Empty until it loads; never blocks on an unknown balance.
+  const [l0Balances, setL0Balances] = React.useState<WalletAccountItem[]>([]);
+  const [l1Balances, setL1Balances] = React.useState<WalletAccountItem[]>([]);
+  const [giveAmount, setGiveAmount] = React.useState('');
+  const [giveChain, setGiveChain] = React.useState('L0');
+  // Order side: `sell` (default) or `buy` (a bid the taker fills). A buy bid
+  // carries where the poster wants the tokens delivered.
+  const [orderSide, setOrderSide] = React.useState<'sell' | 'buy'>('sell');
+  const [buyReceive, setBuyReceive] = React.useState('');
+  const [wantCurrency, setWantCurrency] = React.useState('CNY');
+  const [wantAmount, setWantAmount] = React.useState('');
+  // Binance-style ad fields: unit price (the Total is derived), per-order fiat
+  // limit, payment window and free-text terms.
+  const [wantPrice, setWantPrice] = React.useState('');
+  const [minOrder, setMinOrder] = React.useState('');
+  const [maxOrder, setMaxOrder] = React.useState('');
+  const [timeLimit, setTimeLimit] = React.useState('15');
+  const [remarks, setRemarks] = React.useState('');
   // Book side filter (Binance's Buy/Sell tabs): the Buy tab lists sell ads you
   // can take; the Sell tab lists buy ads (bids) you can fill.
   const [bookSide, setBookSide] = React.useState<'buy' | 'sell'>('buy');
@@ -100,12 +127,28 @@ export default function P2pScreen() {
   ];
   // The Buy/Sell tabs list their own side; the Search tab lists both sides.
   const tabOrders = tab === 'search' ? searchResults : sideOrders;
+  const [validHours, setValidHours] = React.useState('24');
+  const [wantRail, setWantRail] = React.useState('wechat');
+  // Enabled payment methods (Binance multi-rail); `wantRail` stays the primary.
+  const [rails, setRails] = React.useState<string[]>(['wechat']);
   // The taker's chosen method for the selected order (defaults to the ad's first).
   const [chosenRail, setChosenRail] = React.useState('');
   // What this engine actually serves (GET /capabilities): the enabled CNY
   // rails (empty → DEFAULT_RAILS, older engine, see p2p.ts).
   const [caps, setCaps] = React.useState<P2pCapabilities | null>(null);
   const enabledRails: readonly string[] = caps ? caps.rails : DEFAULT_RAILS;
+
+  // Advisory availability for the sell form: compare `giveAmount` against the
+  // seller's balance on `giveChain` (L0 vs the active L1). Unknown balance → no
+  // warning (the chain enforces it at escrow_lock, not here).
+  const availOnL0 = (giveChain.trim().toUpperCase() || 'L0') === 'L0';
+  const availItem = findBalance(availOnL0 ? l0Balances : l1Balances, { tokenId: giveTokenId, tokenName: giveToken });
+  const availText = availItem ? `${availItem.balance} ${availItem.tokenname}` : '';
+  // A seller must hold the token; a buyer pays fiat (an unfunded buyer is fine).
+  const overBalance = orderSide === 'sell' && exceedsBalance(giveAmount, availItem);
+  // `wantAmount` (the TOTAL fiat, what the instructions charge) is derived from
+  // the Binance-style unit **price** × the crypto amount.
+  const formTotal = totalAmount(wantPrice, giveAmount);
 
   // seller's CNY collection profile (mine tab)
   const [profiles, setProfiles] = React.useState<P2pPaymentProfile[]>([]);
@@ -135,6 +178,26 @@ export default function P2pScreen() {
     setSwaps(await mySwaps(identity));
   }, [identity]);
 
+  // Advisory balances for the sell form (L0 + the active L1 chain, matching the
+  // `giveChain` field). Best-effort: a failure leaves the lists empty and the
+  // check simply never fires.
+  const loadBalances = React.useCallback(async () => {
+    const unlocked = getUnlockedWallet();
+    if (!isUnlocked || !unlocked) { setL0Balances([]); setL1Balances([]); return; }
+    const pk = unlocked.wallet.privateKey;
+    const kt = unlocked.wallet.keyType;
+    const l1Url = httpService.getL1Url();
+    const l1Base = httpService.l1Bases(l1Url)[0] ?? l1Url;
+    const [l0, l1] = await Promise.all([
+      httpService.getBalances(pk, kt).catch(() => null),
+      httpService.getBalancesOn(l1Base, pk, kt).catch(() => null),
+    ]);
+    setL0Balances(l0?.success && l0.data ? l0.data : []);
+    setL1Balances(l1?.success && l1.data ? l1.data : []);
+  }, [isUnlocked, getUnlockedWallet]);
+
+  React.useEffect(() => { loadBalances(); }, [loadBalances]);
+
   const refresh = React.useCallback(async () => {
     if (!p2pConfigured()) { setLoading(false); return; }
     setLoading(true);
@@ -146,7 +209,10 @@ export default function P2pScreen() {
     } finally {
       setLoading(false);
     }
-  }, [tab, loadOrders, loadSwaps]);
+    // Advisory balances (may be slow — no L0/L1, or slow discovery): refresh
+    // them off the critical path so the order/swap list is never blocked.
+    void loadBalances();
+  }, [tab, loadOrders, loadSwaps, loadBalances]);
 
   React.useEffect(() => { refresh(); }, [refresh]);
 
@@ -170,10 +236,17 @@ export default function P2pScreen() {
     [enabledRails],
   );
   React.useEffect(() => {
+    if (caps && caps.rails.length > 0) {
+      if (!caps.rails.includes(wantRail)) setWantRail(caps.rails[0]);
+      setRails((cur) => {
+        const filtered = cur.filter((r) => caps.rails.includes(r));
+        return filtered.length ? filtered : [caps.rails[0]];
+      });
+    }
     if (caps && enabledProfileMethods.length > 0 && !enabledProfileMethods.includes(profileMethod)) {
       setProfileMethod(enabledProfileMethods[0]);
     }
-  }, [caps, profileMethod, enabledProfileMethods]);
+  }, [caps, wantRail, profileMethod, enabledProfileMethods]);
 
   const loadProfiles = React.useCallback(async () => {
     if (!identity) { setProfiles([]); return; }
@@ -186,11 +259,22 @@ export default function P2pScreen() {
   }, [identity]);
 
   React.useEffect(() => {
-    // Profiles gate taking an ad through a payment channel (the collection
+    // Profiles gate buying/selling through a payment channel (the collection
     // details a counterparty sees only for a matched trade), so they must be
-    // known before a take can be signed — not only on My swaps.
+    // known before the Buy/Sell forms are usable — not only on My swaps.
     if (identity && p2pConfigured()) loadProfiles();
   }, [identity, loadProfiles]);
+
+  const pickRail = (rail: string) => {
+    // Multi-select: toggle the method; never allow an empty set.
+    setRails((cur) => {
+      const next = cur.includes(rail) ? (cur.length > 1 ? cur.filter((r) => r !== rail) : cur) : [...cur, rail];
+      setWantRail(next[0] ?? rail);
+      return next;
+    });
+    // sensible currency default: the CNY rails quote CNY
+    if (wantCurrency.trim().toUpperCase() === 'USD') setWantCurrency('CNY');
+  };
 
   const requireIdentity = (): P2pIdentity | null => {
     if (!isUnlocked || !publicInfo?.address) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return null; }
@@ -207,8 +291,8 @@ export default function P2pScreen() {
    * WeChat account) up front. They are stored party-scoped on the engine and
    * revealed only to the counterparty of a matched trade, never in the public
    * book — so "private, shared on demand" is enforced here: without a profile
-   * for the rail the take cannot proceed, and the form sends the user to the
-   * profile editor.
+   * for the rail the order/take cannot proceed, and the form sends the user to
+   * the profile editor.
    */
   const requireChannel = (rail: string | undefined | null): boolean => {
     if (channelFor(rail)) return true;
@@ -216,6 +300,101 @@ export default function P2pScreen() {
     setProfileMethod((rail as P2pCnyRail) ?? enabledProfileMethods[0] ?? 'wechat');
     setTab('mine');
     return false;
+  };
+
+  const searchTokens = async (keyword: string) => {
+    setGiveToken(keyword);
+    setGiveTokenId(null);
+    if (!keyword.trim()) { setTokenResults([]); return; }
+    setTokenSearching(true);
+    try {
+      const res = await httpService.searchExchangeTokens(keyword.trim());
+      setTokenResults(res.success && res.data ? res.data : []);
+    } catch (e) {
+      console.error('Error searching tokens:', e);
+      setTokenResults([]);
+    } finally {
+      setTokenSearching(false);
+    }
+  };
+
+  const pickToken = (tk: TokenItem) => {
+    setGiveToken(tk.tokenname || tk.tokenid.slice(0, 8));
+    setGiveTokenId(tk.tokenid);
+    setTokenResults([]);
+  };
+
+  const submitOrder = async () => {
+    const id = requireIdentity();
+    if (!id) return;
+    const hours = parseFloat(validHours);
+    if (!giveToken.trim() || !giveAmount.trim() || !wantPrice.trim() || !formTotal || !hours || hours <= 0) {
+      setNotice({ ok: false, text: t('p2p.createFailed') });
+      return;
+    }
+    // A buy bid must say where the tokens go; default to this wallet.
+    const isBuy = orderSide === 'buy';
+    const recv = buyReceive.trim() || publicInfo?.address || '';
+    if (isBuy && !recv) {
+      setNotice({ ok: false, text: t('p2p.buyFailed') });
+      return;
+    }
+    // Advisory: don't list more than the wallet holds on `giveChain` (the chain
+    // would only reject it later, at escrow_lock). Non-blocking when unknown.
+    if (overBalance) {
+      setNotice({ ok: false, text: t('p2p.overBalance', { amount: availText }) });
+      return;
+    }
+    // Fiat channel (e.g. WeChat): the collection details must exist before the
+    // order can be listed; they stay private and are shown only to a matched
+    // counterparty.
+    if (isCnyRail(rails[0]) && !requireChannel(rails[0])) return;
+    // Important transaction (signs with the wallet key): device unlock first.
+    const approved = await confirmImportant({
+      subtitle: t('p2p.createTitle'),
+      reason: `${giveAmount} ${giveToken} → ${wantAmount} ${wantCurrency}`,
+    });
+    if (!approved) { setNotice({ ok: false, text: t('confirm.cancelled') }); return; }
+    setBusy(true);
+    try {
+      await createOrder(id, {
+        type: isBuy ? 'limit_buy' : 'limit_sell',
+        giveToken: giveToken.trim(),
+        giveAmount: giveAmount.trim(),
+        giveChain: giveChain.trim() || 'L0',
+        wantCurrency: wantCurrency.trim() || 'CNY',
+        wantAmount: formTotal ?? '',
+        wantRail: rails[0] ?? 'wechat',
+        wantRails: rails,
+        validUntil: Math.floor(Date.now() / 1000) + Math.floor(hours * 3600),
+        ...(isBuy ? { receiveAddress: recv } : {}),
+        ...(minOrder.trim() ? { minOrder: minOrder.trim() } : {}),
+        ...(maxOrder.trim() ? { maxOrder: maxOrder.trim() } : {}),
+        ...(Number(timeLimit) > 0 ? { timeLimit: Math.floor(Number(timeLimit)) } : {}),
+        ...(remarks.trim() ? { remarks: remarks.trim() } : {}),
+        // pin the order to the escrow key we will settle against (§26)
+        ...((caps?.escrowPubkey || P2P_ENGINE_PUBKEYS[0])
+          ? { enginePubkey: caps?.escrowPubkey || P2P_ENGINE_PUBKEYS[0] }
+          : {}),
+      });
+      setGiveToken('USDT'); setGiveAmount(''); setWantAmount(''); setWantPrice('');
+      setMinOrder(''); setMaxOrder(''); setRemarks('');
+      setGiveTokenId(null);
+      setNotice({ ok: true, text: t('p2p.created') });
+      // A listed order is not a swap. Show the book side where it actually
+      // appears: a sell ad is a Buy-tab listing; a buy bid is a Sell-tab
+      // listing (takers sell to it). Jumping to "My swaps" made a successful
+      // listing look empty.
+      setTab('open');
+      setBookSide(isBuy ? 'sell' : 'buy');
+      setBookQuery('');
+      setSelected(null);
+      await loadOrders();
+    } catch (e) {
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.createFailed') });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const fillError = (check: ReturnType<typeof checkP2pFill>, order: P2pOrder) =>
@@ -576,6 +755,109 @@ export default function P2pScreen() {
     return <WalletUnlock subtitle={t('p2p.unlockFirst')} testID="p2p-need-unlock" />;
   }
 
+  // Listing an ad lives on My swaps (the Buy/Sell tabs are pure books);
+  // the side selector inside the form picks a sell ad or a buy bid.
+  const createOrderCard = (
+          <View style={s.card}>
+            <Text style={s.cardTitle}>{orderSide === 'sell' ? t('p2p.createTitle') : t('p2p.buyTitle')}</Text>
+            <View style={s.chips} testID="p2p-order-side">
+              {(['sell', 'buy'] as const).map((side) => (
+                <TouchableOpacity
+                  key={side}
+                  style={[s.chip, orderSide === side && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
+                  onPress={() => {
+                    setOrderSide(side);
+                    if (side === 'buy' && !buyReceive.trim()) setBuyReceive(publicInfo?.address ?? '');
+                  }}
+                  disabled={busy}
+                  testID={`p2p-side-${side}`}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: orderSide === side }}
+                >
+                  <Text style={[s.chipText, { color: orderSide === side ? theme.colors.primary : theme.colors.text.secondary }]}>
+                    {side === 'buy' ? t('order.buy') : t('order.sell')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+            <View style={s.field}>
+              <Text style={s.fieldLabel}>{t('p2p.giveToken')}</Text>
+              <TextInput
+                style={s.input}
+                value={giveToken}
+                onChangeText={searchTokens}
+                placeholder="USDT"
+                placeholderTextColor={theme.colors.text.secondary}
+                autoCapitalize="none"
+                autoCorrect={false}
+                testID="p2p-give-token"
+              />
+              {tokenSearching ? (
+                <ActivityIndicator size="small" color={theme.colors.primary} style={{ marginTop: 8 }} />
+              ) : tokenResults.length > 0 ? (
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }} testID="p2p-token-results">
+                  {tokenResults.map((tk, i) => (
+                    <TouchableOpacity key={i} style={s.chip} onPress={() => pickToken(tk)} testID={`p2p-token-${i}`} accessibilityRole="button">
+                      <Text style={s.chipText}>{tk.tokenname}</Text>
+                      <Text style={s.chipSub}>{tk.tokenid.slice(0, 10)}...</Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+              ) : null}
+            </View>
+            <Field label={t('p2p.giveAmount')} value={giveAmount} onChange={setGiveAmount} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-give-amount" />
+            {orderSide === 'sell' && (availItem || overBalance) ? (
+              <Text style={[s.hint, overBalance && { color: theme.colors.accent.red }]} testID="p2p-give-available">
+                {overBalance
+                  ? t('p2p.overBalance', { amount: availText })
+                  : t('p2p.available', { amount: availText })}
+              </Text>
+            ) : null}
+            <Field label={t('p2p.price')} value={wantPrice} onChange={setWantPrice} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
+            {formTotal ? (
+              <Text style={s.hint} testID="p2p-total">
+                {t('p2p.total')}: {formTotal} {wantCurrency.trim() || 'CNY'}
+              </Text>
+            ) : null}
+            <Field label={t('p2p.wantCurrency')} value={wantCurrency} onChange={setWantCurrency} placeholder="CNY" testID="p2p-want-currency" />
+            <Field label={t('p2p.giveChain')} value={giveChain} onChange={setGiveChain} placeholder="L0" testID="p2p-give-chain" />
+            <View style={s.field}>
+              <Text style={s.fieldLabel}>{t('p2p.rail')}</Text>
+              <View style={s.chips}>
+                {enabledRails.map((rail) => (
+                  <TouchableOpacity
+                    key={rail}
+                    style={[s.chip, rails.includes(rail) && { backgroundColor: theme.colors.primarySoft, borderColor: theme.colors.primary }]}
+                    onPress={() => pickRail(rail)}
+                    disabled={busy}
+                    testID={`p2p-rail-${rail}`}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: rails.includes(rail) }}
+                  >
+                    <Text style={[s.chipText, { color: rails.includes(rail) ? theme.colors.primary : theme.colors.text.secondary }]}>{rail}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+            <Field label={t('p2p.minOrder')} value={minOrder} onChange={setMinOrder} placeholder="0" keyboardType="decimal-pad" mono testID="p2p-min-order" />
+            <Field label={t('p2p.maxOrder')} value={maxOrder} onChange={setMaxOrder} placeholder={formTotal ?? '0'} keyboardType="decimal-pad" mono testID="p2p-max-order" />
+            <Field label={t('p2p.timeLimit')} value={timeLimit} onChange={setTimeLimit} placeholder="15" keyboardType="decimal-pad" mono testID="p2p-time-limit" />
+            <Field label={t('p2p.remarks')} value={remarks} onChange={setRemarks} placeholder="" testID="p2p-remarks" />
+            {orderSide === 'buy' ? (
+              <Field
+                label={t('p2p.receiveAddress')}
+                value={buyReceive}
+                onChange={setBuyReceive}
+                placeholder={publicInfo?.address ?? ''}
+                testID="p2p-create-recv"
+              />
+            ) : null}
+            <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.primary }]} onPress={submitOrder} disabled={busy || overBalance} testID="p2p-create">
+              <Text style={s.btnText}>{t('p2p.create')}</Text>
+            </TouchableOpacity>
+          </View>
+  );
+
   const myDid = identity?.did;
 
   return (
@@ -798,6 +1080,7 @@ export default function P2pScreen() {
         <Text style={s.emptyText} testID="p2p-need-unlock">{t('p2p.unlockFirst')}</Text>
       ) : (
         <>
+          {createOrderCard}
           <View style={s.card} testID="p2p-profile-card">
             <Text style={s.cardTitle}>{t('p2p.profileTitle')}</Text>
             <Text style={s.sub}>{t('p2p.channelPrivate')}</Text>
