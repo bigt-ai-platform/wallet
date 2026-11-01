@@ -17,6 +17,7 @@ import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/Transa
 // @ts-ignore
 import { WalletUtil } from 'bigtangle-ts/dist/net/bigtangle/utils/WalletUtil';
 import { httpService } from './http';
+import { postBinary } from './binaryPost';
 import { IS_DEV } from '@/constants/app';
 import { withSlash } from 'chain-discovery';
 import { rememberPeer } from '@/services/discovery';
@@ -31,18 +32,17 @@ async function postRaw(endpoint: string, rawTx: string): Promise<{ response?: an
   let error = 'Unknown error';
   for (const base of httpService.l0Bases()) {
     try {
-      const res = await fetch(`${withSlash(base)}${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/octet-stream' },
-        body: hexToBytes(rawTx) as unknown as BodyInit,
-      });
-      if (!res.ok) {
-        error = `HTTP ${res.status}: ${res.statusText}`;
+      // postBinary (not fetch): the Capacitor bridge corrupts binary bodies
+      // before they reach the native layer — see services/binaryPost.ts.
+      const res = await postBinary(`${withSlash(base)}${endpoint}`, hexToBytes(rawTx));
+      if (res.status < 200 || res.status >= 300) {
+        error = `HTTP ${res.status}`;
         httpService.reportDown('l0', base);
         continue;
       }
       rememberPeer('l0', base);
-      return { response: await res.json() };
+      const text = new TextDecoder().decode(res.data);
+      return { response: text ? JSON.parse(text) : {} };
     } catch (e) {
       error = e instanceof Error ? e.message : 'Unknown error';
       httpService.reportDown('l0', base);

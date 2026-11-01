@@ -126,3 +126,69 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   amount may not leave the ad below `minOrder` (20 USDT on a 25 USDT remainder
   leaves 35 CNY < 70, so it is rejected; 15 USDT → 105 CNY is allowed).
   `p2p-ui` part: 10/10 green.
+## Notes as of 2026-11-01
+
+- **Android payments failed on every binary chain write (fixed)**. The
+  Capacitor app's `native-bridge.js` `convertBody()` UTF-8-decodes a
+  `Uint8Array` request body before the native layer, so a signed transaction
+  lost every non-UTF-8 byte to U+FFFD and grew (~300 → ~550 bytes); the node
+  answered `ProtocolException … ArrayIndexOutOfBoundsException: arraycopy: last source index 658 out of
+  bounds for byte[547]` at `TransactionOutput.parse` and the app showed that
+  body verbatim. The web wallet was unaffected (browser sends the bytes
+  as-is) and L1 orders were unaffected (JSON `{txhex}`), which is why only
+  payments/saveBlock/signToken broke on device. Fixed with
+  `expo-app/sources/services/binaryPost.ts` (`dataType: 'file'` + base64 +
+  `responseType: 'arraybuffer'`, installed into `OkHttp3Util` from
+  `app/_layout.tsx`); see `android.md` → **Binary POSTs**. Tests:
+  `expo-app/sources/services/__tests__/binaryPost.test.ts`,
+  `packages/bigtangle-ts/test/utils/OkHttp3UtilTransportTest.ts`.
+  The plugin import must stay **static**: `import('@capacitor/core')` becomes
+  Metro's `_asyncRequire(id, {paths})`, which never settles in the WebView
+  (payment stuck at "发送中…", no request made, no resource entry) — the
+  first version of this fix hung exactly there until the import was made
+  static.
+- **The generated Gradle wrapper is pinned by `webapp/scripts/patch-android.mjs`**
+  (8.14.3). A wrapper refresh to Gradle 9.6+ fails configuration with
+  "relies on `org.gradle.api.problems.internal.InternalProblems`" because AGP
+  8.13 still uses that removed internal API.
+
+- **OS notifications now mirror `../dai`.** Android had no notification path at
+  all (in-app banners only, no `POST_NOTIFICATIONS`, no channel). Ported dai's
+  stack: `webapp/native/notifier/.../NotifierPlugin.java` (channel
+  `wallet_events`, IMPORTANCE_HIGH, `notify({title,body,tag})`, tap → app),
+  `expo-app/sources/services/nativeNotify.ts` (same four calls as dai's
+  `lib/nativeNotify.ts`) and `systemNotifications.ts` (gate = Settings pref +
+  OS permission + `document.visibilityState === 'hidden'`, mirroring dai's
+  `lib/notify.ts`). `notifySystemMessage()` mirrors to the OS, so
+  payment/order/P2P/prediction events land outside the app. `patch-android.mjs`
+  copies the plugin, adds `POST_NOTIFICATIONS` and writes `ic_stat_wallet`.
+  Verified on a debug build: channel present, `dumpsys notification` shows
+  `pkg=ai.bigt.wallet tag=sys_…`, shade renders "Wallet / Payment finalized".
+  Still process-alive only (WebView poller), same limitation dai documents.
+
+- **Wallet unlock is credential-based after the first password unlock.** The
+  lock screen now offers fingerprint/face/PIN (via the existing `DeviceAuth`
+  plugin) instead of the password every time, like `../dai`'s remembered
+  device. `services/walletRecall.ts` stores the password under
+  `wallet.deviceUnlock`, which `storage/secureWeb.ts` routes to the
+  Keystore-backed plugin (never localStorage); it is read only after
+  `confirmWithDeviceUnlock()` succeeds and is dropped by Settings → *Unlock
+  with fingerprint or face* or wallet deletion. Two bugs fixed on the way:
+  `state/wallet` locked on AppState `inactive` (which the OS unlock prompt
+  itself triggers, wiping the wallet mid-unlock — now `background` only), and
+  the unlock was not remembered on create/import.
+  Follow-up found on device: auto-opening `BiometricPrompt` on mount lost its
+  `AuthenticationCallback` and the button stuck on "解锁中…" (the plugin call
+  never resolved), so the prompt is now user-triggered and
+  `confirmWithDeviceUnlock()` races a 90 s timeout.
+
+- **One payment shows up as several TRANSFER blocks (branch blocks).** The
+  node builds its block prototype from two tips (`CacheBlockPrototypeService`:
+  `Block.createBlock(trunk, branch)`), so a mempool transaction is proposed
+  into the trunk block *and* into branch siblings — the same tx hash appears in
+  one block with positive depth and one or more with **negative** chainlength
+  (verified on eu1: `7c30e864…` in 4098 + two −4098 blocks; same for every
+  transfer there). Funds move once and the fee is charged once. The explorer
+  now flags `chainlength < 0` as `branch` (`lib/blockinfo.ts`) and hides those
+  rows behind a "显示分支块" toggle (count line shows
+  `N 个区块 · 已隐藏 M 个分支块`), with a 分支 badge when shown.

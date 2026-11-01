@@ -39,12 +39,14 @@ export type BootPhase = "platform" | "storage" | "ready";
 export type BootReporter = (phase: BootPhase, detail?: string) => void;
 
 /**
- * Keys that must stay in the RSA Keystore plugin. The wallet holds no separate
- * key material — its only secret is the scrypt-encrypted wallet file, which is
- * self-protecting — so nothing qualifies today. The plugin is retained for
- * legacy draining and for future key material (e.g. a device pairing secret).
+ * Keys that must stay in the RSA Keystore plugin. The wallet file itself is
+ * scrypt-encrypted and lives in localStorage; the one secret kept here is the
+ * "remembered unlock" — the wallet password that lets the unlock screen use
+ * the OS credential (fingerprint/face/PIN) instead of retyping it. The prefix
+ * is matched by `isSecureKey`, so `delegate.ts`/`walletRecall.ts` writes land
+ * in the Keystore, never in localStorage.
  */
-const SECURE_PREFIXES: string[] = [];
+const SECURE_PREFIXES: string[] = ["wallet.deviceUnlock"];
 
 function isSecureKey(k: string): boolean {
   return SECURE_PREFIXES.some((p) => k === p || k.startsWith(p));

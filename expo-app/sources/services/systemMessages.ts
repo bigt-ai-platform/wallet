@@ -7,6 +7,7 @@
  */
 
 import { device } from '@/storage';
+import { raiseSystemNotification } from './systemNotifications';
 
 export type SystemMessageTone = 'info' | 'success' | 'error';
 
@@ -111,6 +112,14 @@ export function notifySystemMessage(input: Omit<SystemMessage, 'id' | 'createdAt
       // A broken consumer must not prevent other listeners from seeing it.
     }
   }
+  // Mirror to the OS (Android Notifier plugin, same channel semantics as
+  // ../dai) so a chain event that lands while the app is backgrounded is not
+  // missed. Gated by the Settings pref + OS permission + foreground state.
+  void raiseSystemNotification({
+    title: message.title,
+    body: message.body,
+    tag: message.id,
+  }).catch(() => {});
   return message;
 }
 

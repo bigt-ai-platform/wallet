@@ -171,6 +171,39 @@ if (mx !== fs.readFileSync(manifest, "utf8")) {
   console.log("patch-android: OTA UpdateReceiver added");
 }
 
+// ── 1d2. system notifications (Notifier plugin, same as ../dai) ─────────────
+// POST_NOTIFICATIONS (API 33+) is requested at runtime by NotifierPlugin; the
+// manifest entry is what makes the alias grantable. The plugin also references
+// R.drawable.ic_stat_wallet, and android/ is regenerated, so the white status
+// bar icon is written on every sync (the system tints it).
+{
+  let nx = fs.readFileSync(manifest, "utf8");
+  if (!nx.includes("android.permission.POST_NOTIFICATIONS")) {
+    nx = nx.replace(
+      /<uses-permission android:name="android.permission.INTERNET" \/>/,
+      '<uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />',
+    );
+    fs.writeFileSync(manifest, nx);
+    console.log("patch-android: POST_NOTIFICATIONS added");
+  }
+  const drawableDir = path.join(app, "res", "drawable");
+  fs.mkdirSync(drawableDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(drawableDir, "ic_stat_wallet.xml"),
+    `<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M5,4h14v3.5h-5.25v12.5h-3.5v-12.5h-5.25z" />
+</vector>
+`,
+  );
+}
+
 // ── 1d-tmp. biometric / device-credential library ───────────────────────────
 // DeviceAuthPlugin uses androidx.biometric (BiometricPrompt + the pre-API-30
 // device-credential fallback). `android/` is regenerated on `cap add`, so the
@@ -193,7 +226,7 @@ if (mx !== fs.readFileSync(manifest, "utf8")) {
 // template also carries MainActivity with the plugin-registering override.
 const javaDest = path.join(app, "java", pkgDir);
 fs.mkdirSync(javaDest, { recursive: true });
-for (const name of ["updater", "deviceauth"]) {
+for (const name of ["updater", "deviceauth", "notifier"]) {
   const javaSrc = path.join(root, "native", name, pkgDir);
   if (!fs.existsSync(javaSrc)) {
     console.warn(`patch-android: native/${name} template missing — skipped`);
@@ -207,8 +240,9 @@ for (const name of ["updater", "deviceauth"]) {
 
 // ── 1f. no GMS: strip the template's google-services wiring ─────────────────
 // Capacitor's android template ships the FCM `google-services` classpath and
-// apply-block, but this app has no Google Play Services / Firebase dependency
-// (no push plugin; notifications are not used natively). Leaving the wiring in
+// apply-block, but this app has no Google Play Services / Firebase dependency:
+// OS notifications come from the local `Notifier` plugin (see 1d2), not FCM.
+// Leaving the wiring in
 // a regenerated tree makes the build recipe reference a proprietary plugin for
 // nothing, so remove both fragments here — `cap add android` re-injects them.
 // Idempotent.
@@ -230,6 +264,27 @@ if (fs.existsSync(buildGradle)) {
   if (appStripped !== appSrc) {
     fs.writeFileSync(buildGradle, appStripped);
     console.log("patch-android: removed google-services apply-block (no GMS)");
+  }
+}
+
+// ── 1g. pin the Gradle wrapper ──────────────────────────────────────────────
+// `cap sync`/CLI refreshes can point the generated wrapper at a Gradle major
+// AGP 8.x cannot run: Gradle 9.6+ removed the `InternalProblems` service the
+// Android plugin still uses, so the build dies at configuration time with
+// "Plugin 'com.android.internal.application' relies on
+// org.gradle.api.problems.internal.InternalProblems". Pin the wrapper to the
+// Gradle line AGP is built against. Idempotent.
+const GRADLE_VERSION = "8.14.3";
+const wrapperProps = path.join(root, "android", "gradle", "wrapper", "gradle-wrapper.properties");
+if (fs.existsSync(wrapperProps)) {
+  const src = fs.readFileSync(wrapperProps, "utf8");
+  const pinned = src.replace(
+    /^distributionUrl=.*$/m,
+    `distributionUrl=https\\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip`,
+  );
+  if (pinned !== src) {
+    fs.writeFileSync(wrapperProps, pinned);
+    console.log(`patch-android: gradle wrapper → ${GRADLE_VERSION} (AGP 8.x compatible)`);
   }
 }
 

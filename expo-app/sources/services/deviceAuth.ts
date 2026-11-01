@@ -65,11 +65,27 @@ export async function confirmWithDeviceUnlock(
   const p = plugin();
   if (!p) return 'unavailable';
   try {
-    const avail = await p.isAvailable();
+    const avail = await withTimeout(p.isAvailable(), PROBE_TIMEOUT_MS, null);
     if (!avail?.available) return 'unavailable';
-    const res = await p.confirm(opts);
-    return res?.ok ? 'ok' : 'denied';
+    // The native prompt resolves from its AuthenticationCallback. If the
+    // Activity is recreated while it is up (rotation, a system dialog taking
+    // over) that callback can be lost and the call would pend forever, leaving
+    // the caller stuck on "Unlocking…". Treat a lost prompt as unavailable.
+    const res = await withTimeout(p.confirm(opts), PROMPT_TIMEOUT_MS, null);
+    if (res == null) return 'unavailable';
+    return res.ok ? 'ok' : 'denied';
   } catch {
     return 'unavailable';
   }
+}
+
+const PROBE_TIMEOUT_MS = 5_000;
+const PROMPT_TIMEOUT_MS = 90_000;
+
+/** Await `p`, but never longer than `ms` (resolves `fallback` instead). */
+function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return Promise.race([
+    p.catch(() => fallback),
+    new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms)),
+  ]);
 }

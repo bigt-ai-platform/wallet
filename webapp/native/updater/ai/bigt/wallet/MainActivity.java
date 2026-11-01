@@ -7,6 +7,7 @@ public class MainActivity extends BridgeActivity {
   public void onCreate(android.os.Bundle savedInstanceState) {
     registerPlugin(UpdaterPlugin.class);
     registerPlugin(DeviceAuthPlugin.class);
+    registerPlugin(NotifierPlugin.class);
     super.onCreate(savedInstanceState);
   }
 }

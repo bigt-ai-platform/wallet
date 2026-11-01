@@ -8,10 +8,56 @@ import type {
 import * as https from "https";
 import { ObjectMapper } from "jackson-js";
 
+/** A raw POST body exactly as it must reach the node. */
+export interface BinaryTransportRequest {
+  url: string;
+  data: Uint8Array;
+  headers: Record<string, string>;
+}
+
+/** The node's raw response body and HTTP status. */
+export interface BinaryTransportResponse {
+  status: number;
+  data: Uint8Array;
+}
+
+export type BinaryHttpTransport = (
+  request: BinaryTransportRequest
+) => Promise<BinaryTransportResponse>;
+
 export class OkHttp3Util {
   private static readonly logger = console;
   public static readonly timeoutMinute = 45;
   private static instance: AxiosInstance;
+
+  /**
+   * Optional byte-exact POST transport. Axios/XHR is correct in a browser, but
+   * the Capacitor Android app runs the web export with `CapacitorHttp`
+   * enabled: its native bridge decodes every `Uint8Array` body with
+   * `TextDecoder` before handing it to the native layer, so all bytes that
+   * are not valid UTF-8 become U+FFFD and a signed transaction arrives
+   * mangled (`ProtocolException ... ArrayIndexOutOfBounds ... out of bounds
+   * for byte[N]` at the node). The host app installs a transport that sends
+   * the exact bytes (base64 + `dataType: 'file'`); this package stays
+   * platform-independent.
+   */
+  private static transport: BinaryHttpTransport | null = null;
+
+  /** Install (or, with null, clear) the byte-exact transport. */
+  public static setTransport(transport: BinaryHttpTransport | null): void {
+    this.transport = transport;
+  }
+
+  /** Headers sent with every request (see the axios request interceptor). */
+  private static requestHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/octet-stream; charset=utf-8",
+    };
+    if (this.pubkey) headers["pubkey"] = this.pubkey;
+    if (this.signHex) headers["signHex"] = this.signHex;
+    if (this.contentHex) headers["contentHex"] = this.contentHex;
+    return headers;
+  }
 
   private static readonly objectMapper: ObjectMapper = new ObjectMapper();
   public static readonly contextRoot: string = "";
@@ -110,6 +156,17 @@ export class OkHttp3Util {
     let requestData = data;
     if (data && data.length === 0) {
       requestData = new Uint8Array(0);
+    }
+
+    if (this.transport) {
+      const result = await this.transport({
+        url,
+        data: requestData,
+        headers: this.requestHeaders(),
+      });
+      const responseBuffer = Buffer.from(result.data);
+      this.checkResponse(responseBuffer, url, result.status);
+      return responseBuffer.toString("utf8");
     }
 
     const response = await this.getAxiosInstance().post(url, requestData);

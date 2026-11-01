@@ -47,7 +47,7 @@ describe('blockinfo', () => {
       hash: HEX,
       height: 42,
       chainlength: 100,
-      rating: '1234.5',
+      branch: false,
       confirmed: true,
       blockType: 'BLOCKTYPE_REWARD',
       insertTime: 1700000000000,
@@ -55,10 +55,17 @@ describe('blockinfo', () => {
     });
   });
 
+  it('flags branch (side-tip) blocks by their negative chainlength', () => {
+    // A payment is proposed into the trunk block and branch siblings, so the
+    // explorer must be able to tell them apart (and hide them by default).
+    expect(toBlockRow({ chainlength: 4098 }).branch).toBe(false);
+    expect(toBlockRow({ chainlength: -4098 }).branch).toBe(true);
+    expect(toBlockRow({}).branch).toBe(false);
+  });
+
   it('toBlockRow is robust against missing fields', () => {
     const row = toBlockRow({});
     expect(row.height).toBe(0);
-    expect(row.rating).toBe('');
     expect(row.confirmed).toBe(false);
     expect(row.blockType).toBe('');
   });

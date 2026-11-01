@@ -291,6 +291,97 @@ trusted key, so it cannot reject a seller-pinned rogue `enginePubkey`
 (docs/p2p.md §27.4 #1) — the built-in engine URL does not by itself constrain
 which vault the wallet will sign for.
 
+## Binary POSTs (chain writes)
+
+Every chain write is a **raw transaction body** (`submitTransaction`,
+`saveBlock`, `signToken`, peg-in), and on Android `CapacitorHttp` corrupts it
+unless it is sent its own way. `native-bridge.js` `convertBody()` does
+`new TextDecoder().decode(uint8Array)`, so bytes that are not valid UTF-8
+become U+FFFD (`EF BF BD`) and the native side writes them back with
+`string.getBytes(UTF_8)`: a ~300-byte signed tx arrives ~550 bytes and mangled,
+and the node answers
+
+```
+net.bigtangle.exception.ProtocolException:
+  java.lang.ArrayIndexOutOfBoundsException: arraycopy:
+  last source index 658 out of bounds for byte[547]
+    at net.bigtangle.core.Message.readBytes(Message.java:313)
+    at net.bigtangle.core.TransactionOutput.parse(...)
+    at net.bigtangle.core.BitcoinSerializer.makeTransaction(...)
+```
+
+(the app shows that body verbatim in an alert). Browsers send the `Uint8Array`
+untouched, which is why the same payment works on `wallet.bigt.ai`. L1 order
+submissions were never affected: `submitOrderTransaction` posts JSON
+(`{txhex}`), not bytes.
+
+Fix: `expo-app/sources/services/binaryPost.ts` — `postBinary()` sends the same
+bytes through the plugin's only byte-exact request encoding (`dataType: 'file'`,
+which the Android side base64-decodes) with `responseType: 'arraybuffer'`, and
+`installBinaryTransport()` (called from `app/_layout.tsx`) routes the SDK's
+`OkHttp3Util` (so `Wallet.submitTransaction` / `saveBlock` / `signToken`)
+through it. Plain `fetch` is kept on web/Node. Regression tests:
+`expo-app/sources/services/__tests__/binaryPost.test.ts` and
+`packages/bigtangle-ts/test/utils/OkHttp3UtilTransportTest.ts`.
+
+`CapacitorHttp` must be a **static** import. `import('@capacitor/core')`
+compiles to Metro's `_asyncRequire(id, {paths})`, which never settles in the
+WebView — the payment then sits at "发送中…" forever with no HTTP request made
+at all (the promise is never resolved *or* rejected, and nothing appears in
+`performance.getEntriesByType('resource')`). The unit test asserts the static
+import shape.
+
+Never post a transaction body with `fetch` in a native build, and never give a
+binary body a JSON content type (the native side would JSON-stringify it).
+
+## Wallet unlock (biometrics, like `../dai`)
+
+The wallet password is only needed **once per device**. After a successful
+password unlock (or create/import), `services/walletRecall.ts` keeps the
+password in the Keystore-backed store (`storage/secureWeb.ts` →
+`SECURE_PREFIXES = ["wallet.deviceUnlock"]`, so it never lands in
+localStorage) and the lock screen offers the OS credential
+(fingerprint / face / device PIN) through the existing `DeviceAuth` plugin as
+its primary button. Turning the option off in Settings → *Unlock with
+fingerprint or face* forgets the stored unlock; deleting the wallet does too.
+
+The prompt is **user-triggered, never auto-opened on mount**: starting
+`BiometricPrompt` while the screen is still transitioning can lose the
+`AuthenticationCallback`, and the plugin call then never resolves — the button
+sat on "解锁中…" forever. On top of that,
+`confirmWithDeviceUnlock()` now races the native call against a 90 s timeout
+and reports `unavailable`, so a lost callback can never wedge the UI. This is the wallet's version of dai's remembered-device unlock, with the
+OS credential as the gate (dai uses a non-extractable WebCrypto device key).
+
+Two related fixes in `state/wallet`: the in-memory wallet is now cleared on
+`background` only — an `inactive` transition also fires for the OS unlock
+prompt itself, which used to lock the wallet mid-unlock — and the password is
+remembered on create/import as well as on unlock prompt.
+
+## System notifications (same as `../dai`)
+
+Chain events use the **same notification stack as `../dai`**:
+`webapp/native/notifier/ai/bigt/wallet/NotifierPlugin.java` (Capacitor plugin
+`Notifier`: channel `wallet_events` / IMPORTANCE_HIGH, `POST_NOTIFICATIONS`
+runtime permission, `notify({title,body,tag})`, tap opens the app),
+`expo-app/sources/services/nativeNotify.ts` (the same four calls as dai's
+`apps/web/src/lib/nativeNotify.ts`) and `systemNotifications.ts` (the gate:
+Settings pref + OS permission + app-in-background, mirroring dai's
+`lib/notify.ts`).
+
+`services/systemMessages.ts` still owns the in-app banner/centre and now
+mirrors every `notifySystemMessage()` to the OS, so a payment that finalizes
+while the app is in the background is not missed. `patch-android.mjs` copies
+the plugin in, adds the manifest permission and writes the `ic_stat_wallet`
+status-bar icon on every sync; `MainActivity` registers the plugin.
+
+Settings → *System notifications* (default ON) is the device-local pref; the
+first toggle asks for the OS permission. Known limits, same as dai: the
+notification is posted from the WebView poller, so it needs the app process
+alive (and Chromium may throttle timers when backgrounded) — true background
+push (WorkManager/FCM) is out of scope. The web build has no Notifier plugin
+and falls back to the browser `Notification` API.
+
 ## Limitations / non-goals
 
 - No native background features beyond the web app's.

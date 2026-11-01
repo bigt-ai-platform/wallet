@@ -56,9 +56,12 @@ export function evaluationHashHex(evaluation: any): string {
 export interface BlockRow {
   hash: string;
   height: number;
-  /** Chainlength of the block (Java page's "depth" column). */
+  /** Chainlength of the block (Java page's "depth" column). Negative on a
+   *  branch tip: the same transaction can be proposed into the trunk block and
+   *  a branch sibling, so a single payment shows up as several transfer blocks. */
   chainlength: number;
-  rating: string;
+  /** True for a branch (side-tip) block, not the main chain. */
+  branch: boolean;
   confirmed: boolean;
   blockType: string;
   insertTime: number;
@@ -72,12 +75,11 @@ function num(v: any): number {
 
 /** Normalize one raw BlockEvaluationDisplay JSON row for rendering. */
 export function toBlockRow(evaluation: any): BlockRow {
-  const rating = evaluation?.totalrating;
   return {
     hash: evaluationHashHex(evaluation),
     height: num(evaluation?.height),
     chainlength: num(evaluation?.chainlength),
-    rating: rating == null ? '' : String(rating),
+    branch: num(evaluation?.chainlength) < 0,
     confirmed: !!evaluation?.confirmed,
     blockType: evaluation?.blockType ?? '',
     insertTime: num(evaluation?.insertTime),

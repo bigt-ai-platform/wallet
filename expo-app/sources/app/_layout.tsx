@@ -11,6 +11,8 @@ import { initSecureStorage, type BootPhase } from '@/storage';
 import { checkForUpdate, confirmUpdate, installFailureText, installUpdate, notify } from '@/services/updater';
 import i18n from '@/lib/i18n';
 import { startAutoSelection, stopAutoSelection } from '@/services/discovery';
+import { installBinaryTransport } from '@/services/binaryPost';
+import { syncNotifyPermission } from '@/services/systemNotifications';
 import Sidebar from '@/components/Sidebar';
 import BootScreen from '@/components/BootScreen';
 import BottomNav from '@/components/BottomNav';
@@ -34,6 +36,12 @@ SplashScreen.setOptions({
     duration: 300,
 });
 SplashScreen.preventAutoHideAsync();
+
+// Capacitor's HTTP bridge UTF-8 decodes binary request bodies before they
+// reach the native layer, which corrupts every signed transaction (see
+// services/binaryPost.ts). Install the byte-exact transport before any
+// wallet/chain write.
+installBinaryTransport();
 
 const DESKTOP_BREAKPOINT = 768;
 
@@ -133,6 +141,10 @@ export default function RootLayout() {
                 console.error('Error initializing:', error);
             } finally {
                 setIsReady(true);
+                // Learn an already-granted OS notification permission so the
+                // first chain event can notify instead of being treated as an
+                // unanswered prompt (same as ../dai).
+                void syncNotifyPermission().catch(() => {});
             }
         })();
     }, []);

@@ -121,6 +121,14 @@ export default function BlocksScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A payment's transaction is proposed into the trunk block *and* into branch
+  // siblings, so one transfer shows up as several TRANSFER rows. Branches are
+  // real blocks but they look like duplicates, so they are hidden by default
+  // and can be shown with the toggle (badged, never silently dropped).
+  const [showBranches, setShowBranches] = React.useState(false);
+  const branchCount = rows.filter((r) => r.branch).length;
+  const visibleRows = showBranches ? rows : rows.filter((r) => !r.branch);
+
   // Fetch the raw block and decode it client-side into the full multi-line
   // dump, exactly like Java's `showBlock` (makeBlock + block2string).
   const showDetail = async (row: BlockRow) => {
@@ -190,7 +198,27 @@ export default function BlocksScreen() {
           </TouchableOpacity>
         </View>
         {searched && !loading ? (
-          <Text style={s.countText}>{t('blocks.results', { count: rows.length })}</Text>
+          <>
+            <Text style={s.countText}>
+              {t('blocks.results', { count: visibleRows.length })}
+              {branchCount > 0 && !showBranches
+                ? ` · ${t('blocks.hiddenBranches', { count: branchCount })}`
+                : ''}
+            </Text>
+            {branchCount > 0 && (
+              <TouchableOpacity
+                onPress={() => setShowBranches((v) => !v)}
+                style={s.branchToggle}
+                accessibilityRole="switch"
+                accessibilityState={{ checked: showBranches }}
+                testID="blocks-show-branches"
+              >
+                <Text style={s.branchToggleText}>
+                  {(showBranches ? '▾ ' : '▸ ') + t('blocks.showBranches')}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </>
         ) : null}
         {error ? <Text style={s.errorText}>{error}</Text> : null}
       </View>
@@ -198,16 +226,16 @@ export default function BlocksScreen() {
       <ScrollView contentContainerStyle={s.content}>
         {loading ? (
           <ActivityIndicator size="large" color={s.loader.color} style={{ padding: 32 }} />
-        ) : rows.length === 0 ? (
+        ) : visibleRows.length === 0 ? (
           searched ? <Text style={s.emptyText}>{t('blocks.empty')}</Text> : null
         ) : (
-          rows.map((row) => {
+          visibleRows.map((row) => {
             const key = row.hash;
             return (
-              <View key={key || row.height} style={s.card} testID="blocks-card">
+              <View key={key || row.height} style={[s.card, row.branch && s.cardBranch]} testID="blocks-card">
                 <View style={s.cardHeader}>
                   <Text style={s.tokenName}>#{row.height}</Text>
-                  <Text style={s.tokenValue}>{row.rating}</Text>
+                  {row.branch && <Text style={s.branchBadge}>{t('blocks.branch')}</Text>}
                 </View>
                 <Text style={s.tokenMeta}>{row.blockType || '-'} · {row.confirmed ? t('balance.confirmYes') : t('balance.confirmNo')}</Text>
                 <Text style={s.tokenMeta}>{t('blocks.depth')}: {row.chainlength}</Text>
@@ -261,9 +289,12 @@ const s = StyleSheet.create((theme) => ({
   loader: { color: theme.colors.primary },
   emptyText: { fontSize: 14, color: theme.colors.text.secondary, textAlign: 'center', padding: 32 },
   card: { backgroundColor: theme.colors.groupped.surface, borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, padding: 14, marginBottom: 8 },
+  cardBranch: { opacity: 0.75 },
+  branchBadge: { fontSize: 11, fontWeight: '600', color: theme.colors.text.secondary, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 },
+  branchToggle: { marginTop: 6, alignSelf: 'flex-start' },
+  branchToggleText: { fontSize: 12, fontWeight: '600', color: theme.colors.primary },
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   tokenName: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary },
-  tokenValue: { fontSize: 15, fontWeight: '700', color: theme.colors.text.primary },
   tokenMeta: { fontSize: 12, color: theme.colors.text.secondary, marginBottom: 2 },
   tokenId: { fontSize: 11, color: theme.colors.text.secondary, fontFamily: MONO_FONT },
   detailBox: { marginTop: 8, padding: 8, borderTopWidth: 1, borderTopColor: theme.colors.border, backgroundColor: theme.colors.groupped.background, borderRadius: 8 },

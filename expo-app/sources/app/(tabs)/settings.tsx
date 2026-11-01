@@ -12,6 +12,13 @@ import { MONO_FONT } from '@/constants/fonts';
 import { APP_VERSION } from '@/constants/app';
 import ChainBadge from '@/components/ChainBadge';
 import { checkForUpdate, confirmUpdate, currentVersion, installFailureText, installUpdate, isUpdaterAvailable } from '@/services/updater';
+import {
+  ensureNotifyPermission,
+  getSystemNotificationsEnabled,
+  setSystemNotificationsEnabled,
+} from '@/services/systemNotifications';
+import { isDeviceUnlockSupported } from '@/services/deviceAuth';
+import { getRememberDeviceUnlock, setRememberDeviceUnlock } from '@/services/walletRecall';
 import type { L1ChainConfig } from '@/types/api';
 
 /** OTA updates: show the installed version and offer a manual check + install
@@ -102,6 +109,27 @@ export default function SettingsScreen() {
     }
   };
 
+  // OS notifications for chain events (same Notifier bridge as ../dai).
+  const [systemNotify, setSystemNotify] = React.useState(() => getSystemNotificationsEnabled());
+  const toggleSystemNotify = async (val: boolean) => {
+    if (val && !(await ensureNotifyPermission())) {
+      Alert.alert(t('settings.notifySystem'), t('settings.notifySystemBlocked'));
+      setSystemNotify(getSystemNotificationsEnabled());
+      return;
+    }
+    setSystemNotificationsEnabled(val);
+    setSystemNotify(val);
+  };
+
+  // Credential (fingerprint/face/PIN) wallet unlock, same idea as ../dai's
+  // remembered device. Android only; turning it off forgets the stored unlock.
+  const deviceUnlockSupported = isDeviceUnlockSupported();
+  const [rememberUnlock, setRememberUnlock] = React.useState(() => getRememberDeviceUnlock());
+  const toggleRememberUnlock = (val: boolean) => {
+    setRememberDeviceUnlock(val);
+    setRememberUnlock(val);
+  };
+
   const saveServer = () => {
     if (!serverUrl.trim()) { Alert.alert('', t('settings.urlEmpty')); return; }
     httpService.setServerUrl(serverUrl.trim());
@@ -179,6 +207,29 @@ export default function SettingsScreen() {
             trackColor={{ false: s.switchOff.color, true: s.switchOn.color }}
             thumbColor={autoDiscover ? s.switchThumb.color : '#f4f3f4'} testID="autodiscover-toggle" />
         </View>
+      </View>
+
+      <View style={s.card}>
+        <View style={s.settingRow}>
+          <View style={s.settingLeft}>
+            <Text style={s.settingLabel}>{t('settings.notifySystem')}</Text>
+            <Text style={s.settingDesc}>{t('settings.notifySystemDesc')}</Text>
+          </View>
+          <Switch value={systemNotify} onValueChange={toggleSystemNotify}
+            trackColor={{ false: s.switchOff.color, true: s.switchOn.color }}
+            thumbColor={systemNotify ? s.switchThumb.color : '#f4f3f4'} testID="system-notify-toggle" />
+        </View>
+        {deviceUnlockSupported && (
+          <View style={[s.settingRow, s.settingRowSpaced]}>
+            <View style={s.settingLeft}>
+              <Text style={s.settingLabel}>{t('settings.unlockWithDevice')}</Text>
+              <Text style={s.settingDesc}>{t('settings.unlockWithDeviceDesc')}</Text>
+            </View>
+            <Switch value={rememberUnlock} onValueChange={toggleRememberUnlock}
+              trackColor={{ false: s.switchOff.color, true: s.switchOn.color }}
+              thumbColor={rememberUnlock ? s.switchThumb.color : '#f4f3f4'} testID="remember-unlock-toggle" />
+          </View>
+        )}
       </View>
 
       {!autoDiscover && (
@@ -279,6 +330,7 @@ const s = StyleSheet.create((theme) => ({
   },
   cardLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
   settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  settingRowSpaced: { marginTop: 16 },
   settingLeft: { flex: 1, marginRight: 12 },
   settingLabel: { fontSize: 15, fontWeight: '600', color: theme.colors.text.primary, marginBottom: 2 },
   settingDesc: { fontSize: 12, color: theme.colors.text.secondary, marginBottom: 8 },

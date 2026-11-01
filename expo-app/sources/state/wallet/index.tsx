@@ -3,6 +3,13 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import { loadWallet, loadPlainWalletSync, isPlainWalletJson, type WalletFile } from '@/screens/wallet/WalletHelper';
 import { device } from '@/storage';
+import { confirmWithDeviceUnlock, isDeviceUnlockSupported } from '@/services/deviceAuth';
+import {
+  forgetWalletUnlock,
+  getRememberedWalletUnlock,
+  hasRememberedWalletUnlock,
+  rememberWalletUnlock,
+} from '@/services/walletRecall';
 import i18n from '@/lib/i18n';
 
 /**
@@ -35,6 +42,14 @@ interface WalletApiContext {
     password?: string,
   ) => Promise<void>;
   unlockWallet: (password: string) => Promise<WalletFile>;
+  /**
+   * Unlock with the OS credential (fingerprint/face/PIN) instead of the wallet
+   * password, using the unlock remembered on this device. `null` when the
+   * device cannot offer it (web, no stored unlock, prompt unavailable).
+   */
+  unlockWithDevice: () => Promise<WalletFile | null>;
+  /** True when the lock screen should offer the credential button. */
+  canUnlockWithDevice: () => boolean;
   lockWallet: () => void;
   clearWallet: () => Promise<void>;
   hasWallet: () => boolean;
@@ -59,6 +74,8 @@ const WalletApiCtx = createContext<WalletApiContext>({
   unlockWallet: async () => {
     throw new Error('WalletProvider not initialized');
   },
+  unlockWithDevice: async () => null,
+  canUnlockWithDevice: () => false,
   lockWallet: () => {},
   clearWallet: async () => {},
   hasWallet: () => false,
@@ -110,10 +127,14 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     };
   });
 
-  // Clear decrypted wallet when app goes to background
+  // Clear decrypted wallet when app goes to background.
+  //
+  // Only `background` locks: an `inactive` transition also happens for the OS
+  // unlock prompt and the system dialogs we open ourselves, and locking on it
+  // would wipe the wallet mid-unlock (the user then has to start over).
   React.useEffect(() => {
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'background' || nextAppState === 'inactive') {
+      if (nextAppState === 'background') {
         if (decryptedWalletRef.current || passwordRef.current) {
           if (decryptedWalletRef.current) {
             const wallet = decryptedWalletRef.current;
@@ -143,6 +164,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         if (password) {
           passwordRef.current = password;
+          // A freshly created/imported wallet is remembered for credential
+          // unlock straight away, like the password-unlock path.
+          rememberWalletUnlock(password);
           // The wallet is now unlocked — populate the in-memory decrypted
           // wallet so getUnlockedWallet() works immediately (import /
           // create flows save with a password and continue unlocked).
@@ -188,6 +212,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       decryptedWalletRef.current = wallet;
       passwordRef.current = password;
+      // Remember the unlock for the OS credential ("remember this device",
+      // like ../dai): the next lock screen offers fingerprint/face instead of
+      // the password. Native only, and removed with the wallet.
+      rememberWalletUnlock(password);
 
       setState((prev) => ({
         ...prev,
@@ -201,6 +229,28 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       throw error;
     }
   }, []);
+
+  const canUnlockWithDevice = useCallback(() => {
+    return isDeviceUnlockSupported() && hasRememberedWalletUnlock();
+  }, []);
+
+  /**
+   * Unlock with the OS credential. The remembered password is read only after
+   * the OS prompt succeeded; a denied/unavailable prompt returns null so the
+   * screen can fall back to the password field.
+   */
+  const unlockWithDevice = useCallback(async () => {
+    if (!isDeviceUnlockSupported()) return null;
+    const remembered = getRememberedWalletUnlock();
+    if (!remembered) return null;
+    const res = await confirmWithDeviceUnlock({
+      title: i18n.t('wallet.deviceUnlockTitle'),
+      subtitle: i18n.t('wallet.deviceUnlockSubtitle'),
+      reason: i18n.t('wallet.deviceUnlockReason'),
+    });
+    if (res !== 'ok') return null;
+    return unlockWallet(remembered);
+  }, [unlockWallet]);
 
   const lockWallet = useCallback(() => {
     if (decryptedWalletRef.current) {
@@ -219,6 +269,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
     device.remove(['device', WALLET_ENCRYPTED_CONTENT_KEY]);
     device.remove(['device', WALLET_ADDRESS_KEY]);
+    // The remembered unlock must never outlive the wallet it belongs to.
+    forgetWalletUnlock();
 
     setState({
       publicInfo: null,
@@ -260,6 +312,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     () => ({
       storeEncryptedWallet,
       unlockWallet,
+      unlockWithDevice,
+      canUnlockWithDevice,
       lockWallet,
       clearWallet,
       hasWallet,
@@ -269,6 +323,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     [
       storeEncryptedWallet,
       unlockWallet,
+      unlockWithDevice,
+      canUnlockWithDevice,
       lockWallet,
       clearWallet,
       hasWallet,

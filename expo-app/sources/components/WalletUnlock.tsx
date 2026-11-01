@@ -25,9 +25,16 @@ export default function WalletUnlock({ subtitle, fullScreen = true, testID }: Wa
   const { t } = useTranslation();
   const router = useRouter();
   const { theme } = useUnistyles();
-  const { publicInfo, unlockWallet } = useWallet();
+  const { publicInfo, unlockWallet, unlockWithDevice, canUnlockWithDevice } = useWallet();
   const [unlockPwd, setUnlockPwd] = React.useState('');
   const [unlocking, setUnlocking] = React.useState(false);
+  // Credential (fingerprint/face/PIN) unlock is offered when this device
+  // remembered the wallet (see services/walletRecall.ts). The password field
+  // stays available as the fallback.
+  const [deviceUnlock, setDeviceUnlock] = React.useState(false);
+  React.useEffect(() => {
+    setDeviceUnlock(publicInfo?.hasEncryptedWallet ? canUnlockWithDevice() : false);
+  }, [publicInfo?.hasEncryptedWallet, canUnlockWithDevice]);
 
   const handleUnlock = async () => {
     if (!unlockPwd || unlocking) return;
@@ -41,6 +48,24 @@ export default function WalletUnlock({ subtitle, fullScreen = true, testID }: Wa
     }
   };
 
+  const handleDeviceUnlock = async () => {
+    if (unlocking) return;
+    setUnlocking(true);
+    try {
+      // null = cancelled/unavailable: keep the button so the user can retry,
+      // the password field below is always the fallback.
+      await unlockWithDevice();
+    } catch (e: any) {
+      showAlert(t('transaction.error'), e?.message || t('keys.wrongPassword'));
+    } finally {
+      setUnlocking(false);
+    }
+  };
+
+  // The credential prompt is user-triggered. It used to auto-open on mount, but
+  // starting BiometricPrompt while the screen is still transitioning can lose
+  // the AuthenticationCallback and leave the button stuck on "Unlocking…".
+
   const body = (
     <View style={fullScreen ? s.centered : s.centeredInline} testID={testID}>
       <WalletIcon size={48} color={theme.colors.text.secondary} />
@@ -51,6 +76,19 @@ export default function WalletUnlock({ subtitle, fullScreen = true, testID }: Wa
           <Text style={s.walletLabel}>
             {t('transaction.walletLabel', { address: `${(publicInfo?.address ?? '').slice(0, 10)}...` })}
           </Text>
+          {deviceUnlock && (
+            <TouchableOpacity
+              style={[s.primaryBtn, unlocking && s.btnDisabled]}
+              onPress={handleDeviceUnlock}
+              disabled={unlocking}
+              testID="unlock-with-device-button"
+            >
+              <Text style={s.primaryBtnText}>
+                {unlocking ? t('keys.unlocking') : t('wallet.unlockWithDevice')}
+              </Text>
+            </TouchableOpacity>
+          )}
+          {deviceUnlock && <Text style={s.orLabel}>{t('wallet.orPassword')}</Text>}
           <TextInput
             style={s.unlockInput}
             value={unlockPwd}
@@ -100,6 +138,7 @@ const s = StyleSheet.create((theme) => ({
   walletLabel: { fontSize: 13, color: theme.colors.text.secondary, marginBottom: 12, fontFamily: MONO_FONT },
   unlockInput: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.surface, color: theme.colors.text.primary, padding: 12, fontSize: 15, width: '100%', maxWidth: 280, marginBottom: 12 },
   placeholder: { color: theme.colors.text.secondary },
+  orLabel: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 16, marginBottom: 8 },
   primaryBtn: { backgroundColor: theme.colors.primary, borderRadius: 10, paddingVertical: 15, paddingHorizontal: 32, alignItems: 'center', marginTop: 8, width: '100%', maxWidth: 280 },
   primaryBtnText: { fontSize: 16, fontWeight: '600', color: '#FFFFFF' },
   secondaryBtn: { borderRadius: 10, borderWidth: 1, borderColor: theme.colors.border, paddingVertical: 14, paddingHorizontal: 32, alignItems: 'center', marginTop: 10, width: '100%', maxWidth: 280 },

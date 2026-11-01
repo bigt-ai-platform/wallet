@@ -1,75 +1,56 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/**
- * In a plain browser the Android `DeviceAuth` plugin does not exist. The gate
- * must therefore report `unavailable` (so `TransactionConfirmProvider` falls
- * back to the wallet-password prompt) and must not call `registerPlugin`.
- */
-const { registerPlugin } = vi.hoisted(() => ({
-  registerPlugin: vi.fn(() => ({
-    isAvailable: async () => ({ available: true }),
-    confirm: async () => ({ ok: true }),
-  })),
+const mocks = vi.hoisted(() => ({
+  isAvailable: vi.fn(),
+  confirm: vi.fn(),
 }));
 
 vi.mock('@capacitor/core', () => ({
-  registerPlugin: (...args: unknown[]) => (registerPlugin as (...a: unknown[]) => unknown)(...args),
+  registerPlugin: () => ({ isAvailable: mocks.isAvailable, confirm: mocks.confirm }),
 }));
 
-function setCapacitor(platform: 'android' | 'web' | null) {
-  (globalThis as { Capacitor?: unknown }).Capacitor = platform
-    ? { isNativePlatform: () => platform === 'android', getPlatform: () => platform }
-    : undefined;
-}
+import { confirmWithDeviceUnlock } from '../deviceAuth';
 
-beforeEach(() => {
-  vi.resetModules();
-  registerPlugin.mockClear();
-});
-
-describe('deviceAuth (browser)', () => {
-  it('is unavailable in a plain browser and never registers a plugin', async () => {
-    setCapacitor(null);
-    const m = await import('../deviceAuth');
-    expect(m.isDeviceUnlockSupported()).toBe(false);
-    expect(await m.confirmWithDeviceUnlock()).toBe('unavailable');
-    expect(registerPlugin).not.toHaveBeenCalled();
-  });
-
-  it('is unavailable on the web platform (Capacitor web)', async () => {
-    setCapacitor('web');
-    const m = await import('../deviceAuth');
-    expect(m.isDeviceUnlockSupported()).toBe(false);
-    expect(await m.confirmWithDeviceUnlock()).toBe('unavailable');
-  });
-});
-
-describe('deviceAuth (android)', () => {
-  it('uses the native plugin when the OS credential is available', async () => {
-    setCapacitor('android');
-    const m = await import('../deviceAuth');
-    expect(m.isDeviceUnlockSupported()).toBe(true);
-    expect(await m.confirmWithDeviceUnlock({ title: 'Confirm' })).toBe('ok');
-    expect(registerPlugin).toHaveBeenCalledWith('DeviceAuth');
-  });
-
-  it('reports unavailable when the OS has no credential set (falls back to password)', async () => {
-    setCapacitor('android');
-    registerPlugin.mockReturnValueOnce({
-      isAvailable: async () => ({ available: false }),
-      confirm: async () => ({ ok: true }),
+describe('confirmWithDeviceUnlock', () => {
+  beforeEach(() => {
+    mocks.isAvailable.mockReset();
+    mocks.confirm.mockReset();
+    vi.stubGlobal('Capacitor', {
+      isNativePlatform: () => true,
+      getPlatform: () => 'android',
     });
-    const m = await import('../deviceAuth');
-    expect(await m.confirmWithDeviceUnlock()).toBe('unavailable');
   });
 
-  it('reports denied when the user cancels the prompt', async () => {
-    setCapacitor('android');
-    registerPlugin.mockReturnValueOnce({
-      isAvailable: async () => ({ available: true }),
-      confirm: async () => ({ ok: false }),
-    });
-    const m = await import('../deviceAuth');
-    expect(await m.confirmWithDeviceUnlock()).toBe('denied');
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('reports success and denial from the OS prompt', async () => {
+    mocks.isAvailable.mockResolvedValue({ available: true });
+    mocks.confirm.mockResolvedValueOnce({ ok: true });
+    await expect(confirmWithDeviceUnlock()).resolves.toBe('ok');
+
+    mocks.confirm.mockResolvedValueOnce({ ok: false, code: 13 });
+    await expect(confirmWithDeviceUnlock()).resolves.toBe('denied');
+  });
+
+  it('falls back when the device has no credential', async () => {
+    mocks.isAvailable.mockResolvedValue({ available: false, code: 11 });
+    await expect(confirmWithDeviceUnlock()).resolves.toBe('unavailable');
+    expect(mocks.confirm).not.toHaveBeenCalled();
+  });
+
+  it('never pends forever when the prompt callback is lost', async () => {
+    // Regression: auto-opening BiometricPrompt during a screen transition could
+    // drop the AuthenticationCallback, leaving the unlock button stuck on
+    // "解锁中…" forever. The call must resolve on its own.
+    vi.useFakeTimers();
+    mocks.isAvailable.mockResolvedValue({ available: true });
+    mocks.confirm.mockReturnValue(new Promise(() => {}));
+
+    const pending = confirmWithDeviceUnlock();
+    await vi.advanceTimersByTimeAsync(90_000);
+    await expect(pending).resolves.toBe('unavailable');
   });
 });
