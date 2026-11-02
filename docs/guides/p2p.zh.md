@@ -83,7 +83,7 @@ ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──inst
 
 买方点击 **Payment details（付款详情）**；引擎会披露卖方的收款资料，并生成一个转账*必须*附带的**每笔交易备注码**，以及精确金额和截止时间。说明会内联渲染在交易卡片中：
 
-![付款说明：户名、账号、715 CNY、备注](/demo/p2p/p2p-cny-wechat-08-instructions-zh.png)
+![付款说明：户名、账号、100 CNY、备注](/demo/p2p/p2p-cny-wechat-08-instructions-zh.png)
 
 交易为 `PAYMENT_PENDING`，并启动一个超时计时器——若买方始终未付款，卖方无需买方同意即可让其过期并退还托管。
 
