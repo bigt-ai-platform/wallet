@@ -18,7 +18,8 @@
     ]
   },
   "scripts": {
-    "verify:seeds": "tsx scripts/verify-seeds.mts"
+    "verify:seeds": "tsx scripts/verify-seeds.mts",
+    "publishpdf": "scripts/publishpdf.sh"
   },
   "packageManager": "yarn@1.22.22"
 }

@@ -57,10 +57,12 @@ function inline(s) {
 }
 
 /** Embed a local image as a data URI (PDF must be self-contained). */
+const missing = [];
 function imgSrc(src, mdDir) {
   if (/^(https?:|data:)/.test(src)) return src;
   const abs = join(mdDir, src);
   if (!existsSync(abs)) {
+    if (!missing.includes(src)) missing.push(src);
     console.warn(`  image not found: ${src}`);
     return "";
   }
@@ -246,11 +248,21 @@ const [titleLine, ...rest] = md.split("\n");
 const title = titleLine.replace(/^#\s*/, "").trim();
 
 const E2E_OUT = join(resolve(DEMO, "..", ".."), "e2e", "demo-output");
-let meta = "P2P settlement · WeChat / Alipay / bank<br>Step-by-step demo guide — the CNY rails";
+let meta = "P2P settlement · WeChat Pay<br>Step-by-step demo guide — BIG → CNY on production L0";
 const swapParts = [];
 let capturedAt;
+// Prefer the production capture (real on-chain escrow) over the older local
+// demo report, so the cover names the run that produced the screenshots.
+const prodReport = join(E2E_OUT, "p2p-prod-capture.json");
 const cnyReport = join(E2E_OUT, "p2p-cny-capture.json");
-if (existsSync(cnyReport)) {
+if (existsSync(prodReport)) {
+  const run = JSON.parse(readFileSync(prodReport, "utf-8"));
+  for (const [rail, r] of Object.entries(run.runs ?? {})) {
+    swapParts.push(`${rail} <code>${r.swapId ?? (r.escrowTxHash ? r.escrowTxHash.slice(0, 12) + "…" : "")}</code>`);
+  }
+  if (run.capturedAt) capturedAt = run.capturedAt;
+  meta = `${meta}<br><strong>live</strong> ${run.app ?? "https://wallet.bigt.ai"}`;
+} else if (existsSync(cnyReport)) {
   const run = JSON.parse(readFileSync(cnyReport, "utf-8"));
   for (const [rail, s] of Object.entries(run.swaps ?? {})) {
     swapParts.push(`${rail} <code>${s.swapId}</code>`);
@@ -261,7 +273,20 @@ if (capturedAt) {
   meta = `${meta}<br><strong>captured</strong> ${capturedAt}${swapParts.length ? ` · ${swapParts.join(" · ")}` : ""}`;
 }
 
-const html = renderHtml(title, mdToHtml(rest.join("\n"), DEMO), meta);
+// Resolve the images first: screenshots are gitignored, so a fresh checkout
+// must run the capture before rendering (never publish an image-less PDF).
+const body = mdToHtml(rest.join("\n"), DEMO);
+if (missing.length) {
+  console.error(
+    `\n${missing.length} screenshot(s) missing — they are gitignored (captured locally).\n` +
+      "Capture first, then render:\n" +
+      "  ./p2pdemo.sh capture walkthrough     # funds-free: local engine, synthetic hashes\n" +
+      "  node docs/p2p-demo/scripts/gen-p2p-all-pdf.mjs",
+  );
+  process.exit(1);
+}
+
+const html = renderHtml(title, body, meta);
 const htmlPath = join(tmpdir(), "p2p-all.html");
 writeFileSync(htmlPath, html);
 mkdirSync(dirname(OUT_PDF), { recursive: true });

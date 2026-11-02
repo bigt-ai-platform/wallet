@@ -10,13 +10,15 @@ ditandatangani dengan kunci PQ wallet Anda sendiri, dan mesin hanya bisa
 tidak pernah menyentuh fiat.
 
 **Di mana.** Layar **P2P** di wallet (bilah samping → Trade → P2P). Semua di
-bawah ini diambil dari layar itu pada build demo lokal.
+bawah ini diambil dari layar itu pada versi wallet saat ini (UI yang sama dengan
+**https://wallet.bigt.ai**).
 
-**Demo vs. live.** Tangkapan layar berasal dari build demo: mesin berjalan
-dengan penyimpanan memori dan tanpa pemeriksaan rantai, jadi langkah lock/release
-memakai hash transaksi sintetis. State machine, tanda tangan, log peristiwa
-append-only, dan jangkar audit on-chain adalah sungguhan; hanya siaran L0 yang
-dibuat stub.
+**Demo, tanpa uang sungguhan.** Tangkapan layar berasal dari harness demo tanpa
+dana: mesin lokal dengan penyimpanan memori dan tanpa klien rantai, jadi langkah
+lock dan rilis memakai hash transaksi sintetis. State machine, tanda tangan,
+skrip escrow 2-of-3, dan catatan audit adalah kode produksi; hanya siaran L0
+yang dibuat stub. Tangkapan diambil dalam bahasa wallet, jadi PDF ini
+menampilkan UI dalam bahasa yang Anda pilih.
 
 **Konfirmasi penjual adalah sinyal fiat.** Tidak ada API penagihan untuk akun
 pribadi WeChat/Alipay/bank, jadi tidak ada peristiwa pembayaran yang dapat
@@ -66,7 +68,7 @@ pembeli yang cocok melalui panggilan instruksi.
 
 ## 2. Penjual memasang order jual
 
-Di tab **Open sells**, isi order: token dan jumlah yang Anda berikan, harga CNY
+Di tab **My swaps**, isi order: token dan jumlah yang Anda berikan, harga CNY
 yang diinginkan, rantai tempat token berada, dan **metode pembayaran**
 (wechat / alipay / bank). Memilih rel CNY mengubah mata uang menjadi CNY. Syarat
 dikunci ke dalam order saat dipasang, jadi ini ditandatangani dengan kunci wallet
@@ -90,6 +92,8 @@ Mesin membuat `swapId` unik untuk siklus hidup dan pertukaran pindah ke `MATCHED
 terlihat di tab **My swaps** pembeli:
 
 ![Pertukaran berstatus MATCHED](/demo/p2p/p2p-cny-wechat-04-matched-id.png)
+
+Seperti penjual, pembeli juga menyimpan detail kanal untuk metode pembayaran yang dipilih di tab **My swaps** (hanya terlihat oleh pihak lawan).
 
 ---
 
@@ -142,7 +146,7 @@ sebagai klaim pembeli:
 
 ## 7. Penjual mengonfirmasi pada mutasinya sendiri
 
-Kartu penjual menampilkan nomor transaksi pembeli dan keterangannya. Penjual memeriksa
+Kartu penjual menampilkan pertukaran, keterangan, dan peringatan konfirmasi berwarna merah. Penjual memeriksa
 **jumlah + keterangan + waktu + nomor transaksi di akunnya sendiri** dan baru kemudian
 menekan **Confirm received** (Konfirmasi diterima):
 

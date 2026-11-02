@@ -1,15 +1,25 @@
-# P2P settlement — CNY rails demo (WeChat / Alipay / Bank)
+# P2P settlement — BIG → CNY demo (WeChat Pay)
 
-Status: **built and captured**. Every screenshot below was taken from the real
-wallet UI driving the real `p2p-engine` — one engine, no mocks. The three CNY
-legs were captured by `e2e/capture-p2p-cny.mjs` (a fresh wallet pair per rail).
-The rail is a data field, not a fork (`docs/p2p.md` §7): the same 2-of-3 escrow,
-the same PQ-signed state machine, three different fiat legs.
+Status: **built and captured — funds-free**. Every screenshot below comes from
+the demo harness (`e2e/capture-p2p-cny.mjs`): the real wallet web build driving
+a local `p2p-engine` with a memory store and **no chain client**. Nothing leaves
+a wallet — the escrow lock and release legs carry synthetic transaction hashes.
+The state machine, the PQ signatures, the 2-of-3 escrow script, the sealed
+payment instructions and the audit records are the production code; only the L0
+broadcast is stubbed. The walkthrough is **BIG → CNY over WeChat Pay**, shot in
+the wallet's own language (the guide PDF you opened uses `<lang>` screenshots
+when they exist, else English).
+
+**Token and fiat.** BIG (`bc`) is the native token on L0 — the only asset the
+production chain carries today — so the ad sells **BIG** and asks for **CNY**,
+paid to the seller's own WeChat account. The engine still serves the Alipay and
+bank rails (`wantRail` is a data field, not a fork — `docs/p2p.md` §7); this
+guide covers the WeChat leg end to end.
 
 The seller's receipt can also be **read automatically from their own phone**
 through the on-phone agent — the screen tree for Alipay/bank, or WeChat's own
 “payment received” push for WeChat (which hides its UI from accessibility). That is
-[§8 Device-side verification](#8-device-side-verification--the-payees-own-phone).
+[§6 Device-side verification](#6-device-side-verification--the-payees-own-phone).
 
 Companion documents: [docs/p2p.md](../p2p.md) (design, protocol & threat
 model), engine source `services/p2p-engine/src/`.
@@ -18,14 +28,17 @@ model), engine source `services/p2p-engine/src/`.
 
 ## 0. What this demo proves (read first)
 
-1. **One state machine, three fiat rails.** `wantRail ∈ {wechat, alipay, bank}`
-   decides the whole fiat leg; all three use
+1. **One asset, one fiat leg, one state machine.** The ad sells **BIG**
+   (`giveToken=bc`) and asks **715 CNY** for 10 BIG; `wantRail=wechat` decides
+   the whole fiat leg. Every step uses
    `instructions`/`proof`/`confirm`/`release`/`complete` (`state.ts:9-28`).
-   Everything before `MATCHED` and the escrow lock is identical.
+   Everything before `MATCHED` and the escrow lock is identical on every rail.
 2. **2-of-3 P2SH escrow on Bigtangle L0.** Seller, buyer and engine hold one
    key each; any two satisfy the script. Nobody — including the engine — can
-   move the tokens alone. The engine proves the lock on chain and fails closed
-   if the transaction is not `CONFIRMED` at the derived escrow address.
+   move the tokens alone. Against a real chain the engine proves the lock
+   (`CONFIRMED`, destination, amount) and fails closed otherwise
+   (`verifyChainLock`). This demo's engine has no chain client, so it records
+   the pasted hash as-is; §5 shows the production run of the same flow.
 3. **The seller's own confirmation is the fiat signal.** There is no webhook for
    a WeChat/Alipay/bank transfer. `PAYMENT_CLAIMED` is only the buyer's claim
    (transaction number + optional receipt); tokens stay locked until the seller signs
@@ -40,11 +53,12 @@ model), engine source `services/p2p-engine/src/`.
    — the same wallet key that signs chain transactions — over the sha256 of
    the canonical (sorted top-level keys) JSON body, plus a nonce + timestamp
    (±5 min): replay-protected, rate-limited to 10 signed requests per DID per
-   minute (`sign.ts:17-19`). The demo's final legs (`release`/`complete`) are
-   signed by the engine signer (`SETTLEMENT_ENGINE_DID`, an ML-DSA did:key
-   ≈3.5 kB); nothing fires them automatically yet, so the capture script stands
-   in for that operator job (§6.1).
-6. **The receipt can be machine-read from the payee's own phone (§8).** The
+   minute (`sign.ts:17-19`). The final legs (`release`/`complete`) are signed by
+   the engine signer (`SETTLEMENT_ENGINE_DID`, an ML-DSA did:key ≈3.5 kB): the
+   seller **pre-signs** the release/refund skeletons at lock, and the engine's
+   settlement hook adds its own signature, broadcasts and waits for
+   `CONFIRMED` — no operator job and no capture-script stand-in (§6.1).
+6. **The receipt can be machine-read from the payee's own phone (§6).** The
    seller pairs the on-phone agent once; the engine then reads the seller's own
    WeChat/Alipay/statement via `POST /swaps/:id/device-read` — the screen tree,
    or, for WeChat (which hides its UI from accessibility), WeChat's own
@@ -64,7 +78,7 @@ model), engine source `services/p2p-engine/src/`.
 | 2 | `ESCROW_LOCKED` | `POST /swaps/:id/transitions` `action=escrow_lock` | **seller** | `txHash` (escrow lock proof) |
 | 3 | `PAYMENT_PENDING` | `POST /swaps/:id/payment-instructions` | buyer | `remark` (12 hex chars, per-swap) |
 | 4 | `PAYMENT_CLAIMED` | `POST /swaps/:id/proof` | buyer | `txId` transaction number, optional `receipt` + `receiptSha256` |
-| 5 | `PAYMENT_VERIFIED` | `POST /swaps/:id/confirm` · or `POST /swaps/:id/device-read` + `POST /swaps/:id/verify` under policy (§8) | **seller** | the seller's own statement check |
+| 5 | `PAYMENT_VERIFIED` | `POST /swaps/:id/confirm` · or `POST /swaps/:id/device-read` + `POST /swaps/:id/verify` under policy (§6) | **seller** | the seller's own statement check |
 | 6 | `ESCROW_RELEASED` | `POST /swaps/:id/transitions` `action=release` | **engine** | `txHash` (release proof) |
 | 7 | `COMPLETED` | `POST /swaps/:id/transitions` `action=complete` | **engine** | — (seller already holds the CNY) |
 
@@ -79,9 +93,8 @@ release so a failed deal can always return the tokens.
 
 | Rail (`wantRail`) | Buyer pays | Seller verifies | Tokens released by |
 |---|---|---|---|
-| `wechat` | WeChat Pay to seller's WeChat ID | seller's own statement + remark | engine `release` + `complete` |
-| `alipay` | Alipay to seller's account | seller's own statement + remark | engine `release` + `complete` |
-| `bank` | bank transfer + remark | bank statement + remark | engine `release` + `complete` |
+| `wechat` (**this demo**) | WeChat Pay to the seller's WeChat ID | the seller's own WeChat statement + remark | presigned release, co-signed by the engine |
+| `alipay` / `bank` | Alipay account / bank card + remark | the seller's own statement + remark | same release path |
 
 Engine environment (`services/p2p-engine/src/server.ts`):
 
@@ -97,40 +110,42 @@ CORS_ORIGIN=http://localhost:18081       # wallet web app origin
 
 ---
 
-## 3. Running the demo yourself
+## 3. Running the demo yourself — no funds
+
+The demo/PDF path **never touches real money**: a local `p2p-engine` with a
+memory store and no chain client, the wallet web build, synthetic lock/release
+hashes.
 
 ```bash
-# 1. workspace packages the engine imports
-for pkg in chain-discovery did p2p-protocol record-sig; do ( cd packages/$pkg && npm run build ); done
-
-# 2. engine bundle (esbuild → dist/server.bundle.mjs)
-( cd services/p2p-engine && npm run build && npm run bundle )
-
-# 3. wallet web app with the engine URL inlined by `expo export`
-( cd expo-app && EXPO_PUBLIC_P2P_ENGINE_URL=http://localhost:18089 npm run web:build )
-echo http://localhost:18089 > e2e/web-build/.p2p-url
-
-# 4. CNY legs: 14 screenshots per rail → assets/screenshots/p2p-cny-{wechat,alipay,bank}-NN-*-en.png
-( cd e2e && RAILS=wechat,alipay,bank node capture-p2p-cny.mjs )
-
-# 5. render the PDF
-node docs/p2p-demo/scripts/gen-p2p-all-pdf.mjs
+./p2pdemo.sh capture walkthrough     # engine + web + shots + PDFs, no funds
+# or step by step:
+( cd e2e && RAILS=wechat node capture-p2p-cny.mjs )   # 14 shots, no funds
+node docs/p2p-demo/scripts/gen-p2p-all-pdf.mjs        # → assets/p2p-all.pdf
+npx tsx scripts/docs-pdf.mts p2p                      # 12-language help guides
 ```
 
-Or all of it through the one entry point: `./p2pdemo.sh capture walkthrough`
-(see `p2pdemo.sh --help`). The captures are self-contained: no L0/L1 — a CNY
-swap has no chain-side dependency beyond the escrow lock proof the engine skips
-when `deps.chain` is unset. `RAILS=wechat` (or `alipay` / `bank`) limits the run
-to one rail.
+> **Rule: never spend production funds for a demo.** The committed shots in
+> this guide were taken on the live deployment and the escrow legs were real
+> (they are the proof that the production wiring works), but that capture is an
+> **operator-only**, explicitly opt-in action — not the demo pipeline.
 
-Run facts used in the screenshots below:
+For an operator who really wants a production-escrow capture:
 
-```json
-{ "wechat": { "swapId": "swap-a13efab115858720", "txId": "42034516068EAEC2", "remark": "f71ade2d23e9" },
-  "alipay": { "swapId": "swap-f8226be10089ddad", "txId": "200E31282969161F6B32A2CF1C93", "remark": "91b6eeced27f" },
-  "bank":   { "swapId": "swap-ad4639ba7976dd97", "txId": "30291CF907571417", "remark": "20e892c372ce" },
-  "capturedAt": "2026-10-12T10:45:52Z" }
+```bash
+# refuses to run without the explicit flag — it funds a real wallet and locks
+# a real BIG escrow on L0
+( cd e2e && ALLOW_REAL_FUNDS=1 RAILS=wechat node capture-p2p-prod.mjs )
+
+# a demo vault can always be swept home with the seller+buyer 2-of-3 keys
+( cd e2e && node p2p-recover-escrow.mjs wechat )
 ```
+
+Run facts used in the screenshots below (written by the capture to
+`e2e/demo-output/p2p-prod-capture.json`): the escrow address, the lock tx on
+L0 (CONFIRMED), the per-swap `remark` the fiat transfer must carry, and the
+fiat transaction number the buyer claims. The release tx lands at the buyer's
+own address and shows up in their wallet as `9.999 bc` (the 10 BIG escrow less
+the L0 spend fee).
 
 ---
 
@@ -151,14 +166,14 @@ to the matched buyer by the instructions call.
 
 ![Seller saves the WeChat payment profile](assets/screenshots/p2p-cny-wechat-01-profile-en.png)
 
-### Step 2 — Seller lists 10 USDT for 715 CNY on the wechat rail
+### Step 2 — Seller lists 10 BIG for 715 CNY on the wechat rail
 
-**Open sells → List a sell order**: token `USDT`, amount `10`, price `715`,
-currency `CNY`, chain `L0`, payment method **wechat** (selecting a CNY rail
-switches the currency to CNY). The signed `POST /orders` payload carries no PII:
+**P2P → My swaps → List a sell order**: token `bc` (BIG's on-chain id), amount
+`10`, price `71.5` CNY per BIG → **Total 715 CNY**, chain `L0`, payment method
+**wechat**. The signed `POST /orders` payload carries no PII:
 
 ```json
-{ "sellerDid": "did:key:z446G…(ML-DSA did, ≈3.5 kB)", "giveToken": "USDT",
+{ "sellerDid": "did:key:z446G…(ML-DSA did, ≈3.5 kB)", "giveToken": "bc",
   "giveAmount": "10", "giveChain": "L0", "wantCurrency": "CNY",
   "wantAmount": "715", "wantRail": "wechat", "validUntil": 1791510000,
   "nonce": "…16+ chars…", "timestamp": 1791509100000,
@@ -169,8 +184,11 @@ switches the currency to CNY). The signed `POST /orders` payload carries no PII:
 
 ### Step 3 — Buyer matches the order
 
-The buyer (fresh wallet, no profile needed) sees the order in **Open sells**
-and opens the buy panel. On a CNY order only a receive address is required:
+The buyer sees the order in the **Buy** tab and opens the buy panel. On a CNY
+order the buyer provides the receive address for the tokens (their own wallet
+address here) and must also have channel details for the chosen rail saved in
+their own **My swaps** tab — the taker's details stay party-private and never
+enter the book:
 
 ![Buy panel on a CNY order](assets/screenshots/p2p-cny-wechat-03-match-en.png)
 
@@ -182,11 +200,17 @@ prefixed ML-DSA public key (`SETTLEMENT_ENGINE_PUBKEY`):
 
 ### Step 4 — Seller locks the token escrow
 
-Back on the seller's **My swaps** tab, the seller pastes the escrow funding
-transaction hash and presses **Lock escrow** — a seller-signed
-`action=escrow_lock` transition. With `deps.chain` configured the engine
-verifies the lock on chain; in the demo (`SETTLEMENT_STORE=mem`, no chain) it
-is recorded as-is.
+The seller's key pays the swap's 2-of-3 vault (the app shows the escrow
+address on the swap card) — a real BIG transfer on L0. Back on the seller's
+**My swaps** tab, the seller pastes that funding transaction hash and presses
+**Lock escrow** — a seller-signed `action=escrow_lock` transition. The engine
+re-reads the transaction on L0 and fails closed unless it is `CONFIRMED` at the
+derived escrow address and holds the advertised amount:
+
+```json
+{ "txHash": "…64 hex…", "escrowAddress": "3PZ7gUE86SjcCkDDzYWcdXkHju3thAg5u2",
+  "…": "CONFIRMED on https://eu1.bigtangle.org — proof, not a claim" }
+```
 
 ![Seller pastes the escrow tx hash](assets/screenshots/p2p-cny-wechat-05-escrow-lock-en.png)
 
@@ -231,7 +255,7 @@ exists purely as the buyer's claim.
 
 ### Step 7 — Seller verifies on their own statement, then confirms
 
-The seller's card shows the buyer's `transaction number` and the remark. The seller checks
+The seller's card shows the swap, the per-swap `remark` and the red confirmation warning. The seller checks
 **amount + remark + time + transaction number in their own WeChat account** (screenshots
 never count), and only then presses **Confirm received** — a seller-signed
 `POST /swaps/:id/confirm`. The red warning above the button is the whole safety
@@ -246,185 +270,77 @@ story of the CNY rail:
 
 ![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-wechat-12-payment-verified-en.png)
 
-### Step 8 — Engine releases the tokens, swap completes
+### Step 8 — The engine releases the escrow on chain
 
 `release` and `complete` are engine-signed actions — the wallet deliberately
-holds no key for them (§6.1). The capture script stands in for the operator /
-release job and signs both with the `SETTLEMENT_ENGINE_DID` key:
+holds no key for them (§6.1). At lock time the seller's wallet **pre-signs**
+both spend paths (the card shows *Escrow pre-signed*); the settlement hook
+(`SETTLEMENT_ESCROW_HOOK_MS`) then adds the engine's signature to the release
+spend, broadcasts it, waits for `CONFIRMED`, and only then moves the swap:
 
 ```bash
-POST /swaps/swap-…/transitions   # did = engine, action=release, txHash=…
-→ { "status": "ESCROW_RELEASED" }
-POST /swaps/swap-…/transitions   # did = engine, action=complete
+POST /swaps/swap-…/transitions   # engine-internal: action=release, txHash=…
+→ { "status": "ESCROW_RELEASED" }   # also the on-chain release spend
+POST /swaps/swap-…/transitions   # action=complete (CNY: no fiat payout)
 → { "status": "COMPLETED" }
 ```
 
 ![ESCROW_RELEASED](assets/screenshots/p2p-cny-wechat-13-escrow-released-en.png)
 
+The swap then completes:
+
 ![COMPLETED](assets/screenshots/p2p-cny-wechat-14-completed-en.png)
 
 ---
 
-## 5. Walkthrough — Alipay (same shape, different rail)
+## 5. The same flow on production L0 (operator reference)
 
-The Alipay leg is the **same state machine** with `wantRail=alipay`: the seller
-saves an Alipay collection profile (account = mobile number / Alipay logon), lists
-USDT for CNY on the alipay chip, and the buyer pays in their own Alipay app.
-The transaction number is Alipay's 28-digit trade number (starts `20`). Fresh wallets are
-used so the screenshots stand alone.
+The demo above runs without money. The identical UI flow against production
+lands real BIG, so the numbers below are from an **operator-only** capture
+(`e2e/capture-p2p-prod.mjs`, requires `ALLOW_REAL_FUNDS=1`) — they are not the
+hashes in the screenshots above.
 
-### Step 1 — Seller saves the Alipay profile
-
-![Seller saves the Alipay payment profile](assets/screenshots/p2p-cny-alipay-01-profile-en.png)
-
-### Step 2 — Seller lists 10 USDT for 716 CNY on the alipay rail
-
-![List a sell order with alipay / CNY](assets/screenshots/p2p-cny-alipay-02-order-en.png)
-
-### Step 3 — Buyer matches
-
-![Buy panel on an Alipay order](assets/screenshots/p2p-cny-alipay-03-match-en.png)
-
-![Swap created at MATCHED](assets/screenshots/p2p-cny-alipay-04-matched-en.png)
-
-### Step 4 — Seller locks the escrow
-
-![Seller pastes the escrow tx hash](assets/screenshots/p2p-cny-alipay-05-escrow-lock-en.png)
-
-![ESCROW_LOCKED](assets/screenshots/p2p-cny-alipay-06-escrow-locked-en.png)
-
-### Step 5 — Buyer pulls the Alipay payment instructions
-
-```json
-{ "method": "alipay", "rail": "alipay", "accountName": "Li Si",
-  "account": "13800138000", "amount": "716", "currency": "CNY",
-  "remark": "91b6eeced27f", "payBy": … }
-```
-
-![Payment details button](assets/screenshots/p2p-cny-alipay-07-buy-locked-en.png)
-
-![Payment instructions: account name, Alipay account, 716 CNY, remark](assets/screenshots/p2p-cny-alipay-08-instructions-en.png)
-
-### Step 6 — Buyer pays in Alipay and claims with the trade number
-
-The buyer transfers `716 CNY` in Alipay, pastes the 28-digit trade number
-(`200E31282969161F6B32A2CF1C93` in this run), and presses **I have paid**.
-
-![Trade number entered](assets/screenshots/p2p-cny-alipay-09-payment-pending-en.png)
-
-![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-alipay-10-payment-claimed-en.png)
-
-### Step 7 — Seller verifies in Alipay, then confirms
-
-![Seller sees the trade number + confirm warning](assets/screenshots/p2p-cny-alipay-11-seller-confirm-en.png)
-
-![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-alipay-12-payment-verified-en.png)
-
-### Step 8 — Release + complete (engine-signed)
-
-![ESCROW_RELEASED](assets/screenshots/p2p-cny-alipay-13-escrow-released-en.png)
-
-![COMPLETED](assets/screenshots/p2p-cny-alipay-14-completed-en.png)
-
----
-
-## 6. Walkthrough — Bank transfer (same shape, bank card)
-
-The bank leg is again the **same state machine** with `wantRail=bank`. The
-collection profile carries one extra field — the **bank name** — which the
-instructions panel shows next to the card number. The buyer's transaction number is the
-bank's 16-digit transfer reference (starts `3029` in this run).
-
-### Step 1 — Seller saves the bank profile (name + card + bank)
-
-![Seller saves the bank payment profile](assets/screenshots/p2p-cny-bank-01-profile-en.png)
-
-### Step 2 — Seller lists 10 USDT for 717 CNY on the bank rail
-
-![List a sell order with bank / CNY](assets/screenshots/p2p-cny-bank-02-order-en.png)
-
-### Step 3 — Buyer matches (only a receive address)
-
-![Buy panel on a bank order](assets/screenshots/p2p-cny-bank-03-match-en.png)
-
-![Swap created at MATCHED](assets/screenshots/p2p-cny-bank-04-matched-en.png)
-
-### Step 4 — Seller locks the escrow
-
-![Seller pastes the escrow tx hash](assets/screenshots/p2p-cny-bank-05-escrow-lock-en.png)
-
-![ESCROW_LOCKED](assets/screenshots/p2p-cny-bank-06-escrow-locked-en.png)
-
-### Step 5 — Buyer pulls the bank payment instructions
-
-```json
-{ "method": "bank", "rail": "bank", "accountName": "Wang Wu",
-  "bankName": "ICBC", "account": "6222 0202 0011 2233 4455",
-  "amount": "717", "currency": "CNY",
-  "remark": "20e892c372ce", "payBy": … }
-```
-
-![Payment details button](assets/screenshots/p2p-cny-bank-07-buy-locked-en.png)
-
-![Payment instructions: account name, bank + card, 717 CNY, remark](assets/screenshots/p2p-cny-bank-08-instructions-en.png)
-
-### Step 6 — Buyer transfers 717 CNY and claims with the bank reference
-
-The buyer wires `717 CNY` from their own online banking, pastes the transfer
-reference (transaction number, `30291CF907571417` in this run), and presses **I have paid**.
-
-![Bank transfer reference entered](assets/screenshots/p2p-cny-bank-09-payment-pending-en.png)
-
-![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-bank-10-payment-claimed-en.png)
-
-### Step 7 — Seller checks their bank statement, then confirms
-
-![Seller sees the transfer reference + confirm warning](assets/screenshots/p2p-cny-bank-11-seller-confirm-en.png)
-
-![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-bank-12-payment-verified-en.png)
-
-### Step 8 — Release + complete (engine-signed)
-
-![ESCROW_RELEASED](assets/screenshots/p2p-cny-bank-13-escrow-released-en.png)
-
-![COMPLETED](assets/screenshots/p2p-cny-bank-14-completed-en.png)
-
----
-
-## 7. Timeline of the captured runs
-
-| Time | Step |
+| Item | Value |
 |---|---|
-| 10:40:24 | **wechat:** both wallets created |
-| 10:40:28 | seller payment profile saved (`wxid_pay8888`) |
-| 10:40:32 | sell order listed (`wantRail=wechat`, 715 CNY) |
-| 10:40:35 | buyer matched the order (receive address only) |
-| 10:41:45 | paced 70 s past the rate-limit window |
-| 10:41:47 | escrow lock recorded (`ESCROW_LOCKED`) |
-| 10:41:50 | buyer pulled payment instructions (account name / account / 715 CNY / remark) |
-| 10:41:51 | buyer claimed payment (transaction number `42034516068EAEC2`) |
-| 10:41:54 | seller confirmed receipt (`PAYMENT_VERIFIED`) → release → complete |
-| 10:42:19 | **alipay:** both wallets created |
-| 10:42:24 | seller payment profile saved (`13800138000`) |
-| 10:42:27 | sell order listed (`wantRail=alipay`, 716 CNY) |
-| 10:43:44 | escrow lock recorded (`ESCROW_LOCKED`) |
-| 10:43:48 | buyer claimed payment (trade no. `200E31282969161F6B32A2CF1C93`) |
-| 10:43:52 | swap completed (`COMPLETED`) |
-| 10:44:17 | **bank:** both wallets created |
-| 10:44:22 | seller payment profile saved (`6222 0202 0011 2233 4455`, ICBC) |
-| 10:44:26 | sell order listed (`wantRail=bank`, 717 CNY) |
-| 10:45:41 | escrow lock recorded (`ESCROW_LOCKED`) |
-| 10:45:46 | buyer claimed payment (bank ref. `30291CF907571417`) |
-| 10:45:50 | swap completed (`COMPLETED`) — seller already holds the 717 CNY |
+| Wallet app | `https://wallet.bigt.ai` (live build, mainnet) |
+| Swap | `swap-ddcfbb82ae02ff9c` — `10 bc → 715 CNY`, rail `wechat` |
+| Seller / buyer | `1GPWeXtM7GkBhU8ayUH4bQ2eKKnB7aRcbz` / `16kZ4EaJ2iLMoW9sijFP1KNg8Z8NBjjR6A` |
+| 2-of-3 vault | `38npQhSd8eriTQoqQkjFgdgJa26EH7kav7` |
+| Escrow lock (L0) | `bfb5ee75362a3d838aff84d242324ca1772097143b72e363420d29fa9b62b9b8` — `CONFIRMED` |
+| Per-swap remark | `5fa896011320` (the WeChat transfer must carry it) |
+| Release (L0) | `5c9b53b9c32f5b2a189486bef5b9b1a4605b49882b1cc091e17813ed3825c3fe` — pays the buyer's address |
+| Buyer's balance after | `9.999 bc` (10 BIG escrow less the L0 spend fee) |
 
-(The 70 s gap after matching on each rail is deliberate: the engine allows
-10 signed requests per DID per 60 s and the seller is at that ceiling after
-profile + list + match. Full timestamps are in
-`e2e/demo-output/p2p-cny-capture.json`.)
+What the production wiring adds over the demo harness:
+
+1. **The escrow is money.** `payToScript` moves 10 BIG from the seller's key
+   into the P2SH vault; `POST /swaps/:id/transitions action=escrow_lock` is
+   refused unless the node reports the transaction `CONFIRMED`, paying the
+   derived vault address, with the advertised amount (`verifyChainLock`).
+2. **Every swap event is anchored** as a `social.p2p-swap` record on L1-SOCIAL.
+   The production engine runs the no-database (blob) stack, so
+   `SETTLEMENT_ANCHOR_MODE` is forced to `required`: if the anchor cannot land,
+   the transition fails closed instead of leaving store state the chain does not
+   have.
+3. **The release is automatic.** At lock the seller's wallet pre-signs both
+   spend skeletons (*Escrow pre-signed* on the card); after the seller confirms,
+   the settlement hook (`SETTLEMENT_ESCROW_HOOK_MS=30000`) adds the engine's
+   signature, broadcasts, waits for `CONFIRMED`, and moves the swap to
+   `ESCROW_RELEASED`. Nobody signs a release by hand.
+
+**One operational caveat, measured on this run.** L1-SOCIAL produces a block
+about every 20 s and the engine's anchor key must spend a *confirmed* output per
+record; its change is `spendPending` until the next block. Two swap events that
+land inside the same block window therefore make the second anchor fail closed
+with `insufficient spendable outputs for social tx` (the UI shows the error and
+the retry succeeds ~40 s later). Funding the anchor key with a handful of
+separate small UTXOs — or queueing anchors inside the engine — removes the
+retry; until then a live flow needs a beat between anchored steps. The capture
+script paces and retries automatically.
 
 ---
 
-## 8. Device-side verification — the payee's own phone
+## 6. Device-side verification — the payee's own phone
 
 A CNY transfer has no webhook, so the seller's own account is the receipt. The
 wallet/engine can **read it automatically** through the on-phone agent
@@ -450,7 +366,7 @@ Two reads satisfy the same `DeviceGateway`:
   amount / memo / transaction number / time from it. This works even though WeChat hides
   its UI.
 
-![The payee's own WeChat payment received notification](assets/screenshots/p2p-verify-wechat-notification-en.png)
+![The payee's own WeChat payment received notification](assets/p2p-verify-wechat-notification-en.png)
 
 *Device capture. The notification text is illustrative — no real transfer was
 made for this shot; on a live swap it carries the swap's own `remark` and
@@ -486,7 +402,7 @@ runs the full read → verdict → `/verify` → machine-confirm to `PAYMENT_VER
 
 ---
 
-## 9. HTTP API reference (CNY rails)
+## 7. HTTP API reference (CNY rails)
 
 All mutating endpoints take a signed body:
 
@@ -534,7 +450,7 @@ Guard rails the engine enforces on every one of them:
 
 ---
 
-## 10. Review findings (code review of the CNY implementation)
+## 8. Review findings (code review of the CNY implementation)
 
 Verified good: the transition table keeps `PAYMENT_CLAIMED` out of the release
 path; `release`/`complete` are engine-only; the profile is party-scoped; the
@@ -544,10 +460,13 @@ recomputed server-side; unit tests cover the CNY legs
 
 Open gaps, in the order they matter:
 
-1. **No automatic release after `confirm`.** The engine does not issue
-   `release`/`complete` itself when the seller confirms — an operator/cron must
-   do it with the engine key. Today the wallet UI has no button for it either
-   (by design: the wallet must not hold the engine key).
+1. **The anchor key is a single sequential spender.** Each swap event anchors
+   on L1-SOCIAL through `submitSocialRecord`, which spends one confirmed UTXO
+   and leaves the change `spendPending` until the next block (~20 s). A burst of
+   events therefore fails closed with `insufficient spendable outputs for
+   social tx`. Keep several anchor UTXOs funded (or queue/retry inside the
+   engine) so a normal settlement — match, lock, instructions, claim, confirm,
+   release, complete — never waits on a block window.
 2. **`payBy` is advisory.** The `SETTLEMENT_CNY_REMARK_TTL` deadline is returned
    to the buyer but never enforced — a swap can be claimed after it expires,
    and `SETTLEMENT_CNY_MAX_CENTS` / a confirm timeout are not implemented.
@@ -566,14 +485,27 @@ Open gaps, in the order they matter:
 
 ---
 
-## 11. Regenerating this guide
+## 9. Regenerating this guide
 
 ```bash
-( cd e2e && RAILS=wechat,alipay,bank node capture-p2p-cny.mjs )  # CNY legs (14 shots per rail)
-node docs/p2p-demo/scripts/gen-p2p-all-pdf.mjs
-# → docs/p2p-demo/assets/p2p-all.pdf
+# 1. screenshots — funds-free local engine (synthetic hashes, nothing moves)
+./p2pdemo.sh capture walkthrough
+
+# 2. PDFs (gitignored build artifacts)
+node docs/p2p-demo/scripts/gen-p2p-all-pdf.mjs   # → assets/p2p-all.pdf
+npx tsx scripts/docs-pdf.mts p2p                 # 12-language help guides
+
+# 3. publish to the public bucket the app links to
+scripts/publishpdf.sh                            # apps/wallet/docs/demo on s3.bigt.ai
 ```
 
-Or `./p2pdemo.sh capture walkthrough`. The generator is dependency-free (own
-markdown → HTML, images embedded as data URIs, `chromium --headless
---print-to-pdf`), the same pipeline the dai help guides use.
+`publishpdf.sh` writes to the EU write primary and then HEADs every read site
+(us 302-redirects to the primary, asia serves a GEO replica), comparing each
+object's byte size with the local file. A production-escrow capture
+(`e2e/capture-p2p-prod.mjs`) is operator-only and needs `ALLOW_REAL_FUNDS=1`.
+
+The offline harness (`./p2pdemo.sh capture walkthrough`, memory engine, no
+chain) still renders the same shots with synthetic hashes. The generator is
+dependency-free (own markdown → HTML, images embedded as data URIs,
+`chromium --headless --print-to-pdf`), the same pipeline the dai help guides
+use.

@@ -71,7 +71,7 @@ fi
 if [ "$APK" -eq 1 ]; then
   # deploy.apk.sh needs MinIO creds for the upload; load them from the fleet env
   # file when the caller hasn't already exported S3_ACCESS_KEY/S3_SECRET_KEY
-  # (same file scripts/docs-upload.sh uses). Sourced after the web step so its
+  # (same file scripts/publishpdf.sh uses). Sourced after the web step so its
   # other vars cannot leak into that build.
   if [ -z "${S3_ACCESS_KEY:-}" ] || [ -z "${S3_SECRET_KEY:-}" ]; then
     for f in "$ROOT/deploy/env/.env.europa" "$ROOT/../dai/deploy/env/.env.europa"; do

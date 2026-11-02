@@ -1,23 +1,20 @@
 #!/usr/bin/env node
 /**
- * Capture the P2P CNY settlement flow for ALL CNY fiat rails — WeChat Pay,
- * Alipay and bank transfer — and save numbered screenshots to
- * docs/p2p-demo/assets/screenshots/p2p-cny-{wechat,alipay,bank}-NN-*-en.png.
+ * Capture the P2P demo — **BIG → CNY, buy and sell over WeChat** — with the
+ * FUNDS-FREE harness: a local `p2p-engine` (memory store, no chain client) and
+ * the wallet web build. Nothing leaves a wallet; the escrow lock/release legs
+ * use synthetic transaction hashes. This is the demo/PDF pipeline (the
+ * production-escrow capture is operator-only, see capture-p2p-prod.mjs).
  *
- * The guide built from them is docs/p2p-demo/p2p-all.md → assets/p2p-all.pdf
- * (the same "markdown + screenshots → PDF" pattern as the dai idif guide).
+ * Screenshots are written per *wallet UI language*:
+ *   docs/p2p-demo/assets/screenshots/p2p-cny-wechat-NN-*-<lang>.png
+ * so a guide whose language is `zh` shows a Chinese UI (docs-pdf.mts picks
+ * `<file>-<lang>.png` and falls back to `-en.png`).
  *
- * Self-contained: starts the p2p-engine (mem store, no chain
- * check — a CNY swap needs no L0/L1) with a generated engine DID, serves
- * e2e/web-build, and drives two fresh wallet pairs (one per rail) through
- *   profile → list (rail=wechat|alipay|bank) → match → lock → instructions →
- *   proof → confirm → release → complete.
- * The release/complete legs are signed with the engine key, exactly what the
- * production engine signer does after the seller confirms.
- *
- * Usage: node capture-p2p-cny.mjs   (from e2e/, after `expo-app` web:build)
- *        KEEP=1 node capture-p2p-cny.mjs   # leave the servers running
- *        RAILS=wechat node capture-p2p-cny.mjs   # only the wechat flow
+ * Usage (from e2e/, after `expo-app` web:build):
+ *   node capture-p2p-cny.mjs                 # English (14 shots)
+ *   LANGS=zh,de node capture-p2p-cny.mjs     # one full flow per language
+ *   LANGS=ko KEEP=1 node capture-p2p-cny.mjs # leave the servers running
  */
 import { chromium } from 'playwright';
 import { spawn, execFileSync } from 'child_process';
@@ -25,9 +22,6 @@ import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
-// The product signs with PQ (ML-DSA-87) did:key — EC/Ed25519 dids only remain
-// for compatibility (docs/p2p.md). Same helpers the wallet client uses
-// (expo-app/sources/lib/p2pIdentity.ts).
 import { PQKey, Sha256Hash, Utils } from 'bigtangle-ts';
 import { didFromPQKey } from 'did/pq';
 
@@ -39,14 +33,15 @@ const WEB_PORT = Number(new URL(APP).port || 8081);
 const ENGINE_PORT = Number(new URL(ENGINE).port || 8089);
 const SHOTS = resolve(ROOT, 'docs/p2p-demo/assets/screenshots');
 const PWD = 'CnyDemoPass123!';
-const TIMEOUT = 30000;
-/** Rails to capture, in order. RAILS=wechat limits to the WeChat flow only. */
-const RAILS = (process.env.RAILS || 'wechat,alipay,bank').split(',').map((r) => r.trim()).filter(Boolean);
+const TIMEOUT = 45_000;
+/** Wallet UI languages to shoot (`LANGS=zh,de`); the demo is WeChat-only. */
+const LANGS = (process.env.LANGS || 'en').split(',').map((l) => l.trim()).filter(Boolean);
+const RAIL = 'wechat';
 mkdirSync(SHOTS, { recursive: true });
 
 const engineKey = PQKey.createNewKey();
+const engineSeed = engineKey.getPrivateKeySeedAsHex();
 const engineDid = didFromPQKey(engineKey);
-/** Prefixed ML-DSA public key → lets the engine derive the 2-of-3 escrow address. */
 const enginePubHex = Utils.HEX.encode(engineKey.getPrefixedPublicKeyBytes());
 const children = [];
 const timeline = [];
@@ -99,7 +94,10 @@ async function waitHealth(url, ms = 30000) {
   }
 }
 
-/** A leftover engine from an earlier e2e run would not know our engine DID. */
+function execSyncSleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
 function freePort(port) {
   if (!listen(port)) return;
   try {
@@ -108,12 +106,7 @@ function freePort(port) {
     /* ignore */
   }
   const t0 = Date.now();
-  while (listen(port) && Date.now() - t0 < 8000) {
-    execSyncSleep(200);
-  }
-}
-function execSyncSleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  while (listen(port) && Date.now() - t0 < 8000) execSyncSleep(200);
 }
 
 function startServers() {
@@ -126,8 +119,13 @@ function startServers() {
       SETTLEMENT_STORE: 'mem',
       SETTLEMENT_ADMIN_TOKEN: 'adm',
       SETTLEMENT_ENGINE_DID: engineDid,
+      // one seed backs the DID (anchor/records), the escrow participant and the
+      // pin the wallet puts on the order — the ring must hold it or the match
+      // fails closed with "pinned to an engine this deployment does not hold"
+      SETTLEMENT_ENGINE_KEY: engineSeed,
+      SETTLEMENT_ESCROW_KEY: engineSeed,
       SETTLEMENT_ENGINE_PUBKEY: enginePubHex,
-      SETTLEMENT_CNY_RAILS: 'wechat,alipay,bank',
+      SETTLEMENT_CNY_RAILS: 'wechat',
       CORS_ORIGIN: `http://localhost:${WEB_PORT},http://127.0.0.1:${WEB_PORT}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -162,47 +160,45 @@ process.on('SIGINT', () => {
   process.exit(130);
 });
 
-// ── wallet helpers (same flow the p2p-ui Playwright spec uses) ──────────────
+// ── browser helpers ─────────────────────────────────────────────────────────
+
+const el = (page, id) => page.locator(`[data-testid="${id}"]`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function openNav(page, label) {
   const menu = page.getByRole('button', { name: 'Open navigation menu' });
   if (await menu.isVisible().catch(() => false)) {
     await menu.click();
     await page.waitForTimeout(400);
-  } else {
-    const back = page.getByRole('button', { name: 'Back' });
-    if (await back.isVisible().catch(() => false)) {
-      await back.click();
-      await page.waitForTimeout(800);
-    }
-    if (await menu.isVisible().catch(() => false)) {
-      await menu.click();
-      await page.waitForTimeout(400);
-    }
   }
   await page.getByRole('button', { name: label, exact: true }).first().click();
   await page.waitForTimeout(1500);
+}
+
+/** Approve the wallet-password confirmation sheet when it appears. */
+async function approve(page) {
+  const sheet = page.locator('[data-testid="confirm-transaction"]');
+  const ok = await sheet.waitFor({ state: 'visible', timeout: 6000 }).then(() => true).catch(() => false);
+  if (!ok) return false;
+  await page.locator('[data-testid="confirm-password"]').fill(PWD);
+  await page.locator('[data-testid="confirm-ok"]').click();
+  await page.waitForTimeout(800);
+  return true;
 }
 
 async function createWallet(browser, name) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2 });
   const page = await context.newPage();
   await page.addInitScript(() => {
-    try {
-      delete globalThis.showSaveFilePicker;
-    } catch {
-      /* ignore */
-    }
+    try { delete globalThis.showSaveFilePicker; } catch { /* ignore */ }
+    try { Object.defineProperty(window, 'PublicKeyCredential', { value: undefined, configurable: true }); } catch { /* ignore */ }
   });
   page.on('dialog', (d) => d.accept().catch(() => {}));
-  page.on('console', (m) => {
-    if (m.type() === 'error') console.log(`[browser error] ${m.text()}`);
-  });
+  page.on('console', (m) => { if (m.type() === 'error') console.log(`[browser:${name}]`, m.text()); });
   page.on('response', async (r) => {
-    if (r.url().startsWith(ENGINE)) {
-      console.log(`[engine ${r.status()}] ${new Date().toISOString().slice(11, 19)} ${r.request().method()} ${new URL(r.url()).pathname} [wallet:${name}]`);
-    } else if (r.status() >= 400 && !r.url().includes('/l0/') && !r.url().includes('/l1/')) {
-      console.log(`[http ${r.status()}] ${r.url()} ${await r.text().catch(() => '')}`);
+    if (r.url().startsWith(ENGINE) && r.status() >= 400) {
+      const body = await r.text().catch(() => '');
+      console.log(`[engine ${r.status()}] ${r.request().method()} ${new URL(r.url()).pathname} ${body.slice(0, 300)}`);
     }
   });
   await page.goto(APP, { waitUntil: 'load' });
@@ -222,192 +218,281 @@ async function createWallet(browser, name) {
   const done = page.getByText('Done').first();
   if (await done.isVisible().catch(() => false)) await done.click();
   await page.waitForTimeout(500);
-  return { context, page };
+  // The Keys screen shows the full address (the home screen truncates it).
+  const text = await page.evaluate(() => document.body.innerText).catch(() => '');
+  const address = (text.match(/\b[1-9A-HJ-NP-Za-km-z]{26,40}\b/) ?? [])[0] ?? '';
+  return { context, page, address };
 }
 
-const el = (page, id) => page.locator(`[data-testid="${id}"]`);
+/** Switch the wallet UI language in place (the i18n instance is exposed on web). */
+async function setLanguage(page, lang) {
+  if (lang === 'en') return;
+  const ok = await page.evaluate((l) => {
+    const i = globalThis.__bigtangleI18n;
+    if (!i?.changeLanguage) return false;
+    i.changeLanguage(l);
+    return true;
+  }, lang).catch(() => false);
+  if (!ok) throw new Error(`could not switch the UI language to ${lang}`);
+  await page.waitForTimeout(1200);
+}
 
-async function waitForStatus(page, expected, id = 'p2p-swap-0-status') {
+async function gotoP2P(page) {
+  await openNav(page, 'P2P');
+  for (let i = 0; i < 20; i++) {
+    if (await el(page, 'p2p-tab-mine').count()) return;
+    const pwd = el(page, 'wallet-password-input').first();
+    if (await pwd.isVisible().catch(() => false)) {
+      await pwd.fill(PWD);
+      await el(page, 'unlock-wallet-button').first().click();
+      await page.waitForTimeout(2500);
+      continue;
+    }
+    await page.waitForTimeout(1500);
+  }
+  throw new Error('P2P screen did not mount');
+}
+
+async function shot(page, name, selector) {
+  if (selector) {
+    await page.evaluate((sel) => {
+      const node = document.querySelector(sel);
+      if (!node) return;
+      node.scrollIntoView({ block: 'start' });
+      window.scrollBy(0, -60);
+    }, selector).catch(() => {});
+    await page.waitForTimeout(400);
+  }
+  await page.screenshot({ path: resolve(SHOTS, name) });
+  console.log(`  ✓ ${name}`);
+}
+
+async function refresh(page) {
+  await el(page, 'p2p-refresh').click().catch(() => {});
+  await page.waitForTimeout(1500);
+}
+
+async function statusOf(page, id = 'p2p-swap-0-status') {
+  return (await el(page, id).first().textContent().catch(() => null)) ?? '';
+}
+
+async function waitStatus(page, expected, ms = TIMEOUT, id = 'p2p-swap-0-status') {
+  const list = Array.isArray(expected) ? expected : [expected];
   const t0 = Date.now();
   for (;;) {
-    const txt = await el(page, id).first().textContent().catch(() => null);
-    if (txt === expected) return;
-    if (Date.now() - t0 > TIMEOUT) {
+    const txt = await statusOf(page, id);
+    if (list.includes(txt)) return txt;
+    if (Date.now() - t0 > ms) {
       const notice = await el(page, 'p2p-notice').first().textContent().catch(() => null);
-      throw new Error(`timeout: want ${expected}, got ${txt} | notice: ${notice}`);
+      throw new Error(`timeout: want ${list.join('|')}, got "${txt}" | notice: ${notice}`);
     }
+    await page.waitForTimeout(400);
+  }
+}
+
+/** Click a control until the swap reaches `expected` (rate-limit retries). */
+async function actUntil(page, testid, expected, { tries = 6, wait = 20_000, ms = TIMEOUT } = {}) {
+  const list = Array.isArray(expected) ? expected : [expected];
+  let last;
+  for (let i = 0; i < tries; i++) {
+    await el(page, testid).click().catch(() => {});
+    await approve(page);
+    try {
+      return await waitStatus(page, list, ms);
+    } catch (e) {
+      last = e;
+      console.log(`  ${testid} not through yet — retry ${i + 1}/${tries}`);
+      await sleep(wait);
+      await refresh(page).catch(() => {});
+    }
+  }
+  throw last;
+}
+
+/** Cancel ads/swaps an interrupted run left open for this DID pair. */
+async function cleanupState(page) {
+  await el(page, 'p2p-tab-open').click().catch(() => {});
+  await page.waitForTimeout(1200);
+  for (let i = 0; i < 6; i++) {
+    const toggle = el(page, `p2p-order-${i}-toggle`);
+    if (!(await toggle.count())) break;
+    await toggle.click();
+    await page.waitForTimeout(400);
+    const cancel = el(page, `p2p-cancel-order-${i}`);
+    if (await cancel.count()) {
+      await cancel.click();
+      await approve(page);
+      await page.waitForTimeout(2000);
+      await refresh(page);
+      i = -1;
+      continue;
+    }
+    await toggle.click();
     await page.waitForTimeout(300);
   }
 }
 
-async function refresh(page) {
-  await el(page, 'p2p-refresh').click();
-  await page.waitForTimeout(1200);
-}
-
-async function shot(page, name) {
-  const path = resolve(SHOTS, name);
-  await page.screenshot({ path, fullPage: true });
-  console.log(`  ✓ ${name}`);
-}
-
-/** Seller's collection-profile identity per rail (shown in the instructions). */
-const RAIL_PROFILE = {
-  wechat: { name: 'Zhang San', account: 'wxid_pay8888', price: '715' },
-  alipay: { name: 'Li Si', account: '13800138000', price: '716' },
-  bank: { name: 'Wang Wu', account: '6222 0202 0011 2233 4455', bank: 'ICBC', price: '717' },
-};
+/** Seller's collection profile + the taker's channel details (both private). */
+const SELLER = { name: 'Zhang San', account: 'wxid_pay8888', price: '71.5', currency: 'CNY' };
+const BUYER = { name: 'Demo Buyer', account: 'wxid_buyer01' };
 
 /**
- * One full CNY settlement on the given rail, with its own fresh seller/buyer
- * wallets. Screenshots are prefixed `${tag}-NN-…` (tag = `p2p-cny-wechat` or
- * `p2p-cny-alipay`). Returns the run facts for the report.
+ * One full BIG → CNY WeChat settlement, with fresh wallets, shot in the given
+ * wallet UI language. Returns the run facts for the report.
  */
-async function captureRail(browser, rail) {
-  const profile = RAIL_PROFILE[rail] ?? RAIL_PROFILE.wechat;
-  const tag = `p2p-cny-${rail}`;
-  const shotN = (n, who, page) => shot(page, `${tag}-${String(n).padStart(2, '0')}-${who}-en.png`);
-  const report = { rail, price: profile.price, timeline: [] };
-  const railAt = (step) => {
-    at(`[${rail}] ${step}`);
-    report.timeline.push(`${new Date().toISOString().slice(11, 19)}  ${step}`);
+async function captureRun(browser, lang) {
+  const tag = `p2p-cny-${RAIL}`;
+  const shotN = (n, who, page, sel) => shot(page, `${tag}-${String(n).padStart(2, '0')}-${who}-${lang}.png`, sel);
+  const run = { rail: RAIL, lang, currency: SELLER.currency, price: SELLER.price, timeline: [] };
+  const runAt = (step) => {
+    at(`[${lang}] ${step}`);
+    run.timeline.push(`${new Date().toISOString().slice(11, 19)}  ${step}`);
   };
 
-  // ── 1. seller saves the collection profile ────────────────────────────────
-  const seller = await createWallet(browser, `${rail}-seller`);
-  const buyer = await createWallet(browser, `${rail}-buyer`);
-  railAt('both wallets created');
-
+  // 1. two fresh wallets (created in English, then the UI switches language)
+  const seller = await createWallet(browser, `${lang}-seller`);
+  const buyer = await createWallet(browser, `${lang}-buyer`);
   const s = seller.page;
-  await openNav(s, 'P2P');
-  await el(s, 'p2p-tab-mine').click();
-  await s.waitForTimeout(800);
-  await el(s, `p2p-profile-method-${rail}`).click();
-  await el(s, 'p2p-profile-name').fill(profile.name);
-  await el(s, 'p2p-profile-account').fill(profile.account);
-  if (profile.bank) await el(s, 'p2p-profile-bank').fill(profile.bank);
-  await el(s, 'p2p-profile-save').click();
-  await s.waitForTimeout(1500);
-  await shotN(1, 'profile', s);
-  railAt(`seller payment profile saved (${rail}: ${profile.account})`);
-
-  // ── 2. seller lists 10 USDT for {price} CNY on the {rail} rail ────────────
-  await el(s, 'p2p-tab-open').click();
-  await s.waitForTimeout(600);
-  // USDT is the market default; fill anyway so the guide stays explicit.
-  await el(s, 'p2p-give-token').fill('USDT');
-  await el(s, 'p2p-give-amount').fill('10');
-  await el(s, 'p2p-want-amount').fill(profile.price);
-  await el(s, `p2p-rail-${rail}`).click();
-  await s.waitForTimeout(400);
-  await el(s, 'p2p-want-currency').fill('CNY');
-  await shotN(2, 'order', s);
-  await el(s, 'p2p-create').click();
-  await s.waitForTimeout(2000);
-  railAt(`sell order listed (wantRail=${rail}, ${profile.price} CNY)`);
-
-  // ── 3. buyer matches — only a receive address on a CNY order ─────────────
   const b = buyer.page;
-  await openNav(b, 'P2P');
-  await el(b, 'p2p-order-0').waitFor({ timeout: TIMEOUT });
-  await el(b, 'p2p-buy-0').click();
-  await el(b, 'p2p-buy-recv').fill(`BCnyDemo${rail[0].toUpperCase() + rail.slice(1)}BuyerAddr`);
+  await setLanguage(s, lang);
+  await setLanguage(b, lang);
+  runAt('both wallets created');
+
+  // 2. seller: collection profile (screenshot 1) + the BIG/CNY ad (screenshot 2)
+  await gotoP2P(s);
+  await cleanupState(s);
+  await el(s, 'p2p-tab-mine').click();
+  await s.waitForTimeout(1000);
+  await el(s, `p2p-profile-method-${RAIL}`).click();
+  await el(s, 'p2p-profile-name').fill(SELLER.name);
+  await el(s, 'p2p-profile-account').fill(SELLER.account);
+  await el(s, 'p2p-profile-save').click();
+  await approve(s);
+  await s.waitForTimeout(1800);
+  await shotN(1, 'profile', s, '[data-testid="p2p-profile-card"]');
+
+  await el(s, 'p2p-give-token').fill('bc');
+  await s.waitForTimeout(800);
+  await el(s, 'p2p-give-amount').fill('10');
+  await el(s, 'p2p-want-amount').fill(SELLER.price);
+  await el(s, `p2p-rail-${RAIL}`).click();
+  await s.waitForTimeout(300);
+  await el(s, 'p2p-want-currency').fill(SELLER.currency);
+  await s.waitForTimeout(400);
+  await shotN(2, 'order', s, '[data-testid="p2p-order-side"]');
+  await el(s, 'p2p-create').click();
+  await approve(s);
+  await s.waitForTimeout(2500);
+  const listing = await el(s, 'p2p-notice').first().textContent().catch(() => null);
+  if (!listing) throw new Error('order was not listed (no notice)');
+  runAt('sell order listed: 10 bc → 715 CNY (wechat)');
+
+  // 3. buyer: own channel details, then take the ad
+  await gotoP2P(b);
+  await el(b, 'p2p-tab-mine').click();
+  await b.waitForTimeout(1000);
+  await el(b, `p2p-profile-method-${RAIL}`).click();
+  await el(b, 'p2p-profile-name').fill(BUYER.name);
+  await el(b, 'p2p-profile-account').fill(BUYER.account);
+  await el(b, 'p2p-profile-save').click();
+  await approve(b);
+  await b.waitForTimeout(1500);
+  await el(b, 'p2p-tab-open').click();
+  await b.waitForTimeout(800);
+  await el(b, 'p2p-order-0-toggle').waitFor({ timeout: TIMEOUT });
+  await el(b, 'p2p-order-0-toggle').click();
+  await b.waitForTimeout(600);
+  if (!buyer.address) throw new Error('could not read the buyer wallet address');
+  await el(b, 'p2p-buy-recv').fill(buyer.address);
   await b.waitForTimeout(400);
-  await shotN(3, 'match', b);
-  await el(b, 'p2p-buy-confirm').click();
-  await waitForStatus(b, 'MATCHED');
-  await shotN(4, 'matched', b);
-  railAt('buyer matched the order (receive address only)');
+  await shotN(3, 'match', b, '[data-testid="p2p-order-0"]');
+  await actUntil(b, 'p2p-buy-confirm', 'MATCHED');
+  await shotN(4, 'matched', b, '[data-testid="p2p-swap-0"]');
+  runAt('buyer matched (receive address only)');
 
-  // ── 4. seller locks the 2-of-3 escrow ────────────────────────────────────
-  // The engine allows 10 signed calls per DID per 60s (sign.ts RATE_LIMIT);
-  // the seller is at its ceiling after profile + list + match, so let the
-  // earlier nonces expire before the lock/confirm leg.
-  await new Promise((r) => setTimeout(r, 70000));
-  railAt('paced 70s past the engine rate-limit window');
+  // 4. seller locks with a synthetic funding hash (memory engine, no chain).
+  //    The engine allows 10 signed calls/DID/60s; the seller is at its ceiling
+  //    after profile + list + match, so let the window pass first.
+  await sleep(70_000);
+  runAt('paced 70 s past the rate-limit window');
+  await el(s, 'p2p-tab-mine').click();
+  await s.waitForTimeout(600);
   await refresh(s);
-  await waitForStatus(s, 'MATCHED');
+  await waitStatus(s, 'MATCHED');
   await el(s, 'p2p-swap-0-txhash').fill('ab'.repeat(32));
-  await shotN(5, 'escrow-lock', s);
-  await el(s, 'p2p-swap-0-lock').click();
-  await waitForStatus(s, 'ESCROW_LOCKED');
-  await shotN(6, 'escrow-locked', s);
-  railAt('escrow lock recorded (ESCROW_LOCKED)');
+  await shotN(5, 'escrow-lock', s, '[data-testid="p2p-swap-0"]');
+  await actUntil(s, 'p2p-swap-0-lock', ['ESCROW_LOCKED', 'PAYMENT_PENDING']);
+  await shotN(6, 'escrow-locked', s, '[data-testid="p2p-swap-0"]');
+  runAt('escrow lock recorded (ESCROW_LOCKED)');
 
-  // ── 5. buyer pulls the signed payment instructions ───────────────────────
+  // 5. buyer: payment instructions (screenshots 7-8)
+  await el(b, 'p2p-tab-mine').click();
+  await b.waitForTimeout(600);
   await refresh(b);
-  await waitForStatus(b, 'ESCROW_LOCKED');
-  await shotN(7, 'buy-locked', b);
+  await waitStatus(b, 'ESCROW_LOCKED');
+  await shotN(7, 'buy-locked', b, '[data-testid="p2p-swap-0"]');
   await el(b, 'p2p-swap-0-instructions').click();
+  await approve(b);
   await el(b, 'p2p-swap-0-instructions-panel').waitFor({ timeout: TIMEOUT });
   await b.waitForTimeout(600);
-  await shotN(8, 'instructions', b);
-  railAt(`buyer pulled payment instructions (户名 / account / ${profile.price} CNY / remark)`);
-  const panelText = await el(b, 'p2p-swap-0-instructions-panel').textContent();
-  const remark = (panelText.match(/Remark:\s*([0-9a-f]+)/) ?? [])[1] ?? '';
+  await shotN(8, 'instructions', b, '[data-testid="p2p-swap-0"]');
+  const panel = await el(b, 'p2p-swap-0-instructions-panel').textContent();
+  const remark = (panel.match(/Remark:\s*([0-9a-f]+)/) ?? [])[1] ?? '';
+  runAt(`buyer pulled instructions (${remark ? `remark ${remark}` : 'remark'})`);
 
-  // ── 6. buyer pays and claims with the 流水号 ─────────────────────────────
-  // WeChat 流水号 starts 4203; Alipay trade numbers are 28-digit (start 20);
-  // bank transfer references are the 16-digit 网银流水号 (start 3029).
-  const txId = rail === 'alipay'
-    ? '20' + randomBytes(14).toString('hex').slice(0, 26).toUpperCase()
-    : rail === 'bank'
-      ? '3029' + randomBytes(6).toString('hex').slice(0, 12).toUpperCase()
-      : '4203' + randomBytes(8).toString('hex').slice(0, 12).toUpperCase();
+  // 6. buyer pays (fiat leg is out of band) and claims with the 流水号
+  const txId = '4203' + randomBytes(8).toString('hex').slice(0, 12).toUpperCase();
   await el(b, 'p2p-swap-0-txid').fill(txId);
   await b.waitForTimeout(400);
-  await shotN(9, 'payment-pending', b);
-  await el(b, 'p2p-swap-0-proof').click();
-  await waitForStatus(b, 'PAYMENT_CLAIMED');
-  await shotN(10, 'payment-claimed', b);
-  railAt(`buyer claimed payment (流水号 ${txId})`);
+  await shotN(9, 'payment-pending', b, '[data-testid="p2p-swap-0"]');
+  await actUntil(b, 'p2p-swap-0-proof', 'PAYMENT_CLAIMED');
+  await shotN(10, 'payment-claimed', b, '[data-testid="p2p-swap-0"]');
+  runAt(`buyer claimed payment (${txId})`);
 
-  // ── 7. seller verifies in their own app, then confirms ───────────────────
+  // 7. seller confirms on their own statement
   await refresh(s);
-  await waitForStatus(s, 'PAYMENT_CLAIMED');
-  await shotN(11, 'seller-confirm', s);
-  await el(s, 'p2p-swap-0-confirm').click();
-  await waitForStatus(s, 'PAYMENT_VERIFIED');
-  await shotN(12, 'payment-verified', s);
-  railAt('seller confirmed receipt (PAYMENT_VERIFIED)');
+  await waitStatus(s, 'PAYMENT_CLAIMED');
+  await shotN(11, 'seller-confirm', s, '[data-testid="p2p-swap-0"]');
+  await actUntil(s, 'p2p-swap-0-confirm', ['PAYMENT_VERIFIED', 'ESCROW_RELEASED', 'COMPLETED']);
+  await shotN(12, 'payment-verified', s, '[data-testid="p2p-swap-0"]');
+  runAt('seller confirmed receipt (PAYMENT_VERIFIED)');
 
-  // ── 8. engine signs release + complete (what the production signer does) ──
+  // 8. engine signs release + complete (what the production signer does)
   const swapId = (await el(b, 'p2p-swap-0').textContent()).match(/swap-[0-9a-f]{16}/)[0];
   const release = await api(`/swaps/${swapId}/transitions`, canonSign({ swapId, action: 'release', txHash: 'cd'.repeat(32) }));
   if (release.status !== 'ESCROW_RELEASED') throw new Error(`release → ${release.status}`);
-  railAt('engine signed the release (ESCROW_RELEASED)');
   await refresh(b);
-  await waitForStatus(b, 'ESCROW_RELEASED');
-  await shotN(13, 'escrow-released', b);
+  await waitStatus(b, ['ESCROW_RELEASED', 'COMPLETED']);
+  await shotN(13, 'escrow-released', b, '[data-testid="p2p-swap-0"]');
+  runAt('engine signed the release (ESCROW_RELEASED)');
 
   const complete = await api(`/swaps/${swapId}/transitions`, canonSign({ swapId, action: 'complete' }));
   if (complete.status !== 'COMPLETED') throw new Error(`complete → ${complete.status}`);
-  railAt(`swap completed (COMPLETED) — seller already holds the ${profile.price} CNY`);
-
   await refresh(b);
-  await waitForStatus(b, 'COMPLETED');
-  await shotN(14, 'completed', b);
+  await waitStatus(b, 'COMPLETED');
+  await shotN(14, 'completed', b, '[data-testid="p2p-swap-0"]');
+  runAt('swap completed (COMPLETED)');
 
-  Object.assign(report, { swapId, txId, remark, engineDid, capturedAt: new Date().toISOString() });
+  Object.assign(run, { swapId, txId, remark, engineDid, capturedAt: new Date().toISOString() });
   await seller.context.close();
   await buyer.context.close();
-  return report;
+  return run;
 }
 
 async function main() {
-  console.log(`engine DID: ${engineDid.slice(0, 46)}… (ML-DSA-87, ${engineDid.length} chars)`);
-  console.log(`rails: ${RAILS.join(', ')}`);
+  console.log(`engine DID: ${engineDid.slice(0, 46)}… (ML-DSA-87)`);
+  console.log(`languages: ${LANGS.join(', ')}`);
   startServers();
   await waitHealth(`${ENGINE}/healthz`);
   await waitHealth(APP, 60000);
   at('engine + wallet web app up');
 
   const browser = await chromium.launch({ headless: true });
-  const reports = {};
+  const runs = [];
   try {
-    for (const rail of RAILS) {
-      console.log(`\n━━━ capturing ${rail} flow ━━━`);
-      reports[rail] = await captureRail(browser, rail);
+    for (const lang of LANGS) {
+      console.log(`\n━━━ ${lang} ━━━`);
+      runs.push(await captureRun(browser, lang));
     }
   } finally {
     await browser.close();
@@ -415,15 +500,20 @@ async function main() {
 
   const report = {
     engineDid,
-    rails: RAILS,
-    swaps: Object.fromEntries(RAILS.map((r) => [r, { swapId: reports[r].swapId, txId: reports[r].txId, remark: reports[r].remark }])),
+    rail: RAIL,
+    languages: LANGS,
+    runs: runs.map((r) => ({
+      lang: r.lang,
+      swapId: r.swapId,
+      txId: r.txId,
+      remark: r.remark,
+      capturedAt: r.capturedAt,
+    })),
     timeline,
     capturedAt: new Date().toISOString(),
   };
   writeFileSync(resolve(HERE, 'demo-output/p2p-cny-capture.json'), JSON.stringify(report, null, 2));
-  console.log('\nTimeline:');
-  for (const line of timeline) console.log(`  ${line}`);
-  console.log(`\nwrote e2e/demo-output/p2p-cny-capture.json (${RAILS.map((r) => `${r}=${reports[r].swapId}`).join(' ')})`);
+  console.log(`\nwrote e2e/demo-output/p2p-cny-capture.json (${runs.map((r) => `${r.lang}=${r.swapId}`).join(' ')})`);
 }
 
 main()

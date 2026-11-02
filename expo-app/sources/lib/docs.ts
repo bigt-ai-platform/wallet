@@ -1,7 +1,7 @@
 /**
  * Help-center guide PDFs. The guides under `docs/guides` are rendered to PDFs
  * by `scripts/docs-pdf.mts` (→ docs/p2p-demo/assets) and published to the
- * shared `apps` bucket under `wallet/docs/demo` by `scripts/docs-upload.sh`,
+ * shared `apps` bucket under `wallet/docs/demo` by `scripts/publishpdf.sh`,
  * mirroring ../dai (apps/web/src/lib/docs.ts + scripts/docs-upload.sh).
  *
  * Every site holds `demo/<guide><suffix>.pdf`: English has no suffix, other

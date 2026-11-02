@@ -3,15 +3,20 @@
 #
 # Renders the P2P demo PDFs from the markdown sources in docs/guides (the
 # 12-language wallet guide) and docs/p2p-demo (the CNY walkthrough —
-# WeChat / Alipay / bank), optionally regenerating screenshots first.
+# WeChat Pay), optionally regenerating screenshots first — funds-free.
 #
 #   ./p2pdemo.sh              # pdf (default): render both PDFs from current shots
 #   ./p2pdemo.sh pdf          # same as above
 #   ./p2pdemo.sh pdf guide    # only the 12-language guide PDFs
-#   ./p2pdemo.sh pdf walkthrough   # only the all-rails walkthrough PDF (p2p-all.pdf)
+#   ./p2pdemo.sh pdf walkthrough   # only the BIG → CNY walkthrough PDF (p2p-all.pdf)
 #   ./p2pdemo.sh capture      # (re)capture screenshots, then render PDFs
+#   LANGS=zh,de ./p2pdemo.sh capture   # also shoot the wallet UI per language
 #   ./p2pdemo.sh capture guide|walkthrough
 #   ./p2pdemo.sh all          # rebuild workspace deps + web + engine, shots, PDFs
+#
+# LANGS (default en) selects the wallet UI languages to shoot; a localized shot
+# lands as <file>-<lang>.png and scripts/docs-pdf.mts uses it for that language
+# (English falls back to -en.png).
 #   ./p2pdemo.sh e2e          # REAL L0 e2e (escrow proved on-chain) via e2etest.sh
 #                             #  p2p-demo — needs `e2e/infra.sh` up first
 #   ./p2pdemo.sh down         # stop a leftover local engine / http-server
@@ -80,16 +85,16 @@ build_web() {
 
 capture_guide() {
   require_bin node
-  info "Capturing guide screenshots (CNY rails)..."
-  ( cd "$ROOT/e2e" && APP_URL="$APP_URL" E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
+  info "Capturing guide screenshots (BIG → CNY, WeChat)..."
+  ( cd "$ROOT/e2e" && LANGS="${LANGS:-en}" APP_URL="$APP_URL" E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
       node capture-p2p-cny.mjs ) || fail "capture-p2p-cny failed"
   log "Guide screenshots captured."
 }
 
 capture_walkthrough() {
   require_bin node
-  info "Capturing CNY screenshots (WeChat/Alipay/bank)..."
-  ( cd "$ROOT/e2e" && APP_URL="$APP_URL" E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
+  info "Capturing BIG → CNY screenshots (WeChat)..."
+  ( cd "$ROOT/e2e" && LANGS="${LANGS:-en}" APP_URL="$APP_URL" E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
       node capture-p2p-cny.mjs ) || fail "capture-p2p-cny failed"
   log "CNY screenshots captured."
 }
@@ -103,7 +108,7 @@ pdf_guide() {
 
 pdf_walkthrough() {
   require_bin node
-  info "Rendering all-rails walkthrough PDF..."
+  info "Rendering the BIG → CNY walkthrough PDF..."
   node docs/p2p-demo/scripts/gen-p2p-all-pdf.mjs || fail "gen-p2p-all-pdf failed"
   log "Walkthrough PDF → docs/p2p-demo/assets/p2p-all.pdf"
 }
@@ -154,4 +159,4 @@ case "$CMD" in
   *) fail "unknown command '$CMD' — run ./p2pdemo.sh --help" ;;
 esac
 
-log "Done. PDFs in docs/p2p-demo/assets (publish with scripts/docs-upload.sh)."
+log "Done. PDFs in docs/p2p-demo/assets (publish with scripts/publishpdf.sh)."

@@ -5,9 +5,9 @@
  * and prints it to PDF via headless Chromium — the same pipeline as
  * ../dai/scripts/docs-pdf.mts, adapted to this repo's layout.
  *
- * The PDFs are committed (docs/p2p-demo/assets) and published to the regional
- * MinIO docs buckets by scripts/docs-upload.sh (whose default src dir is
- * docs/p2p-demo/assets), mirroring ../dai.
+ * The PDFs are build artifacts (gitignored, docs/p2p-demo/assets) published to
+ * the MinIO `apps` bucket under wallet/docs/demo by scripts/publishpdf.sh,
+ * mirroring ../dai.
  *
  * Usage:
  *   npx tsx scripts/docs-pdf.mts            # every guide, every language
@@ -75,18 +75,29 @@ function inline(s: string): string {
  * step-by-step screenshots by their web path (`/demo/p2p/<file>`); the files
  * live in docs/p2p-demo/assets/screenshots. Older/translated sources use the
  * legacy `demo-output/screenshots/<file>` path. Try each candidate, then fall
- * back to the English shot (`<name>-<lang>.png` → `<name>-en.png`) since only
- * the English screenshots are captured.
+ * back to the English shot (`<name>-<lang>.png` → `<name>-en.png`). The
+ * sources reference the English file; a capture that ran with LANGS=zh,de…
+ * writes `<name>-<lang>.png`, and that localized shot wins for its language.
  */
 function imgSrc(src: string, mdDir: string, lang: string): string {
   if (/^(https?:|data:)/.test(src)) return src;
   const base = basename(src);
-  const candidates = [
-    src.startsWith("/") ? join(ROOT, src.replace(/^\/+/, "")) : join(mdDir, src),
-    join(SHOTS_DIR, base),
-    join(ASSETS_DIR, base),
-    join(ASSETS_DIR, src.replace(/^\/+/, "").replace(/^demo\//, "")),
-  ];
+  // A localized capture next to the English reference (guides always point at
+  // the `-en` file). `<file>-srcset`: the rendered PDF then shows the wallet UI
+  // in the guide's own language.
+  const localized = lang && lang !== "en"
+    ? base.replace(/-en\.(png|jpe?g|webp|gif|svg)$/i, `-${lang}.$1`)
+    : base;
+  const names = localized !== base ? [localized, base] : [base];
+  const candidates: string[] = [];
+  for (const n of names) {
+    candidates.push(
+      src.startsWith("/") ? join(ROOT, src.replace(/^\/+/, "")) : join(mdDir, src),
+      join(SHOTS_DIR, n),
+      join(ASSETS_DIR, n),
+      join(ASSETS_DIR, src.replace(/^\/+/, "").replace(/^demo\//, "")),
+    );
+  }
   let abs = candidates.find((p) => existsSync(p));
   if (!abs) {
     const alt = base.replace(new RegExp(`-${lang}\\.(png|jpe?g|webp|gif|svg)$`, "i"), "-en.$1");
@@ -371,4 +382,4 @@ for (const g of guides) {
   console.log(`${g}:`);
   for (const l of langs) generatePdf(g, l);
 }
-console.log(`done → ${OUT_DIR.replace(ROOT + "/", "")}; publish with: scripts/docs-upload.sh`);
+console.log(`done → ${OUT_DIR.replace(ROOT + "/", "")}; publish with: scripts/publishpdf.sh`);

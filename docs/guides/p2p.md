@@ -9,13 +9,15 @@ key, and the engine can only ever **co-sign** a spend — it never holds your
 funds and never touches fiat.
 
 **Where.** The **P2P** screen in the wallet (sidebar → Trade → P2P). Everything
-below is captured from that screen on the local demo build.
+below is captured from that screen on the current wallet build (the same UI you
+get at **https://wallet.bigt.ai**).
 
-**Demo vs. live.** The screenshots come from the demo build: the engine runs with
-a memory store and no chain check, so the lock/release legs use synthetic
-transaction hashes. The state machine, the signatures, the append-only event log
-and the on-chain audit anchor are the real thing; only the L0 broadcast is
-stubbed.
+**Demo, not real money.** The screenshots come from the funds-free demo harness:
+a local engine with a memory store and no chain client, so the escrow lock and
+release legs carry synthetic transaction hashes. The state machine, the
+signatures, the 2-of-3 escrow script and the audit records are the production
+code — only the L0 broadcast is stubbed. The shots are taken in the wallet's own
+language, so this PDF shows the UI in the language you selected.
 
 **Seller confirmation is the fiat signal.** There is no collection API for a
 personal WeChat/Alipay/bank account, so there is no machine-verifiable payment
@@ -65,9 +67,10 @@ to the matched buyer by the instructions call.
 
 ## 2. The seller lists a sell order
 
-On the **Open sells** tab, fill in the order: the token and amount you give, the
-CNY price you want, the chain the tokens sit on, and the **payment method**
-(wechat / alipay / bank). Selecting a CNY rail switches the currency to CNY.
+On the **My swaps** tab, fill in the order: the token and amount you give, the
+price you want per unit (CNY or USD), the chain the tokens sit on, and the
+**payment method** (wechat / alipay / bank). The total is derived from the price
+and the amount.
 Terms are locked into the order when you list it, so this is signed with your
 wallet key:
 
@@ -80,8 +83,10 @@ book (it carries no personal details).
 
 ## 3. The buyer matches
 
-The buyer opens the order and supplies the **receive address** for the released
-tokens. Matching commits the buyer to pay, so it is signed too:
+The buyer opens the order (the **Buy** tab), supplies the **receive address**
+for the released tokens, and — like the seller — saves channel details for the
+chosen rail in their own **My swaps** tab (they stay party-private). Matching
+commits the buyer to pay, so it is signed too:
 
 ![The buyer fills the receive address](/demo/p2p/p2p-cny-wechat-03-match-en.png)
 
@@ -139,7 +144,7 @@ exists purely as the buyer's claim:
 
 ## 7. The seller confirms on their own statement
 
-The seller's card shows the buyer's transaction number and the remark. The seller checks
+The seller's card shows the swap, the per-swap remark and the red confirmation warning. The seller checks
 **amount + remark + time + transaction number in their own account** and only then presses
 **Confirm received**:
 

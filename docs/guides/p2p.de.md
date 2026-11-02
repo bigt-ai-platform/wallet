@@ -10,13 +10,14 @@ und die Engine kann eine Ausgabe immer nur **mit-signieren** — sie hält niema
 dein Geld und berührt niemals Fiat.
 
 **Wo.** Der Bildschirm **P2P** in der Wallet (Seitenleiste → Trade → P2P). Alles
-unten stammt von diesem Bildschirm im lokalen Demo-Build.
+unten stammt von diesem Bildschirm im aktuellen Wallet-Build (dieselbe UI wie auf **https://wallet.bigt.ai**).
 
-**Demo vs. Live.** Die Screenshots stammen aus dem Demo-Build: Die Engine läuft
-mit einem Speicher-Store und ohne Chain-Prüfung, daher nutzen die
-Lock/Release-Schritte synthetische Transaktions-Hashes. Der Zustandsautomat, die
-Signaturen, das Append-only-Ereignisprotokoll und der On-Chain-Audit-Anker sind
-echt; nur der L0-Broadcast ist gestubbt.
+**Demo, kein echtes Geld.** Die Screenshots stammen aus der geldlosen
+Demo-Umgebung: eine lokale Engine mit Speicher-Store und ohne Chain-Client, daher
+nutzen Lock und Freigabe synthetische Transaktions-Hashes. Zustandsautomat,
+Signaturen, 2-von-3-Escrow-Skript und Audit-Einträge sind Produktionscode — nur
+der L0-Broadcast ist gestubbt. Die Aufnahmen entstehen in der Wallet-Sprache,
+dieses PDF zeigt die UI also in der von dir gewählten Sprache.
 
 **Die Verkäuferbestätigung ist das Fiat-Signal.** Für ein persönliches
 WeChat-/Alipay-/Bankkonto gibt es keine Collection-API, also gibt es kein
@@ -67,7 +68,7 @@ es wird nur dem gematchten Käufer durch den Instructions-Aufruf offengelegt.
 
 ## 2. Der Verkäufer stellt eine Verkaufsorder ein
 
-Im Tab **Open sells** füllst du die Order aus: das Token und die Menge, die du
+Im Tab **My swaps** füllst du die Order aus: das Token und die Menge, die du
 gibst, den gewünschten CNY-Preis, die Chain, auf der die Token liegen, und die
 **Zahlungsmethode** (wechat / alipay / bank). Die Wahl eines CNY-Wegs schaltet
 die Währung auf CNY um. Die Konditionen werden beim Einstellen in die Order
@@ -92,6 +93,8 @@ Die Engine erzeugt eine eindeutige `swapId` für den Lebenszyklus, und der Tausc
 geht in `MATCHED` über, sichtbar im Tab **My swaps** des Käufers:
 
 ![Der Tausch ist MATCHED](/demo/p2p/p2p-cny-wechat-04-matched-de.png)
+
+Wie der Verkäufer speichert auch der Käufer im Tab **My swaps** Kanalangaben für die gewählte Zahlungsmethode (nur für die Gegenpartei sichtbar).
 
 ---
 
@@ -146,7 +149,7 @@ Dieser Zustand existiert allein als Behauptung des Käufers:
 
 ## 7. Der Verkäufer bestätigt auf seinem eigenen Kontoauszug
 
-Die Karte des Verkäufers zeigt die Transaktionsnummer des Käufers und den Verwendungszweck.
+Die Karte des Verkäufers zeigt den Tausch, den Verwendungszweck und die rote Bestätigungswarnung.
 Der Verkäufer prüft **Betrag + Verwendungszweck + Zeit + Transaktionsnummer in seinem
 eigenen Konto** und drückt erst dann **Confirm received** (Eingang bestätigen):
 
@@ -167,8 +170,7 @@ des Käufers:
 
 ![ESCROW_RELEASED](/demo/p2p/p2p-cny-wechat-13-escrow-released-de.png)
 
-Da der Verkäufer direkt bezahlt wurde, gibt es keinen Fiat-Auszahlungsschritt —
-der Tausch ist abgeschlossen:
+Da der Verkäufer direkt bezahlt wurde, gibt es keinen Fiat-Auszahlungsschritt — der Tausch ist abgeschlossen:
 
 ![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-de.png)
 

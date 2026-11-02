@@ -1,5 +1,37 @@
 # AGENTS.md
 
+## Demo assets: never spend production funds
+
+The P2P demo screenshots/PDFs are produced by the **funds-free** harness:
+`./p2pdemo.sh capture walkthrough` → `e2e/capture-p2p-cny.mjs`, which runs a
+local `p2p-engine` with a memory store and no chain client (synthetic lock and
+release hashes). Nothing leaves a wallet. The demo is **BIG → CNY over WeChat**
+only. Pass `LANGS=en,zh,de,…` to shoot the wallet UI in several languages: each
+shot lands as `p2p-cny-wechat-NN-*-<lang>.png` and `scripts/docs-pdf.mts`
+prefers `<file>-<lang>.png`, falling back to English — so a wallet set to
+Chinese opens a Chinese PDF with a Chinese UI in the screenshots.
+
+The screenshots **and the rendered PDFs** are gitignored build artifacts
+(`docs/*-demo/assets/screenshots/`, `docs/*-demo/assets/*.pdf`). Nothing under
+those paths is committed any more: a fresh checkout runs
+`./p2pdemo.sh capture walkthrough`, then `scripts/publishpdf.sh`.
+`gen-p2p-all-pdf.mjs` exits non-zero when an embedded shot is missing, so the
+capture always runs first.
+
+`scripts/publishpdf.sh` (`yarn publishpdf`) publishes every rendered guide PDF
+to the public `apps` bucket under `wallet/docs/demo` on **s3.bigt.ai** — the
+exact keys `expo-app/sources/lib/docs.ts` links to. It writes to the EU primary
+and verifies each read site (us 302s to the primary, asia serves a GEO replica);
+`--dry-run` prints the keys without touching the network. `scripts/docs-upload.sh`
+is a deprecated alias.
+
+`e2e/capture-p2p-prod.mjs` is an **operator-only** tool for a real
+production-escrow capture. It refuses to run unless `ALLOW_REAL_FUNDS=1` is set,
+because it funds a production wallet from a validator keystore and locks a real
+BIG escrow on L0. Do not use it (or any other real-funds path) to produce demo
+screenshots. If a demo vault ever needs to be unwound, use
+`e2e/p2p-recover-escrow.mjs` (2-of-3: seller + buyer key).
+
 ## Remote integration tests are ported from the Java blockchain test suite
 
 The remote (network/integration) TypeScript tests under

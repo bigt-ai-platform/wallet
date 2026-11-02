@@ -9,13 +9,16 @@ recebimento no próprio extrato e o depósito é liberado. Cada passo irreversí
 gasto — ele nunca guarda os seus fundos e nunca toca no fiat.
 
 **Onde.** A tela **P2P** da carteira (barra lateral → Trade → P2P). Tudo abaixo
-foi capturado dessa tela na compilação de demonstração local.
+foi capturado dessa tela na versão atual da carteira (a mesma interface de
+**https://wallet.bigt.ai**).
 
-**Demonstração vs. produção.** As capturas vêm da demonstração: o motor roda com
-um armazenamento em memória e sem verificação de cadeia, então as etapas
-lock/release usam hashes de transação sintéticos. A máquina de estados, as
-assinaturas, o log de eventos somente-anexação e a âncora de auditoria on-chain
-são reais; apenas a difusão na L0 é simulada.
+**Demonstração, sem dinheiro real.** As capturas vêm do ambiente de demonstração
+sem fundos: um motor local com armazenamento em memória e sem cliente de cadeia,
+então as etapas de bloqueio e liberação usam hashes de transação sintéticos. A
+máquina de estados, as assinaturas, o script de escrow 2-de-3 e os registros de
+auditoria são o código de produção; apenas a difusão na L0 é simulada. As
+capturas são feitas no idioma da carteira, então este PDF mostra a interface no
+idioma que você escolheu.
 
 **A confirmação do vendedor é o sinal do fiat.** Não há API de cobrança para uma
 conta pessoal de WeChat/Alipay/banco, então não há evento de pagamento
@@ -65,7 +68,7 @@ ao comprador emparelhado pela chamada de instruções.
 
 ## 2. O vendedor publica uma ordem de venda
 
-Na aba **Open sells**, preencha a ordem: o token e a quantidade que você entrega,
+Na aba **My swaps**, preencha a ordem: o token e a quantidade que você entrega,
 o preço em CNY desejado, a cadeia em que os tokens estão e o **método de
 pagamento** (wechat / alipay / bank). Selecionar um trilho CNY muda a moeda para
 CNY. Os termos são fixados na ordem ao publicá-la, então isso é assinado com a
@@ -89,6 +92,8 @@ O motor cria um `swapId` único para o ciclo de vida e a troca vai para `MATCHED
 visível na aba **My swaps** do comprador:
 
 ![A troca está MATCHED](/demo/p2p/p2p-cny-wechat-04-matched-pt.png)
+
+Como o vendedor, o comprador também guarda os dados do canal escolhido na aba **My swaps** (visíveis apenas para a contraparte).
 
 ---
 
@@ -142,7 +147,7 @@ estado existe puramente como a reivindicação do comprador:
 
 ## 7. O vendedor confirma no próprio extrato
 
-O cartão do vendedor mostra o número da transação do comprador e a descrição. O vendedor
+O cartão do vendedor mostra a troca, a descrição e o aviso vermelho de confirmação. O vendedor
 confere **valor + descrição + hora + número da transação na própria conta** e só então
 pressiona **Confirm received** (Confirmar recebimento):
 

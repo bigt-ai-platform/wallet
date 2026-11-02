@@ -10,13 +10,15 @@ clé PQ du wallet, et le moteur ne peut jamais que **co-signer** une dépense �
 ne détient jamais vos fonds et ne touche jamais au fiat.
 
 **Où.** L'écran **P2P** du wallet (barre latérale → Trade → P2P). Tout ce qui suit
-est capturé depuis cet écran dans la version de démonstration locale.
+est capturé depuis cet écran sur la version actuelle du wallet (la même UI que sur **https://wallet.bigt.ai**).
 
-**Démo vs production.** Les captures proviennent de la démo : le moteur tourne
-avec un stockage en mémoire et sans contrôle de chaîne, donc les étapes
-lock/release utilisent des hachages de transaction synthétiques. La machine à
-états, les signatures, le journal d'événements en append-only et l'ancrage
-d'audit on-chain sont réels ; seule la diffusion L0 est simulée.
+**Démo, pas d'argent réel.** Les captures proviennent de l'environnement de
+démo sans fonds : un moteur local avec stockage en mémoire et sans client de
+chaîne, donc les étapes de verrou et de libération utilisent des hachages de
+transaction synthétiques. La machine à états, les signatures, le script
+d'escrow 2-of-3 et les enregistrements d'audit sont le code de production ;
+seule la diffusion L0 est simulée. Les captures sont prises dans la langue du
+wallet : ce PDF affiche donc l'interface dans la langue que vous avez choisie.
 
 **La confirmation du vendeur est le signal fiat.** Il n'existe pas d'API de
 collecte pour un compte personnel WeChat/Alipay/banque, donc il n'y a aucun
@@ -67,7 +69,7 @@ n'est révélé qu'à l'acheteur apparié par l'appel d'instructions.
 
 ## 2. Le vendeur publie un ordre de vente
 
-Dans l'onglet **Open sells**, remplissez l'ordre : le jeton et le montant que
+Dans l'onglet **My swaps**, remplissez l'ordre : le jeton et le montant que
 vous donnez, le prix en CNY souhaité, la chaîne sur laquelle se trouvent les
 jetons et le **moyen de paiement** (wechat / alipay / bank). Sélectionner un rail
 CNY bascule la devise sur CNY. Les conditions sont figées dans l'ordre à la
@@ -91,6 +93,8 @@ Le moteur crée un `swapId` unique pour le cycle de vie et l'échange passe à
 `MATCHED`, visible dans l'onglet **My swaps** de l'acheteur :
 
 ![L'échange est MATCHED](/demo/p2p/p2p-cny-wechat-04-matched-fr.png)
+
+Comme le vendeur, l'acheteur enregistre aussi ses coordonnées de canal pour le moyen de paiement choisi dans l'onglet **My swaps** (visibles uniquement par la contrepartie).
 
 ---
 
@@ -145,7 +149,7 @@ verrouillés.** Cet état n'existe que comme déclaration de l'acheteur :
 
 ## 7. Le vendeur confirme sur son propre relevé
 
-La carte du vendeur affiche le numéro de transaction de l'acheteur et le motif. Le vendeur
+La carte du vendeur affiche l'échange, le motif et l'avertissement rouge de confirmation. Le vendeur
 vérifie **montant + motif + heure + numéro de transaction sur son propre compte** et n'appuie
 qu'ensuite sur **Confirm received** (Confirmer la réception) :
 
@@ -166,7 +170,7 @@ de réception de l'acheteur :
 
 ![ESCROW_RELEASED](/demo/p2p/p2p-cny-wechat-13-escrow-released-fr.png)
 
-Comme le vendeur a été payé directement, il n'y a pas d'étape de versement fiat —
+Le vendeur ayant été payé directement, il n'y a pas d'étape de versement fiat —
 l'échange se termine :
 
 ![COMPLETED](/demo/p2p/p2p-cny-wechat-14-completed-fr.png)
