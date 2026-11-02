@@ -252,6 +252,17 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   (`adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`, then CDP).
   The wallet itself is scrypt-encrypted, so key type was proven from chain
   history instead: `getBlockByHash` → the spending input's scriptSig has a
-  33-byte secp256k1 pubkey (an ML-DSA pubkey is ~2.6 KB). The relay
-  `https://92.5.34.128` still serves an internal Caddy CA cert for the bare IP,
-  so native L0/L1 calls fail while `https://wallet.bigt.ai/l0|l1/` works.
+  33-byte secp256k1 pubkey (an ML-DSA pubkey is ~2.6 KB).
+- **The pinned relay `https://92.5.34.128` works now (not just a cert problem).**
+  s1002 ran only the seeds registry: there was no `/l0/` or `/l1/` route at all.
+  Caddy there now proxies `/l0/*` → `https://eu1.bigtangle.org`, `/l1/*` →
+  `https://ordereu1.bigtangle.org`, keeps `/getPeers`, and sets the global
+  `default_sni 92.5.34.128` (Android sends no SNI for an IP-literal URL, which
+  made Caddy answer `TLSV1_ALERT_INTERNAL_ERROR`). The IP cert is from Caddy's
+  local CA (IP SAN, 12 h auto-renew); the app pins that root in
+  `webapp/native/relay-ca/relay-ca.crt`, and `patch-android.mjs` trusts it
+  **only** for `92.5.34.128` via `network_security_config.xml`. Verified on the
+  phone: CapacitorHttp `POST https://92.5.34.128/l0|/l1/getChainNumber` → 200.
+  The relay config is mirrored in `deploy/s1002-relay.caddy`; if Caddy's
+  `/var/lib/caddy` is wiped the CA changes and the app must be rebuilt with the
+  new root. Do not "fix" this by disabling verification or trusting system CAs.

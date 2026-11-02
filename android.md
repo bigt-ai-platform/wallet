@@ -191,6 +191,41 @@ publish/consume a manifest — and `versionCode` must strictly increase.
 
 ## L0/L1 endpoint discovery
 
+### The pinned relay (`https://92.5.34.128`) and its CA
+
+Native builds pin `PRIVATE_API_BASE = https://92.5.34.128` (no DNS dependency),
+so every L0/L1 call goes to the `s1002` box. That host runs Caddy with:
+
+- `handle_path /l0/*` → `https://eu1.bigtangle.org`
+- `handle_path /l1/*` → `https://ordereu1.bigtangle.org`
+- `/getPeers` → the local `bigtangle-seeds` registry (`:8089`)
+
+The config lives in `/etc/caddy/Caddyfile.d/seeds.caddy` on `92.5.34.128`
+(a copy is kept in `deploy/s1002-relay.caddy`).
+
+A public CA cannot issue a certificate for a bare IP here, so Caddy serves a
+**local-CA** certificate with an `IP:92.5.34.128` SAN (auto-renewed every
+12 h). Android only trusts system CAs by default, which made every native
+chain call fail. The app therefore pins that one root:
+
+- `webapp/native/relay-ca/relay-ca.crt` is the tracked copy of Caddy's
+  `pki/authorities/local/root.crt`;
+- `webapp/scripts/patch-android.mjs` copies it to `res/raw/relay_ca.pem` and
+  writes a `network_security_config.xml` entry that trusts **only** that CA for
+  `92.5.34.128` (never a system CA for that address);
+- Caddy also sets the global `default_sni 92.5.34.128`, because Android's
+  HTTP stack sends no SNI for an IP-literal URL (without it Caddy answers with
+  a TLS `internal_error` alert).
+
+If the relay's Caddy data directory is ever wiped, the local CA changes: copy
+the new `root.crt` to the template, bump the app, and rebuild. To verify from a
+machine or the phone's shell:
+
+```bash
+curl --cacert relay-ca.crt -X POST https://92.5.34.128/l0/getChainNumber \
+  -H 'Content-Type: application/json' -d '{}'   # 200, ssl_verify_result=0
+```
+
 DNS is only the bootstrap for the **seed** set; the app then verifies every seed
 and picks the best (details below). DNS is resolved over **DNS-over-HTTPS**
 (`services/discovery.ts` → `lib/dnsseeds.ts`) because the WebView/RN runtime

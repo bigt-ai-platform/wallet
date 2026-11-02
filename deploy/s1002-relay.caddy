@@ -1,0 +1,52 @@
+# /etc/caddy/Caddyfile.d/seeds.caddy on s1002 (92.5.34.128), 2026-11-02.
+#
+# s1002 is the wallet's private L0/L1 entry point: native builds pin
+# https://92.5.34.128 (no DNS dependency). It also still serves the
+# bigtangle-seeds registry on /getPeers (see ../seeds/deploy.sh).
+#
+# The global `default_sni` lives in /etc/caddy/Caddyfile:
+#
+#   {
+#       # Android/OkHttp sends no SNI for an IP-literal URL; serve the IP cert.
+#       default_sni 92.5.34.128
+#   }
+#   import /etc/caddy/Caddyfile.d/*.caddy
+#
+# The IP certificate is issued by Caddy's local CA (IP SAN 92.5.34.128,
+# auto-renewed every 12 h). No public CA can issue for a bare IP, so the app
+# pins the local root in webapp/native/relay-ca/relay-ca.crt and trusts it only
+# for this address (see android.md, "The pinned relay").
+#
+# Apply: write this file, `caddy validate --config /etc/caddy/Caddyfile`,
+# then `systemctl reload caddy`.
+
+92.5.34.128 {
+	route {
+		# Wallet chain APIs (same contract as https://wallet.bigt.ai/l0|l1).
+		handle_path /l0/* {
+			reverse_proxy https://eu1.bigtangle.org
+		}
+		handle_path /l1/* {
+			reverse_proxy https://ordereu1.bigtangle.org
+		}
+		@seeds path /getPeers
+		handle @seeds {
+			reverse_proxy localhost:8089
+		}
+		respond 404
+	}
+	log {
+		output file /var/log/caddy/ip-access.log
+	}
+}
+
+# Plain HTTP: seeds registry only (no chain API on cleartext).
+http://92.5.34.128 {
+	route {
+		@seeds path /getPeers
+		handle @seeds {
+			reverse_proxy localhost:8089
+		}
+		respond 404
+	}
+}

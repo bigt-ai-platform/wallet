@@ -65,7 +65,21 @@ if (verName || verCode) {
   }
 }
 
-// ── 1. loopback cleartext ───────────────────────────────────────────────────
+// ── 1. loopback cleartext + pinned relay CA ─────────────────────────────────
+//
+// 92.5.34.128 is the wallet's private L0/L1 relay: native builds pin the IP
+// (no DNS dependency) and Caddy there issues its certificate from a per-host
+// local CA with an `IP:92.5.34.128` SAN, auto-renewed every 12 h. No public CA
+// can issue for a bare IP, so the app trusts that one root for that one
+// address and nothing else. The root is public certificate material (the
+// private key never leaves the relay) and lives as a tracked template under
+// native/relay-ca; android/ is regenerated on every cap sync.
+const relayCa = path.join(root, "native", "relay-ca", "relay-ca.crt");
+const rawDir = path.join(app, "res", "raw");
+if (fs.existsSync(relayCa)) {
+  fs.mkdirSync(rawDir, { recursive: true });
+  fs.copyFileSync(relayCa, path.join(rawDir, "relay_ca.pem"));
+}
 fs.mkdirSync(xmlDir, { recursive: true });
 fs.writeFileSync(
   nsc,
@@ -76,7 +90,19 @@ fs.writeFileSync(
         <domain includeSubdomains="true">localhost</domain>
         <domain includeSubdomains="true">127.0.0.1</domain>
         <domain includeSubdomains="true">10.0.2.2</domain>
-    </domain-config>
+    </domain-config>${
+      fs.existsSync(relayCa)
+        ? `
+    <!-- Private L0/L1 relay (PROD_L0_URL/PROD_L1_URL). Pinned by IP; only the
+         relay's own local CA is trusted for it, never a system CA. -->
+    <domain-config cleartextTrafficPermitted="false">
+        <domain includeSubdomains="false">92.5.34.128</domain>
+        <trust-anchors>
+            <certificates src="@raw/relay_ca" />
+        </trust-anchors>
+    </domain-config>`
+        : ""
+    }
 </network-security-config>
 `,
 );
