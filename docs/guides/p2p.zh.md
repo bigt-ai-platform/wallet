@@ -13,12 +13,14 @@
 ## 流程一览
 
 ```
-ACTIVE ──match──▶ MATCHED ──lock──▶ ESCROW_LOCKED ──instructions──▶ PAYMENT_PENDING
+ACTIVE ──撮合──▶ MATCHED ──锁定托管──▶ ESCROW_LOCKED ──付款说明──▶ PAYMENT_PENDING
                                                                           │
-   PAYMENT_PENDING ──proof──▶ PAYMENT_CLAIMED ──confirm──▶ PAYMENT_VERIFIED
+   PAYMENT_PENDING ──付款凭证──▶ PAYMENT_CLAIMED ──确认收款──▶ PAYMENT_VERIFIED
                                                                   │
-                            PAYMENT_VERIFIED ──release──▶ ESCROW_RELEASED ──complete──▶ COMPLETED
+                            PAYMENT_VERIFIED ──释放托管──▶ ESCROW_RELEASED ──完成──▶ COMPLETED
 ```
+
+> 状态：`ACTIVE` 待撮合 · `MATCHED` 已匹配 · `ESCROW_LOCKED` 托管已锁定 · `PAYMENT_PENDING` 待付款 · `PAYMENT_CLAIMED` 已付款待确认 · `PAYMENT_VERIFIED` 已确认收款 · `ESCROW_RELEASED` 托管已释放 · `COMPLETED` 已完成。
 
 | # | 步骤 | 操作方 | 链上 / 引擎 |
 |---|---|---|---|

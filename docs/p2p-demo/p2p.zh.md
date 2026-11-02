@@ -6,6 +6,21 @@
 
 汇率：**BIG/CNY = 0.01** — 本演示挂单 **10,000 BIG → 100 CNY**。
 
+## 流程一览
+
+```
+ACTIVE（待撮合）
+  ──撮合──▶ MATCHED（已匹配）
+  ──锁定托管──▶ ESCROW_LOCKED（托管已锁定）
+  ──付款说明──▶ PAYMENT_PENDING（待付款）
+  ──付款凭证──▶ PAYMENT_CLAIMED（已付款待确认）
+  ──确认收款──▶ PAYMENT_VERIFIED（已确认收款）
+  ──释放托管──▶ ESCROW_RELEASED（托管已释放）
+  ──完成──▶ COMPLETED（已完成）
+```
+
+每一步的引擎状态都以 `ACTIVE` → `MATCHED` → `ESCROW_LOCKED` → `PAYMENT_PENDING` → `PAYMENT_CLAIMED` → `PAYMENT_VERIFIED` → `ESCROW_RELEASED` → `COMPLETED` 推进；没有跳过，也没有回退。
+
 三轨合并演示（微信 / 支付宝 / 银行）见 [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`。
 
 ---
