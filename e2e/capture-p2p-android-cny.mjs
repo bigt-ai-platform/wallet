@@ -246,7 +246,7 @@ async function goP2P() {
 
 async function waitSwapStatus(statuses, timeout = 25000) {
   const list = Array.isArray(statuses) ? statuses : [statuses];
-  await waitFor(`(${q('p2p-swap-0-status')}?.innerText || '') && ${JSON.stringify(list)}.includes(${q('p2p-swap-0-status')}.innerText.trim())`, timeout, `swap ${list}`);
+  await waitFor(`(${q('p2p-swap-0-status')}?.getAttribute('data-status') || '') && ${JSON.stringify(list)}.includes(${q('p2p-swap-0-status')}.getAttribute('data-status').trim())`, timeout, `swap ${list}`);
 }
 
 async function refresh() {

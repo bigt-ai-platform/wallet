@@ -88,16 +88,16 @@ async function matchOrder(page: Page) {
   await el(page, 'p2p-buy-recv').fill(BUYER_RECEIVE_ADDRESS);
   await el(page, 'p2p-buy-confirm').click();
   // submitBuy switches to the mine tab, where the swap card lives.
-  await expect(el(page, 'p2p-swap-0-status')).toHaveText('MATCHED', { timeout: 15000 });
+  await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'MATCHED', { timeout: 15000 });
 }
 
 async function lockEscrow(page: Page) {
   await el(page, 'p2p-tab-mine').click();
   await el(page, 'p2p-refresh').click();
-  await expect(el(page, 'p2p-swap-0-status')).toHaveText('MATCHED', { timeout: 15000 });
+  await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'MATCHED', { timeout: 15000 });
   await el(page, 'p2p-swap-0-txhash').fill('ab'.repeat(32));
   await el(page, 'p2p-swap-0-lock').click();
-  await expect(el(page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED', { timeout: 15000 });
+  await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'ESCROW_LOCKED', { timeout: 15000 });
 }
 
 test.describe('P2P Flow', () => {
@@ -128,7 +128,7 @@ test.describe('P2P Flow', () => {
       await el(buyer.page, 'p2p-buy-0').click();
       await el(buyer.page, 'p2p-buy-recv').fill(BUYER_RECEIVE_ADDRESS);
       await el(buyer.page, 'p2p-buy-confirm').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('MATCHED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'MATCHED', { timeout: 15000 });
 
       // 5. Seller locks the escrow (chain check is off in the e2e engine, so a
       //    dummy txHash is accepted).
@@ -137,9 +137,9 @@ test.describe('P2P Flow', () => {
       // 6. Buyer pulls the seller's instructions: the panel carries the profile
       //    (name + account) and the exact amount to transfer.
       await el(buyer.page, 'p2p-refresh').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'ESCROW_LOCKED', { timeout: 15000 });
       await el(buyer.page, 'p2p-swap-0-instructions').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_PENDING', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'PAYMENT_PENDING', { timeout: 15000 });
       const panel = el(buyer.page, 'p2p-swap-0-instructions-panel');
       await expect(panel).toContainText('Zhang San');
       await expect(panel).toContainText('wxid_e2e');
@@ -148,14 +148,14 @@ test.describe('P2P Flow', () => {
       // 7. Buyer claims the transfer (流水号) → PAYMENT_CLAIMED.
       await el(buyer.page, 'p2p-swap-0-txid').fill('4200001234567890');
       await el(buyer.page, 'p2p-swap-0-proof').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_CLAIMED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'PAYMENT_CLAIMED', { timeout: 15000 });
 
       // 8. Seller confirms on their own statement → PAYMENT_VERIFIED, and the
       //    engine-signed release becomes reachable.
       await el(seller.page, 'p2p-refresh').click();
-      await expect(el(seller.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_CLAIMED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'PAYMENT_CLAIMED', { timeout: 15000 });
       await el(seller.page, 'p2p-swap-0-confirm').click();
-      await expect(el(seller.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_VERIFIED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'PAYMENT_VERIFIED', { timeout: 15000 });
       await expect(el(seller.page, 'p2p-swap-0-release')).toBeAttached();
     } finally {
       await seller.context.close();
@@ -206,13 +206,13 @@ test.describe('P2P Flow', () => {
       await lockEscrow(seller.page);
 
       await el(buyer.page, 'p2p-refresh').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'ESCROW_LOCKED', { timeout: 15000 });
       await el(buyer.page, 'p2p-swap-0-instructions').click();
 
       // The engine answers 409 "seller has no payment profile for this rail";
       // the wallet surfaces it and the swap must not advance.
       await expect(el(buyer.page, 'p2p-notice')).toContainText('profile', { timeout: 15000 });
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED');
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'ESCROW_LOCKED');
     } finally {
       await seller.context.close();
       await buyer.context.close();
@@ -234,15 +234,15 @@ test.describe('P2P Flow', () => {
       // the refund action (ESCROW_REFUNDED).
       await el(seller.page, 'p2p-swap-0-expire').click();
       await expect(el(seller.page, 'p2p-notice')).toContainText('expiry deadline has not elapsed');
-      await expect(el(seller.page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED');
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'ESCROW_LOCKED');
       await expect(async () => {
         await el(seller.page, 'p2p-swap-0-expire').click();
-        await expect(el(seller.page, 'p2p-swap-0-status')).toHaveText('EXPIRED', { timeout: 500 });
+        await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'EXPIRED', { timeout: 500 });
       }).toPass({ timeout: 15000, intervals: [1000] });
       await expect(el(seller.page, 'p2p-swap-0-refund')).toBeAttached();
 
       await el(buyer.page, 'p2p-refresh').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('EXPIRED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'EXPIRED', { timeout: 15000 });
     } finally {
       await seller.context.close();
       await buyer.context.close();
@@ -261,9 +261,9 @@ test.describe('P2P Flow', () => {
       await lockEscrow(seller.page);
 
       await el(buyer.page, 'p2p-refresh').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'ESCROW_LOCKED', { timeout: 15000 });
       await el(buyer.page, 'p2p-swap-0-cancel').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('CANCELLED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'CANCELLED', { timeout: 15000 });
     } finally {
       await seller.context.close();
       await buyer.context.close();
@@ -285,17 +285,17 @@ test.describe('P2P Flow', () => {
       // Claim a payment (PAYMENT_PENDING → PAYMENT_CLAIMED), then dispute it:
       // an open dispute freezes the swap (nothing advances or unwinds).
       await el(buyer.page, 'p2p-refresh').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('ESCROW_LOCKED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'ESCROW_LOCKED', { timeout: 15000 });
       await el(buyer.page, 'p2p-swap-0-instructions').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_PENDING', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'PAYMENT_PENDING', { timeout: 15000 });
       await el(buyer.page, 'p2p-swap-0-txid').fill('4200001234567890');
       await el(buyer.page, 'p2p-swap-0-proof').click();
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_CLAIMED', { timeout: 15000 });
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'PAYMENT_CLAIMED', { timeout: 15000 });
 
       await el(buyer.page, 'p2p-swap-0-dispute').click();
       await expect(el(buyer.page, 'p2p-swap-0')).toContainText('OPEN', { timeout: 15000 });
       // Frozen: the swap did not advance past the claim.
-      await expect(el(buyer.page, 'p2p-swap-0-status')).toHaveText('PAYMENT_CLAIMED');
+      await expect(el(page, 'p2p-swap-0-status')).toHaveAttribute('data-status', 'PAYMENT_CLAIMED');
     } finally {
       await seller.context.close();
       await buyer.context.close();

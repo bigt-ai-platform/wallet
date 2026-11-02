@@ -796,13 +796,19 @@ Cloudflare/ngrok tunnel itself), or bind the LAN for a home setup. Nothing
 auto-discovers; the engine connects to endpoints a person deliberately gave it,
 one swap at a time.
 
-The wallet app surfaces this per swap: **"Verify with my phone"** (buyer or
-seller, CNY swaps in `PAYMENT_PENDING`/`PAYMENT_CLAIMED`) pairs the phone once
-(endpoint + token → a DID-signed grant → `POST /pairings`), asks the engine to
-read (`POST /swaps/:id/device-read` — the caller's own pairing and own side
-only), then **signs the returned verdict** and submits it
+The wallet app surfaces this only when it is useful: **"Verify with my phone"**
+is offered to the **buyer** on a rail with a payer-side read (**Alipay / bank**),
+once the seller is **30 minutes late** on the release (swap in
+`PAYMENT_CLAIMED`/`PAYMENT_VERIFIED`) or **while a dispute is open**. WeChat's
+bridge reads the **payee** notification, so a buyer cannot use it, and PayPal
+has no bridge. The action pairs the phone once (endpoint + token → a DID-signed
+grant → `POST /pairings`), asks the engine to read
+(`POST /swaps/:id/device-read` — the caller's own pairing and own side only),
+then **signs the returned verdict** and submits it
 (`POST /swaps/:id/verify`). Only a swap party can trigger either call, each for
-their own side and their own device; the engine never initiates a read.
+their own side and their own device; the engine never initiates a read. It is
+evidence, not a required settlement step: the seller still confirms and
+releases.
 
 ```
   buyer's phone                            p2p-engine                     seller's phone

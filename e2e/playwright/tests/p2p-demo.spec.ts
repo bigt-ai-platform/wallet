@@ -80,7 +80,7 @@ async function shot(page: Page, name: string) {
 async function waitStatus(page: Page, expected: string, id = 'p2p-swap-0-status', ms = 90000) {
   const t0 = Date.now();
   for (;;) {
-    const txt = await el(page, id).first().textContent().catch(() => null);
+    const txt = await el(page, id).first().getAttribute('data-status').catch(() => null);
     if (txt === expected) return;
     if (Date.now() - t0 > ms) {
       const notice = await el(page, 'p2p-notice').first().textContent().catch(() => null);
@@ -96,7 +96,7 @@ async function waitStatus(page: Page, expected: string, id = 'p2p-swap-0-status'
 async function waitStatusAny(page: Page, expected: string[], id = 'p2p-swap-0-status', ms = 90000): Promise<string> {
   const t0 = Date.now();
   for (;;) {
-    const txt = (await el(page, id).first().textContent().catch(() => null)) ?? '';
+    const txt = (await el(page, id).first().getAttribute('data-status').catch(() => null)) ?? '';
     if (expected.includes(txt)) return txt;
     if (Date.now() - t0 > ms) {
       const notice = await el(page, 'p2p-notice').first().textContent().catch(() => null);

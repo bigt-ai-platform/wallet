@@ -14,7 +14,7 @@ import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import { CloseIcon, HelpIcon, SearchIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
-import { deviceReadSupported } from '@/lib/p2pDeviceRead';
+import { deviceVerifyDue } from '@/lib/p2pDeviceRead';
 import { p2pIdentityFromWallet, shortDid } from '@/lib/p2pIdentity';
 import { exceedsBalance, findBalance, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
 import { checkP2pFill, filterP2pOrders } from '@/lib/p2pOrderBook';
@@ -36,6 +36,19 @@ const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank', 'paypal'];
 /** Built-in rail list — used until the engine's /capabilities report arrives. */
 const DEFAULT_RAILS: readonly string[] = [...CNY_RAILS];
 const RAIL_LABELS: Record<string, string> = { paypal: 'PayPal' };
+/** Protocol status → user-facing label (the raw constant stays in data-status). */
+const STATUS_KEYS: Record<string, string> = {
+  MATCHED: 'p2p.statusMatched',
+  ESCROW_LOCKED: 'p2p.statusEscrowLocked',
+  PAYMENT_PENDING: 'p2p.statusPaymentPending',
+  PAYMENT_CLAIMED: 'p2p.statusPaymentClaimed',
+  PAYMENT_VERIFIED: 'p2p.statusPaymentVerified',
+  ESCROW_RELEASED: 'p2p.statusEscrowReleased',
+  COMPLETED: 'p2p.statusCompleted',
+  EXPIRED: 'p2p.statusExpired',
+  ESCROW_REFUNDED: 'p2p.statusEscrowRefunded',
+  CANCELLED: 'p2p.statusCancelled',
+};
 function railLabel(rail: string): string {
   return RAIL_LABELS[rail] ?? rail;
 }
@@ -1217,12 +1230,29 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
   const isParty = isSeller || isBuyer;
   const cny = isCnyRail(swap.wantRail);
   const st = swap.status;
+  // Re-render once a minute so the delayed-release action appears without a
+  // manual refresh.
+  const [now, setNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!(isBuyer && cny)) return;
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, [isBuyer, cny]);
+  // Optional evidence only: a buyer on a readable rail, after the seller is
+  // overdue on the release, or while a dispute is open.
+  const canDeviceVerify = isBuyer && deviceVerifyDue(swap, 'buyer', now);
 
   return (
     <View style={s.card} testID={`p2p-swap-${index}`}>
       <View style={s.rowBetween}>
         <Text style={s.cardTitle}>{swap.giveAmount} {swap.giveToken} → {swap.wantAmount} {swap.wantCurrency}</Text>
-        <Text style={[s.badge, { color: theme.colors.primary }]} testID={`p2p-swap-${index}-status`}>{st}</Text>
+        <Text
+          style={[s.badge, { color: theme.colors.primary }]}
+          testID={`p2p-swap-${index}-status`}
+          {...({ dataSet: { status: st } } as { dataSet: { status: string } })}
+        >
+          {STATUS_KEYS[st] ? t(STATUS_KEYS[st]) : st}
+        </Text>
       </View>
       <Text style={s.subMono}>{swap.swapId}</Text>
       <Text style={s.sub}>{t('p2p.giveChain')}: {swap.giveChain ?? '-'} · {swap.wantRail ? railLabel(swap.wantRail) : '-'}</Text>
@@ -1324,7 +1354,7 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
 
       {/* Device-side verification (docs/p2p.md §12): read this party's own rail
           app through the phone they paired, then sign and submit the verdict. */}
-      {isBuyer && cny && deviceReadSupported(swap.wantRail) && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
+      {canDeviceVerify ? (
         <>
           <View style={s.actions}>
             <Action label={t('p2pdev.title')} color={theme.colors.accent.purple} onPress={onVerify} disabled={busy} testID={`p2p-swap-${index}-verify`} />
@@ -1387,7 +1417,7 @@ const s = StyleSheet.create((theme) => ({
   didText: { flexShrink: 1, marginTop: 0, fontFamily: MONO_FONT, fontSize: 11, color: theme.colors.text.secondary },
   copyBtn: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, borderWidth: 1, borderColor: theme.colors.primary },
   copyText: { fontSize: 11, color: theme.colors.primary, fontWeight: '600' },
-  badge: { fontSize: 12, fontWeight: '700' },
+  badge: { fontSize: 12, fontWeight: '700', flexShrink: 1, textAlign: 'right', marginLeft: 8 },
   buyPanel: { marginTop: 12, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 12 },
   field: { marginTop: 10 },
   fieldLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 4 },

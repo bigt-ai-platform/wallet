@@ -200,21 +200,27 @@ test.describe('P2P Page', () => {
     await expect(page.getByTestId('p2p-order-0-side')).toContainText('Buy');
   });
 
-  test('phone verification reads WeChat via the payee notification and Alipay via the screen', async ({ page }) => {
+  test('offers phone verification only to buyers on a readable rail after a delay or dispute', async ({ page }) => {
     test.skip(!process.env.E2E_P2P_ENGINE_URL, 'requires a P2P-enabled web build');
-    const swapFor = (did: string, swapId: string, wantRail: string, role: 'seller' | 'buyer') => ({
+    const now = Date.now();
+    const paidLongAgo = now - 31 * 60 * 1000;
+    const swapFor = (did: string, swapId: string, wantRail: string, role: 'seller' | 'buyer', extra: Record<string, unknown> = {}) => ({
       swapId, seq: 3, status: 'PAYMENT_CLAIMED', eventType: 'payment_proof', wantRail, wantCurrency: 'CNY',
       giveToken: 'USDT', giveAmount: '10', wantAmount: '70',
       sellerDid: role === 'seller' ? did : 'did:pq:other', buyerDid: role === 'buyer' ? did : 'did:pq:other', at: 1,
+      paidAt: paidLongAgo, ...extra,
     });
     await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders: [] } }));
-    await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat', 'alipay', 'bank'] } }));
+    await page.route('**/capabilities', (route) => route.fulfill({ json: { rails: ['wechat', 'alipay', 'bank', 'paypal'] } }));
     await page.route('**/swaps/mine', (route) => {
       const did = route.request().postDataJSON().did as string;
       route.fulfill({ json: { swaps: [
-        swapFor(did, 'swap-wechat-sell', 'wechat', 'seller'),
-        swapFor(did, 'swap-wechat-buy', 'wechat', 'buyer'),
-        swapFor(did, 'swap-alipay-buy', 'alipay', 'buyer'),
+        swapFor(did, 'swap-0-wechat-seller', 'wechat', 'seller'),
+        swapFor(did, 'swap-1-wechat-buyer', 'wechat', 'buyer'),
+        swapFor(did, 'swap-2-alipay-buyer', 'alipay', 'buyer'),
+        swapFor(did, 'swap-3-bank-dispute', 'bank', 'buyer', { dispute: 'OPEN', paidAt: now }),
+        swapFor(did, 'swap-4-paypal-buyer', 'paypal', 'buyer'),
+        swapFor(did, 'swap-5-alipay-recent', 'alipay', 'buyer', { paidAt: now }),
       ] } });
     });
     await page.route('**/pairings/mine', (route) => route.fulfill({ json: { pairings: [{
@@ -225,7 +231,7 @@ test.describe('P2P Page', () => {
     await page.route('**/device-read', (route) => {
       reads.push(route.request().postDataJSON());
       route.fulfill({ json: {
-        swapId: 'x', side: 'seller', verdict: { side: 'seller', observed: 'received', evidenceKind: 'device_read' },
+        swapId: 'x', side: 'buyer', verdict: { side: 'buyer', observed: 'sent', evidenceKind: 'device_read' },
         check: { ok: true }, entry: { amount: '70.00' },
       } });
     });
@@ -233,27 +239,25 @@ test.describe('P2P Page', () => {
     await clickTab(page, 'P2P');
     await page.getByTestId('p2p-tab-mine').click();
 
-    // WeChat seller → the notification read.
-    await page.getByTestId('p2p-swap-0-verify').click();
-    await expect(page.getByTestId('p2p-verify-mode-hint')).toContainText('notification');
-    await page.getByTestId('p2p-verify-read').click();
-    await expect(page.getByTestId('p2p-verify-result')).toBeVisible();
-    expect(reads.at(-1)?.via).toBe('notification');
-    await page.getByTestId('p2p-verify-close').click();
+    // No action for a seller, a WeChat buyer (no payer-side read), PayPal, or
+    // a buyer whose seller is not late yet.
+    for (const i of [0, 1, 4, 5]) {
+      await expect(page.getByTestId(`p2p-swap-${i}-verify`)).toHaveCount(0);
+    }
 
-    // WeChat buyer → nothing readable on the payer side.
-    await page.getByTestId('p2p-swap-1-verify').click();
-    await expect(page.getByTestId('p2p-verify-mode-hint')).toContainText('only the seller');
-    // RN-web marks a disabled TouchableOpacity with aria-disabled only (no button role).
-    await expect(page.getByTestId('p2p-verify-read')).toHaveAttribute('aria-disabled', 'true');
-    await page.getByTestId('p2p-verify-close').click();
-
-    // Alipay buyer → the screen read of the open transaction detail.
+    // Alipay buyer, 31 minutes after claiming payment → screen read.
     await page.getByTestId('p2p-swap-2-verify').click();
     await expect(page.getByTestId('p2p-verify-mode-hint')).toContainText('transaction detail');
     await page.getByTestId('p2p-verify-read').click();
     await expect(page.getByTestId('p2p-verify-result')).toBeVisible();
     expect(reads.at(-1)?.via).toBe('screen');
+    await page.getByTestId('p2p-verify-close').click();
+
+    // Bank buyer with an open dispute → offered immediately, same screen read.
+    await page.getByTestId('p2p-swap-3-verify').click();
+    await expect(page.getByTestId('p2p-verify-mode-hint')).toContainText('transaction detail');
+    await page.getByTestId('p2p-verify-read').click();
+    await expect(page.getByTestId('p2p-verify-result')).toBeVisible();
     expect(reads).toHaveLength(2);
   });
 

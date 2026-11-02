@@ -390,7 +390,7 @@ async function refresh(page) {
 }
 
 async function status(page, id = 'p2p-swap-0-status') {
-  return (await el(page, id).first().textContent().catch(() => null)) ?? '';
+  return (await el(page, id).first().getAttribute('data-status').catch(() => null)) ?? '';
 }
 
 async function waitStatus(page, expected, ms = TIMEOUT, id = 'p2p-swap-0-status') {
