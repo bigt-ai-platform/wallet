@@ -37,6 +37,8 @@ const OUT_DIR = process.env.DOCS_PDF_OUT ? resolve(process.env.DOCS_PDF_OUT) : A
 const LANGS = ["en", "zh", "de", "fr", "es", "ja", "hi", "ar", "pt", "id", "ru", "ko"];
 /** Mirror the doc when its language reads right-to-left (lib/i18n RTL_LANGS). */
 const RTL_LANGS = new Set(["ar"]);
+/** Mobile page: a phone-sized 9:16 page, larger text, one screenshot per page. */
+const MOBILE = process.argv.includes("--mobile") || process.env.DOCS_PDF_MOBILE === "1";
 
 const MIME_TYPES: Record<string, string> = {
   ".png": "image/png",
@@ -247,34 +249,34 @@ function renderHtml(title: string, body: string, lang: string): string {
 <html lang="${lang}" dir="${dir}"><head><meta charset="utf-8">
 <title>${esc(title)}</title>
 <style>
-  @page { margin: 18mm 16mm; }
+  @page { ${MOBILE ? "size: 390px 844px; margin: 6mm;" : "margin: 18mm 16mm;"} }
   * { box-sizing: border-box; }
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-         color: ${THEME.textPrimary}; line-height: 1.6; font-size: 13px; margin: 0; }
-  .cover { text-align: center; padding: 60px 20px 20px; border-bottom: 3px solid ${THEME.primary}; margin-bottom: 22px; }
-  .cover h1 { font-size: 26px; font-weight: 800; margin: 0 0 8px; color: ${THEME.textPrimary}; }
-  .cover p { color: ${THEME.textSecondary}; margin: 0; font-size: 14px; }
+         color: ${THEME.textPrimary}; line-height: ${MOBILE ? "1.55" : "1.6"}; font-size: ${MOBILE ? "14px" : "13px"}; margin: 0; }
+  .cover { text-align: center; padding: ${MOBILE ? "24px 8px 12px" : "60px 20px 20px"}; border-bottom: 3px solid ${THEME.primary}; margin-bottom: ${MOBILE ? "14px" : "22px"}; }
+  .cover h1 { font-size: ${MOBILE ? "22px" : "26px"}; font-weight: 800; margin: 0 0 8px; color: ${THEME.textPrimary}; }
+  .cover p { color: ${THEME.textSecondary}; margin: 0; font-size: ${MOBILE ? "12px" : "14px"}; }
   h1, h2, h3 { color: ${THEME.textPrimary}; }
-  h1 { font-size: 20px; margin: 22px 0 8px; }
-  h2 { font-size: 16px; margin: 20px 0 6px; color: ${THEME.primary}; }
+  h1 { font-size: ${MOBILE ? "18px" : "20px"}; margin: 22px 0 8px; }
+  h2 { font-size: 16px; margin: 20px 0 6px; color: ${THEME.primary}; ${MOBILE ? "break-before: page;" : ""} }
   h3 { font-size: 14px; margin: 16px 0 6px; }
   p { margin: 8px 0; }
   a { color: ${THEME.primary}; text-decoration: none; }
   ul { margin: 6px 0 10px; padding-inline-start: 22px; }
   li { margin: 3px 0; }
   code { background: ${THEME.codeBg}; padding: 1px 5px; border-radius: 4px;
-         font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+         font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: ${MOBILE ? "11px" : "12px"}; }
   pre { background: ${THEME.codeBg}; border-radius: 8px; padding: 10px 12px; margin: 8px 0;
-        font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11px;
-        white-space: pre-wrap; word-break: break-word; }
-  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12px; }
+        font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: ${MOBILE ? "10px" : "11px"};
+        white-space: pre-wrap; word-break: break-word; ${MOBILE ? "break-inside: avoid;" : ""} }
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: ${MOBILE ? "11px" : "12px"};${MOBILE ? " break-inside: avoid;" : ""} }
   td { border: 1px solid ${THEME.border}; padding: 6px 8px; vertical-align: top; }
   td.t-head { font-weight: 700; background: ${THEME.codeBg}; }
   hr { border: none; border-top: 1px solid ${THEME.border}; margin: 18px 0; }
-  img.md-img { display: block; max-width: 100%; max-height: 420px; margin: 12px auto;
-               border: 1px solid ${THEME.border}; border-radius: 8px; }
+  img.md-img { display: block; max-width: 100%; max-height: ${MOBILE ? "650px" : "420px"}; width: ${MOBILE ? "100%" : "auto"}; object-fit: contain; margin: 12px auto;
+               border: 1px solid ${THEME.border}; border-radius: 8px; ${MOBILE ? "break-inside: avoid;" : ""} }
   .note { background: rgba(10, 132, 98, 0.08); border-inline-start: 3px solid ${THEME.primary};
-          padding: 8px 12px; margin: 10px 0; font-size: 12px;
+          padding: 8px 12px; margin: 10px 0; font-size: ${MOBILE ? "11px" : "12px"};
           border-start-start-radius: 0; border-end-start-radius: 0;
           border-start-end-radius: 6px; border-end-end-radius: 6px; }
 </style></head><body>

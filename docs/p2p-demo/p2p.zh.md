@@ -1,8 +1,10 @@
 # P2P 结算 — 卖家确认释放的 CNY 兑换
 
-**状态：演示构建 + 仓库内引擎。** 下文即已构建的结算流程：Bigtangle L0 上的 2-of-3 P2SH 托管，以及卖家确认的 CNY 环节（微信支付 / 支付宝 / 银行）。个人转账没有机器可验证的支付事件，因此卖家自己的对账单就是法币信号。截图来自演示构建（内存存储，无链上校验 — 锁定/释放哈希为合成）。设计见 `docs/p2p.md`。
+**状态：演示构建 + 仓库内引擎。** 下文即已构建的结算流程：Bigtangle L0 上的 2-of-3 P2SH 托管，以及卖家确认的 CNY 环节（微信支付 / 支付宝 / 银行）。个人转账没有机器可验证的支付事件，因此卖家自己的对账单就是法币信号。截图来自 **Android 应用真机** 的免资金演示构建（内存存储，无链上校验 — 锁定/释放哈希为合成）。设计见 `docs/p2p.md`。
 
-本指南演示挂单出售 USDT、与买家匹配、托管锁定、买家**直接**向卖家支付 CNY、卖家在自己的对账单上确认、托管释放，以及超时退款。
+本指南演示挂单出售 **BIG**（`bc`）、与买家匹配、托管锁定、买家**直接**向卖家支付 CNY、卖家在自己的对账单上确认、托管释放，以及超时退款。
+
+汇率：**BIG/CNY = 0.01** — 本演示挂单 **10,000 BIG → 100 CNY**。
 
 三轨合并演示（微信 / 支付宝 / 银行）见 [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`。
 
@@ -16,13 +18,13 @@
 
 ---
 
-## 2. 卖家挂单 USDT
+## 2. 卖家挂单 BIG
 
 向结算引擎提交 DID 签名的限价单：
 
 ```json
-{ "sellerDid": "did:key:z446G…", "giveToken": "USDT", "giveAmount": "10",
-  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "715",
+{ "sellerDid": "did:key:z446G…", "giveToken": "bc", "giveAmount": "10000",
+  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "100",
   "wantRail": "wechat", "validUntil": 1791510000,
   "nonce": "…", "timestamp": 1791509100000, "signature": "…" }
 ```
@@ -50,17 +52,17 @@
 
 ---
 
-## 4. 卖家将 USDT 锁定到 2-of-3 托管
+## 4. 卖家将 BIG 锁定到 2-of-3 托管
 
 托管地址是一个含三个密钥的 P2SH 脚本 — 卖家、买家、引擎 — 阈值为二：
 
 ```typescript
 // redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
 const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "10");
+await L0.transfer(escrowAddress, "10000");
 ```
 
-引擎用 `getTransactionStatus` 证明锁定 — `CONFIRMED`、目标 `escrowAddress`、金额 10 — 任何一项检查不成立即失败关闭。状态：`ESCROW_LOCKED`。买家在付款前看到资金已受保护。
+引擎用 `getTransactionStatus` 证明锁定 — `CONFIRMED`、目标 `escrowAddress`、金额 10000 — 任何一项检查不成立即失败关闭。状态：`ESCROW_LOCKED`。买家在付款前看到资金已受保护。
 
 ![卖家粘贴托管交易哈希](assets/screenshots/p2p-cny-wechat-05-escrow-lock-zh.png)
 
@@ -74,19 +76,19 @@ await L0.transfer(escrowAddress, "10");
 
 ```json
 { "method": "wechat", "rail": "wechat", "accountName": "Zhang San",
-  "account": "wxid_pay8888", "amount": "715", "currency": "CNY",
+  "account": "wxid_pay8888", "amount": "100", "currency": "CNY",
   "remark": "f71ade2d23e9", "payBy": 1791510060 }
 ```
 
 状态：`PAYMENT_PENDING`。超时计时开始 — 未支付的交换可在无需买家同意的情况下过期并退款。
 
-![支付说明：户名、账户、715 CNY、备注](assets/screenshots/p2p-cny-wechat-08-instructions-zh.png)
+![支付说明：户名、账户、100 CNY、备注](assets/screenshots/p2p-cny-wechat-08-instructions-zh.png)
 
 ---
 
 ## 6. 买家支付 CNY 并用流水号认领
 
-买家在自己的微信应用中转账 `715 CNY`，将交易号（流水号）粘贴到 **Transaction ID**，并按下 **我已付款**。可选的凭证图片存储在服务器端；只有其 `sha256` 被锚定到交换事件上。
+买家在自己的微信应用中转账 `100 CNY`，将交易号（流水号）粘贴到 **Transaction ID**，并按下 **我已付款**。可选的凭证图片存储在服务器端；只有其 `sha256` 被锚定到交换事件上。
 
 ![已输入交易号（流水号）](assets/screenshots/p2p-cny-wechat-09-payment-pending-zh.png)
 

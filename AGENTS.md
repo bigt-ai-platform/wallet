@@ -278,3 +278,15 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   modes, serves `/healthz` + `/capabilities`, accepts a DID-signed `POST
   /orders`, matches it and derives the 2-of-3 escrow address, and verifies a
   classic EC-DID signed read (same results as the old image).
+
+- **Chinese P2P demo on the Android app (funds-free) + mobile PDF.** The
+  on-device walkthrough is `e2e/capture-p2p-android-cny.mjs`: it starts a local
+  memory-store `p2p-engine`, reverses it into the phone, drives the installed
+  demo APK via its WebView devtools with two plain demo wallets (temporarily
+  replacing the device wallet, backed up/restored in `finally`), and writes the
+  14 `p2p-cny-wechat-NN-*-zh.png` shots. Rate is **BIG/CNY = 0.01** (10,000
+  BIG → 100 CNY). Build the demo APK with
+  `EXPO_PUBLIC_P2P_ENGINE_URL=http://127.0.0.1:18089 EXPO_PUBLIC_E2E_AUTOCONFIRM=1 APP_VERSION_NAME=1.0.124 APP_VERSION_CODE=1000124 ./webapp.sh --device=… --no-launch`,
+  and reinstall the release APK afterwards. Mobile PDF:
+  `DOCS_PDF_MOBILE=1 npx tsx scripts/docs-pdf.mts --md docs/p2p-demo/p2p.zh.md --out docs/p2p-demo/assets/p2p-android.zh.mobile.pdf --lang zh`
+  (390×844 page, one section per page). Screenshots/PDFs stay gitignored.
