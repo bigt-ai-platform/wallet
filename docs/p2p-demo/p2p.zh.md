@@ -15,11 +15,13 @@ ACTIVE（待撮合）
   ──付款说明──▶ PAYMENT_PENDING（待付款）
   ──付款凭证──▶ PAYMENT_CLAIMED（已付款待确认）
   ──确认收款──▶ PAYMENT_VERIFIED（已确认收款）
-  ──释放托管──▶ ESCROW_RELEASED（托管已释放）
+  ──卖方 release（引擎共同签名）──▶ ESCROW_RELEASED（托管已释放）
   ──完成──▶ COMPLETED（已完成）
 ```
 
 每一步的引擎状态都以 `ACTIVE` → `MATCHED` → `ESCROW_LOCKED` → `PAYMENT_PENDING` → `PAYMENT_CLAIMED` → `PAYMENT_VERIFIED` → `ESCROW_RELEASED` → `COMPLETED` 推进；没有跳过，也没有回退。
+
+可选路径：`PAYMENT_CLAIMED` / `PAYMENT_VERIFIED` ──争议──▶ 引擎协助裁决（`release` 或 `refund`）。
 
 三轨合并演示（微信 / 支付宝 / 银行）见 [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`。
 
@@ -125,11 +127,11 @@ await L0.transfer(escrowAddress, "10000");
 
 ---
 
-## 8. 引擎与卖家释放托管
+## 8. 卖方释放托管（引擎共同签名）
 > **卖家请尽快释放托管。** 确认收款后应立即执行 `release`；延迟释放会计入卖家评分（确认→释放时长），严重或多次延迟会把卖家标记为 **不安全（unsafe）**，影响后续订单。设备核验（“Verify with my phone”）只由 **买家** 在卖家延迟释放时发起，用于推动延迟释放；卖家不应依赖它。
 
 
-两个签名即可满足脚本：卖家的（锁定时预签名，或共同签署）和引擎的。任何单一一方都无法动用资金。
+**卖方在确认收款后应立即点击「释放资金」**；引擎共同签名后广播。两个签名即可满足脚本：卖家的（锁定时预签名，或共同签署）和引擎的。任何单一一方都无法动用资金。
 
 ```typescript
 const scriptSig = updateScriptWithSignature(unsigned, [
@@ -148,7 +150,13 @@ await L0.submitTransaction(serialize(tx));
 
 ---
 
-## 9. 超时或失败 → 退款
+## 9. 可选：争议由引擎协助裁决
+
+若买卖双方对付款有争议（金额不符、未收到款、卖家延迟释放等），任一方都可以冻结交易并提交争议。引擎（或部署中配置的仲裁人）核对链上托管与付款证据后，裁决为 `release`（放币给买家）或 `refund`（退回卖家）；裁决会锚定到交换记录。卖家的败诉与反复延迟会反映在信誉中，严重时可标记为 **不安全（unsafe）**。
+
+---
+
+## 10. 超时或失败 → 退款
 
 若买家始终未付款，引擎与卖家共同签署同一脚本退回卖家：
 
@@ -165,19 +173,11 @@ await L0.submitTransaction(serialize(tx));
 
 ---
 
-## 10. 设备侧验证 — 卖家自己的手机
+## 11. 可选：买家设备核验（延迟释放）
 
-卖家自己的对账单就是凭证；引擎可以通过手机上的 App
-([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
-自动读取。WeChat 对无障碍隐藏界面，因此对 WeChat 由 App 读取“收款到账”通知
-（支付宝/银行为屏幕内容）。
+当卖家在 `PAYMENT_VERIFIED` 后延迟释放，买家可以在交易卡片上点击 **Verify with my phone**：在自己的手机上配对一次（Mobile Agent），引擎读取买家的付款记录（发送侧），钱包对判定签名并提交。核验只由 **买家** 发起，会记录到卖家的信誉中；它用于推动延迟释放，不能替代卖家应尽快执行的 `release`。
 
-配对是 App 在“服务器”页面显示的**一次性短码**：在钱包的**设备**页面
-（**用码配对**）或 dai 的 **Mobile** 页面输入端点与短码，App 即返回每台设备
-的令牌（`POST /pair/claim`）；在 设置 › 访问 › 已配对设备 中撤销。
-
-在 `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt` 下，引擎即可无需手动确认
-而自动确认。
+---
 
 ## 对比：Binance P2P 与本次结算
 

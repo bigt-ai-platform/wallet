@@ -17,10 +17,12 @@ ACTIVE ──撮合──▶ MATCHED ──锁定托管──▶ ESCROW_LOCKED �
                                                                           │
    PAYMENT_PENDING ──付款凭证──▶ PAYMENT_CLAIMED ──确认收款──▶ PAYMENT_VERIFIED
                                                                   │
-                            PAYMENT_VERIFIED ──释放托管──▶ ESCROW_RELEASED ──完成──▶ COMPLETED
+                            PAYMENT_VERIFIED ──卖方释放（引擎共同签名）──▶ ESCROW_RELEASED ──完成──▶ COMPLETED
 ```
 
 > 状态：`ACTIVE` 待撮合 · `MATCHED` 已匹配 · `ESCROW_LOCKED` 托管已锁定 · `PAYMENT_PENDING` 待付款 · `PAYMENT_CLAIMED` 已付款待确认 · `PAYMENT_VERIFIED` 已确认收款 · `ESCROW_RELEASED` 托管已释放 · `COMPLETED` 已完成。
+
+> 可选争议：`PAYMENT_CLAIMED` / `PAYMENT_VERIFIED` ──争议──▶ 引擎协助裁决（`release` 或 `refund`）。
 
 | # | 步骤 | 操作方 | 链上 / 引擎 |
 |---|---|---|---|
@@ -31,7 +33,8 @@ ACTIVE ──撮合──▶ MATCHED ──锁定托管──▶ ESCROW_LOCKED �
 | 5 | 买方拉取付款说明 | 买方 | `PAYMENT_PENDING`（+ 每笔交易的备注） |
 | 6 | 买方在自己的应用里付款，用流水号认领 | 买方 | `PAYMENT_CLAIMED` |
 | 7 | 卖方核对自己的账单并确认 | 卖方 | `PAYMENT_VERIFIED` |
-| 8 | 引擎释放代币，交易完成 | 引擎 | `ESCROW_RELEASED` → `COMPLETED` |
+| 8 | **卖方释放代币**（引擎共同签名） | **卖方 + 引擎** | `ESCROW_RELEASED` |
+| 9 | *可选：* 争议由引擎协助裁决（释放或退款） | 引擎（仲裁） | `disputeOutcome` → `ESCROW_RELEASED` / `ESCROW_REFUNDED` |
 
 每次状态转换都会作为一条 `social.p2p-swap` 记录锚定到 L1-SOCIAL 链上，因此整个生命周期都可公开审计，同时不暴露任何一方的账户信息。
 
@@ -115,11 +118,11 @@ ACTIVE ──撮合──▶ MATCHED ──锁定托管──▶ ESCROW_LOCKED �
 
 ---
 
-## 8. 释放 — 资金转移
+## 8. 卖方释放 — 引擎共同签名
 > **卖家请尽快释放托管。** 确认收款后应立即执行 `release`；延迟释放会计入卖家评分（确认→释放时长），严重或多次延迟会把卖家标记为 **不安全（unsafe）**，影响后续订单。设备核验（“Verify with my phone”）只由 **买家** 在卖家延迟释放时发起，用于推动延迟释放；卖家不应依赖它。
 
 
-释放会移动托管的代币：卖方（预签名或共同签名）与引擎各自对托管输出的支出签名，两个签名即可满足 2-of-3 脚本。代币到达买方的收款地址：
+**卖方在确认收款后应立即点击「释放资金」**。释放会移动托管的代币：卖方（预签名或共同签名）与引擎各自对托管输出的支出签名，两个签名即可满足 2-of-3 脚本。代币到达买方的收款地址：
 
 ![ESCROW_RELEASED](/demo/p2p/p2p-cny-wechat-13-escrow-released-zh.png)
 
@@ -129,36 +132,15 @@ ACTIVE ──撮合──▶ MATCHED ──锁定托管──▶ ESCROW_LOCKED �
 
 ---
 
-## 可选 — 用自己的手机自动确认
+## 9. 可选 — 争议由引擎协助裁决
 
-第 7 步通常是手动点击。若想让引擎替你确认，把手机配对一次，让它读取**卖家本人**
-的收款记录——也就是卖家本应手动核对的同一份账单，只是自动读取。
+若买卖双方对付款有争议（金额不符、未收到款、卖家延迟释放等），任一方都可以冻结交易并提交争议。引擎（或部署中配置的仲裁人）核对链上托管与付款证据后，裁决为 `release`（放币给买家）或 `refund`（退回卖家）；裁决会锚定到交换记录。卖家的败诉与反复延迟会反映在信誉中，严重时可标记为 **不安全（unsafe）**。
 
-**配对手机（一次）。** 在自己的手机上安装 **Mobile Agent** 应用
-([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))；
-它在*手机上*运行 MCP 服务器（无障碍服务，无需 adb）。授予无障碍权限、启动其
-服务器，并记下它显示的端点与**短的一次性配对码**。在钱包中打开 **Device（设备）**，
-点击 **Pair with code（用代码配对）**，输入端点与配对码。随时可在 **Settings ›
-Access › Paired devices（设置 › 访问 › 已配对设备）** 中撤销配对。
+---
 
-**验证一笔交易。** 在交易卡片中点击 **Verify with my phone（用我的手机验证）**——
-任一方都可以验证自己的设备。引擎连接到已配对的端点，从你自己的支付应用中读取
-匹配的条目（金额、备注、时间和流水号），随后由**钱包对判定结果签名**。支付宝和
-银行会把界面暴露给无障碍服务；微信则隐藏其界面，因此对微信，应用读取微信自身的
-“收款到账”通知：
+## 可选 — 买家设备核验（延迟释放时）
 
-![收款人自己的微信收款通知](/demo/p2p/p2p-verify-wechat-notification-en.png)
-
-**验证前须知。**
-
-- **引擎必须能连到你的手机。** 引擎会直接连接你配对的端点，因此端点必须是公网 HTTPS 地址（例如通往手机的隧道）。`http://192.168.x.x` 这类家庭网络地址无法访问，会被拒绝。
-- **支付宝和银行：先打开这笔账单。** 读取的是当前屏幕内容，请先在应用里打开这笔付款的交易详情，再点 **Read my phone**。
-- **微信：仅限卖方。** 微信“收款到账”通知只出现在收款人的手机上，所以微信付款只能由卖方验证，买方无法验证。
-
-**带来什么改变。** 默认情况下，读取结果仅作为争议证据。在 `SETTLEMENT_CNY_AUTO_RELEASE_ON`
-策略下（`seller_receipt`，或更严格的 `two_sided` / `verified_receipt`），符合条件
-的读取会**替代手动确认**并释放托管。这仍是证明（attestation），而不是预言机：
-配对即授权，可随时撤销，引擎只读取你配对的那一方。
+当卖家在 `PAYMENT_VERIFIED` 后延迟释放，买家可以在交易卡片上点击 **Verify with my phone**：在自己的手机上配对一次，引擎读取买家的付款记录（微信 / 支付宝 / 银行的发送记录），钱包对判定签名并提交。设备核验只由 **买家** 发起，用于推动延迟释放，并会记录到卖家的信誉中；它不能替代卖家应尽快执行的 `release`。
 
 ---
 
