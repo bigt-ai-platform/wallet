@@ -61,6 +61,9 @@ require_region() { valid_region "$1" || { echo -e "${RED}invalid region '$1'. Va
 vm_ip()   { echo "${REGION_VM[$1]}"; }
 vm_user() { echo "${REGION_SSH_USER[$1]}"; }
 vm_key()  { echo "${REGION_SSH_KEY[$1]}"; }
+vm_jump() { echo "${REGION_SSH_JUMP[$1]:-}"; }
+# `-J <host>` for a region routed through a jump box (see region.conf).
+ssh_jump_opts() { local j; j="$(vm_jump "$1")"; [ -n "$j" ] && printf ' -J %s' "$j"; return 0; }
 domain()  { echo "${REGION_DOMAIN[$1]}"; }
 
 # The single shared P2P engine runs on P2P_REGION (region.conf); every other
@@ -74,7 +77,7 @@ default_repo() {
   [ "$u" = "root" ] && echo "/srv/wallet" || echo "/home/$u/wallet"
 }
 
-ssh_run() { local r="$1"; shift; ssh ${SSH_OPTS} -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" "$@"; }
+ssh_run() { local r="$1"; shift; ssh ${SSH_OPTS}$(ssh_jump_opts "$r") -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" "$@"; }
 
 sudo_cmd() { local r="$1"; [ "$(vm_user "$r")" = "root" ] && echo "" || echo "sudo"; }
 
@@ -102,7 +105,7 @@ sync_repo() {
   echo -e "${GREEN}--- Syncing repo → $(vm_ip "$r"):$REMOTE_REPO ---${NC}"
   ssh_run "$r" "mkdir -p $REMOTE_REPO"
   rsync -az --delete --no-owner --no-group \
-    -e "ssh ${SSH_OPTS} -i $(vm_key "$r")" \
+    -e "ssh ${SSH_OPTS}$(ssh_jump_opts "$r") -i $(vm_key "$r")" \
     --exclude node_modules --exclude '**/node_modules' --exclude .git \
     --exclude web-build --exclude 'e2e/web-build' --exclude 'e2e/demo-output' \
     --exclude 'expo-app/.expo' --exclude deploy/.image --exclude '*.log' \
@@ -111,6 +114,7 @@ sync_repo() {
     --exclude out --exclude 'expo-app/dist' --exclude 'expo-app/android' \
     --exclude 'expo-app/ios' --exclude 'webapp/android' --exclude 'webapp/dist' \
     --exclude '*.apk' --exclude '*.aab' --exclude '.gradle' \
+    --exclude docs --exclude e2e \
     "${PROJECT_DIR}/" "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/"
   # legacy rename /srv/bapp (or /home/<user>/bapp) → the resolved REMOTE_REPO:
   # drop the old default dir only after the new one has the tree, and never
@@ -138,7 +142,7 @@ ensure_image() {
       exit 1
     fi
     ssh_run "$r" "mkdir -p $REMOTE_REPO/.image"
-    scp ${SSH_OPTS} -i "$(vm_key "$r")" "$tar" "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/.image/wallet-web.latest.tar"
+    scp ${SSH_OPTS}$(ssh_jump_opts "$r") -i "$(vm_key "$r")" "$tar" "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/.image/wallet-web.latest.tar"
     ssh_run "$r" "docker load -i $REMOTE_REPO/.image/wallet-web.latest.tar"
   fi
 }
@@ -199,12 +203,12 @@ p2p_up() {
 
   echo -e "${GREEN}--- P2P secrets → $(vm_ip "$r"):$REMOTE_REPO/deploy/env ---${NC}"
   ssh_run "$r" "mkdir -p $REMOTE_REPO/deploy/env"
-  scp ${SSH_OPTS} -i "$(vm_key "$r")" "$env_file" \
+  scp ${SSH_OPTS}$(ssh_jump_opts "$r") -i "$(vm_key "$r")" "$env_file" \
     "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/deploy/env/.env.p2p.${r}"
   # image tar (no-registry path): transfer when tag.sh saved one
   if [ -f "$tar" ]; then
     ssh_run "$r" "mkdir -p $REMOTE_REPO/.image"
-    scp ${SSH_OPTS} -i "$(vm_key "$r")" "$tar" \
+    scp ${SSH_OPTS}$(ssh_jump_opts "$r") -i "$(vm_key "$r")" "$tar" \
       "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/.image/wallet-p2p-engine.latest.tar"
   fi
 
