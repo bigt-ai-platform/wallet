@@ -1,206 +1,180 @@
-# Liquidación FIAT — Swap de CNY con liberación confirmada por el vendedor
+# Liquidación FIAT (moneda fiduciaria) — Cambia BIG por WeChat / Alipay / banco o PayPal
 
-**Estado: build de demostración + motor en el repositorio.** Todo lo que sigue es el flujo de liquidación tal como está construido: depósito en garantía P2SH de 2-de-3 en Bigtangle L0 y una pata CNY confirmada por el vendedor (WeChat Pay / Alipay / banco). Una transferencia personal no tiene un evento de pago verificable por máquina, así que el propio extracto del vendedor es la señal fiat. Las capturas son del build de demostración (almacén en memoria, sin comprobación de cadena — los hashes de bloqueo/liberación son sintéticos). El diseño vive en `docs/p2p.md`.
+**Terminología.** FIAT = moneda fiduciaria; CNY = yuan chino; USD = dólar estadounidense; P2P = entre particulares.
 
-Esta guía recorre la publicación de USDT en venta, el emparejamiento con un comprador, el bloqueo del depósito, el pago de CNY del comprador **directamente** al vendedor, la confirmación del vendedor en su propio extracto, la liberación del depósito y el reembolso por tiempo agotado.
+**Qué es esto.** En la cartera Bigtangle puedes intercambiar **BIG** directamente por moneda fiduciaria (WeChat Pay / Alipay / banco, o **PayPal USD**). Los BIG del vendedor se depositan primero en una **dirección de depósito en garantía** que solo puede moverse cuando dos de las tres partes —vendedor, comprador y plataforma— están de acuerdo; el comprador paga el dinero directamente al vendedor; y el vendedor libera los BIG cuando ha confirmado el cobro en su propio extracto. La plataforma no custodia tu dinero ni toca la moneda fiduciaria.
 
-Para el recorrido combinado de tres raíles (WeChat / Alipay / banco) véase [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`.
+**Sobre las capturas.** Las imágenes siguientes proceden del entorno de demostración en un dispositivo real; los importes y los hashes son datos de demostración y no implican dinero real.
+
+Esta guía muestra: el vendedor publica una oferta de venta de BIG, el comprador compra, se bloquea el depósito, el comprador paga, el vendedor confirma, se liberan los BIG y, por último, el reembolso cuando se agota el tiempo. Tipo de cambio **BIG/CNY = 0.01**, oferta **10,000 BIG → 100 CNY**.
+
+## Resumen del flujo
+
+```
+Pendiente de emparejar → Emparejado → Depósito bloqueado → Pago pendiente → Pago reclamado → Pago confirmado → Depósito liberado → Completado
+```
+
+Cada paso aparece en la tarjeta de la operación dentro de la aplicación; el estado solo avanza, nunca se salta ni retrocede.
+
+Ruta opcional: si después del pago las partes no se ponen de acuerdo, cualquiera de ellas puede congelar la operación y abrir una disputa, y la plataforma ayuda a resolverla (liberar los BIG al comprador o reembolsar al vendedor).
+
+
+**PayPal (dólares).** Al elegir **PayPal**, la moneda fiduciaria cambia automáticamente a **USD** y la cuenta de cobro pasa a ser un correo de PayPal; el resto del flujo es idéntico. Demostración completa en [p2p-paypal.zh.md](p2p-paypal.zh.md) → `assets/p2p-paypal.zh.mobile.pdf` (**10,000 BIG → 100 USD**).
+
+
 
 ---
 
 ## 1. El vendedor guarda un perfil de cobro
 
-El vendedor abre **P2P → Mis swaps**, elige el raíl (`wechat`) e introduce el nombre y la cuenta de cobro. El perfil se almacena en el servidor bajo el DID del vendedor y **no** forma parte del libro público de órdenes — solo se revela al comprador emparejado.
+El vendedor abre **P2P → Mis operaciones**, elige el método de cobro (WeChat, Alipay, banco o PayPal) y rellena el nombre del titular y el número de cuenta (en PayPal, el correo). Estos datos solo se muestran al comprador cuando la operación ya está cerrada y nunca aparecen en el libro público de ofertas.
 
 ![El vendedor guarda el perfil de pago de WeChat](assets/screenshots/p2p-cny-wechat-01-profile-es.png)
 
 ---
 
-## 2. El vendedor publica USDT
+## 2. El vendedor publica una oferta de BIG
 
-Envía una orden limitada firmada con DID al motor de liquidación:
+En **Publicar oferta de venta**, el vendedor indica el token (`bc`), la cantidad **10,000**, el precio **0.01**, la moneda fiduciaria **CNY** y el método de cobro **WeChat**, y la publica.
 
-```json
-{ "sellerDid": "did:key:z446G…", "giveToken": "USDT", "giveAmount": "10",
-  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "715",
-  "wantRail": "wechat", "validUntil": 1791510000,
-  "nonce": "…", "timestamp": 1791509100000, "signature": "…" }
-```
+Una vez publicada, la oferta aparece en el libro público con el estado **Pendiente de emparejar**. El vendedor puede retirar en cualquier momento una oferta que aún no se haya emparejado.
 
-La orden se valida contra la firma DID del vendedor. Estado: `ACTIVE`; caduca tras `validUntil`.
-
-![Publicar una orden de venta con wechat / CNY](assets/screenshots/p2p-cny-wechat-02-order-es.png)
+![Publicar una oferta de venta con wechat / CNY](assets/screenshots/p2p-cny-wechat-02-order-es.png)
 
 ---
 
-## 3. El comprador empareja la orden
+## 3. El comprador empareja la oferta
 
-El comprador envía un emparejamiento firmado con DID, indicando la dirección que debe recibir la liberación del depósito. No hay cuenta/correo que recoger — nada sobre el raíl fiat es necesario en el momento del emparejamiento:
+El comprador abre la oferta, introduce la dirección donde quiere recibir los BIG y confirma la compra. En este momento todavía no hace falta indicar ninguna cuenta de WeChat ni de Alipay: los datos de cobro del vendedor se muestran solo a este comprador, una vez bloqueado el depósito.
 
-```json
-{ "orderId": "ord-…", "buyerDid": "did:key:z6Mk…",
-  "receiveAddress": "mBuyer…", "nonce": "…", "timestamp": …, "signature": "…" }
-```
-
-Estado: `MATCHED`. Se crea un `swapId` único para el ciclo de vida y la dirección de depósito 2-de-3 se deriva de las claves vendedor + comprador + motor.
+La aplicación crea un número de operación único para esta compra y prepara la dirección de depósito; el estado pasa a **Emparejado**.
 
 ![El comprador rellena la dirección de recepción](assets/screenshots/p2p-cny-wechat-03-match-es.png)
 
-![Swap creado en MATCHED](assets/screenshots/p2p-cny-wechat-04-matched-es.png)
+![Operación creada en Emparejado](assets/screenshots/p2p-cny-wechat-04-matched-es.png)
 
 ---
 
-## 4. El vendedor bloquea USDT en el depósito de 2-de-3
+## 4. El vendedor bloquea los BIG en el depósito
 
-La dirección de depósito es un script P2SH con tres claves — vendedor, comprador, motor — y un umbral de dos:
+La aplicación genera para esta operación una **dirección de depósito 2-de-3**: hacen falta dos de las tres partes —vendedor, comprador y plataforma— para mover los fondos, y ninguna puede llevárselos por sí sola.
 
-```typescript
-// redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
-const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "10");
-```
+El vendedor transfiere **10,000 BIG** a esa dirección y pega en la aplicación el hash de esa transferencia. Cuando la aplicación ha comprobado el importe y la dirección de destino, el estado pasa a **Depósito bloqueado**. El comprador puede ver que los BIG ya están bloqueados antes de pagar la moneda fiduciaria.
 
-El motor demuestra el bloqueo con `getTransactionStatus` — `CONFIRMED`, destino `escrowAddress`, importe 10 — y falla en modo cerrado si alguna comprobación no se cumple. Estado: `ESCROW_LOCKED`. El comprador ve los fondos asegurados antes de pagar.
+![El vendedor pega el hash de la transferencia al depósito](assets/screenshots/p2p-cny-wechat-05-escrow-lock-es.png)
 
-![El vendedor pega el hash de la tx de depósito](assets/screenshots/p2p-cny-wechat-05-escrow-lock-es.png)
-
-![ESCROW_LOCKED](assets/screenshots/p2p-cny-wechat-06-escrow-locked-es.png)
+![Depósito bloqueado](assets/screenshots/p2p-cny-wechat-06-escrow-locked-es.png)
 
 ---
 
 ## 5. El comprador obtiene las instrucciones de pago
 
-El comprador pulsa **Detalles de pago**. El motor revela el perfil del vendedor más un **concepto por swap** que la transferencia *debe* llevar, el importe exacto y una fecha límite:
+El comprador pulsa **Detalles de pago** y ve:
 
-```json
-{ "method": "wechat", "rail": "wechat", "accountName": "Zhang San",
-  "account": "wxid_pay8888", "amount": "715", "currency": "CNY",
-  "remark": "f71ade2d23e9", "payBy": 1791510060 }
-```
+- El nombre del titular
+- La cuenta de cobro (WeChat / Alipay / banco, o el correo de PayPal)
+- El importe exacto **100 CNY**
+- El **código de concepto** exclusivo de esta operación
+- La fecha límite de pago
 
-Estado: `PAYMENT_PENDING`. Arranca un temporizador — un swap impagado puede expirar y reembolsarse sin el consentimiento del comprador.
+Al hacer la transferencia, el comprador debe escribir el código de concepto en el concepto. El estado pasa a **Pago pendiente**; si no se paga antes de la fecha límite, la operación caduca y se reembolsa.
 
-![Instrucciones de pago: titular, cuenta, 715 CNY, concepto](assets/screenshots/p2p-cny-wechat-08-instructions-es.png)
+![Instrucciones de pago: titular, cuenta, 100 CNY, concepto](assets/screenshots/p2p-cny-wechat-08-instructions-es.png)
 
 ---
 
-## 6. El comprador paga CNY y reclama con el número de transacción
+## 6. El comprador paga en CNY y lo declara
 
-El comprador transfiere `715 CNY` en su propia app de WeChat, pega el número de transacción en **Transaction ID** y pulsa **He pagado**. La imagen de recibo opcional se almacena en el servidor; solo su `sha256` se ancla al evento del swap.
+El comprador transfiere **100 CNY** desde su propia aplicación de WeChat, escribe el código de concepto en el concepto, pega el número de operación (número de referencia) en **Número de operación** y pulsa **He pagado**.
 
-![Número de transacción introducido](assets/screenshots/p2p-cny-wechat-09-payment-pending-es.png)
+Puede adjuntar una imagen del comprobante de pago; la imagen solo se guarda en el servidor y no se escribe en la cadena.
 
-Estado: `PAYMENT_CLAIMED` — los tokens siguen bloqueados. Este estado es la reclamación del comprador y nada más.
+![Número de operación introducido](assets/screenshots/p2p-cny-wechat-09-payment-pending-es.png)
 
-![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-wechat-10-payment-claimed-es.png)
+El estado pasa a **Pago reclamado**. Los BIG siguen bloqueados: esto es solo la declaración de pago del comprador.
+
+![Pago reclamado](assets/screenshots/p2p-cny-wechat-10-payment-claimed-es.png)
 
 ---
 
 ## 7. El vendedor confirma en su propio extracto
 
-La tarjeta del vendedor muestra el número de transacción del comprador y el concepto. El vendedor comprueba **importe + concepto + hora + número de transacción en su propia cuenta** (las capturas nunca cuentan) y solo entonces pulsa **Confirmar recepción**:
+La tarjeta del vendedor muestra el número de referencia y el concepto que ha indicado el comprador. El vendedor comprueba solo en su propio extracto de WeChat el **importe + concepto + hora + número de referencia**, y únicamente cuando todo cuadra pulsa **Confirmar cobro**.
 
-![El vendedor ve el número de transacción + la advertencia de confirmación](assets/screenshots/p2p-cny-wechat-11-seller-confirm-es.png)
+Una captura de pantalla no sirve como prueba; lo que cuenta es el dinero que ha entrado realmente en su propia cuenta.
 
-Estado: `PAYMENT_VERIFIED`.
+![El vendedor ve el número de referencia + el aviso de confirmación](assets/screenshots/p2p-cny-wechat-11-seller-confirm-es.png)
 
-![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-wechat-12-payment-verified-es.png)
+El estado pasa a **Pago confirmado**.
 
----
-
-## 8. El motor y el vendedor liberan el depósito
-
-Dos firmas satisfacen el script: la del vendedor (prefirmada en el bloqueo, o una cofirma) y la del motor. Ninguna parte por sí sola puede mover los fondos.
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await sellerKey.signInput(tx, 0),
-  await engineKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-El gasto de liberación se ensambla y se emite hacia `receiveAddress`. Estado: `ESCROW_RELEASED`. El comprador ya tiene los tokens; como el vendedor ya cobró en CNY, no hay paso de pago fiat — `complete` cierra el swap.
-
-![ESCROW_RELEASED](assets/screenshots/p2p-cny-wechat-13-escrow-released-es.png)
-
-![COMPLETED](assets/screenshots/p2p-cny-wechat-14-completed-es.png)
+![Pago confirmado](assets/screenshots/p2p-cny-wechat-12-payment-verified-es.png)
 
 ---
 
-## 9. Tiempo agotado o fallo → reembolso
+## 8. El vendedor libera el depósito
 
-Si el comprador nunca paga, el motor y el vendedor cosignan el mismo script de vuelta al vendedor:
+> **Vendedor: libera el depósito cuanto antes.** Nada más confirmar el cobro, pulsa **Liberar fondos**. Retrasar la liberación baja la puntuación del vendedor; los retrasos graves o repetidos lo marcan como **poco fiable**, lo que afecta a sus próximas operaciones.
 
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await engineKey.signInput(tx, 0),
-  await sellerKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
+En cuanto el vendedor confirma el cobro, pulsa **Liberar fondos**; la plataforma firma junto con él y los BIG se envían a la dirección de cobro del comprador. Bastan la firma del vendedor y la de la plataforma para completar la liberación, y ninguna de las dos partes puede mover ese dinero por separado.
 
-El reembolso no requiere consentimiento del comprador ni bloqueo temporal — el umbral se alcanza con las otras dos claves. Estado: `EXPIRED` → `ESCROW_REFUNDED`. Ninguna parte retiene nunca los fondos de la otra.
+Como el vendedor ha cobrado directamente, no hay ningún paso adicional de envío de moneda fiduciaria y la operación termina en ese momento.
+
+![Depósito liberado](assets/screenshots/p2p-cny-wechat-13-escrow-released-es.png)
+
+![Completado](assets/screenshots/p2p-cny-wechat-14-completed-es.png)
+
+El estado pasa a **Completado**.
 
 ---
 
-## 10. Verificación en el dispositivo — el propio teléfono del vendedor
+## 9. Opcional: la plataforma ayuda a resolver una disputa
 
-El extracto del propio vendedor es el recibo; el motor puede leerlo
-automáticamente a través de la app del teléfono
-([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp)).
-WeChat oculta su interfaz a la accesibilidad, así que para WeChat la app lee la
-notificación «pago recibido» (para Alipay/banco, la pantalla).
+Si las partes no están de acuerdo sobre el pago (importe incorrecto, dinero no recibido, el vendedor tarda en liberar, etc.), cualquiera de ellas puede congelar la operación y abrir una disputa. La plataforma revisa el depósito y las pruebas de pago y decide **liberar los BIG al comprador** o **reembolsar al vendedor**.
 
-El emparejamiento es un **código corto de un solo uso** que la app muestra en su
-pantalla Servidor: introduce el endpoint y el código en la pantalla **Dispositivo**
-de la cartera (**Emparejar con código**) o en la página **Mobile** de dai — la app
-devuelve un token por dispositivo (`POST /pair/claim`); se revoca en Ajustes ›
-Acceso › Dispositivos emparejados.
+Las disputas perdidas y los retrasos repetidos quedan registrados en la reputación del vendedor y, en casos graves, pueden marcarlo como **poco fiable**.
 
-Con `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt`, el motor puede confirmar
-automáticamente sin el toque manual.
+---
 
-## Comparativa: Binance P2P vs esta liquidación
+## 10. Tiempo agotado o fallo → reembolso
+
+Si el comprador no paga nunca, el vendedor puede dejar que la operación caduque; los BIG en depósito vuelven al vendedor sin necesidad del consentimiento del comprador.
+
+Ninguna de las partes retiene nunca el dinero de la otra.
+
+---
+
+## 11. Opcional: «Verificar con mi teléfono» (comprador, liberación retrasada)
+
+No es un paso necesario en una liquidación normal. El comprador solo ve **«Verificar con mi teléfono»** cuando el vendedor retrasa la liberación (más de **30 minutos** desde que el comprador declara el pago, o si el cobro ya está confirmado y aun así no libera) **o** cuando ya hay una disputa abierta.
+
+Solo aparece para **Alipay / banco**, porque el comprador puede leer los movimientos de su cuenta; WeChat solo notifica al receptor y PayPal no tiene puente de lectura, así que en esos dos casos no se muestra. El comprador hace una lectura con su propio teléfono emparejado, y la cartera firma y envía el resultado; la verificación queda registrada en la reputación del vendedor, pero no sustituye la liberación que el vendedor debe hacer cuanto antes.
+
+---
+
+## Comparativa: Binance P2P y esta liquidación
 
 | Función | Binance P2P | Esta liquidación |
 |---|---|---|
-| Verificación fiat | El vendedor pulsa «Confirmar» (sistema de honor) | El vendedor confirma en su propio extracto; el motor impone el protocolo |
-| Custodia fiat | P2P (comprador → vendedor) | P2P (comprador → vendedor) — el motor nunca toca el fiat |
-| Depósito | Libro interno | P2SH de 2-de-3 en Bigtangle L0 (verificable) |
-| Reembolso | Ticket de soporte | Motor + vendedor cosignan, sin consentimiento del comprador |
-| Resolución de disputas | Soporte humano (días) | Prueba de tx en cadena + almacén de pruebas + concepto por swap (minutos) |
+| Verificación fiat | El vendedor pulsa «Confirmar» (sistema de reputación) | El vendedor confirma en su propio extracto y la plataforma libera según el protocolo |
+| Custodia fiat | La plataforma (comprador → vendedor) | El comprador paga directamente al vendedor; la plataforma no toca la moneda fiduciaria |
+| Depósito | Libro interno de la plataforma | Depósito 2-de-3 en la cadena, verificable públicamente |
+| Reembolso | Ticket con atención al cliente | La operación caduca y vuelve automáticamente al vendedor |
+| Resolución de disputas | Atención al cliente humana (varios días) | Disputa en la aplicación + decisión de la plataforma (más rápida) |
 
 ---
 
-## Línea de tiempo completa
+## Línea de tiempo
 
 ```
-MATCHED          14:20:00  Importe fijado en el emparejamiento
-ESCROW_LOCKED    14:23:15  Tx L0 CONFIRMED en la dirección de 2-de-3
-PAYMENT_PENDING  14:24:00  instrucciones emitidas (cuenta + concepto f71ade2d23e9)
-PAYMENT_CLAIMED  14:25:10  el comprador pegó el número de transacción 4200001234567890
-PAYMENT_VERIFIED 14:26:40  el vendedor confirmó en su propio extracto de WeChat
-ESCROW_RELEASED  14:27:20  vendedor + motor cosignaron el gasto hacia receiveAddress
-COMPLETED        14:27:21  sin pago fiat — el vendedor ya tiene los CNY
+Emparejado          14:20  Importe fijado al emparejar
+Depósito bloqueado  14:23  El vendedor transfiere los BIG y la aplicación confirma la recepción
+Pago pendiente      14:24  El comprador ve las instrucciones de pago
+Pago reclamado      14:25  El comprador paga e indica el número de referencia
+Pago confirmado     14:26  El vendedor confirma en su propio extracto
+Depósito liberado   14:27  Vendedor y plataforma firman juntos; los BIG van al comprador
+Completado          14:27  Fin de la operación
 ```
 
 ---
 
-## Flujo completo de la demostración
-
-```typescript
-// 1. El vendedor guarda un perfil de cobro en CNY     (POST /profiles)
-// 2. El vendedor envía una orden limitada firmada     (POST /orders)
-// 3. El comprador empareja con un match firmado       (POST /orders/:id/match)
-// 4. El vendedor financia el depósito P2SH 2-de-3 en L0; el motor lo demuestra (escrow_lock)
-// 5. El comprador obtiene las instrucciones de pago   (POST /swaps/:id/payment-instructions)
-// 6. Comprador paga y reclama número de transacción   (POST /swaps/:id/proof)
-// 7. El vendedor confirma en su propio extracto       (POST /swaps/:id/confirm)
-// 8. Vendedor + motor cosignan la liberación          (POST /swaps/:id/transitions, action: release)
-// 9. El motor completa el swap                        (…/transitions, action: complete)
-```
-
-Diferencia clave con Binance P2P: los fondos reposan en un script 2-de-3 que ninguna parte controla por sí sola, cada transición se ancla en L1-SOCIAL y el propio extracto del vendedor — no un ticket de soporte — es la verdad fiat.
+Si quieres conocer los detalles de implementación —máquina de estados, firmas, scripts de depósito e interfaces—, consulta la documentación para desarrolladores `docs/p2p.md`.

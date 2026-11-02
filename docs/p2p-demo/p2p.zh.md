@@ -1,33 +1,25 @@
-# FIAT（法币）结算 — 卖家确认释放的 CNY / USD（人民币 / 美元）兑换
+# FIAT（法币）结算 — 用微信 / 支付宝 / 银行或 PayPal 兑换 BIG
 
-**术语。** FIAT = 法币；CNY = 人民币；USD = 美元；P2P = 点对点。下文标题与正文中的英文常量（如 `PAYMENT_CLAIMED`）是协议状态名。
+**术语。** FIAT = 法币；CNY = 人民币；USD = 美元；P2P = 点对点。
 
-**状态：演示构建 + 仓库内引擎。** 下文即已构建的结算流程：Bigtangle L0 上的 2-of-3 P2SH 托管，以及卖家确认的法币环节（微信支付 / 支付宝 / 银行，均可选 **PayPal（USD）**）。个人转账没有机器可验证的支付事件，因此卖家自己的对账单就是法币信号。截图来自 **Android 应用真机** 的免资金演示构建（内存存储，无链上校验 — 锁定/释放哈希为合成）。设计见 `docs/p2p.md`。
+**这是什么。** 在 Bigtangle 钱包里，用 **BIG** 与法币（微信支付 / 支付宝 / 银行，或 **PayPal USD**）直接交换。卖家的 BIG 先放进一个需要买卖双方和平台三方中两方同意才能动用的**托管地址**；买家把钱直接付给卖家；卖家在自己的账单上确认后释放 BIG。平台不保管你的资金，也不经手法币。
 
-本指南演示挂单出售 **BIG**（`bc`）、与买家匹配、托管锁定、买家**直接**向卖家支付 CNY、卖家在自己的对账单上确认、托管释放，以及超时退款。
+**截图说明。** 下面的截图来自真机演示环境，金额与哈希是演示数据，不涉及真实资金。
 
-汇率：**BIG/CNY = 0.01** — 本演示挂单 **10,000 BIG → 100 CNY**。
+本指南演示：卖家挂单出售 BIG、买家购买、托管锁定、买家付款、卖家确认、释放 BIG，以及超时退款。汇率 **BIG/CNY = 0.01**，挂单 **10,000 BIG → 100 CNY**。
 
 ## 流程一览
 
 ```
-ACTIVE（待撮合）
-  ──撮合──▶ MATCHED（已匹配）
-  ──锁定托管──▶ ESCROW_LOCKED（托管已锁定）
-  ──付款说明──▶ PAYMENT_PENDING（待付款）
-  ──付款凭证──▶ PAYMENT_CLAIMED（已付款待确认）
-  ──确认收款──▶ PAYMENT_VERIFIED（已确认收款）
-  ──卖方 release（引擎共同签名）──▶ ESCROW_RELEASED（托管已释放）
-  ──完成──▶ COMPLETED（已完成）
+待撮合 → 已匹配 → 托管已锁定 → 待付款 → 已付款待确认 → 已确认收款 → 托管已释放 → 已完成
 ```
 
-每一步的引擎状态都以 `ACTIVE` → `MATCHED` → `ESCROW_LOCKED` → `PAYMENT_PENDING` → `PAYMENT_CLAIMED` → `PAYMENT_VERIFIED` → `ESCROW_RELEASED` → `COMPLETED` 推进；没有跳过，也没有回退。
+每一步都会显示在应用的交易卡片上；状态只会向前推进，不会跳过或回退。
 
-可选路径：`PAYMENT_CLAIMED` / `PAYMENT_VERIFIED` ──争议──▶ 引擎协助裁决（`release` 或 `refund`）。
+可选路径：付款后如果双方有争议，可以冻结交易并提交争议，由平台协助裁决（放币给买家或退款给卖家）。
 
-三轨合并演示（微信 / 支付宝 / 银行）见 [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`。
 
-**PayPal（美元）。** 通道选择 **PayPal** 时，法币自动切换为 **USD**，收款账户改为 PayPal 邮箱，其余流程（托管、备注码、确认、释放、争议）完全相同。完整演示见 [p2p-paypal.zh.md](p2p-paypal.zh.md) → `assets/p2p-paypal.zh.mobile.pdf`（BIG/USD = 0.01，10,000 BIG → 100 USD）。
+**PayPal（美元）。** 选择 **PayPal** 时，法币会自动切换为 **USD**，收款账户改为 PayPal 邮箱，其余流程完全相同。完整演示见 [p2p-paypal.zh.md](p2p-paypal.zh.md) → `assets/p2p-paypal.zh.mobile.pdf`（**10,000 BIG → 100 USD**）。
 
 ![以 paypal / USD 挂出卖单](assets/screenshots/p2p-paypal-02-order-zh.png)
 
@@ -37,7 +29,7 @@ ACTIVE（待撮合）
 
 ## 1. 卖家保存收款档案
 
-卖家打开 **P2P → 我的交换**，选择通道（`wechat`）并输入收款名称和账户。该档案存储在服务器的卖家 DID 下，**不属于**公开订单簿 — 仅在匹配后向买家披露。
+卖家打开 **P2P → 我的交易**，选择收款方式（微信、支付宝、银行或 PayPal），填写户名和账号（PayPal 填邮箱）。这些信息只在成交后向买家展示，不会出现在公开订单簿里。
 
 ![卖家保存微信支付档案](assets/screenshots/p2p-cny-wechat-01-profile-zh.png)
 
@@ -45,16 +37,9 @@ ACTIVE（待撮合）
 
 ## 2. 卖家挂单 BIG
 
-向结算引擎提交 DID 签名的限价单：
+卖家在 **发布卖单** 里填写代币（`bc`）、数量 **10,000**、价格 **0.01**、法币 **CNY**、收款方式 **微信**，然后发布。
 
-```json
-{ "sellerDid": "did:key:z446G…", "giveToken": "bc", "giveAmount": "10000",
-  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "100",
-  "wantRail": "wechat", "validUntil": 1791510000,
-  "nonce": "…", "timestamp": 1791509100000, "signature": "…" }
-```
-
-订单将验证卖家的 DID 签名。状态：`ACTIVE`；订单在 `validUntil` 后过期。
+发布后，卖单出现在公开订单簿中，状态为 **待撮合**。卖家可以随时撤销尚未成交的卖单。
 
 ![以 wechat / CNY 挂出卖单](assets/screenshots/p2p-cny-wechat-02-order-zh.png)
 
@@ -62,128 +47,109 @@ ACTIVE（待撮合）
 
 ## 3. 买家匹配订单
 
-买家提交 DID 签名的匹配，并提供接收托管释放的地址。没有账户/邮箱需要填写 — 匹配时无需任何法币通道信息：
+买家打开卖单，填写接收 BIG 的地址，然后确认购买。此时还不需要填写微信或支付宝账号——卖家的收款信息会在托管锁定后单独展示给这位买家。
 
-```json
-{ "orderId": "ord-…", "buyerDid": "did:key:z6Mk…",
-  "receiveAddress": "mBuyer…", "nonce": "…", "timestamp": …, "signature": "…" }
-```
-
-状态：`MATCHED`。为整个生命周期创建唯一的 `swapId`，2-of-3 托管地址由卖家 + 买家 + 引擎密钥推导。
+应用为这笔交易创建一个唯一的交易号，并准备托管地址；状态变为 **已匹配**。
 
 ![买家填写接收地址](assets/screenshots/p2p-cny-wechat-03-match-zh.png)
 
-![创建于 MATCHED 的交换](assets/screenshots/p2p-cny-wechat-04-matched-zh.png)
+![创建于已匹配的交换](assets/screenshots/p2p-cny-wechat-04-matched-zh.png)
 
 ---
 
-## 4. 卖家将 BIG 锁定到 2-of-3 托管
+## 4. 卖家将 BIG 锁定到托管
 
-托管地址是一个含三个密钥的 P2SH 脚本 — 卖家、买家、引擎 — 阈值为二：
+应用为这笔交易生成一个 **2-of-3 托管地址**：卖家、买家、平台三方中任意两方同意才能动用资金，任何一方都不能单独拿走。
 
-```typescript
-// redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
-const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "10000");
-```
-
-引擎用 `getTransactionStatus` 证明锁定 — `CONFIRMED`、目标 `escrowAddress`、金额 10000 — 任何一项检查不成立即失败关闭。状态：`ESCROW_LOCKED`。买家在付款前看到资金已受保护。
+卖家把 **10,000 BIG** 转入该地址，并在应用中粘贴这笔转账的交易哈希。应用核对金额和收款地址后，状态变为 **托管已锁定**。买家在支付法币之前就能看到 BIG 已经被锁定。
 
 ![卖家粘贴托管交易哈希](assets/screenshots/p2p-cny-wechat-05-escrow-lock-zh.png)
 
-![ESCROW_LOCKED](assets/screenshots/p2p-cny-wechat-06-escrow-locked-zh.png)
+![托管已锁定](assets/screenshots/p2p-cny-wechat-06-escrow-locked-zh.png)
 
 ---
 
 ## 5. 买家拉取支付说明
 
-买家按下 **支付详情**。引擎披露卖家档案，以及转账*必须*携带的**每笔交换备注**、精确金额和截止时间：
+买家点击 **支付详情**，会看到：
 
-```json
-{ "method": "wechat", "rail": "wechat", "accountName": "Zhang San",
-  "account": "wxid_pay8888", "amount": "100", "currency": "CNY",
-  "remark": "f71ade2d23e9", "payBy": 1791510060 }
-```
+- 卖家户名
+- 收款账户（微信 / 支付宝 / 银行账号，或 PayPal 邮箱）
+- 精确金额 **100 CNY**
+- 这笔交易专属的**备注码**
+- 付款截止时间
 
-状态：`PAYMENT_PENDING`。超时计时开始 — 未支付的交换可在无需买家同意的情况下过期并退款。
+买家转账时必须在备注里填写备注码。状态变为 **待付款**；如果超过截止时间仍未付款，交易会过期并退款。
 
 ![支付说明：户名、账户、100 CNY、备注](assets/screenshots/p2p-cny-wechat-08-instructions-zh.png)
 
 ---
 
-## 6. 买家支付 CNY 并用流水号认领
+## 6. 买家支付 CNY 并认领
 
-买家在自己的微信应用中转账 `100 CNY`，将交易号（流水号）粘贴到 **Transaction ID**，并按下 **我已付款**。可选的凭证图片存储在服务器端；只有其 `sha256` 被锚定到交换事件上。
+买家在自己的微信里转账 **100 CNY**，在备注中填入备注码，然后把交易号（流水号）粘贴到 **交易单号**，按下 **我已付款**。
+
+可以附加付款凭证图片；图片只保存在服务器端，不会写入链上。
 
 ![已输入交易号（流水号）](assets/screenshots/p2p-cny-wechat-09-payment-pending-zh.png)
 
-状态：`PAYMENT_CLAIMED` — 代币仍处于锁定状态。此状态仅是买家的主张，仅此而已。
+状态变为 **已付款待确认**。此时 BIG 仍然锁定，这只是买家的付款声明。
 
-![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-wechat-10-payment-claimed-zh.png)
+![已付款待确认](assets/screenshots/p2p-cny-wechat-10-payment-claimed-zh.png)
 
 ---
 
-## 7. 卖家在自己的对账单上确认
+## 7. 卖家在自己的账单上确认
 
-卖家的卡片显示买家的流水号和备注。卖家在自己的账户中核对**金额 + 备注 + 时间 + 流水号**（截图一律不算数），然后才按下 **确认收款**：
+卖家的交易卡片会显示买家填写的流水号和备注。卖家只在自己的微信账单里核对 **金额 + 备注 + 时间 + 流水号**，确认无误后才按下 **确认收款**。
+
+截图不能作为凭证；以自己账户里的实际到账为准。
 
 ![卖家看到流水号 + 确认警告](assets/screenshots/p2p-cny-wechat-11-seller-confirm-zh.png)
 
-状态：`PAYMENT_VERIFIED`。
+状态变为 **已确认收款**。
 
-![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-wechat-12-payment-verified-zh.png)
-
----
-
-## 8. 卖方释放托管（引擎共同签名）
-> **卖家请尽快释放托管。** 确认收款后应立即执行 `release`；延迟释放会计入卖家评分（确认→释放时长），严重或多次延迟会把卖家标记为 **不安全（unsafe）**，影响后续订单。设备核验（App 中的 **「用我的手机验证」**，英文界面为 “Verify with my phone”）不是必需步骤，只在 **买家** 于卖家延迟释放（超过 30 分钟）或有争议时出现，用于推动延迟释放；卖家不应依赖它。
-
-
-**卖方在确认收款后应立即点击「释放资金」**；引擎共同签名后广播。两个签名即可满足脚本：卖家的（锁定时预签名，或共同签署）和引擎的。任何单一一方都无法动用资金。
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await sellerKey.signInput(tx, 0),
-  await engineKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-释放交易被组装并广播到 `receiveAddress`。状态：`ESCROW_RELEASED`。买家持有代币；由于卖家已收到 CNY，不存在法币打款步骤 — `complete` 关闭交换。
-
-![ESCROW_RELEASED](assets/screenshots/p2p-cny-wechat-13-escrow-released-zh.png)
-
-![COMPLETED](assets/screenshots/p2p-cny-wechat-14-completed-zh.png)
+![已确认收款](assets/screenshots/p2p-cny-wechat-12-payment-verified-zh.png)
 
 ---
 
-## 9. 可选：争议由引擎协助裁决
+## 8. 卖方释放托管
 
-若买卖双方对付款有争议（金额不符、未收到款、卖家延迟释放等），任一方都可以冻结交易并提交争议。引擎（或部署中配置的仲裁人）核对链上托管与付款证据后，裁决为 `release`（放币给买家）或 `refund`（退回卖家）；裁决会锚定到交换记录。卖家的败诉与反复延迟会反映在信誉中，严重时可标记为 **不安全（unsafe）**。
+> **卖家请尽快释放托管。** 确认收款后应立即点击 **释放资金**。延迟释放会降低卖家评分；严重或多次延迟会把卖家标记为 **不安全**，影响后续订单。
+
+卖家确认收款后立即点击 **释放资金**，平台会共同签名，把 BIG 转到买家的收款地址。卖家的签名和平台的签名两者即可完成释放，任何一方都不能单独动这笔钱。
+
+由于卖家是直接收款的，没有额外的法币打款步骤，交易随即结束。
+
+![托管已释放](assets/screenshots/p2p-cny-wechat-13-escrow-released-zh.png)
+
+![已完成](assets/screenshots/p2p-cny-wechat-14-completed-zh.png)
+
+状态变为 **已完成**。
+
+---
+
+## 9. 可选：争议由平台协助裁决
+
+如果双方对付款有争议（金额不符、未收到款、卖家迟迟不释放等），任何一方都可以冻结交易并提交争议。平台核对托管与付款凭证后，决定 **放币给买家** 或 **退款给卖家**。
+
+卖家的败诉和反复延迟会记录在信誉中，严重时会被标记为 **不安全**。
 
 ---
 
 ## 10. 超时或失败 → 退款
 
-若买家始终未付款，引擎与卖家共同签署同一脚本退回卖家：
+如果买家一直没有付款，卖家可以让交易过期；托管的 BIG 会退回卖家，不需要买家同意。
 
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await engineKey.signInput(tx, 0),
-  await sellerKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-退款无需买家同意，也无需时间锁 — 另外两个密钥即可达到阈值。状态：`EXPIRED` → `ESCROW_REFUNDED`。任何一方都不曾持有对方的资金。
+任何一方都不会持有对方的资金。
 
 ---
 
 ## 11. 可选：「用我的手机验证」（买家，延迟释放）
 
-这不是正常结算的必需步骤。只有卖家延迟释放（买家认领付款后超过 **30 分钟**，或已确认但迟迟不释放）**或** 争议已开启时，买家才会看到 **「用我的手机验证」**；它只对**支付宝 / 银行**显示（买家侧可读取转账记录）——微信只有收款方通知，PayPal 没有读取桥。买家用自己配对的手机（Mobile Agent）读取一次，钱包对判定签名并提交；核验会记录到卖家的信誉中，但不能替代卖家应尽快执行的 `release`。
+这不是正常结算的必需步骤。只有卖家延迟释放（买家认领付款后超过 **30 分钟**，或已确认但迟迟不释放）**或** 争议已开启时，买家才会看到 **「用我的手机验证」**。
+
+它只对 **支付宝 / 银行** 显示，因为买家侧可以读取转账记录；微信只有收款方通知，PayPal 没有读取桥，因此都不显示。买家用自己配对的手机读取一次，钱包对结果签名并提交；核验会记录到卖家的信誉中，但不能替代卖家应尽快执行的释放。
 
 ---
 
@@ -191,40 +157,26 @@ await L0.submitTransaction(serialize(tx));
 
 | 功能 | Binance P2P | 本次结算 |
 |---|---|---|
-| 法币验证 | 卖家点击"确认"（信誉系统） | 卖家在自己的对账单上确认；引擎强制执行协议 |
-| 法币托管 | P2P（买家 → 卖家） | P2P（买家 → 卖家）— 引擎从不经手法币 |
-| 托管 | 内部账本 | Bigtangle L0 上的 2-of-3 P2SH（可验证） |
-| 退款 | 客服工单 | 引擎 + 卖家共同签署，无需买家同意 |
-| 争议解决 | 人工客服（数天） | 链上交易证明 + 证明存储 + 每笔交换备注（数分钟） |
+| 法币验证 | 卖家点击“确认”（信誉系统） | 卖家在自己的账单上确认，平台按流程放币 |
+| 法币托管 | 平台（买家 → 卖家） | 买家直接付给卖家，平台不经手法币 |
+| 托管 | 平台内部账本 | 链上 2-of-3 托管，公开可查 |
+| 退款 | 客服工单 | 交易过期自动退回卖家 |
+| 争议解决 | 人工客服（数天） | 应用内争议 + 平台裁决（更快） |
 
 ---
 
-## 完整时间线
+## 时间线
 
 ```
-MATCHED          14:20:00  金额在匹配时固定
-ESCROW_LOCKED    14:23:15  L0 交易在 2-of-3 地址 CONFIRMED
-PAYMENT_PENDING  14:24:00  已下发说明（账户 + 备注 f71ade2d23e9）
-PAYMENT_CLAIMED  14:25:10  买家粘贴流水号 4200001234567890
-PAYMENT_VERIFIED 14:26:40  卖家在自己的微信对账单上确认
-ESCROW_RELEASED  14:27:20  卖家 + 引擎共同签署支出到 receiveAddress
-COMPLETED        14:27:21  无法币打款 — 卖家已持有 CNY
+已匹配        14:20  金额在匹配时固定
+托管已锁定    14:23  卖家转入 BIG，应用确认到账
+待付款        14:24  买家看到付款说明
+已付款待确认  14:25  买家付款并填写流水号
+已确认收款    14:26  卖家在自己的账单确认
+托管已释放    14:27  卖家和平台共同签名，BIG 转给买家
+已完成        14:27  交易结束
 ```
 
 ---
 
-## 完整演示流程
-
-```typescript
-// 1. 卖家保存 CNY 收款档案                 (POST /profiles)
-// 2. 卖家提交签名限价单                   (POST /orders)
-// 3. 买家使用签名匹配                     (POST /orders/:id/match)
-// 4. 卖家在 L0 为 2-of-3 P2SH 托管注资；引擎证明（escrow_lock）
-// 5. 买家拉取支付说明                     (POST /swaps/:id/payment-instructions)
-// 6. 买家在微信付款并认领流水号           (POST /swaps/:id/proof)
-// 7. 卖家在自己的对账单上确认             (POST /swaps/:id/confirm)
-// 8. 卖家 + 引擎共同签署释放              (POST /swaps/:id/transitions, action: release)
-// 9. 引擎完成交换                         (…/transitions, action: complete)
-```
-
-与 Binance P2P 的关键区别：资金存放于任何一方都无法单独控制的 2-of-3 脚本中，每次状态转移都锚定在 L1-SOCIAL 上，而卖家自己的对账单 — 而非客服工单 — 才是法币事实。
+想了解状态机、签名、托管脚本和接口的实现细节，请看开发者文档 `docs/p2p.md`。

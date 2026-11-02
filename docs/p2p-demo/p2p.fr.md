@@ -1,205 +1,180 @@
-# Règlement FIAT — Swap en CNY avec libération confirmée par le vendeur
+# Règlement FIAT (monnaie fiduciaire) — échanger des BIG avec WeChat / Alipay / virement bancaire ou PayPal
 
-**Statut : build de démonstration + moteur en dépôt.** Tout ce qui suit est le flux de règlement tel que construit : séquestre P2SH 2-sur-3 sur Bigtangle L0 et une jambe CNY confirmée par le vendeur (WeChat Pay / Alipay / banque). Un virement personnel n'a pas d'événement de paiement vérifiable par machine, donc le propre relevé du vendeur constitue le signal fiat. Les captures proviennent du build de démonstration (stockage en mémoire, pas de contrôle de chaîne — les hachages de verrouillage/libération sont synthétiques). Le design se trouve dans `docs/p2p.md`.
+**Terminologie.** FIAT = monnaie fiduciaire ; CNY = yuan ; USD = dollar américain ; P2P = pair à pair.
 
-Ce guide déroule la mise en vente d'USDT, l'appariement avec un acheteur, le verrouillage du séquestre, le paiement des CNY par l'acheteur **directement** au vendeur, la confirmation du vendeur sur son propre relevé, la libération du séquestre et le remboursement en cas de délai dépassé.
+**De quoi s'agit-il.** Dans le portefeuille Bigtangle, échangez des **BIG** directement contre de la monnaie fiduciaire (WeChat Pay / Alipay / virement bancaire, ou **PayPal USD**). Les BIG du vendeur sont d'abord placés dans une **adresse de séquestre** qui ne peut être utilisée qu'avec l'accord de deux parties sur trois — vendeur, acheteur et plateforme ; l'acheteur paie l'argent directement au vendeur ; le vendeur confirme sur son propre relevé, puis libère les BIG. La plateforme ne conserve pas vos fonds et ne touche jamais à la monnaie fiduciaire.
 
-Pour le parcours combiné à trois rails (WeChat / Alipay / banque), voir [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`.
+**À propos des captures d'écran.** Les captures ci-dessous proviennent d'un environnement de démonstration sur appareil réel ; les montants et les empreintes affichés sont des données de démonstration et n'impliquent aucun fonds réel.
 
----
+Ce guide présente : un vendeur publie une annonce de vente de BIG, un acheteur achète, le séquestre se verrouille, l'acheteur paie, le vendeur confirme, les BIG sont libérés, ainsi que le remboursement en cas d'expiration. Taux **BIG/CNY = 0.01**, annonce **10,000 BIG → 100 CNY**.
 
-## 1. Le vendeur enregistre un profil de collecte
+## Aperçu du déroulement
 
-Le vendeur ouvre **P2P → Mes swaps**, choisit le rail (`wechat`) et saisit le nom et le compte du bénéficiaire. Le profil est stocké côté serveur sous le DID du vendeur et ne fait **pas** partie du carnet d'ordres public — il n'est révélé qu'à l'acheteur apparié.
-
-![Le vendeur enregistre le profil de paiement WeChat](assets/screenshots/p2p-cny-wechat-01-profile-fr.png)
-
----
-
-## 2. Le vendeur inscrit ses USDT
-
-Soumet une ordre limite signée par DID au moteur de règlement :
-
-```json
-{ "sellerDid": "did:key:z446G…", "giveToken": "USDT", "giveAmount": "10",
-  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "715",
-  "wantRail": "wechat", "validUntil": 1791510000,
-  "nonce": "…", "timestamp": 1791509100000, "signature": "…" }
+```
+En attente de jumelage → Jumelé → Séquestre verrouillé → Paiement en attente → Paiement déclaré → Paiement confirmé → Séquestre libéré → Terminé
 ```
 
-L'ordre est validé contre la signature DID du vendeur. Statut : `ACTIVE` ; elle expire après `validUntil`.
+Chaque étape s'affiche sur la carte de transaction dans l'application ; l'état ne peut qu'avancer, sans saut ni retour en arrière.
 
-![Inscrire une ordre de vente avec wechat / CNY](assets/screenshots/p2p-cny-wechat-02-order-fr.png)
+Parcours facultatif : après le paiement, si les deux parties ne sont pas d'accord, la transaction peut être gelée et un litige soumis ; la plateforme aide alors à trancher (libération des fonds à l'acheteur ou remboursement au vendeur).
 
----
 
-## 3. L'acheteur apparie l'ordre
+**PayPal (dollars).** En choisissant **PayPal**, la monnaie fiduciaire passe automatiquement en **USD**, le compte de réception devient une adresse e-mail PayPal, et le reste du déroulement est identique. Démonstration complète : [p2p-paypal.zh.md](p2p-paypal.zh.md) → `assets/p2p-paypal.zh.mobile.pdf` (**10,000 BIG → 100 USD**).
 
-L'acheteur soumet un appariement signé par DID, en fournissant l'adresse qui doit recevoir la libération du séquestre. Il n'y a aucun compte/e-mail à collecter — rien sur le rail fiat n'est nécessaire au moment de l'appariement :
 
-```json
-{ "orderId": "ord-…", "buyerDid": "did:key:z6Mk…",
-  "receiveAddress": "mBuyer…", "nonce": "…", "timestamp": …, "signature": "…" }
-```
-
-Statut : `MATCHED`. Un `swapId` unique est créé pour le cycle de vie et l'adresse de séquestre 2-sur-3 est dérivée des clés vendeur + acheteur + moteur.
-
-![L'acheteur renseigne l'adresse de réception](assets/screenshots/p2p-cny-wechat-03-match-fr.png)
-
-![Swap créé à MATCHED](assets/screenshots/p2p-cny-wechat-04-matched-fr.png)
 
 ---
 
-## 4. Le vendeur verrouille ses USDT dans un séquestre 2-sur-3
+## 1. Le vendeur enregistre son profil de réception
 
-L'adresse de séquestre est un script P2SH à trois clés — vendeur, acheteur, moteur — avec un seuil de deux :
+Le vendeur ouvre **P2P → Mes transactions**, choisit le mode de réception (WeChat, Alipay, banque ou PayPal) et saisit le nom du titulaire et le numéro de compte (une adresse e-mail pour PayPal). Ces informations ne sont montrées à l'acheteur qu'une fois la transaction conclue ; elles n'apparaissent jamais dans le carnet d'ordres public.
 
-```typescript
-// redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
-const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "10");
-```
-
-Le moteur prouve le verrouillage avec `getTransactionStatus` — `CONFIRMED`, destination `escrowAddress`, montant 10 — et échoue en mode fermé si un contrôle ne tient pas. Statut : `ESCROW_LOCKED`. L'acheteur voit les fonds sécurisés avant de payer.
-
-![Le vendeur colle le hachage de la tx de séquestre](assets/screenshots/p2p-cny-wechat-05-escrow-lock-fr.png)
-
-![ESCROW_LOCKED](assets/screenshots/p2p-cny-wechat-06-escrow-locked-fr.png)
+![Le vendeur enregistre son profil WeChat Pay](assets/screenshots/p2p-cny-wechat-01-profile-fr.png)
 
 ---
 
-## 5. L'acheteur récupère les instructions de paiement
+## 2. Le vendeur publie une annonce de vente de BIG
 
-L'acheteur appuie sur **Détails du paiement**. Le moteur révèle le profil du vendeur, plus un **libellé par swap** que le virement *doit* porter, le montant exact et une échéance :
+Dans **Publier une annonce de vente**, le vendeur indique le jeton (`bc`), la quantité **10,000**, le prix **0.01**, la monnaie fiduciaire **CNY**, le mode de réception **WeChat**, puis publie.
 
-```json
-{ "method": "wechat", "rail": "wechat", "accountName": "Zhang San",
-  "account": "wxid_pay8888", "amount": "715", "currency": "CNY",
-  "remark": "f71ade2d23e9", "payBy": 1791510060 }
-```
+Une fois publiée, l'annonce apparaît dans le carnet d'ordres public avec l'état **En attente de jumelage**. Le vendeur peut à tout moment retirer une annonce qui n'a pas encore trouvé preneur.
 
-Statut : `PAYMENT_PENDING`. Un minuteur démarre — un swap impayé peut expirer et être remboursé sans le consentement de l'acheteur.
-
-![Instructions de paiement : nom du titulaire, compte, 715 CNY, libellé](assets/screenshots/p2p-cny-wechat-08-instructions-fr.png)
+![Annonce de vente en wechat / CNY](assets/screenshots/p2p-cny-wechat-02-order-fr.png)
 
 ---
 
-## 6. L'acheteur paie les CNY et réclame avec le numéro de transaction
+## 3. L'acheteur apparie l'annonce
 
-L'acheteur vire `715 CNY` dans sa propre app WeChat, colle le numéro de transaction dans **Transaction ID** et appuie sur **J'ai payé**. L'image de reçu facultative est stockée côté serveur ; seul son `sha256` est ancré sur l'événement du swap.
+L'acheteur ouvre l'annonce, saisit l'adresse qui recevra les BIG, puis confirme l'achat. Il n'a pas encore besoin d'indiquer un compte WeChat ou Alipay : les informations de réception du vendeur ne sont communiquées qu'à cet acheteur, après le verrouillage du séquestre.
+
+L'application attribue à cette transaction un numéro unique et prépare l'adresse de séquestre ; l'état passe à **Jumelé**.
+
+![L'acheteur saisit l'adresse de réception](assets/screenshots/p2p-cny-wechat-03-match-fr.png)
+
+![Échange créé à l'état Jumelé](assets/screenshots/p2p-cny-wechat-04-matched-fr.png)
+
+---
+
+## 4. Le vendeur verrouille ses BIG dans le séquestre
+
+L'application génère pour cette transaction une **adresse de séquestre 2-sur-3** : les fonds ne peuvent être utilisés qu'avec l'accord de deux parties parmi les trois (vendeur, acheteur, plateforme), et aucune partie ne peut les retirer seule.
+
+Le vendeur transfère **10,000 BIG** à cette adresse, puis colle dans l'application l'empreinte de ce transfert. Après vérification du montant et de l'adresse de réception, l'état passe à **Séquestre verrouillé**. L'acheteur voit ainsi que les BIG sont bien bloqués avant même de payer en monnaie fiduciaire.
+
+![Le vendeur colle l'empreinte de la transaction de séquestre](assets/screenshots/p2p-cny-wechat-05-escrow-lock-fr.png)
+
+![Séquestre verrouillé](assets/screenshots/p2p-cny-wechat-06-escrow-locked-fr.png)
+
+---
+
+## 5. L'acheteur consulte les instructions de paiement
+
+En appuyant sur **Détails du paiement**, l'acheteur voit :
+
+- le nom du titulaire
+- le compte de réception (numéro WeChat / Alipay / bancaire, ou adresse e-mail PayPal)
+- le montant exact **100 CNY**
+- un **code de référence** propre à cette transaction
+- la date limite de paiement
+
+L'acheteur doit inscrire le code de référence dans le libellé de son virement. L'état passe à **Paiement en attente** ; si le paiement n'est pas effectué avant la date limite, la transaction expire et les fonds sont remboursés.
+
+![Instructions de paiement : titulaire, compte, 100 CNY, référence](assets/screenshots/p2p-cny-wechat-08-instructions-fr.png)
+
+---
+
+## 6. L'acheteur paie en CNY et déclare son paiement
+
+L'acheteur effectue un virement de **100 CNY** depuis son propre WeChat, inscrit le code de référence dans le libellé, puis colle le numéro de transaction (numéro de référence du virement) dans **Numéro de transaction** et appuie sur **J'ai payé**.
+
+Il peut joindre une image de son justificatif de paiement ; cette image est conservée uniquement côté serveur et n'est jamais inscrite sur la chaîne.
 
 ![Numéro de transaction saisi](assets/screenshots/p2p-cny-wechat-09-payment-pending-fr.png)
 
-Statut : `PAYMENT_CLAIMED` — les jetons sont toujours verrouillés. Cet état est la réclamation de l'acheteur et rien de plus.
+L'état passe à **Paiement déclaré**. À ce stade, les BIG restent verrouillés : il ne s'agit que de la déclaration de paiement de l'acheteur.
 
-![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-wechat-10-payment-claimed-fr.png)
+![Paiement déclaré](assets/screenshots/p2p-cny-wechat-10-payment-claimed-fr.png)
 
 ---
 
 ## 7. Le vendeur confirme sur son propre relevé
 
-La carte du vendeur affiche le numéro de transaction de l'acheteur et le libellé. Le vendeur vérifie **montant + libellé + heure + numéro de transaction sur son propre compte** (les captures ne comptent jamais) et n'appuie qu'ensuite sur **Confirmer la réception** :
+La carte de transaction du vendeur affiche le numéro de référence et le libellé saisis par l'acheteur. Le vendeur vérifie **le montant + le libellé + l'heure + le numéro de transaction uniquement dans son propre relevé WeChat**, et n'appuie sur **Confirmer la réception** qu'après vérification.
+
+Une capture d'écran ne fait pas foi ; seul le crédit réellement reçu sur votre propre compte compte.
 
 ![Le vendeur voit le numéro de transaction + l'avertissement de confirmation](assets/screenshots/p2p-cny-wechat-11-seller-confirm-fr.png)
 
-Statut : `PAYMENT_VERIFIED`.
+L'état passe à **Paiement confirmé**.
 
-![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-wechat-12-payment-verified-fr.png)
-
----
-
-## 8. Le moteur et le vendeur libèrent le séquestre
-
-Deux signatures satisfont le script : celle du vendeur (pré-signée au verrouillage, ou une co-signature) et celle du moteur. Aucune partie seule ne peut déplacer les fonds.
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await sellerKey.signInput(tx, 0),
-  await engineKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-La dépense de libération est assemblée et diffusée vers `receiveAddress`. Statut : `ESCROW_RELEASED`. L'acheteur détient les jetons ; comme le vendeur a déjà été payé en CNY, il n'y a pas d'étape de versement fiat — `complete` clôt le swap.
-
-![ESCROW_RELEASED](assets/screenshots/p2p-cny-wechat-13-escrow-released-fr.png)
-
-![COMPLETED](assets/screenshots/p2p-cny-wechat-14-completed-fr.png)
+![Paiement confirmé](assets/screenshots/p2p-cny-wechat-12-payment-verified-fr.png)
 
 ---
 
-## 9. Délai dépassé ou échec → remboursement
+## 8. Le vendeur libère le séquestre
 
-Si l'acheteur ne paie jamais, le moteur et le vendeur cosignent le même script en faveur du vendeur :
+> **Vendeurs, libérez le séquestre sans attendre.** Dès la confirmation du paiement, appuyez sur **Libérer les fonds**. Une libération tardive dégrade la réputation du vendeur ; des retards graves ou répétés le font marquer comme **non fiable**, ce qui pénalise ses commandes futures.
 
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await engineKey.signInput(tx, 0),
-  await sellerKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
+Dès que le vendeur a confirmé le paiement, il appuie sur **Libérer les fonds** ; la plateforme cosigne alors et les BIG sont transférés à l'adresse de réception de l'acheteur. La signature du vendeur et celle de la plateforme suffisent pour libérer les fonds, et aucune des parties ne peut y toucher seule.
 
-Le remboursement ne demande ni consentement de l'acheteur ni time-lock — le seuil est atteint avec les deux autres clés. Statut : `EXPIRED` → `ESCROW_REFUNDED`. Aucune partie ne détient jamais les fonds de l'autre.
+Comme le vendeur est payé directement, il n'y a aucune étape supplémentaire de versement en monnaie fiduciaire : la transaction se termine aussitôt.
+
+![Séquestre libéré](assets/screenshots/p2p-cny-wechat-13-escrow-released-fr.png)
+
+![Terminé](assets/screenshots/p2p-cny-wechat-14-completed-fr.png)
+
+L'état passe à **Terminé**.
 
 ---
 
-## 10. Vérification côté appareil — le téléphone du vendeur
+## 9. Facultatif : un litige tranché avec l'aide de la plateforme
 
-Le relevé du vendeur est le reçu ; le moteur peut le lire automatiquement via
-l'app du téléphone ([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp)).
-WeChat masque son interface à l'accessibilité, donc pour WeChat l'app lit la
-notification « paiement reçu » (pour Alipay/banque, l'écran).
+Si les deux parties ne sont pas d'accord sur le paiement (montant incorrect, paiement non reçu, vendeur qui tarde à libérer, etc.), chacune peut geler la transaction et soumettre un litige. Après vérification du séquestre et des preuves de paiement, la plateforme décide de **libérer les fonds à l'acheteur** ou de **rembourser le vendeur**.
 
-L'appairage est un **code court à usage unique** affiché par l'app sur son écran
-Serveur : saisissez l'endpoint et le code dans l'écran **Appareil** du
-portefeuille (**Appairer avec le code**) ou la page **Mobile** de dai — l'app
-renvoie un jeton par appareil (`POST /pair/claim`) ; révocation dans Réglages ›
-Accès › Appareils appairés.
+Les litiges perdus par le vendeur et ses retards répétés sont enregistrés dans sa réputation ; en cas de manquement grave, il est marqué comme **non fiable**.
 
-Avec `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt`, le moteur peut confirmer
-automatiquement sans le tap manuel.
+---
 
-## Comparaison : Binance P2P vs ce règlement
+## 10. Expiration ou échec → remboursement
+
+Si l'acheteur ne paie jamais, le vendeur peut laisser la transaction expirer ; les BIG placés en séquestre lui sont rendus, sans avoir besoin de l'accord de l'acheteur.
+
+Aucune des parties ne détient jamais les fonds de l'autre.
+
+---
+
+## 11. Facultatif : « Vérifier avec mon téléphone » (acheteur, libération tardive)
+
+Cette étape n'est pas nécessaire pour un règlement normal. L'acheteur ne voit **« Vérifier avec mon téléphone »** que si le vendeur tarde à libérer (plus de **30 minutes** après la déclaration de paiement de l'acheteur, ou paiement confirmé mais toujours pas de libération) **ou** si un litige est ouvert.
+
+Cette option n'apparaît que pour **Alipay / virement bancaire**, car l'acheteur peut y consulter l'historique des virements ; WeChat n'envoie qu'une notification au bénéficiaire et PayPal n'offre aucun accès en lecture, donc elle n'y est pas proposée. L'acheteur effectue une seule lecture avec son téléphone appairé ; le portefeuille signe le résultat et le transmet. Cette vérification est enregistrée dans la réputation du vendeur, mais ne remplace pas la libération que le vendeur doit effectuer sans attendre.
+
+---
+
+## Comparaison : Binance P2P et ce règlement
 
 | Fonctionnalité | Binance P2P | Ce règlement |
 |---|---|---|
-| Vérification fiat | Le vendeur clique « Confirmer » (système d'honneur) | Le vendeur confirme sur son propre relevé ; le moteur applique le protocole |
-| Custody fiat | P2P (acheteur → vendeur) | P2P (acheteur → vendeur) — le moteur ne touche jamais le fiat |
-| Séquestre | Registre interne | P2SH 2-sur-3 sur Bigtangle L0 (vérifiable) |
-| Remboursement | Ticket support | Moteur + vendeur cosignent, sans consentement de l'acheteur |
-| Résolution de litige | Support humain (jours) | Preuve tx on-chain + magasin de preuves + libellé par swap (minutes) |
+| Vérification de la monnaie fiduciaire | Le vendeur clique sur « Confirmer » (système de réputation) | Le vendeur confirme sur son propre relevé ; la plateforme libère les fonds selon le protocole |
+| Dépôt fiduciaire | La plateforme (acheteur → vendeur) | L'acheteur paie directement le vendeur ; la plateforme ne touche jamais la monnaie fiduciaire |
+| Séquestre | Registre interne à la plateforme | Séquestre 2-sur-3 sur la chaîne, vérifiable publiquement |
+| Remboursement | Ticket auprès du support | Expiration automatique, retour au vendeur |
+| Résolution des litiges | Support humain (plusieurs jours) | Litige dans l'application + arbitrage de la plateforme (plus rapide) |
 
 ---
 
-## Chronologie complète
+## Chronologie
 
 ```
-MATCHED          14:20:00  Montant fixé à l'appariement
-ESCROW_LOCKED    14:23:15  Tx L0 CONFIRMÉE à l'adresse 2-sur-3
-PAYMENT_PENDING  14:24:00  instructions émises (compte + libellé f71ade2d23e9)
-PAYMENT_CLAIMED  14:25:10  l'acheteur a collé le numéro de transaction 4200001234567890
-PAYMENT_VERIFIED 14:26:40  le vendeur a confirmé sur son propre relevé WeChat
-ESCROW_RELEASED  14:27:20  vendeur + moteur ont cosigné la dépense vers receiveAddress
-COMPLETED        14:27:21  pas de versement fiat — le vendeur détient déjà les CNY
+Jumelé                 14:20  Montant fixé au jumelage
+Séquestre verrouillé   14:23  Le vendeur transfère les BIG, l'application confirme la réception
+Paiement en attente    14:24  L'acheteur voit les instructions de paiement
+Paiement déclaré       14:25  L'acheteur paie et renseigne le numéro de transaction
+Paiement confirmé      14:26  Le vendeur confirme sur son propre relevé
+Séquestre libéré       14:27  Vendeur et plateforme cosignent, les BIG vont à l'acheteur
+Terminé                14:27  Transaction terminée
 ```
 
 ---
 
-## Flux de démonstration complet
-
-```typescript
-// 1. Le vendeur enregistre un profil de collecte en CNY  (POST /profiles)
-// 2. Le vendeur soumet une ordre limite signée           (POST /orders)
-// 3. L'acheteur apparie avec un match signé              (POST /orders/:id/match)
-// 4. Le vendeur approvisionne le séquestre P2SH 2-sur-3 sur L0 ; le moteur le prouve (escrow_lock)
-// 5. L'acheteur récupère les instructions de paiement    (POST /swaps/:id/payment-instructions)
-// 6. L'acheteur paie et réclame le numéro de transaction (POST /swaps/:id/proof)
-// 7. Le vendeur confirme sur son propre relevé           (POST /swaps/:id/confirm)
-// 8. Vendeur + moteur cosignent la libération            (POST /swaps/:id/transitions, action: release)
-// 9. Le moteur clôt le swap                              (…/transitions, action: complete)
-```
-
-Différence clé avec Binance P2P : les fonds reposent dans un script 2-sur-3 que ni l'une ni l'autre partie ne contrôle seule, chaque transition est ancrée sur L1-SOCIAL, et le propre relevé du vendeur — pas un ticket support — constitue la vérité fiat.
+Pour comprendre les détails d'implémentation — machine à états, signatures, script de séquestre et interfaces —, consultez la documentation développeur `docs/p2p.md`.

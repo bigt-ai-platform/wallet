@@ -1,33 +1,43 @@
-# FIAT-Abwicklung — CNY-Swap mit vom Verkäufer bestätigter Freigabe
+# FIAT (Fiat-Währung) Abwicklung — BIG mit WeChat / Alipay / Bank oder PayPal tauschen
 
-**Status: Demo-Build + Engine im Repo.** Alles nachfolgende ist der Abwicklungsfluss wie gebaut: 2-von-3-P2SH-Eskrow auf Bigtangle L0 und eine vom Verkäufer bestätigte CNY-Strecke (WeChat Pay / Alipay / Bank). Eine persönliche Überweisung hat kein maschinell verifizierbares Zahlungsereignis, daher ist der eigene Kontoauszug des Verkäufers das Fiat-Signal. Screenshots stammen aus dem Demo-Build (Memory Store, keine Chain-Prüfung — die Lock/Release-Hashes sind synthetisch). Das Design liegt in `docs/p2p.md`.
+**Begriffe.** FIAT = Fiat-Währung; CNY = chinesischer Yuan; USD = US-Dollar; P2P = Peer-to-Peer.
 
-Diese Anleitung führt durch das Einlisten von USDT zum Verkauf, das Matching mit einem Käufer, die Eskrow-Sperre, die Zahlung von CNY durch den Käufer **direkt** an den Verkäufer, die Bestätigung des Verkäufers auf dem eigenen Kontoauszug, die Eskrow-Freigabe und die Rückerstattung bei Timeout.
+**Worum es geht.** In der Bigtangle Wallet tauschst du **BIG** direkt gegen Fiat-Währung (WeChat Pay / Alipay / Bank oder **PayPal USD**). Die BIG des Verkäufers kommen zuerst in eine **Treuhandadresse**, über die nur mit Zustimmung von zwei der drei Seiten — Verkäufer, Käufer und Plattform — verfügt werden kann. Der Käufer zahlt das Geld direkt an den Verkäufer; nachdem der Verkäufer den Eingang auf seinem eigenen Kontoauszug bestätigt hat, gibt er die BIG frei. Die Plattform verwahrt dein Geld nicht und berührt die Fiat-Währung nicht.
 
-Für den kombinierten Drei-Schienen-Durchlauf (WeChat / Alipay / Bank) siehe [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`.
+**Zu den Screenshots.** Die Screenshots unten stammen aus einer Demo-Umgebung auf einem echten Gerät; Beträge und Hash-Werte sind Demodaten, es ist kein echtes Geld im Spiel.
+
+Diese Anleitung zeigt: Ein Verkäufer stellt BIG zum Verkauf ein, ein Käufer kauft, die Treuhand wird gesperrt, der Käufer zahlt, der Verkäufer bestätigt, die BIG werden freigegeben, und bei Zeitüberschreitung gibt es eine Rückerstattung. Wechselkurs **BIG/CNY = 0.01**, Order **10,000 BIG → 100 CNY**.
+
+## Ablauf im Überblick
+
+```
+Ausstehendes Match → Zugeordnet → Treuhand gesperrt → Zahlung ausstehend → Zahlung gemeldet → Zahlung bestätigt → Treuhand freigegeben → Abgeschlossen
+```
+
+Jeder Schritt erscheint auf der Transaktionskarte in der App; der Status läuft nur vorwärts und wird weder übersprungen noch zurückgesetzt.
+
+Optionaler Weg: Wenn es nach der Zahlung Streit zwischen beiden Seiten gibt, kann die Transaktion eingefroren und ein Streitfall eingereicht werden, den die Plattform unterstützend entscheidet (BIG an den Käufer freigeben oder Geld an den Verkäufer erstatten).
+
+
+**PayPal (US-Dollar).** Wenn du **PayPal** wählst, wechselt die Fiat-Währung automatisch auf **USD** und das Empfangskonto wird zur PayPal-E-Mail-Adresse; der restliche Ablauf bleibt völlig gleich. Die vollständige Demo steht in [p2p-paypal.zh.md](p2p-paypal.zh.md) → `assets/p2p-paypal.zh.mobile.pdf` (**10,000 BIG → 100 USD**).
+
+
 
 ---
 
 ## 1. Verkäufer speichert ein Zahlungsprofil
 
-Der Verkäufer öffnet **P2P → Meine Swaps**, wählt die Schiene (`wechat`) und gibt den Empfänger-Namen und das Konto ein. Das Profil wird serverseitig unter der DID des Verkäufers gespeichert und ist **nicht** Teil des öffentlichen Orderbuchs — es wird nur dem gematchten Käufer offengelegt.
+Der Verkäufer öffnet **P2P → Meine Transaktionen** und wählt die Zahlungsmethode (WeChat, Alipay, Bank oder PayPal); dann trägt er Kontoinhaber und Kontonummer ein (bei PayPal die E-Mail-Adresse). Diese Angaben werden dem Käufer erst nach dem Match gezeigt und erscheinen nicht im öffentlichen Orderbuch.
 
-![Verkäufer speichert das WeChat-Zahlungsprofil](assets/screenshots/p2p-cny-wechat-01-profile-de.png)
+![Verkäufer speichert das WeChat-Pay-Profil](assets/screenshots/p2p-cny-wechat-01-profile-de.png)
 
 ---
 
-## 2. Verkäufer listet USDT
+## 2. Verkäufer stellt BIG zum Verkauf ein
 
-Übermittelt eine DID-signierte Limit-Order an die Settlement Engine:
+Der Verkäufer trägt unter **Verkaufsorder veröffentlichen** den Token (`bc`), die Menge **10,000**, den Preis **0.01**, die Fiat-Währung **CNY** und die Zahlungsmethode **WeChat** ein und veröffentlicht die Order.
 
-```json
-{ "sellerDid": "did:key:z446G…", "giveToken": "USDT", "giveAmount": "10",
-  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "715",
-  "wantRail": "wechat", "validUntil": 1791510000,
-  "nonce": "…", "timestamp": 1791509100000, "signature": "…" }
-```
-
-Die Order wird gegen die DID-Signatur des Verkäufers validiert. Status: `ACTIVE`; sie läuft nach `validUntil` ab.
+Nach dem Veröffentlichen erscheint die Verkaufsorder im öffentlichen Orderbuch mit dem Status **Ausstehendes Match**. Eine noch nicht gematchte Verkaufsorder kann der Verkäufer jederzeit zurückziehen.
 
 ![Eine Verkaufsorder mit wechat / CNY einstellen](assets/screenshots/p2p-cny-wechat-02-order-de.png)
 
@@ -35,172 +45,136 @@ Die Order wird gegen die DID-Signatur des Verkäufers validiert. Status: `ACTIVE
 
 ## 3. Käufer matcht die Order
 
-Der Käufer übermittelt ein DID-signiertes Match und gibt die Adresse an, die die Eskrow-Freigabe erhalten soll. Es gibt kein Konto/E-Mail zu erfassen — zum Matchzeitpunkt ist nichts über die Fiat-Schiene nötig:
+Der Käufer öffnet die Verkaufsorder, trägt die Adresse für den BIG-Empfang ein und bestätigt den Kauf. WeChat- oder Alipay-Konto müssen hier noch nicht angegeben werden — die Zahlungsinformationen des Verkäufers werden diesem Käufer erst nach dem Sperren der Treuhand separat angezeigt.
 
-```json
-{ "orderId": "ord-…", "buyerDid": "did:key:z6Mk…",
-  "receiveAddress": "mBuyer…", "nonce": "…", "timestamp": …, "signature": "…" }
-```
+Die App legt für diese Transaktion eine eindeutige Transaktionsnummer an und bereitet die Treuhandadresse vor; der Status wechselt auf **Zugeordnet**.
 
-Status: `MATCHED`. Für den Lebenszyklus wird eine eindeutige `swapId` erzeugt und die 2-von-3-Eskrow-Adresse aus den Schlüsseln von Verkäufer + Käufer + Engine abgeleitet.
+![Käufer trägt die Empfangsadresse ein](assets/screenshots/p2p-cny-wechat-03-match-de.png)
 
-![Der Käufer trägt die Empfangsadresse ein](assets/screenshots/p2p-cny-wechat-03-match-de.png)
-
-![Swap bei MATCHED erstellt](assets/screenshots/p2p-cny-wechat-04-matched-de.png)
+![Swap bei Zugeordnet erstellt](assets/screenshots/p2p-cny-wechat-04-matched-de.png)
 
 ---
 
-## 4. Verkäufer sperrt USDT im 2-von-3-Eskrow
+## 4. Verkäufer sperrt die BIG in der Treuhand
 
-Die Eskrow-Adresse ist ein P2SH-Skript mit drei Schlüsseln — Verkäufer, Käufer, Engine — und einer Schwelle von zwei:
+Die App erzeugt für diese Transaktion eine **2-von-3-Treuhandadresse**: Nur wenn zwei der drei Seiten — Verkäufer, Käufer und Plattform — zustimmen, kann über das Geld verfügt werden; keine Seite kann es allein entnehmen.
 
-```typescript
-// redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
-const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "10");
-```
+Der Verkäufer überweist **10,000 BIG** an diese Adresse und fügt den Hash dieser Überweisung in die App ein. Nachdem die App Betrag und Empfangsadresse geprüft hat, wechselt der Status auf **Treuhand gesperrt**. Der Käufer sieht schon vor der Fiat-Zahlung, dass die BIG gesperrt sind.
 
-Die Engine belegt die Sperre mit `getTransactionStatus` — `CONFIRMED`, Ziel `escrowAddress`, Betrag 10 — und schlägt fehlgeschlossen fehl, wenn eine Prüfung nicht besteht. Status: `ESCROW_LOCKED`. Der Käufer sieht die Mittel gesichert, bevor er zahlt.
+![Verkäufer fügt den Hash der Treuhand-Überweisung ein](assets/screenshots/p2p-cny-wechat-05-escrow-lock-de.png)
 
-![Der Verkäufer fügt den Eskrow-Tx-Hash ein](assets/screenshots/p2p-cny-wechat-05-escrow-lock-de.png)
-
-![ESCROW_LOCKED](assets/screenshots/p2p-cny-wechat-06-escrow-locked-de.png)
+![Treuhand gesperrt](assets/screenshots/p2p-cny-wechat-06-escrow-locked-de.png)
 
 ---
 
 ## 5. Käufer ruft die Zahlungsanweisungen ab
 
-Der Käufer drückt **Zahlungsdetails**. Die Engine legt das Profil des Verkäufers offen, plus einen **Swap-spezifischen Verwendungszweck**, den die Überweisung *tragen muss*, den exakten Betrag und eine Frist:
+Der Käufer tippt auf **Zahlungsdetails** und sieht:
 
-```json
-{ "method": "wechat", "rail": "wechat", "accountName": "Zhang San",
-  "account": "wxid_pay8888", "amount": "715", "currency": "CNY",
-  "remark": "f71ade2d23e9", "payBy": 1791510060 }
-```
+- den Kontoinhaber des Verkäufers
+- das Empfangskonto (WeChat- / Alipay- / Bankkonto oder PayPal-E-Mail-Adresse)
+- den genauen Betrag **100 CNY**
+- einen **Verwendungszweck**, der nur zu dieser Transaktion gehört
+- die Zahlungsfrist
 
-Status: `PAYMENT_PENDING`. Ein Timeout startet — ein unbezahlter Swap kann ohne Zustimmung des Käufers verfallen und erstattet werden.
+Beim Überweisen muss der Käufer den Verwendungszweck als Notiz angeben. Der Status wechselt auf **Zahlung ausstehend**; wird die Frist ohne Zahlung überschritten, verfällt die Transaktion und wird erstattet.
 
-![Zahlungsanweisungen: Kontoinhaber, Konto, 715 CNY, Verwendungszweck](assets/screenshots/p2p-cny-wechat-08-instructions-de.png)
+![Zahlungsanweisung: Kontoinhaber, Konto, 100 CNY, Verwendungszweck](assets/screenshots/p2p-cny-wechat-08-instructions-de.png)
 
 ---
 
-## 6. Käufer zahlt CNY und reklamiert mit der Transaktionsnummer
+## 6. Käufer zahlt CNY und meldet die Zahlung
 
-Der Käufer überweist `715 CNY` in seiner eigenen WeChat-App, fügt die Transaktionsnummer in **Transaction ID** ein und drückt **Ich habe bezahlt**. Das optionale Belegbild wird serverseitig gespeichert; nur sein `sha256` wird am Swap-Ereignis verankert.
+Der Käufer überweist **100 CNY** in seiner eigenen WeChat-App, trägt den Verwendungszweck als Notiz ein, fügt danach die Transaktionsnummer in **Transaktionsnummer** ein und tippt auf **Ich habe bezahlt**.
 
-![Transaction ID (Transaktionsnummer) eingegeben](assets/screenshots/p2p-cny-wechat-09-payment-pending-de.png)
+Optional lässt sich ein Bild als Zahlungsbeleg anhängen; das Bild wird nur auf dem Server gespeichert und nicht in die Blockchain geschrieben.
 
-Status: `PAYMENT_CLAIMED` — die Token sind noch gesperrt. Dieser Zustand ist die Behauptung des Käufers und nichts weiter.
+![Transaktionsnummer eingegeben](assets/screenshots/p2p-cny-wechat-09-payment-pending-de.png)
 
-![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-wechat-10-payment-claimed-de.png)
+Der Status wechselt auf **Zahlung gemeldet**. Die BIG bleiben weiterhin gesperrt; das ist nur die Zahlungsmeldung des Käufers.
+
+![Zahlung gemeldet](assets/screenshots/p2p-cny-wechat-10-payment-claimed-de.png)
 
 ---
 
 ## 7. Verkäufer bestätigt auf dem eigenen Kontoauszug
 
-Die Karte des Verkäufers zeigt die Transaktionsnummer des Käufers und den Verwendungszweck. Der Verkäufer prüft **Betrag + Verwendungszweck + Zeit + Transaktionsnummer im eigenen Konto** (Screenshots zählen nie) und drückt erst dann **Empfang bestätigen**:
+Die Transaktionskarte des Verkäufers zeigt die vom Käufer eingetragene Transaktionsnummer und die Notiz. Der Verkäufer prüft ausschließlich im eigenen WeChat-Kontoauszug **Betrag + Verwendungszweck + Zeit + Transaktionsnummer** und tippt erst nach einwandfreier Prüfung auf **Zahlungseingang bestätigen**.
 
-![Verkäufer sieht Transaktionsnummer + die Bestätigungswarnung](assets/screenshots/p2p-cny-wechat-11-seller-confirm-de.png)
+Screenshots gelten nicht als Beleg; maßgeblich ist der tatsächliche Eingang auf dem eigenen Konto.
 
-Status: `PAYMENT_VERIFIED`.
+![Verkäufer sieht Transaktionsnummer + Bestätigungswarnung](assets/screenshots/p2p-cny-wechat-11-seller-confirm-de.png)
 
-![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-wechat-12-payment-verified-de.png)
+Der Status wechselt auf **Zahlung bestätigt**.
 
----
-
-## 8. Engine und Verkäufer geben das Eskrow frei
-
-Zwei Signaturen erfüllen das Skript: die des Verkäufers (bei der Sperre vorab signiert, oder eine Co-Signatur) und die der Engine. Keine einzelne Partei kann die Mittel bewegen.
-
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await sellerKey.signInput(tx, 0),
-  await engineKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
-
-Der Freigabe-Spend wird zusammengesetzt und an `receiveAddress` broadcastet. Status: `ESCROW_RELEASED`. Der Käufer hält die Token; da der Verkäufer bereits in CNY bezahlt wurde, gibt es keinen Fiat-Auszahlungsschritt — `complete` schließt den Swap ab.
-
-![ESCROW_RELEASED](assets/screenshots/p2p-cny-wechat-13-escrow-released-de.png)
-
-![COMPLETED](assets/screenshots/p2p-cny-wechat-14-completed-de.png)
+![Zahlung bestätigt](assets/screenshots/p2p-cny-wechat-12-payment-verified-de.png)
 
 ---
 
-## 9. Timeout oder Fehler → Rückerstattung
+## 8. Verkäufer gibt die Treuhand frei
 
-Wenn der Käufer nie zahlt, co-signieren Engine und Verkäufer dasselbe Skript zurück an den Verkäufer:
+> **Verkäufer, bitte gib die Treuhand zügig frei.** Nach der Bestätigung des Zahlungseingangs solltest du sofort auf **Mittel freigeben** tippen. Verzögerte Freigaben senken die Bewertung des Verkäufers; bei schweren oder wiederholten Verzögerungen wird der Verkäufer als **unsicher** markiert, was sich auf künftige Orders auswirkt.
 
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await engineKey.signInput(tx, 0),
-  await sellerKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
+Der Verkäufer tippt nach der Bestätigung des Zahlungseingangs sofort auf **Mittel freigeben**, die Plattform signiert mit, und die BIG gehen an die Empfangsadresse des Käufers. Die Signatur des Verkäufers und die der Plattform genügen für die Freigabe; keine Seite kann das Geld allein bewegen.
 
-Die Rückerstattung braucht weder Zustimmung des Käufers noch einen Timelock — die Schwelle wird mit den anderen zwei Schlüsseln erreicht. Status: `EXPIRED` → `ESCROW_REFUNDED`. Keine Partei hält jemals die Mittel der anderen.
+Da der Verkäufer das Fiat direkt erhalten hat, gibt es keinen weiteren Fiat-Auszahlungsschritt, und die Transaktion ist damit beendet.
+
+![Treuhand freigegeben](assets/screenshots/p2p-cny-wechat-13-escrow-released-de.png)
+
+![Abgeschlossen](assets/screenshots/p2p-cny-wechat-14-completed-de.png)
+
+Der Status wechselt auf **Abgeschlossen**.
 
 ---
 
-## 10. Geräte-Verifizierung — das eigene Telefon des Verkäufers
+## 9. Optional: Streitfall mit Unterstützung der Plattform
 
-Der eigene Kontoauszug des Verkäufers ist der Beleg; die Engine kann ihn über die
-App auf dem Telefon ([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp))
-automatisch lesen. WeChat verbirgt seine Oberfläche vor der Barrierefreiheit,
-daher liest die App für WeChat die „Zahlungseingang“-Benachrichtigung (bei Alipay/Bank
-den Bildschirm).
+Wenn es Streit über die Zahlung gibt (Betrag weicht ab, Geld nicht angekommen, Verkäufer gibt trotz Bestätigung nicht frei usw.), kann jede Seite die Transaktion einfrieren und einen Streitfall einreichen. Die Plattform prüft Treuhand und Zahlungsbelege und entscheidet dann, **die BIG an den Käufer freizugeben** oder **das Geld an den Verkäufer zu erstatten**.
 
-Die Kopplung ist ein **kurzer, einmalig verwendbarer Code**, den die App auf dem
-Server-Bildschirm zeigt: Endpunkt + Code im **Geräte**-Bildschirm der Wallet
-(**Mit Code koppeln**) bzw. auf der **Mobile**-Seite von dai eingeben — die App
-gibt ein Token pro Gerät zurück (`POST /pair/claim`); Widerruf unter Einstellungen
-› Zugriff › Gekoppelte Geräte.
+Niederlagen und wiederholte Verzögerungen des Verkäufers werden in der Reputation erfasst; in schweren Fällen wird er als **unsicher** markiert.
 
-Mit `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt` kann die Engine danach ohne
-manuelles Bestätigen automatisch bestätigen.
+---
 
-## Vergleich: Binance P2P vs. diese Abwicklung
+## 10. Zeitüberschreitung oder Fehlschlag → Rückerstattung
+
+Wenn der Käufer gar nicht zahlt, kann der Verkäufer die Transaktion verfallen lassen; die in der Treuhand gesperrten BIG gehen an den Verkäufer zurück, ohne dass der Käufer zustimmen muss.
+
+Keine Seite hält jemals das Geld der anderen.
+
+---
+
+## 11. Optional: „Mit meinem Telefon verifizieren“ (Käufer, verzögerte Freigabe)
+
+Das ist kein notwendiger Schritt der normalen Abwicklung. Der Käufer sieht **„Mit meinem Telefon verifizieren“** nur dann, wenn der Verkäufer die Freigabe verzögert (mehr als **30 Minuten** nach der Zahlungsmeldung des Käufers, oder nach der Bestätigung ohne Freigabe) **oder** wenn ein Streitfall eröffnet wurde.
+
+Der Schritt erscheint nur bei **Alipay / Bank**, weil die Käuferseite die Überweisungsaufzeichnungen lesen kann; WeChat benachrichtigt nur den Empfänger, und PayPal hat keine Lesebrücke, deshalb erscheint er dort nicht. Der Käufer liest einmal mit seinem gekoppelten Telefon, die Wallet signiert das Ergebnis und reicht es ein; die Prüfung fließt in die Reputation des Verkäufers ein, kann aber die Freigabe nicht ersetzen, die der Verkäufer zügig vornehmen soll.
+
+---
+
+## Vergleich: Binance P2P und diese Abwicklung
 
 | Funktion | Binance P2P | Diese Abwicklung |
 |---|---|---|
-| Fiat-Prüfung | Verkäufer klickt „Bestätigen" (Ehrensystem) | Verkäufer bestätigt auf dem eigenen Kontoauszug; die Engine erzwingt das Protokoll |
-| Fiat-Custody | P2P (Käufer → Verkäufer) | P2P (Käufer → Verkäufer) — die Engine berührt Fiat nie |
-| Eskrow | Internes Ledger | 2-von-3-P2SH auf Bigtangle L0 (prüfbar) |
-| Rückerstattung | Support-Ticket | Engine + Verkäufer co-signieren, keine Zustimmung des Käufers |
-| Streitlösung | Menschlicher Support (Tage) | Chain-Tx-Beleg + Proof Store + Swap-Verwendungszweck (Minuten) |
+| Fiat-Prüfung | Verkäufer klickt „Bestätigen“ (Reputationssystem) | Verkäufer bestätigt auf dem eigenen Kontoauszug, die Plattform gibt die BIG nach dem Ablauf frei |
+| Fiat-Verwahrung | Plattform (Käufer → Verkäufer) | Käufer zahlt direkt an den Verkäufer, die Plattform berührt das Fiat nie |
+| Treuhand | internes Konto der Plattform | 2-von-3-Treuhand on-chain, öffentlich einsehbar |
+| Rückerstattung | Support-Ticket | abgelaufene Transaktion geht automatisch an den Verkäufer zurück |
+| Streitbeilegung | menschlicher Support (mehrere Tage) | Streitfall in der App + Entscheidung der Plattform (schneller) |
 
 ---
 
-## Vollständige Timeline
+## Zeitleiste
 
 ```
-MATCHED          14:20:00  Betrag beim Match festgelegt
-ESCROW_LOCKED    14:23:15  L0-Tx CONFIRMED an der 2-von-3-Adresse
-PAYMENT_PENDING  14:24:00  Anweisungen ausgegeben (Konto + Verwendungszweck f71ade2d23e9)
-PAYMENT_CLAIMED  14:25:10  Käufer fügte Transaktionsnummer 4200001234567890 ein
-PAYMENT_VERIFIED 14:26:40  Verkäufer bestätigte auf dem eigenen WeChat-Kontoauszug
-ESCROW_RELEASED  14:27:20  Verkäufer + Engine co-signierten den Spend an receiveAddress
-COMPLETED        14:27:21  keine Fiat-Auszahlung — der Verkäufer hält die CNY bereits
+Zugeordnet           14:20  Betrag wird beim Match festgelegt
+Treuhand gesperrt    14:23  Verkäufer überweist BIG, App bestätigt den Eingang
+Zahlung ausstehend   14:24  Käufer sieht die Zahlungsanweisungen
+Zahlung gemeldet     14:25  Käufer zahlt und trägt die Transaktionsnummer ein
+Zahlung bestätigt    14:26  Verkäufer bestätigt auf dem eigenen Kontoauszug
+Treuhand freigegeben 14:27  Verkäufer und Plattform signieren gemeinsam, BIG gehen an den Käufer
+Abgeschlossen        14:27  Transaktion beendet
 ```
 
 ---
 
-## Vollständiger Demo-Ablauf
-
-```typescript
-// 1. Verkäufer speichert ein CNY-Zahlungsprofil            (POST /profiles)
-// 2. Verkäufer übermittelt eine signierte Limit-Order     (POST /orders)
-// 3. Käufer matcht mit einem signierten Match             (POST /orders/:id/match)
-// 4. Verkäufer finanziert 2-von-3-P2SH-Eskrow auf L0; Engine belegt es (escrow_lock)
-// 5. Käufer ruft die Zahlungsanweisungen ab               (POST /swaps/:id/payment-instructions)
-// 6. Käufer zahlt und reklamiert die Transaktionsnummer   (POST /swaps/:id/proof)
-// 7. Verkäufer bestätigt auf dem eigenen Kontoauszug      (POST /swaps/:id/confirm)
-// 8. Verkäufer + Engine co-signieren die Freigabe         (POST /swaps/:id/transitions, action: release)
-// 9. Engine schließt den Swap ab                          (…/transitions, action: complete)
-```
-
-Entscheidender Unterschied zu Binance P2P: Die Mittel liegen in einem 2-von-3-Skript, das keine Partei allein kontrolliert, jeder Übergang wird auf L1-SOCIAL verankert, und der eigene Kontoauszug des Verkäufers — nicht ein Support-Ticket — ist die Fiat-Wahrheit.
+Wenn dich die Umsetzungsdetails zu Statusmaschine, Signaturen, Treuhandskript und Schnittstellen interessieren, lies die Entwicklerdokumentation `docs/p2p.md`.

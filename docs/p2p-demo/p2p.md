@@ -1,246 +1,180 @@
-# FIAT Settlement — CNY Swap with Seller-Confirmed Release
+# FIAT (fiat currency) settlement — exchange BIG with WeChat / Alipay / bank transfer or PayPal
 
-**Status: demo build + in-repo engine.** Everything below is the settlement flow
-as built: 2-of-3 P2SH escrow on Bigtangle L0 and a seller-confirmed CNY leg
-(WeChat Pay / Alipay / bank). A personal transfer has no machine-verifiable
-payment event, so the seller's own statement is the fiat signal. Screenshots are
-from the demo build (memory store, no chain check — the lock/release hashes are
-synthetic). The design lives in `docs/p2p.md`.
+**Terms.** FIAT = fiat currency; CNY = Chinese yuan; USD = US dollar; P2P = peer-to-peer.
 
-This guide walks through listing USDT for sale, matching with a buyer, escrow
-lock, the buyer paying CNY **directly** to the seller, the seller confirming on
-their own statement, escrow release, and refund on timeout.
+**What this is.** In the Bigtangle wallet you exchange **BIG** directly for fiat currency (WeChat Pay / Alipay / bank transfer, or **PayPal USD**). The seller's BIG goes into an **escrow address** first, and moving those funds requires the agreement of two out of three parties: seller, buyer and platform. The buyer pays the seller directly. The seller confirms the payment on their own statement and then releases the BIG. The platform never holds your funds and never touches the fiat currency.
 
-For the combined three-rail walkthrough (WeChat / Alipay / bank) see
-[p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`.
+**About the screenshots.** The screenshots below come from a real-device demo environment; amounts and hashes are demo data and no real funds are involved.
 
----
+This guide walks through: a seller posting BIG for sale, a buyer purchasing, the escrow locking, the buyer paying, the seller confirming, the BIG being released, and the timeout refund path. The rate is **BIG/CNY = 0.01**, and the order is **10,000 BIG → 100 CNY**.
 
-## 1. Seller saves a collection profile
+## Flow at a glance
 
-The seller opens **P2P → My swaps**, picks the rail (`wechat`) and enters the collection
-name and account. The profile is stored server-side under the seller's DID and
-is **not** part of the public order book — it is revealed only to the matched
-buyer.
-
-![Seller saves the WeChat payment profile](assets/screenshots/p2p-cny-wechat-01-profile-en.png)
-
----
-
-## 2. Seller lists USDT
-
-Submit a DID-signed limit order to the settlement engine:
-
-```json
-{ "sellerDid": "did:key:z446G…", "giveToken": "USDT", "giveAmount": "10",
-  "giveChain": "L0", "wantCurrency": "CNY", "wantAmount": "715",
-  "wantRail": "wechat", "validUntil": 1791510000,
-  "nonce": "…", "timestamp": 1791509100000, "signature": "…" }
+```
+Pending match → Matched → Escrow locked → Awaiting payment → Payment claimed → Payment confirmed → Escrow released → Completed
 ```
 
-The order is validated against the seller's DID signature. Status: `ACTIVE`; it
-expires after `validUntil`.
+Every step shows on the trade card in the app; the status only moves forward, never skipping or going back.
 
-![List a sell order with wechat / CNY](assets/screenshots/p2p-cny-wechat-02-order-en.png)
+Optional path: if the two sides disagree after payment, either one can freeze the trade and open a dispute, and the platform helps decide the outcome (release the coins to the buyer or refund the seller).
 
----
 
-## 3. Buyer matches order
+**PayPal (USD).** When you choose **PayPal**, the fiat currency switches to **USD** automatically, the receiving account becomes a PayPal email, and the rest of the flow is identical. Full walkthrough: [p2p-paypal.zh.md](p2p-paypal.zh.md) → `assets/p2p-paypal.zh.mobile.pdf` (**10,000 BIG → 100 USD**).
 
-The buyer submits a DID-signed match, supplying the address that must receive
-the escrow release. There is no account/email to collect — nothing about the
-fiat rail is needed at match time:
 
-```json
-{ "orderId": "ord-…", "buyerDid": "did:key:z6Mk…",
-  "receiveAddress": "mBuyer…", "nonce": "…", "timestamp": …, "signature": "…" }
-```
-
-Status: `MATCHED`. A unique `swapId` is created for the lifecycle and the
-2-of-3 escrow address is derived from the seller + buyer + engine keys.
-
-![The buyer fills the receive address](assets/screenshots/p2p-cny-wechat-03-match-en.png)
-
-![Swap created at MATCHED](assets/screenshots/p2p-cny-wechat-04-matched-en.png)
 
 ---
 
-## 4. Seller locks USDT in 2-of-3 escrow
+## 1. The seller saves a receiving profile
 
-The escrow address is a P2SH script with three keys — seller, buyer, engine —
-and a threshold of two:
+The seller opens **P2P → My trades**, picks a receiving method (WeChat, Alipay, bank or PayPal) and fills in the account name and number (an email for PayPal). This information is shown only to the buyer after a trade is struck; it never appears in the public order book.
 
-```typescript
-// redeemScript = OP_2 <seller> <buyer> <engine> OP_3 OP_CHECKMULTISIG
-const escrowAddress = p2shAddress(sellerPub, buyerPub, enginePub);
-await L0.transfer(escrowAddress, "10");
-```
-
-The engine proves the lock with `getTransactionStatus` — `CONFIRMED`,
-destination `escrowAddress`, amount 10 — and fails closed if any check does not
-hold. Status: `ESCROW_LOCKED`. The buyer sees funds secured before paying.
-
-![The seller pastes the escrow tx hash](assets/screenshots/p2p-cny-wechat-05-escrow-lock-en.png)
-
-![ESCROW_LOCKED](assets/screenshots/p2p-cny-wechat-06-escrow-locked-en.png)
+![Seller saves a WeChat Pay profile](assets/screenshots/p2p-cny-wechat-01-profile-en.png)
 
 ---
 
-## 5. Buyer pulls the payment instructions
+## 2. The seller posts BIG for sale
 
-The buyer presses **Payment details**. The engine reveals the seller's profile
-plus a **per-swap remark** the transfer *must* carry, the exact amount and a
-deadline:
+In **Post a sell order** the seller enters the token (`bc`), the amount **10,000**, the price **0.01**, the fiat currency **CNY** and the receiving method **WeChat**, then posts it.
 
-```json
-{ "method": "wechat", "rail": "wechat", "accountName": "Zhang San",
-  "account": "wxid_pay8888", "amount": "715", "currency": "CNY",
-  "remark": "f71ade2d23e9", "payBy": 1791510060 }
-```
+Once posted, the sell order appears in the public order book with the status **Pending match**. The seller can cancel a trade that has not been matched at any time.
 
-Status: `PAYMENT_PENDING`. A timeout starts — an unpaid swap can be expired and
-refunded without the buyer's consent.
-
-![Payment instructions: account name, account, 715 CNY, remark](assets/screenshots/p2p-cny-wechat-08-instructions-en.png)
+![Posting a sell order with wechat / CNY](assets/screenshots/p2p-cny-wechat-02-order-en.png)
 
 ---
 
-## 6. Buyer pays CNY and claims with the transaction number
+## 3. The buyer matches the order
 
-The buyer transfers `715 CNY` in their own WeChat app, pastes the transaction
-number into **Transaction ID**, and presses **I have paid**. The optional
-receipt image is stored server-side; only its `sha256` is anchored on the swap
-event.
+The buyer opens the sell order, enters the address that should receive the BIG, and confirms the purchase. No WeChat or Alipay account is needed at this point — the seller's receiving details are shown separately to this buyer once the escrow is locked.
 
-![Transaction ID entered](assets/screenshots/p2p-cny-wechat-09-payment-pending-en.png)
+The app creates a unique trade number for this trade and prepares the escrow address; the status becomes **Matched**.
 
-Status: `PAYMENT_CLAIMED` — the tokens are still locked. This state is the
-buyer's claim and nothing more.
+![Buyer enters the receiving address](assets/screenshots/p2p-cny-wechat-03-match-en.png)
 
-![PAYMENT_CLAIMED](assets/screenshots/p2p-cny-wechat-10-payment-claimed-en.png)
+![The swap created at Matched](assets/screenshots/p2p-cny-wechat-04-matched-en.png)
 
 ---
 
-## 7. Seller confirms on their own statement
+## 4. The seller locks the BIG into escrow
 
-The seller's card shows the buyer's transaction number and the remark. The seller checks
-**amount + remark + time + transaction number in their own account** (screenshots never
-count) and only then presses **Confirm received**:
+The app generates a **2-of-3 escrow address** for this trade: any two of the three parties — seller, buyer and platform — must agree before funds can move, so no single party can take the money alone.
 
-![Seller sees transaction number + the confirm warning](assets/screenshots/p2p-cny-wechat-11-seller-confirm-en.png)
+The seller sends **10,000 BIG** to that address and pastes the transaction hash of that transfer into the app. Once the app has checked the amount and the receiving address, the status becomes **Escrow locked**. The buyer can see that the BIG is locked before paying any fiat currency.
 
-Status: `PAYMENT_VERIFIED`.
+![Seller pastes the escrow transaction hash](assets/screenshots/p2p-cny-wechat-05-escrow-lock-en.png)
 
-![PAYMENT_VERIFIED](assets/screenshots/p2p-cny-wechat-12-payment-verified-en.png)
+![Escrow locked](assets/screenshots/p2p-cny-wechat-06-escrow-locked-en.png)
 
 ---
 
-## 8. Engine and seller release escrow
+## 5. The buyer pulls up the payment instructions
 
-Two signatures satisfy the script: the seller's (presigned at lock, or a
-co-sign) and the engine's. No single party can move the funds.
+When the buyer taps **Payment details**, they see:
 
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await sellerKey.signInput(tx, 0),
-  await engineKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
+- the seller's account name
+- the receiving account (WeChat / Alipay / bank account number, or PayPal email)
+- the exact amount, **100 CNY**
+- a **reference code** unique to this trade
+- the payment deadline
 
-The release spend is assembled and broadcast to `receiveAddress`. Status:
-`ESCROW_RELEASED`. The buyer holds the tokens; because the seller was already
-paid in CNY, there is no fiat payout step — `complete` closes the swap.
+The buyer must put the reference code in the payment note when transferring. The status becomes **Awaiting payment**; if the buyer has still not paid by the deadline, the trade expires and is refunded.
 
-![ESCROW_RELEASED](assets/screenshots/p2p-cny-wechat-13-escrow-released-en.png)
-
-![COMPLETED](assets/screenshots/p2p-cny-wechat-14-completed-en.png)
+![Payment instructions: name, account, 100 CNY, reference](assets/screenshots/p2p-cny-wechat-08-instructions-en.png)
 
 ---
 
-## 9. Timeout or failure → refund
+## 6. The buyer pays CNY and claims the payment
 
-If the buyer never pays, the engine and the seller co-sign the same script back
-to the seller:
+The buyer transfers **100 CNY** in their own WeChat, puts the reference code in the note, then pastes the transaction number (serial number) into **Transaction ID** and taps **I have paid**.
 
-```typescript
-const scriptSig = updateScriptWithSignature(unsigned, [
-  await engineKey.signInput(tx, 0),
-  await sellerKey.signInput(tx, 0),
-  redeemScript,
-]);
-await L0.submitTransaction(serialize(tx));
-```
+A payment receipt image can be attached; the image is stored on the server only and is never written on chain.
 
-Refund needs no buyer consent and no timelock — the threshold is reached with the
-other two keys. Status: `EXPIRED` → `ESCROW_REFUNDED`. Neither party ever holds
-the other's funds.
+![Transaction number (serial number) entered](assets/screenshots/p2p-cny-wechat-09-payment-pending-en.png)
+
+The status becomes **Payment claimed**. The BIG is still locked at this point — this is only the buyer's claim of payment.
+
+![Payment claimed](assets/screenshots/p2p-cny-wechat-10-payment-claimed-en.png)
 
 ---
 
-## 10. Device-side verification — the seller's own phone
+## 7. The seller confirms on their own statement
 
-The seller's own statement is the receipt; the engine can read it **automatically**
-through the on-phone app
-([`android-remote-control-mcp`](https://github.com/danielealbano/android-remote-control-mcp)).
-WeChat hides its UI from accessibility, so for WeChat the app reads the
-“payment received” push (Alipay/bank expose the screen).
+The seller's trade card shows the serial number and note the buyer entered. The seller checks **amount + note + time + serial number** against their own WeChat statement only, and taps **Confirm payment received** once everything matches.
 
-![The payee's own WeChat payment received notification](assets/screenshots/p2p-verify-wechat-notification-en.png)
+A screenshot is not proof of payment; what actually arrived in your own account is what counts.
 
-*Device capture. The notification text is illustrative — no real transfer was
-made for this shot; on a live swap it carries the swap's own `remark` and
-transaction number.*
+![Seller sees the serial number and the confirmation warning](assets/screenshots/p2p-cny-wechat-11-seller-confirm-en.png)
 
-Pairing is a **short single-use code** the app shows on its Server screen: enter
-the endpoint and the code in the wallet's **Device** screen (**Pair with code**)
-or dai's **Mobile** page — the app returns a per-device token
-(`POST /pair/claim`); revoke it in Settings › Access › Paired devices.
+The status becomes **Payment confirmed**.
 
-Under `SETTLEMENT_CNY_AUTO_RELEASE_ON=seller_receipt` the engine can then
-machine-confirm without the manual tap.
+![Payment confirmed](assets/screenshots/p2p-cny-wechat-12-payment-verified-en.png)
+
+---
+
+## 8. The seller releases the escrow
+
+> **Sellers should release the escrow promptly.** After confirming the payment, tap **Release funds** right away. Delaying release lowers the seller's rating; serious or repeated delays mark the seller as **unsafe** and affect future orders.
+
+The seller taps **Release funds** immediately after confirming the payment, the platform co-signs, and the BIG is transferred to the buyer's receiving address. The seller's signature plus the platform's signature are enough to complete the release, and neither party can move the money alone.
+
+Because the seller was paid directly, there is no extra fiat payout step and the trade ends right away.
+
+![Escrow released](assets/screenshots/p2p-cny-wechat-13-escrow-released-en.png)
+
+![Completed](assets/screenshots/p2p-cny-wechat-14-completed-en.png)
+
+The status becomes **Completed**.
+
+---
+
+## 9. Optional: the platform helps decide a dispute
+
+If the two sides disagree about the payment (wrong amount, money not received, a seller who will not release, and so on), either one can freeze the trade and open a dispute. The platform checks the escrow and the payment evidence and decides to **release the coins to the buyer** or **refund the seller**.
+
+A seller's lost disputes and repeated delays are recorded in their reputation, and in serious cases they are marked **unsafe**.
+
+---
+
+## 10. Timeout or failure → refund
+
+If the buyer never pays, the seller can let the trade expire; the escrowed BIG goes back to the seller without needing the buyer's agreement.
+
+Neither side ever holds the other side's funds.
+
+---
+
+## 11. Optional: "Verify with my phone" (buyer, delayed release)
+
+This is not required for normal settlement. The buyer only sees **"Verify with my phone"** when the seller is late to release (more than **30 minutes** after the buyer claims payment, or the payment is confirmed but the release keeps stalling) **or** a dispute is already open.
+
+It is shown only for **Alipay / bank**, because on the buyer's side the transfer records can be read; WeChat only notifies the receiving party and PayPal has no read bridge, so neither shows it. The buyer reads the records once with their own paired phone, the wallet signs the result and submits it; the check is recorded in the seller's reputation, but it does not replace the release the seller should carry out promptly.
+
+---
 
 ## Comparison: Binance P2P vs this settlement
 
 | Feature | Binance P2P | This settlement |
 |---|---|---|
-| Fiat verification | Seller clicks "Confirm" (honor system) | Seller confirms on their own statement; the engine enforces the protocol |
-| Fiat custody | P2P (buyer → seller) | P2P (buyer → seller) — the engine never touches fiat |
-| Escrow | Internal ledger | 2-of-3 P2SH on Bigtangle L0 (verifiable) |
-| Refund | Support ticket | Engine + seller co-sign, no buyer consent |
-| Dispute resolution | Human support (days) | Chain tx proof + proof store + per-swap remark (minutes) |
+| Fiat verification | Seller taps "confirm" (reputation system) | Seller confirms on their own statement, platform releases per the process |
+| Fiat custody | Platform (buyer → seller) | Buyer pays the seller directly, platform never touches the fiat |
+| Escrow | Platform internal ledger | On-chain 2-of-3 escrow, publicly auditable |
+| Refund | Support ticket | Expired trades return to the seller automatically |
+| Dispute resolution | Manual support (several days) | In-app dispute + platform ruling (faster) |
 
 ---
 
-## Complete timeline
+## Timeline
 
 ```
-MATCHED          14:20:00  Amount fixed at match
-ESCROW_LOCKED    14:23:15  L0 tx CONFIRMED at the 2-of-3 address
-PAYMENT_PENDING  14:24:00  instructions issued (account + remark f71ade2d23e9)
-PAYMENT_CLAIMED  14:25:10  buyer pasted transaction number 4200001234567890
-PAYMENT_VERIFIED 14:26:40  seller confirmed on their own WeChat statement
-ESCROW_RELEASED  14:27:20  seller + engine co-signed spend to receiveAddress
-COMPLETED        14:27:21  no fiat payout — the seller already holds the CNY
+Matched               14:20  amount fixed at matching
+Escrow locked         14:23  seller transfers BIG, app confirms receipt
+Awaiting payment      14:24  buyer sees the payment instructions
+Payment claimed       14:25  buyer pays and enters the serial number
+Payment confirmed     14:26  seller confirms on their own statement
+Escrow released       14:27  seller and platform co-sign, BIG goes to the buyer
+Completed             14:27  trade ends
 ```
 
 ---
 
-## Full demo flow
-
-```typescript
-// 1. Seller saves a CNY collection profile            (POST /profiles)
-// 2. Seller submits a signed limit order              (POST /orders)
-// 3. Buyer matches with a signed match                (POST /orders/:id/match)
-// 4. Seller funds 2-of-3 P2SH escrow on L0; engine proves it (escrow_lock)
-// 5. Buyer pulls the payment instructions             (POST /swaps/:id/payment-instructions)
-// 6. Buyer pays and claims the transaction number     (POST /swaps/:id/proof)
-// 7. Seller confirms on their own statement           (POST /swaps/:id/confirm)
-// 8. Seller + engine co-sign the release              (POST /swaps/:id/transitions, action: release)
-// 9. Engine completes the swap                        (…/transitions, action: complete)
-```
-
-Key difference from Binance P2P: funds sit in a 2-of-3 script neither party
-controls alone, every transition is anchored on L1-SOCIAL, and the seller's own
-statement — not a support ticket — is the fiat truth.
+For implementation details on the state machine, signatures, escrow script and interfaces, see the developer document `docs/p2p.md`.
