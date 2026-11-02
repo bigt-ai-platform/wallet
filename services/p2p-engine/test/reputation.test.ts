@@ -78,8 +78,28 @@ describe("reputationFromEvents — outcome attribution", () => {
     expect(buyer.avgPayMs).toBe(5000);
     expect(seller.avgConfirmMs).toBe(4000);
     expect(seller.avgReleaseMs).toBe(2000);
+    expect(seller.unsafe).toBe(false);
+    expect(buyer.unsafe).toBe(false);
     expect(seller.counterparties).toBe(1);
     expect(seller.since).toBe(1_700_000_000_000);
+  });
+
+  it("marks a seller unsafe after a persistently delayed release", () => {
+    const log = completedLog("swap-0000000000000003", 1_700_000_000_000);
+    // confirm at +9000, release normally +11000 → move it 31 min later.
+    log[4] = { ...log[4], at: log[4].at + 31 * 60 * 1000 };
+    const seller = reputationFromEvents(log).get(S)!.seller;
+    expect(seller.avgReleaseMs).toBeGreaterThan(30 * 60 * 1000);
+    expect(seller.unsafe).toBe(true);
+  });
+
+  it("marks a seller unsafe when arbitration released to the buyer", () => {
+    const log = completedLog("swap-0000000000000004", 1_700_000_000_000, {
+      disputeOutcome: "release",
+    } as Partial<P2pSwapEvent>);
+    const seller = reputationFromEvents(log).get(S)!.seller;
+    expect(seller.lostDisputes).toBe(1);
+    expect(seller.unsafe).toBe(true);
   });
 
   it("counts an expired swap against the buyer's no-show record", () => {

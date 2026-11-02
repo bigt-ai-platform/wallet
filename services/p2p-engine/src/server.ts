@@ -1903,6 +1903,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       completionRate: r.seller.completionRate,
       disputes: r.seller.disputes,
       lostDisputes: r.seller.lostDisputes,
+      unsafe: r.seller.unsafe,
     };
   }
 

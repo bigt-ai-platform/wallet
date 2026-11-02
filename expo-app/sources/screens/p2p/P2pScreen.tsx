@@ -1000,6 +1000,11 @@ export default function P2pScreen() {
                     })}
                   </Text>
                 ) : null}
+                {o.sellerReputation?.unsafe ? (
+                  <Text style={[s.sub, { color: theme.colors.accent.red }]} testID={`p2p-order-${i}-unsafe`}>
+                    {t('p2p.unsafeSeller')}
+                  </Text>
+                ) : null}
                 {own && o.status === 'ACTIVE' ? (
                   <View style={s.actions}>
                     <Action label={t('p2p.cancelOrder')} color={theme.colors.accent.red} onPress={() => submitCancel(o)} disabled={busy} testID={`p2p-cancel-order-${i}`} />
@@ -1267,6 +1272,10 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
         </View>
       ) : null}
 
+      {isSeller && (st === 'PAYMENT_CLAIMED' || st === 'PAYMENT_VERIFIED') ? (
+        <Text style={s.warn} testID={`p2p-swap-${index}-release-warn`}>{t('p2p.releaseWarn')}</Text>
+      ) : null}
+
       {isSeller && st === 'EXPIRED' ? (
         <View style={s.actions}>
           <Action label={t('p2p.aRefund')} color={theme.colors.accent.red} onPress={onRefund} disabled={busy} testID={`p2p-swap-${index}-refund`} />
@@ -1310,11 +1319,12 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
 
       {/* Device-side verification (docs/p2p.md §12): read this party's own rail
           app through the phone they paired, then sign and submit the verdict. */}
-      {isParty && cny && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
+      {isBuyer && cny && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <>
           <View style={s.actions}>
             <Action label={t('p2pdev.title')} color={theme.colors.accent.purple} onPress={onVerify} disabled={busy} testID={`p2p-swap-${index}-verify`} />
           </View>
+          <Text style={s.hint} testID={`p2p-swap-${index}-verify-delayed`}>{t('p2pdev.delayedHint')}</Text>
           {/* The auto-release policy decides whether a read confirms or is only
               evidence — surface the default (`off`) so the tap has no surprise. */}
           {autoReleaseOn === 'off' ? (

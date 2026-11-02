@@ -82,6 +82,8 @@ export interface P2pOrder {
     completionRate: number;
     disputes: number;
     lostDisputes: number;
+    /** Seller safety mark: lost arbitration, or a persistently delayed release. */
+    unsafe?: boolean;
   };
   /**
    * Advisory proof-of-balance snapshot for a sell ad (docs/p2p.md §11): the

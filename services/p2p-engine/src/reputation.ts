@@ -60,6 +60,8 @@ export interface RoleReputation {
   /** completed / (completed + expired + refunded); cancellations neutral. */
   completionRate: number;
   tier: ReputationTier;
+  /** Seller safety mark: lost arbitration, or a mean confirm→release over 30 min. */
+  unsafe: boolean;
 }
 
 export interface ReputationReport {
@@ -93,6 +95,8 @@ export interface ReputationDetail extends ReputationReport {
 
 /** Tier thresholds (docs/p2p.md §25). */
 const TRUSTED_TRADES = 10;
+/** A seller whose mean confirm→release exceeds this is marked unsafe. */
+export const UNSAFE_RELEASE_MS = 30 * 60 * 1000;
 const TRUSTED_COMPLETION = 0.95;
 const ESTABLISHED_TRADES = 3;
 const ESTABLISHED_COMPLETION = 0.8;
@@ -122,6 +126,7 @@ function emptyRole(): RoleReputation {
     counterparties: 0,
     completionRate: 0,
     tier: "new",
+    unsafe: false,
   };
 }
 
@@ -311,6 +316,12 @@ export function reputationFromEvents(
     r.buyer.completionRate = completionRate(r.buyer);
     r.seller.tier = tierOf(r.seller);
     r.buyer.tier = tierOf(r.buyer);
+    // Safety is separate from the trust tier: a lost arbitration always marks
+    // the role unsafe; for a seller, a persistently delayed release does too.
+    r.seller.unsafe =
+      r.seller.lostDisputes > 0 ||
+      (r.seller.avgReleaseMs !== null && r.seller.avgReleaseMs > UNSAFE_RELEASE_MS);
+    r.buyer.unsafe = r.buyer.lostDisputes > 0;
   }
   return out;
 }
