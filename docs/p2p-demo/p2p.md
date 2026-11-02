@@ -1,4 +1,4 @@
-# P2P Settlement — CNY Swap with Seller-Confirmed Release
+# FIAT Settlement — CNY Swap with Seller-Confirmed Release
 
 **Status: demo build + in-repo engine.** Everything below is the settlement flow
 as built: 2-of-3 P2SH escrow on Bigtangle L0 and a seller-confirmed CNY leg

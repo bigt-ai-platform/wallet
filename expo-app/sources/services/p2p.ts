@@ -36,7 +36,8 @@ export type P2pSwapAction =
   | 'complete';
 
 /** Fiat rails (docs/p2p.md §7): buyer pays seller directly, seller confirms. */
-export type P2pCnyRail = 'wechat' | 'alipay' | 'bank';
+export type P2pCnyRail = 'wechat' | 'alipay' | 'bank' | 'paypal';
+export type P2pFiatRail = P2pCnyRail;
 
 export interface P2pOrder {
   orderId: string;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deviceReadMode } from '../p2pDeviceRead';
+import { deviceReadMode, deviceReadSupported } from '../p2pDeviceRead';
 
 describe('deviceReadMode', () => {
   it('reads the WeChat payee notification, never a WeChat buyer', () => {
@@ -12,5 +12,11 @@ describe('deviceReadMode', () => {
       expect(deviceReadMode(rail, 'seller')).toBe('screen');
       expect(deviceReadMode(rail, 'buyer')).toBe('screen');
     }
+  });
+
+  it('has no device bridge for PayPal on either side', () => {
+    expect(deviceReadMode('paypal', 'seller')).toBeNull();
+    expect(deviceReadMode('paypal', 'buyer')).toBeNull();
+    expect(deviceReadSupported('paypal')).toBe(false);
   });
 });

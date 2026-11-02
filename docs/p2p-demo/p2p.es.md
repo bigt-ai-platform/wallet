@@ -1,4 +1,4 @@
-# Liquidación P2P — Swap de CNY con liberación confirmada por el vendedor
+# Liquidación FIAT — Swap de CNY con liberación confirmada por el vendedor
 
 **Estado: build de demostración + motor en el repositorio.** Todo lo que sigue es el flujo de liquidación tal como está construido: depósito en garantía P2SH de 2-de-3 en Bigtangle L0 y una pata CNY confirmada por el vendedor (WeChat Pay / Alipay / banco). Una transferencia personal no tiene un evento de pago verificable por máquina, así que el propio extracto del vendedor es la señal fiat. Las capturas son del build de demostración (almacén en memoria, sin comprobación de cadena — los hashes de bloqueo/liberación son sintéticos). El diseño vive en `docs/p2p.md`.
 

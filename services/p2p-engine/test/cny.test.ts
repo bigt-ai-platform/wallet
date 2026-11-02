@@ -56,14 +56,14 @@ function sweepTick(a: TestApp): Promise<void> {
 
 type TestApp = Awaited<ReturnType<typeof buildApp>>;
 
-async function saveProfile(a: TestApp, method = "wechat") {
+async function saveProfile(a: TestApp, method = "wechat", account = "wxid_pay888") {
   const r = await a.inject({
     method: "POST",
     url: "/profiles",
     payload: signed(seller, sellerDid, {
       method,
       accountName: "Zhang San",
-      account: "wxid_pay888",
+      account,
       ...(method === "bank" ? { bankName: "ICBC 1234" } : {}),
       requestMethod: "POST",
       requestPath: "/profiles",
@@ -72,10 +72,11 @@ async function saveProfile(a: TestApp, method = "wechat") {
   expect(r.statusCode).toBe(200);
 }
 
-/** Creates a CNY order (wantRail), matches it with the buyer (no PayPal PII), locks escrow. */
+/** Creates a fiat order (wantRail), matches it with the buyer, locks escrow. */
 async function toEscrowLocked(
   a: TestApp,
   wantRail = "wechat",
+  wantCurrency = wantRail === "paypal" ? "USD" : "CNY",
 ): Promise<string> {
   const r1 = await a.inject({
     method: "POST",
@@ -86,7 +87,7 @@ async function toEscrowLocked(
       giveToken: "USDT",
       giveAmount: "100",
       giveChain: "L0",
-      wantCurrency: "CNY",
+      wantCurrency,
       wantAmount: "715",
       wantRail,
       validUntil: Math.floor(clock / 1000) + 3600,
@@ -124,6 +125,30 @@ async function toEscrowLocked(
   bump();
   return swapId;
 }
+
+describe("fiat rails (docs/p2p.md)", () => {
+  it("serves a PayPal USD order and its payment instructions", async () => {
+    const a = await app({ SETTLEMENT_FIAT_RAILS: "paypal" });
+    await saveProfile(a, "paypal", "seller@paypal.example");
+    const swapId = await toEscrowLocked(a, "paypal");
+    const path = `/swaps/${swapId}/payment-instructions`;
+    const r = await a.inject({
+      method: "POST",
+      url: path,
+      payload: signed(buyer, buyerDid, {
+        requestMethod: "POST",
+        requestPath: path,
+      }),
+    });
+    expect(r.statusCode).toBe(201);
+    const body = r.json();
+    expect(body.rail).toBe("paypal");
+    expect(body.method).toBe("paypal");
+    expect(body.currency).toBe("USD");
+    expect(body.account).toBe("seller@paypal.example");
+    expect(body.amount).toBe("715");
+  });
+});
 
 describe("CNY rails (docs/p2p.md)", () => {
   it("returns a conflict for simultaneous proof and confirmation instead of false success", async () => {
@@ -1010,7 +1035,7 @@ describe("CNY rails (docs/p2p.md)", () => {
       method: "POST",
       url: "/profiles",
       payload: signed(seller, sellerDid, {
-        method: "paypal",
+        method: "venmo",
         accountName: "x",
         account: "y",
         requestMethod: "POST",

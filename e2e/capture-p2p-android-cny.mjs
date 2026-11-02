@@ -5,17 +5,21 @@
  * - starts a local p2p-engine (memory store, no chain client) on :18089 and
  *   reverses it into the phone;
  * - drives the installed demo APK (built with EXPO_PUBLIC_P2P_ENGINE_URL and
- *   EXPO_PUBLIC_E2E_AUTOCONFIRM) through a full BIG → CNY WeChat settlement
- *   using two plain demo wallets (seller/buyer), switching them in the app;
- * - writes the Chinese screenshots the PDF guide references
- *   (docs/p2p-demo/assets/screenshots/p2p-cny-wechat-NN-*-zh.png);
+ *   EXPO_PUBLIC_E2E_AUTOCONFIRM) through a full BIG → fiat settlement using two
+ *   plain demo wallets (seller/buyer), switching them in the app;
+ * - writes the screenshots the PDF guide references
+ *   (docs/p2p-demo/assets/screenshots/<PREFIX>-NN-*-<LANG>.png);
  * - backs up the device's real wallet before touching it and restores it in
  *   `finally` (the encrypted blob is copied as-is; no password needed).
  *
- * Rates: BIG/CNY = 0.01 → the ad sells 10,000 BIG for 100 CNY.
+ * Rates: BIG/fiat = PRICE → the ad sells GIVE BIG for GIVE × PRICE fiat.
+ * Defaults: WeChat/CNY, 10,000 BIG → 100 CNY at 0.01.
  *
  * Usage (after building/installing the demo APK):
  *   node e2e/capture-p2p-android-cny.mjs
+ *   RAIL=paypal CURRENCY=USD PREFIX=p2p-paypal \
+ *     SELLER_ACCOUNT=seller@example.com BUYER_ACCOUNT=buyer@example.com \
+ *     node e2e/capture-p2p-android-cny.mjs
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -31,10 +35,19 @@ const CDP_PORT = Number(process.env.CDP_PORT || 9445);
 const SHOTS = resolve(ROOT, 'docs/p2p-demo/assets/screenshots');
 const BACKUP = '/tmp/opencode/wallet-android-demo-backup.json';
 const DEMO_WALLETS = '/tmp/opencode/wallet-android-demo-wallets.json';
-const PRICE = '0.01'; // BIG/CNY
-const GIVE = '10000'; // BIG
-const WANT = '100'; // CNY = GIVE × PRICE
-const RAIL = 'wechat';
+const PRICE = process.env.PRICE || '0.01'; // fiat per BIG
+const GIVE = process.env.GIVE || '10000'; // BIG
+const CURRENCY = process.env.CURRENCY || 'CNY';
+const WANT = String(Number(GIVE) * Number(PRICE)); // fiat = GIVE × PRICE
+const RAIL = process.env.RAIL || 'wechat';
+const LANG = process.env.LANG_TAG || 'zh';
+const PREFIX = process.env.PREFIX || `p2p-cny-${RAIL}`;
+// PayPal accounts are emails; the CNY rails use their own ids.
+const SELLER_NAME = process.env.SELLER_NAME || '张三';
+const BUYER_NAME = process.env.BUYER_NAME || '李四';
+const SELLER_ACCOUNT = process.env.SELLER_ACCOUNT || 'wxid_pay8888';
+const BUYER_ACCOUNT = process.env.BUYER_ACCOUNT || 'wxid_buyer01';
+const shotName = (name) => `${PREFIX}-${name}-${LANG}.png`;
 mkdirSync(SHOTS, { recursive: true });
 
 const log = (...a) => console.log('·', ...a);
@@ -281,6 +294,7 @@ async function main() {
       SETTLEMENT_ENGINE_KEY: engineSeed,
       SETTLEMENT_ESCROW_KEY: engineSeed,
       SETTLEMENT_ENGINE_PUBKEY: enginePubHex,
+      SETTLEMENT_FIAT_RAILS: RAIL,
       SETTLEMENT_CNY_RAILS: RAIL,
       CORS_ORIGIN: 'http://localhost,http://127.0.0.1',
     },
@@ -298,38 +312,38 @@ async function main() {
   await saveBackup();
 
   // 3. seller: profile + ad
-  await setWallet(seller);
+  await setWallet(seller, LANG);
   await goP2P();
   await click('p2p-tab-mine');
   await click(`p2p-profile-method-${RAIL}`);
-  await fill('p2p-profile-name', '张三');
-  await fill('p2p-profile-account', 'wxid_pay8888');
+  await fill('p2p-profile-name', SELLER_NAME);
+  await fill('p2p-profile-account', SELLER_ACCOUNT);
   await click('p2p-profile-save');
   await waitFor(`(${q('p2p-notice')}?.innerText || '').includes('已保存')`, 15000, 'profile saved');
-  await shot('p2p-cny-wechat-01-profile-zh.png');
+  await shot(shotName('01-profile'));
 
   await click('p2p-side-sell');
   await fill('p2p-give-token', 'bc');
   await fill('p2p-give-amount', GIVE);
   await fill('p2p-want-amount', PRICE);
   await click(`p2p-rail-${RAIL}`);
-  await fill('p2p-want-currency', 'CNY');
+  await fill('p2p-want-currency', CURRENCY);
   await sleep(500);
   const total = await text('p2p-total');
   log(`ad form total: ${total}`);
   if (!total.includes(WANT)) throw new Error(`unexpected total "${total}" (want ${WANT})`);
-  await shot('p2p-cny-wechat-02-order-zh.png');
+  await shot(shotName('02-order'));
   await click('p2p-create');
   await waitFor(`(${q('p2p-notice')}?.innerText || '').includes('已发布')`, 20000, 'order listed');
   log('sell order listed');
 
   // 4. buyer: own private channel details, then match
-  await setWallet(buyer);
+  await setWallet(buyer, LANG);
   await goP2P();
   await click('p2p-tab-mine');
   await click(`p2p-profile-method-${RAIL}`);
-  await fill('p2p-profile-name', '李四');
-  await fill('p2p-profile-account', 'wxid_buyer01');
+  await fill('p2p-profile-name', BUYER_NAME);
+  await fill('p2p-profile-account', BUYER_ACCOUNT);
   await click('p2p-profile-save');
   await waitFor(`(${q('p2p-notice')}?.innerText || '').includes('已保存')`, 15000, 'buyer profile saved');
   await click('p2p-tab-open');
@@ -338,56 +352,56 @@ async function main() {
   await sleep(500);
   await fill('p2p-buy-recv', buyer.address);
   await sleep(300);
-  await shot('p2p-cny-wechat-03-match-zh.png');
+  await shot(shotName('03-match'));
   await click('p2p-buy-confirm');
   await sleep(3500);
   console.log('  buyer notice:', await text('p2p-notice'));
   console.log('  buyer tail:', (await bodyText()).slice(-900).replace(/\n/g, ' | '));
   await waitFor(`!!${q('p2p-swap-0')}`, 20000, 'swap created');
   await waitSwapStatus('MATCHED');
-  await shot('p2p-cny-wechat-04-matched-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('04-matched'), '[data-testid="p2p-swap-0"]');
   log('buyer matched');
 
   // 5. seller: escrow lock
-  await setWallet(seller);
+  await setWallet(seller, LANG);
   await goP2P();
   await click('p2p-tab-mine');
   await waitFor(`!!${q('p2p-swap-0-txhash')}`, 20000, 'seller swap MATCHED');
   await fill('p2p-swap-0-txhash', 'ab'.repeat(32));
-  await shot('p2p-cny-wechat-05-escrow-lock-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('05-escrow-lock'), '[data-testid="p2p-swap-0"]');
   await click('p2p-swap-0-lock');
   await waitSwapStatus('ESCROW_LOCKED');
-  await shot('p2p-cny-wechat-06-escrow-locked-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('06-escrow-locked'), '[data-testid="p2p-swap-0"]');
   log('escrow lock recorded');
 
   // 6. buyer: instructions + proof
-  await setWallet(buyer);
+  await setWallet(buyer, LANG);
   await goP2P();
   await click('p2p-tab-mine');
   await waitSwapStatus('ESCROW_LOCKED');
-  await shot('p2p-cny-wechat-07-buy-locked-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('07-buy-locked'), '[data-testid="p2p-swap-0"]');
   await click('p2p-swap-0-instructions');
   await waitFor(`!!${q('p2p-swap-0-instructions-panel')}`, 20000, 'instructions');
   await sleep(500);
-  await shot('p2p-cny-wechat-08-instructions-zh.png', '[data-testid="p2p-swap-0-instructions-panel"]');
+  await shot(shotName('08-instructions'), '[data-testid="p2p-swap-0-instructions-panel"]');
   const txId = '4203' + randomBytes(8).toString('hex').slice(0, 12).toUpperCase();
   await fill('p2p-swap-0-txid', txId);
   await sleep(300);
-  await shot('p2p-cny-wechat-09-payment-pending-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('09-payment-pending'), '[data-testid="p2p-swap-0"]');
   await click('p2p-swap-0-proof');
   await waitSwapStatus('PAYMENT_CLAIMED');
-  await shot('p2p-cny-wechat-10-payment-claimed-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('10-payment-claimed'), '[data-testid="p2p-swap-0"]');
   log(`buyer claimed payment (${txId})`);
 
   // 7. seller: confirm
-  await setWallet(seller);
+  await setWallet(seller, LANG);
   await goP2P();
   await click('p2p-tab-mine');
   await waitSwapStatus('PAYMENT_CLAIMED');
-  await shot('p2p-cny-wechat-11-seller-confirm-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('11-seller-confirm'), '[data-testid="p2p-swap-0"]');
   await click('p2p-swap-0-confirm');
   await waitSwapStatus(['PAYMENT_VERIFIED', 'ESCROW_RELEASED', 'COMPLETED']);
-  await shot('p2p-cny-wechat-12-payment-verified-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('12-payment-verified'), '[data-testid="p2p-swap-0"]');
   log('seller confirmed receipt');
 
   // 8. engine stand-in release + complete (no chain in the funds-free demo)
@@ -399,13 +413,13 @@ async function main() {
   log(`settled ${swapId}`);
 
   // 9. buyer: released + completed
-  await setWallet(buyer);
+  await setWallet(buyer, LANG);
   await goP2P();
   await click('p2p-tab-mine');
   await waitSwapStatus(['ESCROW_RELEASED', 'COMPLETED']);
-  await shot('p2p-cny-wechat-13-escrow-released-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('13-escrow-released'), '[data-testid="p2p-swap-0"]');
   await waitSwapStatus('COMPLETED');
-  await shot('p2p-cny-wechat-14-completed-zh.png', '[data-testid="p2p-swap-0"]');
+  await shot(shotName('14-completed'), '[data-testid="p2p-swap-0"]');
   log('completed');
 }
 
@@ -417,7 +431,7 @@ try {
   console.error('capture failed:', e?.message || e);
   try {
     console.error('  page tail:', (await bodyText()).slice(-1200).replace(/\n/g, ' | '));
-    await shot('p2p-debug-failure-zh.png');
+    await shot(shotName('99-debug-failure'));
   } catch {}
 } finally {
   try { await restoreBackup(); } catch (e) { console.error('restore failed:', e?.message || e); }

@@ -14,6 +14,7 @@ import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import { CloseIcon, HelpIcon, SearchIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
+import { deviceReadSupported } from '@/lib/p2pDeviceRead';
 import { p2pIdentityFromWallet, shortDid } from '@/lib/p2pIdentity';
 import { exceedsBalance, findBalance, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
 import { checkP2pFill, filterP2pOrders } from '@/lib/p2pOrderBook';
@@ -31,9 +32,13 @@ import {
 type Tab = 'open' | 'mine' | 'search';
 
 /** Fiat rails (docs/p2p.md §7): buyer pays seller directly; seller confirms receipt. */
-const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank'];
+const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank', 'paypal'];
 /** Built-in rail list — used until the engine's /capabilities report arrives. */
 const DEFAULT_RAILS: readonly string[] = [...CNY_RAILS];
+const RAIL_LABELS: Record<string, string> = { paypal: 'PayPal' };
+function railLabel(rail: string): string {
+  return RAIL_LABELS[rail] ?? rail;
+}
 function isCnyRail(rail?: string): boolean {
   return !!rail && CNY_RAILS.includes(rail);
 }
@@ -270,8 +275,8 @@ export default function P2pScreen() {
       setWantRail(next[0] ?? rail);
       return next;
     });
-    // sensible currency default: the CNY rails quote CNY
-    if (wantCurrency.trim().toUpperCase() === 'USD') setWantCurrency('CNY');
+    // PayPal quotes USD; the CNY rails quote CNY.
+    setWantCurrency(rail === 'paypal' ? 'USD' : 'CNY');
   };
 
   const requireIdentity = (): P2pIdentity | null => {
@@ -832,7 +837,7 @@ export default function P2pScreen() {
                     accessibilityRole="button"
                     accessibilityState={{ selected: rails.includes(rail) }}
                   >
-                    <Text style={[s.chipText, { color: rails.includes(rail) ? theme.colors.primary : theme.colors.text.secondary }]}>{rail}</Text>
+                    <Text style={[s.chipText, { color: rails.includes(rail) ? theme.colors.primary : theme.colors.text.secondary }]}>{railLabel(rail)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -963,7 +968,7 @@ export default function P2pScreen() {
                 {isExpanded ? (
                   <>
                 <Text style={s.sub} testID={`p2p-order-${i}-limit`}>
-                  {t('p2p.advertised', { amount: `${o.remainingGive ?? o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).join(', ')}
+                  {t('p2p.advertised', { amount: `${o.remainingGive ?? o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).map(railLabel).join(', ')}
                 </Text>
                 {fundsText ? (
                   <Text
@@ -1050,7 +1055,7 @@ export default function P2pScreen() {
                               accessibilityRole="button"
                               accessibilityState={{ selected: chosenRail === rail }}
                             >
-                              <Text style={[s.chipText, { color: chosenRail === rail ? theme.colors.primary : theme.colors.text.secondary }]}>{rail}</Text>
+                              <Text style={[s.chipText, { color: chosenRail === rail ? theme.colors.primary : theme.colors.text.secondary }]}>{railLabel(rail)}</Text>
                             </TouchableOpacity>
                           ))}
                         </View>
@@ -1098,7 +1103,7 @@ export default function P2pScreen() {
                   accessibilityRole="button"
                   accessibilityState={{ selected: profileMethod === m }}
                 >
-                  <Text style={[s.chipText, { color: profileMethod === m ? theme.colors.primary : theme.colors.text.secondary }]}>{m}</Text>
+                  <Text style={[s.chipText, { color: profileMethod === m ? theme.colors.primary : theme.colors.text.secondary }]}>{railLabel(m)}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -1220,7 +1225,7 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
         <Text style={[s.badge, { color: theme.colors.primary }]} testID={`p2p-swap-${index}-status`}>{st}</Text>
       </View>
       <Text style={s.subMono}>{swap.swapId}</Text>
-      <Text style={s.sub}>{t('p2p.giveChain')}: {swap.giveChain ?? '-'} · {swap.wantRail ?? '-'}</Text>
+      <Text style={s.sub}>{t('p2p.giveChain')}: {swap.giveChain ?? '-'} · {swap.wantRail ? railLabel(swap.wantRail) : '-'}</Text>
       {swap.escrowAddress ? <Text style={s.sub}>{t('p2p.escrowAddress')}: {swap.escrowAddress.slice(0, 20)}…</Text> : null}
       {swap.remark && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <Text style={s.subMono}>{t('p2p.remark')}: {swap.remark}</Text>
@@ -1319,7 +1324,7 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
 
       {/* Device-side verification (docs/p2p.md §12): read this party's own rail
           app through the phone they paired, then sign and submit the verdict. */}
-      {isBuyer && cny && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
+      {isBuyer && cny && deviceReadSupported(swap.wantRail) && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <>
           <View style={s.actions}>
             <Action label={t('p2pdev.title')} color={theme.colors.accent.purple} onPress={onVerify} disabled={busy} testID={`p2p-swap-${index}-verify`} />

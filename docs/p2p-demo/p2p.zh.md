@@ -1,6 +1,6 @@
-# P2P 结算 — 卖家确认释放的 CNY 兑换
+# FIAT 结算 — 卖家确认释放的 CNY / USD 兑换
 
-**状态：演示构建 + 仓库内引擎。** 下文即已构建的结算流程：Bigtangle L0 上的 2-of-3 P2SH 托管，以及卖家确认的 CNY 环节（微信支付 / 支付宝 / 银行）。个人转账没有机器可验证的支付事件，因此卖家自己的对账单就是法币信号。截图来自 **Android 应用真机** 的免资金演示构建（内存存储，无链上校验 — 锁定/释放哈希为合成）。设计见 `docs/p2p.md`。
+**状态：演示构建 + 仓库内引擎。** 下文即已构建的结算流程：Bigtangle L0 上的 2-of-3 P2SH 托管，以及卖家确认的法币环节（微信支付 / 支付宝 / 银行，均可选 **PayPal（USD）**）。个人转账没有机器可验证的支付事件，因此卖家自己的对账单就是法币信号。截图来自 **Android 应用真机** 的免资金演示构建（内存存储，无链上校验 — 锁定/释放哈希为合成）。设计见 `docs/p2p.md`。
 
 本指南演示挂单出售 **BIG**（`bc`）、与买家匹配、托管锁定、买家**直接**向卖家支付 CNY、卖家在自己的对账单上确认、托管释放，以及超时退款。
 
@@ -24,6 +24,12 @@ ACTIVE（待撮合）
 可选路径：`PAYMENT_CLAIMED` / `PAYMENT_VERIFIED` ──争议──▶ 引擎协助裁决（`release` 或 `refund`）。
 
 三轨合并演示（微信 / 支付宝 / 银行）见 [p2p-all.md](p2p-all.md) → `assets/p2p-all.pdf`。
+
+**PayPal（美元）。** 通道选择 **PayPal** 时，法币自动切换为 **USD**，收款账户改为 PayPal 邮箱，其余流程（托管、备注码、确认、释放、争议）完全相同。完整演示见 [p2p-paypal.zh.md](p2p-paypal.zh.md) → `assets/p2p-paypal.zh.mobile.pdf`（BIG/USD = 0.01，10,000 BIG → 100 USD）。
+
+![以 paypal / USD 挂出卖单](assets/screenshots/p2p-paypal-02-order-zh.png)
+
+![PayPal 付款说明：邮箱与 100 USD](assets/screenshots/p2p-paypal-08-instructions-zh.png)
 
 ---
 

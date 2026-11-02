@@ -1,4 +1,4 @@
-# P2P-Abwicklung — CNY-Swap mit vom Verkäufer bestätigter Freigabe
+# FIAT-Abwicklung — CNY-Swap mit vom Verkäufer bestätigter Freigabe
 
 **Status: Demo-Build + Engine im Repo.** Alles nachfolgende ist der Abwicklungsfluss wie gebaut: 2-von-3-P2SH-Eskrow auf Bigtangle L0 und eine vom Verkäufer bestätigte CNY-Strecke (WeChat Pay / Alipay / Bank). Eine persönliche Überweisung hat kein maschinell verifizierbares Zahlungsereignis, daher ist der eigene Kontoauszug des Verkäufers das Fiat-Signal. Screenshots stammen aus dem Demo-Build (Memory Store, keine Chain-Prüfung — die Lock/Release-Hashes sind synthetisch). Das Design liegt in `docs/p2p.md`.
 

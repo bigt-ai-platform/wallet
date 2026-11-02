@@ -16,16 +16,22 @@ import type {
 export type { P2pSwapStatus };
 export type { PairingGrant, PaymentVerdict, VerifyEvidenceKind };
 
-/** Peer-to-peer CNY collection methods (WeChat Pay / Alipay / bank transfer). */
-export type PaymentRail = "wechat" | "alipay" | "bank";
+/** Peer-to-peer fiat collection methods (PayPal USD + CNY rails). */
+export type PaymentRail = "wechat" | "alipay" | "bank" | "paypal";
 
-/** Peer-to-peer CNY collection methods (WeChat Pay / Alipay / bank transfer). */
-export const CNY_RAILS = ["wechat", "alipay", "bank"] as const;
-export type CnyRail = (typeof CNY_RAILS)[number];
+/** Fiat collection methods: CNY rails and PayPal (USD). */
+export const FIAT_RAILS = ["wechat", "alipay", "bank", "paypal"] as const;
+/** @deprecated use FIAT_RAILS — kept for existing callers/imports. */
+export const CNY_RAILS = FIAT_RAILS;
+export type FiatRail = (typeof FIAT_RAILS)[number];
+/** @deprecated use FiatRail. */
+export type CnyRail = FiatRail;
 
-export function isCnyRail(rail: string | undefined): rail is CnyRail {
-  return (CNY_RAILS as readonly string[]).includes(rail ?? "");
+export function isFiatRail(rail: string | undefined): rail is FiatRail {
+  return (FIAT_RAILS as readonly string[]).includes(rail ?? "");
 }
+/** @deprecated use isFiatRail. */
+export const isCnyRail = isFiatRail;
 
 export type P2pOrderType = "limit_sell" | "limit_buy";
 

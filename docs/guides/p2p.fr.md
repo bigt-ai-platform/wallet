@@ -1,4 +1,4 @@
-# Règlement P2P — échange CNY natif au wallet
+# Règlement FIAT — échange CNY natif au wallet
 
 **De quoi il s'agit.** Un échange pair à pair entre de la crypto sur
 **Bigtangle L0** et de la monnaie fiat CNY (WeChat Pay / Alipay / banque). Le

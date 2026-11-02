@@ -1,4 +1,4 @@
-# Règlement P2P — Swap en CNY avec libération confirmée par le vendeur
+# Règlement FIAT — Swap en CNY avec libération confirmée par le vendeur
 
 **Statut : build de démonstration + moteur en dépôt.** Tout ce qui suit est le flux de règlement tel que construit : séquestre P2SH 2-sur-3 sur Bigtangle L0 et une jambe CNY confirmée par le vendeur (WeChat Pay / Alipay / banque). Un virement personnel n'a pas d'événement de paiement vérifiable par machine, donc le propre relevé du vendeur constitue le signal fiat. Les captures proviennent du build de démonstration (stockage en mémoire, pas de contrôle de chaîne — les hachages de verrouillage/libération sont synthétiques). Le design se trouve dans `docs/p2p.md`.
 

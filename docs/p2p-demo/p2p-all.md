@@ -1,4 +1,4 @@
-# P2P settlement — BIG → CNY demo (WeChat Pay)
+# FIAT settlement — BIG → CNY demo (WeChat Pay)
 
 Status: **built and captured — funds-free**. Every screenshot below comes from
 the demo harness (`e2e/capture-p2p-cny.mjs`): the real wallet web build driving

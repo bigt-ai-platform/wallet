@@ -1,4 +1,4 @@
-# Liquidação P2P — troca CNY nativa da carteira
+# Liquidação FIAT — troca CNY nativa da carteira
 
 **O que é.** Uma troca ponto a ponto entre cripto na **Bigtangle L0** e fiat CNY
 (WeChat Pay / Alipay / banco). O vendedor deposita os tokens em um **endereço

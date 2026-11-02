@@ -1,4 +1,4 @@
-# P2P settlement — 2-of-3 PQ escrow, seller-confirmed release (CNY rails)
+# FIAT settlement — 2-of-3 PQ escrow, seller-confirmed release (CNY + PayPal USD rails)
 
 **Status: the wallet UI and guide are built and shipped; the engine is in-repo
 but not yet live.** The happy path is **seller-confirmed, seller-released** and
@@ -175,32 +175,33 @@ The only *chain-level* work is a later phase, not required here:
 
 ## 4. The rails — the only difference is conflict evidence
 
-The WeChat / Alipay / bank rails share the entire happy path (§8). The *only*
-thing that differs is what evidence exists when a conflict goes to arbitration
-(§12):
+The WeChat / Alipay / bank / PayPal rails share the entire happy path (§8).
+The *only* thing that differs is what evidence exists when a conflict goes to
+arbitration (§12):
 
-| | WeChat / Alipay | Bank transfer |
-|---|---|---|
-| Where the seller sees the money | own WeChat / Alipay app statement | own bank statement memo |
-| Machine-verifiable payment event | **none — and none is possible** (no collection API for personal accounts) | **none** |
-| Arbitration evidence pack | transaction id + receipt sha256 + seller's own ledger + per-swap remark code | bank transaction id + receipt sha256 + seller's ledger + per-swap remark code |
-| Clawback by the sender | none — personal transfers are final | none — personal transfers are final |
-| Freeze (frozen account) risk | medium–high for crypto-pattern transfers — runbook in §16 | medium–high; prefer bank for large amounts |
+| | WeChat / Alipay | Bank transfer | PayPal (USD) |
+|---|---|---|---|
+| Where the seller sees the money | own WeChat / Alipay app statement | own bank statement memo | own PayPal activity / statement |
+| Machine-verifiable payment event | **none — and none is possible** (no collection API for personal accounts) | **none** | **none on the swap path** — the REST capture API covers business integrations only |
+| Arbitration evidence pack | transaction id + receipt sha256 + seller's own ledger + per-swap remark code | bank transaction id + receipt sha256 + seller's ledger + per-swap remark code | PayPal transaction id + receipt sha256 + seller's own activity + per-swap remark code |
+| Clawback by the sender | none — personal transfers are final | none — personal transfers are final | buyer protection can open a claim after receipt (treat as dispute evidence) |
+| Freeze (frozen account) risk | medium–high for crypto-pattern transfers — runbook in §16 | medium–high; prefer bank for large amounts | account limitation risk; keep a separate business account for P2P |
 
 Order, match, escrow lock, proof, confirm, release, refund, dispute and anchor
 are one protocol with one state machine (§9), one API (§11), one UI, one engine.
 A swap picks its rail at match time (`wantRail`).
 
-### CNY rail properties
+### Fiat rail properties
 
-| | WeChat Pay | Alipay | Bank transfer |
-|---|---|---|---|
-| Speed / hours | instant, 24/7 | instant, 24/7 | instant for small amounts (IBPS/online banking) 24/7; large via HVPS on banking hours |
-| Transfer note (memo) | ✅ supported | ✅ supported | ✅ memo (length and charset vary by bank) |
-| Receiver identity shown to sender | nickname + real-name surname | real-name account name | **full account name** — best for name-match |
-| Typical use in P2P | small/medium, fast | small/medium, fast | large amounts, preferred when limits or freeze risk bite |
+| | WeChat Pay | Alipay | Bank transfer | PayPal |
+|---|---|---|---|---|
+| Currency | CNY | CNY | CNY | **USD** |
+| Speed / hours | instant, 24/7 | instant, 24/7 | instant for small amounts (IBPS/online banking) 24/7; large via HVPS on banking hours | instant, 24/7 |
+| Transfer note (memo) | ✅ supported | ✅ supported | ✅ memo (length and charset vary by bank) | ✅ note / invoice id |
+| Receiver identity shown to sender | nickname + real-name surname | real-name account name | **full account name** — best for name-match | PayPal email or business name |
+| Typical use in P2P | small/medium, fast | small/medium, fast | large amounts, preferred when limits or freeze risk bite | cross-border USD, no Chinese bank account needed |
 
-Recommendations: offer **all three** on every order (the seller's profile
+Recommendations: offer every rail the seller actually accepts (the profile
 stores which they accept); default to **bank transfer above a configurable
 threshold** — the full account name on the transfer screen is the strongest identity
 check, and HVPS/online banking transfers are less likely to trip WeChat/Alipay risk
@@ -418,9 +419,9 @@ Binance P2P asks for, minus the custody.
 ## 7. Fiat leg: buyer → seller, directly
 
 There is no invoice, no webhook and no payout on the happy path, and for a
-personal CNY transfer there never will be: WeChat Pay and Alipay expose no
-collection API for personal accounts, and a natural-person bank account cannot
-receive callbacks. The buyer sends a direct transfer to the seller; the engine
+personal fiat transfer there never will be: WeChat Pay and Alipay expose no
+collection API for personal accounts, a natural-person bank account cannot
+receive callbacks, and PayPal's capture API covers business integrations only. The buyer sends a direct transfer to the seller; the engine
 never touches fiat, and only enforces the protocol.
 
 The fiat signal is therefore: **the seller attests that money is in their
@@ -429,11 +430,16 @@ their own balance) and the engine's job shrinks from *verifying* the rail to
 *enforcing the protocol*: confirm-then-release, dispute-then-arbitrate, always
 fail closed on the chain leg.
 
-**PayPal is not a rail.** The engine and the wallet offer only the CNY rails
-(`wechat`, `alipay`, `bank`). `services/p2p-verify` ships a PayPal REST client
-for operators — `p2p-verify --paypal-capture <id> [--paypal-amount N
---paypal-currency USD]` checks a capture against PayPal's API (needs
-`PAYPAL_CLIENT_ID` / `PAYPAL_SECRET`) — but no swap is ever settled through it.
+**PayPal is a rail, quoted in USD.** `wantRail: "paypal"` sets
+`wantCurrency: "USD"`; the seller's collection profile stores a PayPal email,
+and the buyer pays it directly. Selecting PayPal in the wallet switches the
+ad's currency to USD automatically (the CNY rails switch it back to CNY).
+There is no device-read bridge for PayPal yet, so the buyer's “Verify with my
+phone” action is hidden and the evidence path stays manual confirm / dispute.
+`services/p2p-verify` still ships a PayPal REST client for operators —
+`p2p-verify --paypal-capture <id> [--paypal-amount N --paypal-currency USD]`
+checks a capture against PayPal's API (needs `PAYPAL_CLIENT_ID` /
+`PAYPAL_SECRET`) — but no swap is ever settled through it.
 
 Seller's payment instructions and the per-swap remark code are delivered
 **only after `ESCROW_LOCKED`** and only to the matched buyer, through the same
@@ -448,7 +454,7 @@ whole-body signed, party-scoped reads as `POST /swaps/mine` / `/swaps/get`
 ```
   buyer                     p2p-engine                         seller
     │                            │                                │
-    │ 1. match (DID-signed, wantCurrency, wantRail∈{wechat,alipay,bank})
+    │ 1. match (DID-signed, wantCurrency, wantRail∈{wechat,alipay,bank,paypal})
     │───────────────────────────▶│                                │
     │                    2. fund 2-of-3 P2SH escrow on L0 ◀──────│
     │            3. getTransactionStatus → CONFIRMED + address + amount
@@ -641,7 +647,8 @@ SETTLEMENT_BLOB_DIR                     # blob mode: a directory (mounted volume
 SETTLEMENT_BLOB_KEY                     # blob mode: AES-256-GCM key for the objects at rest
 SETTLEMENT_ADMIN_TOKEN=…            # arbitration / admin routes
 SETTLEMENT_ENGINE_KEY / _PUBKEY     # engine key (scripts/p2p-engine-key.mjs)
-SETTLEMENT_CNY_RAILS=wechat,alipay,bank   # enabled methods (empty = rail off)
+SETTLEMENT_FIAT_RAILS=wechat,alipay,bank,paypal  # enabled methods (empty = all)
+SETTLEMENT_CNY_RAILS=wechat,alipay,bank   # deprecated alias for SETTLEMENT_FIAT_RAILS
 SETTLEMENT_CNY_REMARK_TTL=900             # seconds the remark code is valid
 SETTLEMENT_CNY_CONFIRM_TIMEOUT=900        # claim → confirm deadline: past it the sweep opens a dispute (§12); 0 = never
 SETTLEMENT_CNY_EXPIRE_AFTER=3600          # silent pre-payment idle: past it the sweep expires + refunds (§12); 0 = never

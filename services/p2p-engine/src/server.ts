@@ -113,8 +113,8 @@ import {
 } from "./chain.js";
 import { checkDidTokenFunds, type FundsSnapshot } from "./funds.js";
 import {
-  CNY_RAILS,
-  isCnyRail,
+  FIAT_RAILS,
+  isFiatRail,
   type CnyRail,
   type EscrowSigning,
   type PaymentProfile,
@@ -475,17 +475,18 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   const adminToken = () => env.SETTLEMENT_ADMIN_TOKEN?.trim() || "";
 
   /**
-   * Enabled CNY collection methods (docs/p2p.md §11). Unset or empty → all
-   * three (an env file that forgets the line must not silently kill the
-   * rails); `SETTLEMENT_CNY_RAILS=wechat,bank` restricts.
+   * Enabled fiat collection methods (docs/p2p.md §11). Unset or empty → all
+   * (an env file that forgets the line must not silently kill the rails);
+   * `SETTLEMENT_FIAT_RAILS=wechat,paypal` restricts. The older
+   * `SETTLEMENT_CNY_RAILS` name is still read as a fallback.
    */
-  function cnyRails(): string[] {
-    const raw = env.SETTLEMENT_CNY_RAILS;
-    if (raw === undefined || !raw.trim()) return [...CNY_RAILS];
+  function fiatRails(): string[] {
+    const raw = env.SETTLEMENT_FIAT_RAILS ?? env.SETTLEMENT_CNY_RAILS;
+    if (raw === undefined || !raw.trim()) return [...FIAT_RAILS];
     return raw
       .split(",")
       .map((s) => s.trim())
-      .filter((s) => (CNY_RAILS as readonly string[]).includes(s));
+      .filter((s) => (FIAT_RAILS as readonly string[]).includes(s));
   }
 
   /**
@@ -802,11 +803,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       actorDid,
       at: now(),
     });
-    // CNY rails have no fiat payout step — the seller already got the CNY,
+    // Fiat rails have no payout step — the seller already got the fiat,
     // so `complete` closes the loop while the engine is the acting signer.
     if (
       kind === "release" &&
-      isCnyRail(stored.wantRail) &&
+      isFiatRail(stored.wantRail) &&
       canTransition(stored.status, "COMPLETED")
     ) {
       stored = await persist({
@@ -1525,15 +1526,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
   app.get("/healthz", async () => ({ ok: true }));
 
   /**
-   * Public capability report (no auth): which rails this engine serves. CNY
-   * rails are engine config (`SETTLEMENT_CNY_RAILS`); the wallet reads this at
+   * Public capability report (no auth): which rails this engine serves. Fiat
+   * rails are engine config (`SETTLEMENT_FIAT_RAILS`); the wallet reads this at
    * boot and hides rails that would only ever fail (docs/p2p.md).
    * `escrow`/`chain` are diagnostics: `chain.l0` false means lock proofs are
    * accepted WITHOUT verification (server.ts escrow_lock), never a prod state.
    */
   app.get("/capabilities", async () => ({
     ok: true,
-    rails: [...cnyRails()],
+    rails: [...fiatRails()],
     escrow: !!env.SETTLEMENT_ENGINE_PUBKEY?.trim(),
     /** Public escrow key: the wallet rebuilds the 2-of-3 vault with it. */
     escrowPubkey: env.SETTLEMENT_ENGINE_PUBKEY?.trim() || null,
@@ -1614,11 +1615,11 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       return reply.code(400).send({ error: "amounts must be decimal strings" });
     }
     // rail must be one of the CNY methods configured for this engine
-    if (!cnyRails().includes(String(wantRail))) {
+    if (!fiatRails().includes(String(wantRail))) {
       return reply
         .code(400)
         .send({
-          error: `wantRail not enabled (one of: ${cnyRails().join(", ")})`,
+          error: `wantRail not enabled (one of: ${fiatRails().join(", ")})`,
         });
     }
     if (typeof validUntil !== "number" || validUntil * 1000 <= now()) {
@@ -1689,7 +1690,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     // the engine's enabled rails.
     const wantRails = Array.isArray(body.wantRails)
       ? (body.wantRails as unknown[]).filter(
-          (r): r is string => typeof r === "string" && cnyRails().includes(r),
+          (r): r is string => typeof r === "string" && fiatRails().includes(r),
         )
       : undefined;
     if (
@@ -1699,7 +1700,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       return reply
         .code(400)
         .send({
-          error: `wantRails must be a non-empty subset of: ${cnyRails().join(
+          error: `wantRails must be a non-empty subset of: ${fiatRails().join(
             ", ",
           )}`,
         });
@@ -2502,15 +2503,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return { swaps: swaps.map(redact) };
   });
 
-  //────────── CNY rails (docs/p2p.md) ─────────────────────────────────────
+  //────────── Fiat rails (docs/p2p.md) ─────────────────────────────────────
   // No API and no webhook exists for a personal WeChat/Alipay/bank transfer:
   // the buyer pays the seller directly and the seller's own confirmation is
-  // the fiat signal. The engine never touches CNY — it enforces the protocol
+  // the fiat signal. The engine never touches fiat — it enforces the protocol
   // (instructions → proof → confirm), freezes on dispute, and hands release to
   // the engine only after payment is confirmed (by seller or arbiter).
 
   /**
-   * Buyer pulls the seller's CNY payment profile + a per-swap remark code the
+   * Buyer pulls the seller's fiat payment profile + a per-swap remark code the
    * transfer must carry (§6: the seller checks amount+remark+time+流水号 on
    * their own statements — screenshots never count). Buyer-signed; idempotent
    * while PAYMENT_PENDING; the profile itself stays off the chain record.
@@ -2528,8 +2529,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         return reply.code(409).send({ error: "swap has no buyer" });
       if (!swap.sellerDid)
         return reply.code(409).send({ error: "swap has no seller" });
-      if (!isCnyRail(swap.wantRail))
-        return reply.code(400).send({ error: "not a CNY swap" });
+      if (!isFiatRail(swap.wantRail))
+        return reply.code(400).send({ error: "not a fiat swap" });
       const buyer = typeof body.did === "string" ? body.did : "";
       if (!buyer) return reply.code(400).send({ error: "did required" });
       if (buyer !== swap.buyerDid)
@@ -2604,8 +2605,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       if (!swap) return reply.code(404).send({ error: "unknown swap" });
       if (!swap.buyerDid)
         return reply.code(409).send({ error: "swap has no buyer" });
-      if (!isCnyRail(swap.wantRail))
-        return reply.code(400).send({ error: "not a CNY swap" });
+      if (!isFiatRail(swap.wantRail))
+        return reply.code(400).send({ error: "not a fiat swap" });
       const buyer = typeof body.did === "string" ? body.did : "";
       if (!buyer) return reply.code(400).send({ error: "did required" });
       if (buyer !== swap.buyerDid)
@@ -2784,8 +2785,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       );
       if (!signed.ok)
         return reply.code(signed.status ?? 400).send({ error: signed.error });
-      if (!isCnyRail(swap.wantRail))
-        return reply.code(400).send({ error: "not a CNY swap" });
+      if (!isFiatRail(swap.wantRail))
+        return reply.code(400).send({ error: "not a fiat swap" });
 
       // The verdict's side is the caller's role — a party can never file the
       // other side's story.
@@ -3047,8 +3048,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       );
       if (!signed.ok)
         return reply.code(signed.status ?? 400).send({ error: signed.error });
-      if (!isCnyRail(swap.wantRail))
-        return reply.code(400).send({ error: "not a CNY swap" });
+      if (!isFiatRail(swap.wantRail))
+        return reply.code(400).send({ error: "not a fiat swap" });
 
       // The caller's own, still-valid pairing — never someone else's endpoint.
       const wanted =
@@ -3124,7 +3125,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     },
   );
 
-  /** Either party can freeze a CNY swap mid-review; tokens stay locked. */
+  /** Either party can freeze a fiat swap mid-review; tokens stay locked. */
   app.post<{ Params: { swapId: string } }>(
     "/swaps/:swapId/dispute",
     async (request, reply) => {
@@ -3482,10 +3483,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     const did = typeof body.did === "string" ? body.did : "";
     if (!did) return reply.code(400).send({ error: "did required" });
     const method = typeof body.method === "string" ? body.method : "";
-    if (!(CNY_RAILS as readonly string[]).includes(method)) {
+    if (!(FIAT_RAILS as readonly string[]).includes(method)) {
       return reply
         .code(400)
-        .send({ error: `method must be one of: ${CNY_RAILS.join(", ")}` });
+        .send({ error: `method must be one of: ${FIAT_RAILS.join(", ")}` });
     }
     const accountName =
       typeof body.accountName === "string" ? body.accountName.trim() : "";

@@ -39,7 +39,7 @@ function signed(key: Ed25519Key, did: string, fields: Record<string, unknown>) {
   return { ...payload, signature: signPayload(payload, key.getPrivHex()!) };
 }
 
-async function app() {
+async function app(extra: NodeJS.ProcessEnv = {}) {
   return buildApp({
     store,
     env: {
@@ -47,6 +47,7 @@ async function app() {
       SETTLEMENT_ADMIN_TOKEN: "adm",
       // The suite shares one store, so the per-buyer cap is covered separately.
       SETTLEMENT_MAX_OPEN_SWAPS: "0",
+      ...extra,
     } as NodeJS.ProcessEnv,
     guard: new ReplayGuard(() => clock),
     chain: null,
@@ -181,13 +182,21 @@ describe("settlement server", () => {
     await saveProfile(await app());
   });
 
-  it("reports only the enabled CNY rails (no paypal)", async () => {
+  it("reports the enabled fiat rails, including paypal", async () => {
     const a = await app();
     const caps = (
       await a.inject({ method: "GET", url: "/capabilities" })
     ).json();
-    expect(caps.rails).toEqual(["wechat", "alipay", "bank"]);
+    expect(caps.rails).toEqual(["wechat", "alipay", "bank", "paypal"]);
     expect(caps.paypal).toBeUndefined();
+  });
+
+  it("restricts the rail list from SETTLEMENT_FIAT_RAILS", async () => {
+    const a = await app({ SETTLEMENT_FIAT_RAILS: "paypal" });
+    const caps = (
+      await a.inject({ method: "GET", url: "/capabilities" })
+    ).json();
+    expect(caps.rails).toEqual(["paypal"]);
   });
 
   it("runs a full lifecycle through signed requests", async () => {
