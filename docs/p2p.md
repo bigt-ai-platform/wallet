@@ -1,4 +1,4 @@
-# FIAT settlement — 2-of-3 PQ escrow, seller-confirmed release (CNY + PayPal USD rails)
+# FIAT (fiat-currency) settlement — 2-of-3 PQ escrow, seller-confirmed release (CNY + PayPal USD rails)
 
 **Status: the wallet UI and guide are built and shipped; the engine is in-repo
 but not yet live.** The happy path is **seller-confirmed, seller-released** and
