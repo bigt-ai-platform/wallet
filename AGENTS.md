@@ -266,3 +266,15 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   The relay config is mirrored in `deploy/s1002-relay.caddy`; if Caddy's
   `/var/lib/caddy` is wiped the CA changes and the app must be rebuilt with the
   new root. Do not "fix" this by disabling verification or trusting system CAs.
+
+- **P2P engine runtime image is ~2x smaller (206 MB vs 443 MB).** The runtime
+  stage used to copy the build stage's full `node_modules` (installed with
+  `--production=false`), `packages/` and `services/` — 443 MB / 141.6 MB
+  compressed. It now ships only the 4.5 MB esbuild bundle plus the three
+  packages the bundle keeps external (`pg`, `ajv`, `ajv-formats`, with the
+  versions read from the build's resolution) → **206 MB / ~72 MB compressed**
+  (remaining weight is the `node:20-slim` base; `node:20-alpine`/distroless
+  would cut another ~60-80 MB). Verified the slim image boots in mem and blob
+  modes, serves `/healthz` + `/capabilities`, accepts a DID-signed `POST
+  /orders`, matches it and derives the 2-of-3 escrow address, and verifies a
+  classic EC-DID signed read (same results as the old image).

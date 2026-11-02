@@ -33,14 +33,25 @@ RUN yarn workspace chain-discovery build \
  && yarn workspace p2p-engine build \
  && yarn workspace p2p-engine bundle
 
+# The bundle inlines everything except three packages it keeps external:
+#   - pg: dynamic import in main()
+#   - ajv + ajv-formats: the runtime modules fastify's compiled validators
+#     `require` (they cannot be bundled into the generated validator code)
+# Record the exact resolved versions so the runtime install cannot drift from
+# the versions the bundle/validators were built against.
+RUN node -e 'const fs=require("fs");const v=(n)=>require(`/app/node_modules/${n}/package.json`).version;fs.writeFileSync("/runtime-deps.json",JSON.stringify({pg:v("pg"),ajv:v("ajv"),"ajv-formats":v("ajv-formats")}))'
+
+# Runtime: only the esbuild bundle + its external deps. No workspace sources,
+# no dev toolchain (typescript/vite/tsx/esbuild/vitest/… used to add ~150 MB).
 FROM node:20-slim AS runtime
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages ./packages
-COPY --from=build /app/services/p2p-engine ./services/p2p-engine
-COPY --from=build /app/services/p2p-verify ./services/p2p-verify
 WORKDIR /app/services/p2p-engine
+ENV NODE_ENV=production
+COPY --from=build /runtime-deps.json /tmp/runtime-deps.json
+COPY --from=build /app/services/p2p-engine/dist ./dist
+RUN npm install --no-save --omit=dev --no-audit --no-fund --ignore-scripts \
+      $(node -p 'Object.entries(require("/tmp/runtime-deps.json")).map(([k,v])=>k+"@"+v).join(" ")') \
+ && npm cache clean --force \
+ && rm -f /tmp/runtime-deps.json
 EXPOSE 8108
 # Runs the esbuild bundle: bigtangle-ts ships extensionless ESM + CJS-interop
 # deps that plain `node dist/server.js` cannot load under Node's ESM resolver.
