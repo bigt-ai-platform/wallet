@@ -156,7 +156,7 @@ function mdToHtml(source: string, mdDir: string = GUIDES_DIR, lang: string = "en
   for (const raw of lines) {
     const line = raw.trimEnd();
 
-    if (fence) {
+    if (fence !== null) {
       if (line.startsWith("```")) {
         out.push(`</pre>`);
         fence = null;
@@ -239,7 +239,7 @@ function mdToHtml(source: string, mdDir: string = GUIDES_DIR, lang: string = "en
   flushList();
   flushTable();
   flushQuote();
-  if (fence) out.push(`</pre>`);
+  if (fence !== null) out.push(`</pre>`);
   return out.join("\n");
 }
 
@@ -249,7 +249,7 @@ function renderHtml(title: string, body: string, lang: string): string {
 <html lang="${lang}" dir="${dir}"><head><meta charset="utf-8">
 <title>${esc(title)}</title>
 <style>
-  @page { ${MOBILE ? "size: 390px 844px; margin: 6mm;" : "margin: 18mm 16mm;"} }
+  @page { ${MOBILE ? "size: 390px 844px; margin: 6mm;" : "size: A4; margin: 18mm 16mm;"} }
   * { box-sizing: border-box; }
   body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
          color: ${THEME.textPrimary}; line-height: ${MOBILE ? "1.55" : "1.6"}; font-size: ${MOBILE ? "14px" : "13px"}; margin: 0; }
