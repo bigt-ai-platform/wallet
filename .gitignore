@@ -73,6 +73,7 @@ out/
 docs/p2p-demo/assets/screenshots/
 docs/prediction-demo/assets/screenshots/
 docs/p2p-demo/assets/*.pdf
+docs/p2p-demo/assets/tiktok/
 docs/prediction-demo/assets/*.pdf
 
 # deploy: locally built web image tar (deploy/region.sh loads it onto VMs)

@@ -19,7 +19,8 @@
   },
   "scripts": {
     "verify:seeds": "tsx scripts/verify-seeds.mts",
-    "publishpdf": "scripts/publishpdf.sh"
+    "publishpdf": "scripts/publishpdf.sh",
+    "tiktok": "node e2e/make-p2p-tiktok.mjs"
   },
   "packageManager": "yarn@1.22.22"
 }
