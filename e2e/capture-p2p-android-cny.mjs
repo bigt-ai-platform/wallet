@@ -41,6 +41,9 @@ const CURRENCY = process.env.CURRENCY || 'CNY';
 const WANT = String(Number(GIVE) * Number(PRICE)); // fiat = GIVE × PRICE
 const RAIL = process.env.RAIL || 'wechat';
 const LANG = process.env.LANG_TAG || 'zh';
+// Success notices the app shows, used to wait for a save/publish.
+const NOTICE_SAVED = LANG === 'en' ? 'Profile saved' : '已保存';
+const NOTICE_LISTED = LANG === 'en' ? 'Order listed' : '已发布';
 const PREFIX = process.env.PREFIX || `p2p-cny-${RAIL}`;
 // PayPal accounts are emails; the CNY rails use their own ids.
 const SELLER_NAME = process.env.SELLER_NAME || '张三';
@@ -319,7 +322,7 @@ async function main() {
   await fill('p2p-profile-name', SELLER_NAME);
   await fill('p2p-profile-account', SELLER_ACCOUNT);
   await click('p2p-profile-save');
-  await waitFor(`(${q('p2p-notice')}?.innerText || '').includes('已保存')`, 15000, 'profile saved');
+  await waitFor(`(${q('p2p-notice')}?.innerText || '').includes(${JSON.stringify(NOTICE_SAVED)})`, 15000, 'profile saved');
   await shot(shotName('01-profile'));
 
   await click('p2p-side-sell');
@@ -334,7 +337,7 @@ async function main() {
   if (!total.includes(WANT)) throw new Error(`unexpected total "${total}" (want ${WANT})`);
   await shot(shotName('02-order'));
   await click('p2p-create');
-  await waitFor(`(${q('p2p-notice')}?.innerText || '').includes('已发布')`, 20000, 'order listed');
+  await waitFor(`(${q('p2p-notice')}?.innerText || '').includes(${JSON.stringify(NOTICE_LISTED)})`, 20000, 'order listed');
   log('sell order listed');
 
   // 4. buyer: own private channel details, then match
@@ -345,7 +348,7 @@ async function main() {
   await fill('p2p-profile-name', BUYER_NAME);
   await fill('p2p-profile-account', BUYER_ACCOUNT);
   await click('p2p-profile-save');
-  await waitFor(`(${q('p2p-notice')}?.innerText || '').includes('已保存')`, 15000, 'buyer profile saved');
+  await waitFor(`(${q('p2p-notice')}?.innerText || '').includes(${JSON.stringify(NOTICE_SAVED)})`, 15000, 'buyer profile saved');
   await click('p2p-tab-open');
   await waitFor(`!!${q('p2p-order-0-toggle')}`, 20000, 'buyer book');
   await click('p2p-order-0-toggle');

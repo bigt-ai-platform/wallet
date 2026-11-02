@@ -20,7 +20,9 @@
   "scripts": {
     "verify:seeds": "tsx scripts/verify-seeds.mts",
     "publishpdf": "scripts/publishpdf.sh",
-    "tiktok": "node e2e/make-p2p-tiktok.mjs"
+    "tiktok": "node e2e/make-p2p-tiktok.mjs",
+    "tiktok:paypal": "node e2e/make-p2p-tiktok.mjs --lang=zh --rail=paypal",
+    "tiktok:en": "node e2e/make-p2p-tiktok.mjs --lang=en --rail=wechat"
   },
   "packageManager": "yarn@1.22.22"
 }
