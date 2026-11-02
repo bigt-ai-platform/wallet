@@ -3,8 +3,8 @@ import { PQKey, Sha256Hash, Utils, SignatureBundle } from 'bigtangle-ts';
 import { verifyRecordSig, type AnchoredRecord } from 'record-sig';
 import { P2P_ORDER_ID_RE } from 'p2p-protocol';
 import {
-  canonicalJson, canonicalRecordJson, newOrderId, pqDidFromKey, pqKeyFromPrivateHex,
-  shortDid, signP2pPayload, signP2pRecord, signedBody,
+  canonicalJson, canonicalRecordJson, newOrderId, p2pIdentityFromWallet, pqDidFromKey,
+  pqKeyFromPrivateHex, shortDid, signP2pPayload, signP2pRecord, signedBody,
 } from '../p2pIdentity';
 
 /** Deterministic ML-DSA-87 test key. The wallet stores the serialized
@@ -80,6 +80,29 @@ describe('p2pIdentity', () => {
 
   it('mints order ids the engine accepts', () => {
     expect(P2P_ORDER_ID_RE.test(newOrderId())).toBe(true);
+  });
+
+  it('derives a stable PQ identity for a legacy EC wallet key', () => {
+    // A legacy secp256k1 wallet stores a 32-byte secret (no PQ bundle).
+    const ecHex = Utils.HEX.encode(new Uint8Array(32).fill(0x22));
+    const id = p2pIdentityFromWallet(ecHex, 'EC');
+    expect(id).not.toBeNull();
+    expect(id!.did.startsWith('did:key:z')).toBe(true);
+    // Deterministic: the same wallet always gets the same did:key.
+    expect(p2pIdentityFromWallet(ecHex, 'EC')!.did).toBe(id!.did);
+    // Its signatures verify under the DID like any PQ party signature.
+    const payload = { did: id!.did, giveAmount: '100', type: 'limit_buy' };
+    const sig = signP2pPayload(id!.key, payload);
+    expect(engineVerifies(payload, sig, id!.key.getPrefixedPublicKeyBytes())).toBe(true);
+    expect(engineVerifies({ ...payload, giveAmount: '101' }, sig, id!.key.getPrefixedPublicKeyBytes())).toBe(false);
+  });
+
+  it('keeps the stored-bundle path for PQ wallets and rejects missing keys', () => {
+    const pq = p2pIdentityFromWallet(STORED_HEX, 'PQ');
+    expect(pq?.did).toBe(pqDidFromKey(pqKeyFromPrivateHex(STORED_HEX)));
+    expect(p2pIdentityFromWallet(undefined)).toBeNull();
+    expect(p2pIdentityFromWallet('')).toBeNull();
+    expect(p2pIdentityFromWallet('00', 'PQ')).toBeNull();
   });
 
   it('shortens a long did:key to head…tail', () => {

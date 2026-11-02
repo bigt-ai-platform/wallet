@@ -58,6 +58,28 @@ export function isDeviceUnlockSupported(): boolean {
   return plugin() !== null;
 }
 
+/**
+ * True while an OS unlock prompt is up.
+ *
+ * On several OEM builds the device-credential (PIN/pattern) step of
+ * `BiometricPrompt` is a separate system activity, so the WebView sees
+ * `AppState === 'background'` for the whole prompt. The wallet must not treat
+ * that as "the user left the app" and wipe itself mid transaction — the create
+ * flow would come back to the unlock screen after the user authenticated.
+ */
+let promptsInFlight = 0;
+export function isDeviceUnlockPromptActive(): boolean {
+  return promptsInFlight > 0;
+}
+
+const settledListeners = new Set<() => void>();
+
+/** Subscribe to "the prompt finished"; returns an unsubscribe function. */
+export function onDeviceUnlockSettled(fn: () => void): () => void {
+  settledListeners.add(fn);
+  return () => { settledListeners.delete(fn); };
+}
+
 /** Show the OS unlock prompt. Returns `unavailable` when it cannot be used. */
 export async function confirmWithDeviceUnlock(
   opts: { title?: string; subtitle?: string; reason?: string } = {},
@@ -71,7 +93,18 @@ export async function confirmWithDeviceUnlock(
     // Activity is recreated while it is up (rotation, a system dialog taking
     // over) that callback can be lost and the call would pend forever, leaving
     // the caller stuck on "Unlocking…". Treat a lost prompt as unavailable.
-    const res = await withTimeout(p.confirm(opts), PROMPT_TIMEOUT_MS, null);
+    promptsInFlight += 1;
+    let res: Awaited<ReturnType<DeviceAuthPlugin['confirm']>> | null;
+    try {
+      res = await withTimeout(p.confirm(opts), PROMPT_TIMEOUT_MS, null);
+    } finally {
+      promptsInFlight -= 1;
+      if (promptsInFlight === 0) {
+        for (const fn of settledListeners) {
+          try { fn(); } catch { /* a listener must never break settlement */ }
+        }
+      }
+    }
     if (res == null) return 'unavailable';
     return res.ok ? 'ok' : 'denied';
   } catch {

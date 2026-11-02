@@ -224,3 +224,34 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   now flags `chainlength < 0` as `branch` (`lib/blockinfo.ts`) and hides those
   rows behind a "显示分支块" toggle (count line shows
   `N 个区块 · 已隐藏 M 个分支块`), with a 分支 badge when shown.
+
+## Notes as of 2026-11-02
+
+- **P2P works with a legacy EC wallet again.** `P2pScreen` set `identity = null`
+  for `keyType === 'EC'` (P2P signs with ML-DSA + a `did:key`), so an unlocked
+  legacy secp256k1 wallet showed "请先解锁钱包" on the create form (the "create
+  P2P buy shows unlock first" report) — the mine tab is the only place the create
+  form lives. `p2pIdentityFromWallet` (`lib/p2pIdentity.ts`) now derives the P2P
+  identity deterministically from the EC 32-byte secret (`PQKey.fromPrivateKeyHex`
+  → ML-DSA seed); the EC address stays the receive/refund address. Covered by
+  `lib/__tests__/p2pIdentity.test.ts` and
+  `e2e/playwright/tests/p2p-legacy-wallet.spec.ts` (seeds a plain EC wallet,
+  needs a P2P-enabled web build).
+- **The wallet no longer auto-locks during its own OS unlock prompt.** On OEM
+  builds the device-credential step of `BiometricPrompt` runs in another
+  activity, so the WebView goes `background`; the AppState handler wiped the
+  wallet mid-create/pay and the screen returned to "unlock first" after the
+  user authenticated. `services/deviceAuth.ts` now counts in-flight prompts
+  (`isDeviceUnlockPromptActive`) and the wallet locks on background only when no
+  prompt is up (plus a 1.5 s settle re-check if the user really left). Plain
+  (unencrypted) wallets are never moved to the locked state — they have no
+  password to unlock them again.
+- **Diagnosing the device wallet type**: the app is release-signed but
+  `webapp.sh` builds a *debuggable* APK with the same cert, so installing it
+  over the release app keeps the data and exposes `webview_devtools_remote`
+  (`adb forward tcp:9333 localabstract:webview_devtools_remote_<pid>`, then CDP).
+  The wallet itself is scrypt-encrypted, so key type was proven from chain
+  history instead: `getBlockByHash` → the spending input's scriptSig has a
+  33-byte secp256k1 pubkey (an ML-DSA pubkey is ~2.6 KB). The relay
+  `https://92.5.34.128` still serves an internal Caddy CA cert for the bare IP,
+  so native L0/L1 calls fail while `https://wallet.bigt.ai/l0|l1/` works.

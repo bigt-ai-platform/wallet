@@ -32,6 +32,41 @@ export function pqKeyFromPrivateHex(privateKeyHex: string): PQKey {
   return PQKey.fromPrivateKey(Utils.HEX.decode(privateKeyHex));
 }
 
+/**
+ * The P2P signing identity for a wallet key.
+ *
+ * Every P2P request is signed with ML-DSA and authenticated as a `did:key`, so
+ * the wallet needs a PQ key. A legacy secp256k1 wallet (`keyType === 'EC'`,
+ * imported from an old `.wallet`) has no PQ key of its own — but its 32-byte
+ * private key *is* a valid ML-DSA seed. Deriving the P2P identity from it is
+ * deterministic (the same wallet always gets the same did:key) and keeps the
+ * EC address as the receive/refund address; the did is only the engine identity
+ * and the party key share of an escrow vault.
+ *
+ * Without this, `identity` stayed null for every legacy wallet and the create
+ * form rendered "unlock your wallet first" even while the wallet was unlocked.
+ *
+ * Returns null only when the stored key cannot be reconstructed.
+ */
+export function p2pIdentityFromWallet(
+  privateKeyHex: string | undefined,
+  keyType?: 'PQ' | 'EC',
+): { key: PQKey; did: string } | null {
+  const hex = (privateKeyHex ?? '').trim();
+  if (!hex) return null;
+  try {
+    // PQ wallets store the serialized private-key bundle (fromPrivateKey);
+    // EC wallets store the 32-byte secp256k1 secret, which fromPrivateKeyHex
+    // expands as the ML-DSA seed.
+    const key = keyType === 'EC'
+      ? PQKey.fromPrivateKeyHex(hex)
+      : pqKeyFromPrivateHex(hex);
+    return { key, did: pqDidFromKey(key) };
+  } catch {
+    return null;
+  }
+}
+
 /** did:key over the PQ public key (codec 0x300001, base58btc) — matches the engine. */
 export function pqDidFromKey(key: PQKey): string {
   const mc = encodeUvarint(MULTICODEC_MLDSA87);

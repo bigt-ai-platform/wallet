@@ -264,6 +264,15 @@ Node auth is off on a stock node (`server.permissioned=false`,
 Three keys, threshold two: **seller**, **buyer**, **engine**. Keys are ML-DSA
 (`PQKey`), the wallet's default key type.
 
+A **legacy secp256k1 (EC)** wallet (imported from an old `.wallet`) has no PQ
+key of its own. The app derives its P2P `did:key` deterministically from the
+same 32-byte secret (`p2pIdentityFromWallet` in
+`expo-app/sources/lib/p2pIdentity.ts`), which is a valid ML-DSA seed. The did is
+only the engine identity and the party key share of a vault; the wallet's EC
+address stays the receive/refund address. Without this a legacy wallet was
+unlocked but had `identity === null`, and the create form (My swaps) rendered
+"unlock your wallet first".
+
 ```
 redeemScript = OP_2 <sellerPubKey> <buyerPubKey> <enginePubKey> OP_3 OP_CHECKMULTISIG
 outputScript = P2SH(sha256hash160(redeemScript))

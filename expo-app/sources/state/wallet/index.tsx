@@ -3,7 +3,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import { loadWallet, loadPlainWalletSync, isPlainWalletJson, type WalletFile } from '@/screens/wallet/WalletHelper';
 import { device } from '@/storage';
-import { confirmWithDeviceUnlock, isDeviceUnlockSupported } from '@/services/deviceAuth';
+import { confirmWithDeviceUnlock, isDeviceUnlockPromptActive, isDeviceUnlockSupported, onDeviceUnlockSettled } from '@/services/deviceAuth';
 import {
   forgetWalletUnlock,
   getRememberedWalletUnlock,
@@ -127,33 +127,62 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     };
   });
 
-  // Clear decrypted wallet when app goes to background.
+  /**
+   * Wipe the decrypted key from memory. An unencrypted wallet is never locked:
+   * its only copy is the plain JSON already in localStorage, and it has no
+   * password — a "locked" state there dead-ends on a password prompt the user
+   * never set.
+   */
+  const lockWallet = useCallback(() => {
+    if (decryptedWalletRef.current) {
+      const wallet = decryptedWalletRef.current;
+      if (wallet.wallet.privateKey) {
+        (wallet.wallet as any).privateKey = '0'.repeat(64);
+      }
+      decryptedWalletRef.current = null;
+    }
+    passwordRef.current = null;
+    setState((prev) => ({ ...prev, isUnlocked: false }));
+  }, []);
+
+  // Clear the decrypted wallet when the app goes to the background.
   //
   // Only `background` locks: an `inactive` transition also happens for the OS
   // unlock prompt and the system dialogs we open ourselves, and locking on it
   // would wipe the wallet mid-unlock (the user then has to start over).
   React.useEffect(() => {
+    let settleTimer: ReturnType<typeof setTimeout> | null = null;
+    const clearSettleTimer = () => {
+      if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+    };
+    const lockOnBackground = () => {
+      const stored = device.get(['device', WALLET_ENCRYPTED_CONTENT_KEY]);
+      if (stored && isPlainWalletJson(String(stored))) return;
+      lockWallet();
+    };
     const handleAppStateChange = (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'background') {
-        if (decryptedWalletRef.current || passwordRef.current) {
-          if (decryptedWalletRef.current) {
-            const wallet = decryptedWalletRef.current;
-            if (wallet.wallet.privateKey) {
-              (wallet.wallet as any).privateKey = '0'.repeat(64);
-            }
-            decryptedWalletRef.current = null;
-          }
-          if (passwordRef.current) {
-            passwordRef.current = null;
-          }
-          setState((prev) => ({ ...prev, isUnlocked: false }));
-        }
-      }
+      if (nextAppState === 'active') { clearSettleTimer(); return; }
+      if (nextAppState !== 'background') return;
+      // Our own OS unlock prompt is a separate system activity on several
+      // OEM builds, so the app "backgrounds" while the user authenticates.
+      // Locking here wiped the wallet the create/pay flow was about to use.
+      if (isDeviceUnlockPromptActive()) return;
+      lockOnBackground();
     };
 
     const subscription = AppState.addEventListener('change', handleAppStateChange);
-    return () => subscription?.remove();
-  }, []);
+    const offPromptSettled = onDeviceUnlockSettled(() => {
+      // If the user really left the app while the prompt was up, lock shortly
+      // after it settles — long enough for the resumed WebView to report
+      // `active` again (which cancels this), so a normal unlock never locks.
+      if (settleTimer) return;
+      settleTimer = setTimeout(() => {
+        settleTimer = null;
+        if (AppState.currentState === 'background') handleAppStateChange('background');
+      }, 1500);
+    });
+    return () => { clearSettleTimer(); subscription?.remove(); offPromptSettled(); };
+  }, [lockWallet]);
 
   const storeEncryptedWallet = useCallback(
     async (encryptedContent: string, address: string, password?: string) => {
@@ -251,18 +280,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (res !== 'ok') return null;
     return unlockWallet(remembered);
   }, [unlockWallet]);
-
-  const lockWallet = useCallback(() => {
-    if (decryptedWalletRef.current) {
-      const wallet = decryptedWalletRef.current;
-      if (wallet.wallet.privateKey) {
-        (wallet.wallet as any).privateKey = '0'.repeat(64);
-      }
-      decryptedWalletRef.current = null;
-    }
-    passwordRef.current = null;
-    setState((prev) => ({ ...prev, isUnlocked: false }));
-  }, []);
 
   const clearWallet = useCallback(async () => {
     lockWallet();

@@ -14,7 +14,7 @@ import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import { CloseIcon, HelpIcon, SearchIcon } from '@/components/Icons';
 import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
-import { pqDidFromKey, pqKeyFromPrivateHex, shortDid } from '@/lib/p2pIdentity';
+import { p2pIdentityFromWallet, shortDid } from '@/lib/p2pIdentity';
 import { exceedsBalance, findBalance, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
 import { checkP2pFill, filterP2pOrders } from '@/lib/p2pOrderBook';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
@@ -159,15 +159,13 @@ export default function P2pScreen() {
 
   const keyHex = isUnlocked ? getUnlockedWallet()?.wallet.privateKey : undefined;
   const keyType = getUnlockedWallet()?.wallet.keyType;
-  const identity = React.useMemo<P2pIdentity | null>(() => {
-    if (!keyHex || keyType === 'EC') return null;
-    try {
-      const key = pqKeyFromPrivateHex(keyHex);
-      return { key, did: pqDidFromKey(key) };
-    } catch {
-      return null;
-    }
-  }, [keyHex, keyType]);
+  // A legacy EC wallet signs P2P with an ML-DSA identity derived from the same
+  // secret (see p2pIdentityFromWallet) — otherwise every action on this screen
+  // was a "please unlock first" dead end on an unlocked wallet.
+  const identity = React.useMemo<P2pIdentity | null>(
+    () => p2pIdentityFromWallet(keyHex, keyType),
+    [keyHex, keyType],
+  );
 
   const loadOrders = React.useCallback(async () => {
     setOrders(await listOpenOrders());
@@ -278,7 +276,7 @@ export default function P2pScreen() {
 
   const requireIdentity = (): P2pIdentity | null => {
     if (!isUnlocked || !publicInfo?.address) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return null; }
-    if (!identity) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return null; }
+    if (!identity) { setNotice({ ok: false, text: t('p2p.identityUnavailable') }); return null; }
     return identity;
   };
 
@@ -1077,7 +1075,7 @@ export default function P2pScreen() {
             })}
         </>
       ) : !identity ? (
-        <Text style={s.emptyText} testID="p2p-need-unlock">{t('p2p.unlockFirst')}</Text>
+        <Text style={s.emptyText} testID="p2p-need-unlock">{t('p2p.identityUnavailable')}</Text>
       ) : (
         <>
           {createOrderCard}
