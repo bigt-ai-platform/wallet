@@ -123,6 +123,27 @@ describe("syncOnce — order-book projection from the chain", () => {
     expect((await store.getOrder(match.orderId!))?.remainingGive).toBe("0.3");
   });
 
+  it("preserves who acted through replay (cancel attribution)", async () => {
+    const match = swapRec({ giveAmount: "0.1", wantAmount: "0.1" });
+    const cancelled = swapRec({
+      giveAmount: "0.1",
+      wantAmount: "0.1",
+      status: "CANCELLED",
+      swapSeq: 1,
+      actorDid: sellerDid,
+    });
+    const src = chain([
+      GENESIS,
+      block("h1", 1, "h0", [rec(orderRec({ giveAmount: "0.3", wantAmount: "0.3" })), rec(match)]),
+      block("h2", 2, "h1", [rec(cancelled)]),
+    ]);
+    const store = new MemSettlementStore();
+    await syncOnce(src, store, new MemCursorStore());
+    const swap = await store.getSwap("swap-0123456789abcdef");
+    expect(swap?.status).toBe("CANCELLED");
+    expect(swap?.actorDid).toBe(sellerDid);
+  });
+
   it("opens an order, is idempotent across runs, and advances the cursor", async () => {
     const src = chain([GENESIS, block("h1", 1, "h0", [rec(orderRec())])]);
     const store = new MemSettlementStore();

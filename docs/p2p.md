@@ -1388,10 +1388,16 @@ seller can still be a slow payer.
 | `EXPIRED` | `expired` — the buyer no-show counter |
 | `ESCROW_REFUNDED` | `refunded`; with `disputeOutcome: "refund"` also the buyer's `lostDisputes` |
 | `disputeOutcome: "release"` | the seller's `lostDisputes` |
+| `CANCELLED` by the caller | `cancelledBySelf` — a match walk-away; counts as a decided outcome in the caller's `completionRate` |
+| `CANCELLED` by the counterparty | `cancelledByCounterparty` — neutral for this role |
 | event timings | buyer `avgPayMs` (match → claim); seller `avgConfirmMs`, `avgReleaseMs` |
 
-`completionRate = completed / (completed + expired + refunded)` — cancellations
-are neutral (either party may cancel before payment) and reported separately.
+`completionRate = completed / (completed + expired + refunded + cancelledBySelf)`:
+whichever party cancels a matched swap walked away from it, so the cancel counts
+against that party's own rate and not the counterparty's. (A seller may only
+cancel before payment instructions exist, §9; a buyer may also cancel before
+claiming payment.) Both roles report `cancelledBySelf` /
+`cancelledByCounterparty`, plus `cancelledBySelf30d`.
 
 **Wash-resistant.** At most **3 swaps per counterparty pair** count toward the
 aggregates (`pairCap`), oldest first — two colluding DIDs cannot inflate each
@@ -1401,6 +1407,11 @@ Velocity limits (§16) still apply on top.
 **Tiers** — transparent thresholds, not a magic score:
 `trusted` ≥ 10 counted trades, ≥ 95% completion, zero lost disputes;
 `established` ≥ 3 counted trades, ≥ 80% completion; otherwise `new`.
+
+**Walk-away safety mark.** Either role that cancels matched swaps is marked
+`unsafe` when it does so **3+ times in 30 days**, or when walk-aways are **≥ 50%
+of their counted 30-day swaps** with at least 3 swaps. One cancel does not mark
+an account unsafe; the raw counter is still shown in the badge.
 
 **Visibility.** Public summary for anyone — `GET /public/reputation/:did`
 (PII-free counts, rates, latencies, tier — including `trades30d`, counted

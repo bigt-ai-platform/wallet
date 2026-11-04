@@ -83,7 +83,12 @@ export interface P2pOrder {
     completionRate: number;
     disputes: number;
     lostDisputes: number;
-    /** Seller safety mark: lost arbitration, or a persistently delayed release. */
+    /** Matched swaps this seller cancelled before payment (walk-aways). */
+    cancelledBySelf?: number;
+    /** Those walk-aways among swaps in the last 30 days. */
+    cancelledBySelf30d?: number;
+    /** Seller safety mark: lost arbitration, persistently delayed release, or
+     *  repeated cancel-after-match. */
     unsafe?: boolean;
   };
   /**

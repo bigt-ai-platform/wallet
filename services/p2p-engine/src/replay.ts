@@ -265,6 +265,7 @@ function eventFromSwapRecord(rec: P2pSwapRecord, txid: string): P2pSwapEvent {
     // marks the event (§12).
     eventType: rec.verifySide !== undefined ? "payment_verify" : EVENT_TYPE_FOR_STATUS[rec.status] ?? "match",
     ...(rec.orderId !== undefined ? { orderId: rec.orderId } : {}),
+    ...(rec.actorDid !== undefined ? { actorDid: rec.actorDid } : {}),
     ...(rec.sellerDid !== undefined ? { sellerDid: rec.sellerDid } : {}),
     ...(rec.buyerDid !== undefined ? { buyerDid: rec.buyerDid } : {}),
     ...(rec.giveChain !== undefined ? { giveChain: rec.giveChain } : {}),

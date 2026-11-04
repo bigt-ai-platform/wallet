@@ -1904,6 +1904,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       completionRate: r.seller.completionRate,
       disputes: r.seller.disputes,
       lostDisputes: r.seller.lostDisputes,
+      cancelledBySelf: r.seller.cancelledBySelf,
+      cancelledBySelf30d: r.seller.cancelledBySelf30d,
       unsafe: r.seller.unsafe,
     };
   }

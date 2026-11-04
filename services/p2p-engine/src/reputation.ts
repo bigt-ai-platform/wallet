@@ -12,8 +12,10 @@
  *
  * Counted set: terminal swaps only (COMPLETED / EXPIRED / ESCROW_REFUNDED /
  * CANCELLED), pair-capped and ordered by match time. `completionRate` is
- * completed / (completed + expired + refunded) — cancellations are neutral
- * (either party may cancel before payment) and reported separately.
+ * completed / (completed + expired + refunded + cancelledBySelf): whichever
+ * party cancels a matched swap walked away from it, so it counts for that
+ * role. Cancels keep their own counters too, and a repeated pattern marks the
+ * role unsafe.
  */
 import type { P2pSwapEvent } from "./types.js";
 
@@ -57,11 +59,21 @@ export interface RoleReputation {
   since: number | null;
   /** Distinct counterparties, uncapped. */
   counterparties: number;
-  /** completed / (completed + expired + refunded); cancellations neutral. */
+  /** completed / (completed + expired + refunded + cancelledBySelf) — a cancel
+   *  by either party is a walk-away from a matched trade and counts. */
   completionRate: number;
   tier: ReputationTier;
-  /** Seller safety mark: lost arbitration, or a mean confirm→release over 30 min. */
+  /** Safety mark: lost arbitration, a seller's mean confirm→release over
+   *  30 min, or a repeated pattern of cancelling after the match (§25). */
   unsafe: boolean;
+  /** Terminal swaps this role cancelled itself. Either side cancelling a
+   *  matched swap is a walk-away and counts in that role's completion rate;
+   *  a seller may only do it before instructions (§9). */
+  cancelledBySelf: number;
+  /** Terminal swaps the counterparty cancelled. */
+  cancelledByCounterparty: number;
+  /** `cancelledBySelf` among counted swaps in the last 30 days. */
+  cancelledBySelf30d: number;
 }
 
 export interface ReputationReport {
@@ -82,6 +94,10 @@ export interface SwapAttribution {
   expired: boolean;
   cancelled: boolean;
   refunded: boolean;
+  /** Which side issued the cancel event, when it names a party. */
+  cancelledBy: "seller" | "buyer" | null;
+  /** `cancelledBy === role` — this role walked away from the match. */
+  cancelledBySelf: boolean;
   disputed: boolean;
   lostDispute: boolean;
   payMs: number | null;
@@ -97,6 +113,10 @@ export interface ReputationDetail extends ReputationReport {
 const TRUSTED_TRADES = 10;
 /** A seller whose mean confirm→release exceeds this is marked unsafe. */
 export const UNSAFE_RELEASE_MS = 30 * 60 * 1000;
+/** A seller who cancels this many counted matches in 30 days is unsafe. */
+export const UNSAFE_CANCELS_30D = 3;
+/** …or this share of their counted 30-day swaps (with enough history). */
+export const UNSAFE_CANCEL_RATE = 0.5;
 const TRUSTED_COMPLETION = 0.95;
 const ESTABLISHED_TRADES = 3;
 const ESTABLISHED_COMPLETION = 0.8;
@@ -127,6 +147,9 @@ function emptyRole(): RoleReputation {
     completionRate: 0,
     tier: "new",
     unsafe: false,
+    cancelledBySelf: 0,
+    cancelledByCounterparty: 0,
+    cancelledBySelf30d: 0,
   };
 }
 
@@ -140,7 +163,10 @@ function mean(values: number[]): number | null {
 }
 
 function completionRate(r: RoleReputation): number {
-  const decided = r.completed + r.expired + r.refunded;
+  // A cancel is a walk-away from a matched trade: the role that cancelled is
+  // accountable for it, so it counts as a decided outcome for that role (a
+  // cancel by the counterparty stays neutral).
+  const decided = r.completed + r.expired + r.refunded + r.cancelledBySelf;
   return decided ? r.completed / decided : 0;
 }
 
@@ -155,6 +181,16 @@ function tierOf(r: RoleReputation): ReputationTier {
 export function attributeSwap(list: readonly P2pSwapEvent[], counted: boolean): SwapAttribution[] {
   const sorted = [...list].sort((a, b) => a.seq - b.seq);
   const latest = sorted[sorted.length - 1];
+  const cancelEvent = sorted.find((e) => e.eventType === "cancel");
+  // The event names its signer; map it back to a role. Old logs without
+  // `actorDid` stay unattributed (neutral) rather than guessing.
+  const cancelActor = cancelEvent?.actorDid;
+  const cancelledBy: "seller" | "buyer" | null =
+    cancelActor && cancelActor === latest.sellerDid
+      ? "seller"
+      : cancelActor && cancelActor === latest.buyerDid
+        ? "buyer"
+        : null;
   const disputed = sorted.some((e) => e.dispute != null);
   const lostForSeller = latest.disputeOutcome === "release"; // seller refused; arbitration released to buyer
   const lostForBuyer = latest.disputeOutcome === "refund"; // arbitration refunded the seller
@@ -177,6 +213,8 @@ export function attributeSwap(list: readonly P2pSwapEvent[], counted: boolean): 
     expired: latest.status === "EXPIRED",
     cancelled: latest.status === "CANCELLED",
     refunded: latest.status === "ESCROW_REFUNDED",
+    cancelledBy,
+    cancelledBySelf: cancelledBy === role,
     disputed,
     lostDispute: role === "seller" ? lostForSeller : lostForBuyer,
     payMs: role === "buyer" ? payMs : null,
@@ -266,7 +304,15 @@ export function reputationFromEvents(
       if (attr.at >= windowStart) r.trades30d += 1;
       if (attr.completed) r.completed += 1;
       if (attr.expired) r.expired += 1;
-      if (attr.cancelled) r.cancelled += 1;
+      if (attr.cancelled) {
+        r.cancelled += 1;
+        if (attr.cancelledBySelf) {
+          r.cancelledBySelf += 1;
+          if (attr.at >= windowStart) r.cancelledBySelf30d += 1;
+        } else if (attr.cancelledBy) {
+          r.cancelledByCounterparty += 1;
+        }
+      }
       if (attr.refunded) r.refunded += 1;
       if (attr.disputed) r.disputes += 1;
       if (attr.lostDispute) r.lostDisputes += 1;
@@ -317,11 +363,21 @@ export function reputationFromEvents(
     r.seller.tier = tierOf(r.seller);
     r.buyer.tier = tierOf(r.buyer);
     // Safety is separate from the trust tier: a lost arbitration always marks
-    // the role unsafe; for a seller, a persistently delayed release does too.
+    // the role unsafe; for a seller, a persistently delayed release does too,
+    // as does a repeated pattern of walking away from matched swaps (§25).
+    const repeatCancels = (role: RoleReputation): boolean => {
+      const rate =
+        role.trades30d > 0 ? role.cancelledBySelf30d / role.trades30d : 0;
+      return (
+        role.cancelledBySelf30d >= UNSAFE_CANCELS_30D ||
+        (role.trades30d >= 3 && rate >= UNSAFE_CANCEL_RATE)
+      );
+    };
     r.seller.unsafe =
       r.seller.lostDisputes > 0 ||
-      (r.seller.avgReleaseMs !== null && r.seller.avgReleaseMs > UNSAFE_RELEASE_MS);
-    r.buyer.unsafe = r.buyer.lostDisputes > 0;
+      (r.seller.avgReleaseMs !== null && r.seller.avgReleaseMs > UNSAFE_RELEASE_MS) ||
+      repeatCancels(r.seller);
+    r.buyer.unsafe = r.buyer.lostDisputes > 0 || repeatCancels(r.buyer);
   }
   return out;
 }

@@ -18,6 +18,8 @@ import { deviceVerifyDue } from '@/lib/p2pDeviceRead';
 import { p2pIdentityFromWallet, shortDid } from '@/lib/p2pIdentity';
 import { exceedsBalance, findBalance, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
 import { checkP2pFill, filterP2pOrders } from '@/lib/p2pOrderBook';
+import { railLabel } from '@/lib/p2pRails';
+import { BIG_TOKEN, includeNativeBig } from '@/lib/tokenSearch';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
 import type { TokenItem, WalletAccountItem } from '@/types/api';
@@ -35,7 +37,6 @@ type Tab = 'open' | 'mine' | 'search';
 const CNY_RAILS: readonly string[] = ['wechat', 'alipay', 'bank', 'paypal'];
 /** Built-in rail list — used until the engine's /capabilities report arrives. */
 const DEFAULT_RAILS: readonly string[] = [...CNY_RAILS];
-const RAIL_LABELS: Record<string, string> = { paypal: 'PayPal' };
 /** Protocol status → user-facing label (the raw constant stays in data-status). */
 const STATUS_KEYS: Record<string, string> = {
   MATCHED: 'p2p.statusMatched',
@@ -49,9 +50,6 @@ const STATUS_KEYS: Record<string, string> = {
   ESCROW_REFUNDED: 'p2p.statusEscrowRefunded',
   CANCELLED: 'p2p.statusCancelled',
 };
-function railLabel(rail: string): string {
-  return RAIL_LABELS[rail] ?? rail;
-}
 function isCnyRail(rail?: string): boolean {
   return !!rail && CNY_RAILS.includes(rail);
 }
@@ -325,7 +323,9 @@ export default function P2pScreen() {
     setTokenSearching(true);
     try {
       const res = await httpService.searchExchangeTokens(keyword.trim());
-      setTokenResults(res.success && res.data ? res.data : []);
+      const rows = res.success && res.data ? res.data : [];
+      // Same rule as /trade: native BIG has no token-index row, so add it here.
+      setTokenResults(includeNativeBig(rows, keyword, BIG_TOKEN));
     } catch (e) {
       console.error('Error searching tokens:', e);
       setTokenResults([]);
@@ -813,9 +813,9 @@ export default function P2pScreen() {
               ) : tokenResults.length > 0 ? (
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, marginTop: 8 }} testID="p2p-token-results">
                   {tokenResults.map((tk, i) => (
-                    <TouchableOpacity key={i} style={s.chip} onPress={() => pickToken(tk)} testID={`p2p-token-${i}`} accessibilityRole="button">
-                      <Text style={s.chipText}>{tk.tokenname}</Text>
-                      <Text style={s.chipSub}>{tk.tokenid.slice(0, 10)}...</Text>
+                    <TouchableOpacity key={i} style={[s.chip, giveTokenId === tk.tokenid && s.chipActive]} onPress={() => pickToken(tk)} testID={`p2p-token-${i}`} accessibilityRole="button" accessibilityState={{ selected: giveTokenId === tk.tokenid }}>
+                      <Text style={[s.chipText, giveTokenId === tk.tokenid && s.chipTextActive]}>{tk.tokenname}</Text>
+                      <Text style={[s.chipSub, giveTokenId === tk.tokenid && s.chipSubActive]}>{tk.tokenid.slice(0, 10)}...</Text>
                     </TouchableOpacity>
                   ))}
                 </ScrollView>
@@ -850,7 +850,7 @@ export default function P2pScreen() {
                     accessibilityRole="button"
                     accessibilityState={{ selected: rails.includes(rail) }}
                   >
-                    <Text style={[s.chipText, { color: rails.includes(rail) ? theme.colors.primary : theme.colors.text.secondary }]}>{railLabel(rail)}</Text>
+                    <Text style={[s.chipText, { color: rails.includes(rail) ? theme.colors.primary : theme.colors.text.secondary }]}>{railLabel(t, rail)}</Text>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -867,6 +867,11 @@ export default function P2pScreen() {
                 placeholder={publicInfo?.address ?? ''}
                 testID="p2p-create-recv"
               />
+            ) : null}
+            {isCnyRail(rails[0]) ? (
+              <Text style={s.warn} testID="p2p-create-cancel-warn">
+                {orderSide === 'sell' ? t('p2p.sellerCancelWarn') : t('p2p.buyerCancelWarn')}
+              </Text>
             ) : null}
             <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.primary }]} onPress={submitOrder} disabled={busy || overBalance} testID="p2p-create">
               <Text style={s.btnText}>{t('p2p.create')}</Text>
@@ -981,7 +986,7 @@ export default function P2pScreen() {
                 {isExpanded ? (
                   <>
                 <Text style={s.sub} testID={`p2p-order-${i}-limit`}>
-                  {t('p2p.advertised', { amount: `${o.remainingGive ?? o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).map(railLabel).join(', ')}
+                  {t('p2p.advertised', { amount: `${o.remainingGive ?? o.giveAmount} ${o.giveToken}` })} · {t('p2p.limit')}: {o.minOrder || '0'}–{o.maxOrder || o.wantAmount} {o.wantCurrency} · {t('p2p.rail')}: {(o.wantRails?.length ? o.wantRails : [o.wantRail]).map((r) => railLabel(t, r)).join(', ')}
                 </Text>
                 {fundsText ? (
                   <Text
@@ -1016,6 +1021,9 @@ export default function P2pScreen() {
                       trades: o.sellerReputation.trades,
                       pct: Math.round(o.sellerReputation.completionRate * 100),
                     })}
+                    {o.sellerReputation.cancelledBySelf30d
+                      ? ` · ${t('p2p.repCancels', { count: o.sellerReputation.cancelledBySelf30d })}`
+                      : ''}
                   </Text>
                 ) : null}
                 {o.sellerReputation?.unsafe ? (
@@ -1068,7 +1076,7 @@ export default function P2pScreen() {
                               accessibilityRole="button"
                               accessibilityState={{ selected: chosenRail === rail }}
                             >
-                              <Text style={[s.chipText, { color: chosenRail === rail ? theme.colors.primary : theme.colors.text.secondary }]}>{railLabel(rail)}</Text>
+                              <Text style={[s.chipText, { color: chosenRail === rail ? theme.colors.primary : theme.colors.text.secondary }]}>{railLabel(t, rail)}</Text>
                             </TouchableOpacity>
                           ))}
                         </View>
@@ -1116,7 +1124,7 @@ export default function P2pScreen() {
                   accessibilityRole="button"
                   accessibilityState={{ selected: profileMethod === m }}
                 >
-                  <Text style={[s.chipText, { color: profileMethod === m ? theme.colors.primary : theme.colors.text.secondary }]}>{railLabel(m)}</Text>
+                  <Text style={[s.chipText, { color: profileMethod === m ? theme.colors.primary : theme.colors.text.secondary }]}>{railLabel(t, m)}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -1255,7 +1263,7 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
         </Text>
       </View>
       <Text style={s.subMono}>{swap.swapId}</Text>
-      <Text style={s.sub}>{t('p2p.giveChain')}: {swap.giveChain ?? '-'} · {swap.wantRail ? railLabel(swap.wantRail) : '-'}</Text>
+      <Text style={s.sub}>{t('p2p.giveChain')}: {swap.giveChain ?? '-'} · {swap.wantRail ? railLabel(t, swap.wantRail) : '-'}</Text>
       {swap.escrowAddress ? <Text style={s.sub}>{t('p2p.escrowAddress')}: {swap.escrowAddress.slice(0, 20)}…</Text> : null}
       {swap.remark && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <Text style={s.subMono}>{t('p2p.remark')}: {swap.remark}</Text>
@@ -1279,6 +1287,14 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
           <Text style={s.sub}>{t('p2p.payBy')}: {new Date(instruction.payBy * 1000).toLocaleString()}</Text>
           {instruction.qr ? <Image source={{ uri: instruction.qr }} style={s.instrQr} /> : null}
         </View>
+      ) : null}
+
+      {/* Cancelling a matched swap is a walk-away: it counts in your rating. */}
+      {((isSeller && (st === 'MATCHED' || st === 'ESCROW_LOCKED')) ||
+        (isBuyer && (st === 'ESCROW_LOCKED' || st === 'PAYMENT_PENDING'))) ? (
+        <Text style={s.warn} testID={`p2p-swap-${index}-cancel-warn`}>
+          {isSeller ? t('p2p.sellerCancelWarn') : t('p2p.buyerCancelWarn')}
+        </Text>
       ) : null}
 
       {isSeller && (st === 'MATCHED' || st === 'ESCROW_LOCKED' || st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
@@ -1429,8 +1445,11 @@ const s = StyleSheet.create((theme) => ({
   actionText: { fontSize: 13, fontWeight: '600' },
   chips: { flexDirection: 'row', gap: 8, marginTop: 4, flexWrap: 'wrap' },
   chip: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6 },
+  chipActive: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
   chipText: { fontSize: 13, fontWeight: '600' },
+  chipTextActive: { color: '#FFFFFF' },
   chipSub: { fontSize: 11, color: theme.colors.text.secondary, marginTop: 2 },
+  chipSubActive: { color: '#FFFFFF', opacity: 0.85 },
   notice: { borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 12, backgroundColor: theme.colors.groupped.surface },
   noticeText: { fontSize: 13, fontWeight: '600' },
   instructions: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, padding: 12, marginTop: 12, backgroundColor: theme.colors.groupped.background },

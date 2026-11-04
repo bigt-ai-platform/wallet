@@ -7,6 +7,7 @@ import {
   type P2pAutoReleasePolicy, type P2pIdentity, type P2pPairing, type P2pDeviceReadResult, type P2pSwap,
 } from '@/services/p2p';
 import { deviceReadMode } from '@/lib/p2pDeviceRead';
+import { railLabel } from '@/lib/p2pRails';
 
 /**
  * "Verify with my phone" (docs/p2p.md §12): pair the party's own phone (the
@@ -127,7 +128,7 @@ export default function PhoneVerifyCard({ id, swap, autoReleaseOn, onStatus, onC
           ? t('p2phelp.wechatBuyer')
           : mode === 'notification'
             ? t('p2phelp.wechatSeller')
-            : t('p2phelp.openDetail', { rail: swap.wantRail ?? '' })}
+            : t('p2phelp.openDetail', { rail: railLabel(t, swap.wantRail ?? '') })}
       </Text>
 
       {pairings.filter((p) => !p.revoked).length === 0 ? (

@@ -49,6 +49,14 @@ export interface P2pSwapRecord {
   status: P2pSwapStatus;
   /** monotonic per-swap event sequence (0-based). */
   swapSeq: number;
+  /**
+   * did:key of the party that caused this event (the seller, the buyer, or the
+   * engine for engine-driven transitions). `from` is only the anchoring key
+   * (the engine), so without this a replay cannot tell who cancelled a swap —
+   * which the reputation walk-away signal needs (§25). Public: both parties'
+   * DIDs are already in the record.
+   */
+  actorDid?: string;
   orderId?: string;
   sellerDid?: string;
   buyerDid?: string;
@@ -110,6 +118,7 @@ export function p2pSwapRecord(a: P2pSwapRecordInput): P2pSwapRecord {
     ts: a.ts ?? Date.now(),
   };
   if (a.orderId !== undefined) record.orderId = a.orderId;
+  if (a.actorDid !== undefined) record.actorDid = a.actorDid;
   if (a.sellerDid !== undefined) record.sellerDid = a.sellerDid;
   if (a.buyerDid !== undefined) record.buyerDid = a.buyerDid;
   if (a.giveChain !== undefined) record.giveChain = a.giveChain;
@@ -169,6 +178,9 @@ export function validateP2pSwapRecord(r: Partial<P2pSwapRecord>): { ok: true } |
     }
   }
   // The pinned escrow participant is a prefixed PQ pubkey (~5.2k hex chars).
+  if (r.actorDid !== undefined && (typeof r.actorDid !== "string" || r.actorDid.length === 0 || r.actorDid.length > 6000)) {
+    return { ok: false, error: "invalid actorDid (1..6000)" };
+  }
   if (r.enginePubkey !== undefined && !/^[0-9a-f]{64,6000}$/.test(r.enginePubkey)) {
     return { ok: false, error: "invalid enginePubkey (prefixed PQ pubkey hex)" };
   }

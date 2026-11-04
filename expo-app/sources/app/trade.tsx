@@ -12,6 +12,7 @@ import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
 import { recordOrder } from '@/services/tracking';
 import { BC_DECIMALS, decimalsFor, orderPriceShift } from '@/lib/tokenformat';
+import { includeNativeBig } from '@/lib/tokenSearch';
 import { utcOffsetLabel } from '@/lib/timeformat';
 import { CopyIcon, ExpandIcon, CloseIcon } from '@/components/Icons';
 import TradingChart, { DEFAULT_INDICATORS, type ChartIndicators } from '@/components/TradingChart';
@@ -169,13 +170,7 @@ export default function TradeScreen() {
           price: '0', change: '0', executedquantity: '0', decimals: tk.decimals,
         }));
         // BIG is the native chain token (id "bc") and has no token-index row.
-        const want = keyword.trim().toUpperCase();
-        const bigMatch = want.length > 0
-          && ('BIG'.startsWith(want) || 'BIGTANGLE'.startsWith(want) || want === 'BC');
-        if (bigMatch && !rows.some((tk) => tk.tokenid === BIG_TOKEN.tokenid)) {
-          rows.unshift(BIG_TOKEN);
-        }
-        setTokenResults(rows);
+        setTokenResults(includeNativeBig(rows, keyword, BIG_TOKEN));
       }
     } catch (e) { console.error('Error searching tokens:', e); }
     finally { setSearching(false); }

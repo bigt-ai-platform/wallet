@@ -111,16 +111,42 @@ describe("reputationFromEvents — outcome attribution", () => {
     expect(map.get(B)!.buyer.completionRate).toBe(0);
   });
 
-  it("treats cancellations as neutral for the completion rate", () => {
+  it("treats a buyer cancel as neutral for the seller's completion rate", () => {
     const log = [
-      ...buyerLog("swap-0000000000000003", "CANCELLED", "cancel", 1_700_000_000_000),
+      ...buyerLog("swap-0000000000000003", "CANCELLED", "cancel", 1_700_000_000_000, { actorDid: B }),
       ...completedLog("swap-0000000000000004", 1_700_000_100_000),
     ];
     const map = reputationFromEvents(log);
     const seller = map.get(S)!.seller;
     expect(seller.cancelled).toBe(1);
+    expect(seller.cancelledBySelf).toBe(0);
+    expect(seller.cancelledByCounterparty).toBe(1);
     expect(seller.completed).toBe(1);
-    expect(seller.completionRate).toBe(1); // 1 / (1 completed + 0 expired + 0 refunded)
+    expect(seller.completionRate).toBe(1); // 1 / (1 completed + 0 expired + 0 refunded + 0 walk-aways)
+    expect(map.get(B)!.buyer.cancelledBySelf).toBe(1);
+    expect(map.get(B)!.buyer.completionRate).toBe(0.5); // 1 completed / (1 completed + 1 walk-away)
+  });
+
+  it("counts a seller cancel after match as a walk-away", () => {
+    const log = buyerLog("swap-0000000000000003", "CANCELLED", "cancel", 1_700_000_000_000, { actorDid: S });
+    const map = reputationFromEvents(log, { now: 1_700_000_000_000 + 60_000 });
+    const seller = map.get(S)!.seller;
+    expect(seller.cancelled).toBe(1);
+    expect(seller.cancelledBySelf).toBe(1);
+    expect(seller.cancelledBySelf30d).toBe(1);
+    expect(seller.completed).toBe(0);
+    expect(seller.completionRate).toBe(0); // 0 / (0 + 0 + 0 + 1 walk-away)
+    expect(map.get(B)!.buyer.cancelledBySelf).toBe(0);
+    expect(map.get(B)!.buyer.cancelledByCounterparty).toBe(1);
+  });
+
+  it("leaves an unattributed legacy cancel neutral", () => {
+    const log = buyerLog("swap-0000000000000003", "CANCELLED", "cancel", 1_700_000_000_000);
+    const seller = reputationFromEvents(log).get(S)!.seller;
+    expect(seller.cancelled).toBe(1);
+    expect(seller.cancelledBySelf).toBe(0);
+    expect(seller.cancelledByCounterparty).toBe(0);
+    expect(seller.completionRate).toBe(0); // decided set is empty
   });
 
   it("attributes arbitration outcomes to the losing role", () => {
@@ -198,6 +224,50 @@ describe("reputationFromEvents — wash resistance and tiers", () => {
 
     const disputed = clean.map((e, i) => (i === 5 ? { ...e, dispute: "RESOLVED", disputeOutcome: "release" as const } : e));
     expect(reputationFromEvents(disputed).get(S)!.seller.tier).toBe("established"); // a lost dispute blocks "trusted"
+  });
+
+  it("marks a seller unsafe after repeated walk-aways, but not after one", () => {
+    const t0 = 1_700_000_000_000;
+    const now = t0 + 60 * 60 * 1000;
+    const once = buyerLog("swap-0000000000000011", "CANCELLED", "cancel", t0, { actorDid: S });
+    expect(reputationFromEvents(once, { now }).get(S)!.seller.unsafe).toBe(false);
+
+    const repeated = [1, 2, 3].flatMap((i) =>
+      buyerLog(`swap-${String(i).padStart(16, "0")}`, "CANCELLED", "cancel", t0 + i * 1000, { actorDid: S }),
+    );
+    const seller = reputationFromEvents(repeated, { now }).get(S)!.seller;
+    expect(seller.cancelledBySelf30d).toBe(3);
+    expect(seller.unsafe).toBe(true);
+  });
+
+  it("dilutes walk-aways with completed trades", () => {
+    const t0 = 1_700_000_000_000;
+    const now = t0 + 60 * 60 * 1000;
+    const log = [
+      ...buyerLog("swap-0000000000000011", "CANCELLED", "cancel", t0, { actorDid: S }),
+      ...[1, 2, 3, 4, 5].flatMap((i) =>
+        completedLog(`swap-${String(i).padStart(16, "0")}`, t0 + i * 60_000).map((e) => ({
+          ...e,
+          buyerDid: `did:key:zB${i}`,
+        })),
+      ),
+    ];
+    const seller = reputationFromEvents(log, { now }).get(S)!.seller;
+    expect(seller.cancelledBySelf30d).toBe(1);
+    expect(seller.trades30d).toBe(6);
+    expect(seller.unsafe).toBe(false);
+    expect(seller.completionRate).toBeCloseTo(5 / 6);
+  });
+
+  it("marks a buyer unsafe after repeated walk-aways too", () => {
+    const t0 = 1_700_000_000_000;
+    const now = t0 + 60 * 60 * 1000;
+    const repeated = [1, 2, 3].flatMap((i) =>
+      buyerLog(`swap-${String(i).padStart(16, "0")}`, "CANCELLED", "cancel", t0 + i * 1000, { actorDid: B }),
+    );
+    const buyer = reputationFromEvents(repeated, { now }).get(B)!.buyer;
+    expect(buyer.cancelledBySelf30d).toBe(3);
+    expect(buyer.unsafe).toBe(true);
   });
 
   it("never leaks PII into the summary", () => {

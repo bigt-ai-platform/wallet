@@ -82,6 +82,7 @@ export function swapEventRecord(
     status: event.status,
     swapSeq: event.seq,
     orderId: event.orderId,
+    actorDid: event.actorDid,
     sellerDid: event.sellerDid,
     buyerDid: event.buyerDid,
     giveChain: event.giveChain,
