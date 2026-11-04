@@ -1762,6 +1762,27 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         });
     }
 
+    // A fiat sell ad is unserviceable without the seller's collection details
+    // for every rail it advertises: without this the buyer only learns at
+    // payment-instructions, after escrow is already locked. A buy bid's poster
+    // pays fiat, so their profile is irrelevant; the taker-seller is checked
+    // at match time instead.
+    if (type === "limit_sell") {
+      const advertised = wantRails?.length ? wantRails : [wantRail];
+      const missing: string[] = [];
+      for (const rail of advertised) {
+        if (!isFiatRail(rail)) continue;
+        if (!(await deps.store.getProfile(sellerDid, rail))) missing.push(rail);
+      }
+      if (missing.length) {
+        return reply.code(422).send({
+          error: `seller has no payment profile for: ${missing.join(
+            ", ",
+          )} — save the channel details before listing`,
+        });
+      }
+    }
+
     // Advisory proof-of-balance for a sell ad (the poster is the token giver).
     // A buy bid's poster pays fiat, so nothing to check here; the taker is
     // checked at match time. `warn` keeps the order but flags it in the public
@@ -2127,6 +2148,19 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         return reply
           .code(400)
           .send({ error: `rail must be one of: ${rails.join(", ")}` });
+      }
+      // The token giver must be able to collect on the chosen rail. This is
+      // the taker-seller check for a buy bid (and defence in depth for a sell
+      // ad): reject before any escrow lock or swap event exists.
+      if (
+        isFiatRail(chosenRail) &&
+        !(await deps.store.getProfile(sellerDid, chosenRail))
+      ) {
+        return reply
+          .code(409)
+          .send({
+            error: `seller has no payment profile for ${chosenRail}; ask them to add it before matching`,
+          });
       }
 
       // Re-check the token giver at the moment of match (advisory): the ad may

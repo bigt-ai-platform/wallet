@@ -361,10 +361,13 @@ export default function P2pScreen() {
       setNotice({ ok: false, text: t('p2p.overBalance', { amount: availText }) });
       return;
     }
-    // Fiat channel (e.g. WeChat): the collection details must exist before the
-    // order can be listed; they stay private and are shown only to a matched
-    // counterparty.
-    if (isCnyRail(rails[0]) && !requireChannel(rails[0])) return;
+    // Fiat channel (e.g. WeChat): a sell ad must have collection details for
+    // EVERY rail it advertises (the engine enforces the same rule). A buy bid's
+    // poster pays fiat, so the taker-seller's profile is checked at match.
+    if (orderSide === 'sell') {
+      const missingRail = rails.find((rail) => isCnyRail(rail) && !channelFor(rail));
+      if (missingRail && !requireChannel(missingRail)) return;
+    }
     // Important transaction (signs with the wallet key): device unlock first.
     const approved = await confirmImportant({
       subtitle: t('p2p.createTitle'),

@@ -449,6 +449,7 @@ describe("CNY rails (docs/p2p.md)", () => {
 
   it("matches a CNY order and rejects the removed PayPal routes", async () => {
     const a = await app();
+    await saveProfile(a, "alipay");
     const swapId = await toEscrowLocked(a, "alipay");
     const swap = (await store.getSwap(swapId))!;
     expect(swap.wantRail).toBe("alipay");
@@ -525,21 +526,32 @@ describe("CNY rails (docs/p2p.md)", () => {
     });
     expect(disabled.statusCode).toBe(400);
 
-    // no profile for this rail yet → 409
-    const swapId = await toEscrowLocked(a, "bank");
-    const noProfile = await a.inject({
+    // a bank ad cannot be listed before the seller saves bank details
+    const noBankProfile = await a.inject({
       method: "POST",
-      url: `/swaps/${swapId}/payment-instructions`,
-      payload: signed(buyer, buyerDid, {
+      url: "/orders",
+      payload: signed(seller, sellerDid, {
+        type: "limit_sell",
+        sellerDid,
+        giveToken: "USDT",
+        giveAmount: "1",
+        giveChain: "L0",
+        wantCurrency: "CNY",
+        wantAmount: "7",
+        wantRail: "bank",
+        validUntil: Math.floor(clock / 1000) + 3600,
         requestMethod: "POST",
-        requestPath: `/swaps/${swapId}/payment-instructions`,
+        requestPath: "/orders",
       }),
     });
-    expect(noProfile.statusCode).toBe(409);
-    expect(noProfile.json().error).toContain("no payment profile");
+    expect(noBankProfile.statusCode).toBe(422);
+    expect(noBankProfile.json().error).toContain(
+      "no payment profile for: bank",
+    );
 
-    // now the seller saves one and instructions work
+    // now the seller saves one: the ad lists and instructions work
     await saveProfile(a, "bank");
+    const swapId = await toEscrowLocked(a, "bank");
     bump();
     const ins = await a.inject({
       method: "POST",

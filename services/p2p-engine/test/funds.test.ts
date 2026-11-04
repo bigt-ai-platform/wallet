@@ -111,9 +111,16 @@ async function app(chain: ChainClient | null, extraEnv: NodeJS.ProcessEnv = {}) 
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   clock = 1_700_000_000_000;
   store = new MemSettlementStore();
+  await store.upsertProfile({
+    sellerDid,
+    method: "wechat",
+    accountName: "Zhang San",
+    account: "wxid_pay888",
+    updatedAt: clock,
+  });
 });
 
 describe("did balance key", () => {
@@ -270,6 +277,15 @@ describe("order funds gate", () => {
 
   it("checks the taker as the seller on a buy bid", async () => {
     const a = await app(fakeChain([row("1")]));
+    // The taker is the token giver/seller on a buy bid; it needs collection
+    // details before a match can even be attempted.
+    await store.upsertProfile({
+      sellerDid: buyerDid,
+      method: "wechat",
+      accountName: "Li Si",
+      account: "wxid_taker888",
+      updatedAt: clock,
+    });
     const orderId = `ord-${randomBytes(8).toString("hex")}`;
     // The poster is the buyer; posting a bid needs no balance.
     const created = await a.inject({

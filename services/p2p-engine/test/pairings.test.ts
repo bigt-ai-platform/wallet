@@ -172,7 +172,7 @@ function deviceRead(
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   clock = 1_700_000_000_000;
   store.orders.clear();
   store.swapEvents.clear();
@@ -181,6 +181,13 @@ beforeEach(() => {
   store.paymentVerifications.clear();
   store.pairings.clear();
   reads.length = 0;
+  await store.upsertProfile({
+    sellerDid,
+    method: "wechat",
+    accountName: "Zhang San",
+    account: "wxid_pay888",
+    updatedAt: clock,
+  });
 });
 
 describe("device pairing + engine read (docs/p2p.md §12)", () => {

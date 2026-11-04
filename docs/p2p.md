@@ -637,6 +637,14 @@ disposable database with schema-creation privileges.
 | `POST /profiles`, `POST /profiles/mine` | seller | payment profile upsert / list (store-only PII, §14) |
 | `GET /public/orders` | anyone | PII-free active order book |
 
+**Fiat rail profiles are enforced before a swap exists.** `POST /orders` for a
+`limit_sell` ad requires the seller's `PaymentProfile` for **every** advertised
+rail; `POST /orders/:id/match` requires the token giver (the seller — including
+the taker on a `limit_buy` bid) to have one for the **chosen** rail. Both fail
+with 422/409 before any swap event or escrow lock, so a buyer can no longer lock
+funds against a seller who cannot produce payment details. A `limit_buy` poster
+is the fiat payer, so the poster needs no profile.
+
 Env config:
 
 ```

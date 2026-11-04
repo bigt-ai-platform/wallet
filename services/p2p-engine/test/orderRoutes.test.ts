@@ -80,10 +80,99 @@ function orderPayload(overrides: Record<string, unknown> = {}) {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   store = new MemSettlementStore();
+  // A fiat sell ad now requires collection details for its rail(s) — seed the
+  // seller's WeChat profile so order-route tests stay about their subject.
+  await store.upsertProfile({
+    sellerDid,
+    method: "wechat",
+    accountName: "Zhang San",
+    account: "wxid_pay888",
+    updatedAt: clock,
+  });
   txidOk = true;
   anchorThrows = false;
+});
+
+describe("fiat rail profile enforcement", () => {
+  it("rejects a sell ad for a rail without collection details", async () => {
+    const a = await app();
+    const r = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: orderPayload({
+        wantRail: "wechat",
+        wantRails: ["wechat", "alipay"],
+      }),
+    });
+    expect(r.statusCode).toBe(422);
+    expect(r.json().error).toContain("no payment profile for: alipay");
+  });
+
+  it("allows a buy bid without the poster's own profile", async () => {
+    const a = await app();
+    const r = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(other, otherDid, {
+        type: "limit_buy",
+        sellerDid: otherDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "USD",
+        wantAmount: "101",
+        wantRail: "wechat",
+        receiveAddress: RECEIVE_ADDRESS,
+        validUntil: Math.floor(clock / 1000) + 3600,
+        requestMethod: "POST",
+        requestPath: "/orders",
+      }),
+    });
+    expect(r.statusCode).toBe(201);
+  });
+
+  it("rejects a match when the taker-seller has no profile for the rail", async () => {
+    const a = await app();
+    // Poster is the buyer (no profile needed); the taker is the token giver
+    // and has no WeChat details.
+    const created = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(other, otherDid, {
+        type: "limit_buy",
+        sellerDid: otherDid,
+        giveToken: "USDT",
+        giveAmount: "100",
+        giveChain: "L0",
+        wantCurrency: "USD",
+        wantAmount: "101",
+        wantRail: "wechat",
+        receiveAddress: RECEIVE_ADDRESS,
+        validUntil: Math.floor(clock / 1000) + 3600,
+        requestMethod: "POST",
+        requestPath: "/orders",
+      }),
+    });
+    expect(created.statusCode).toBe(201);
+    const orderId = created.json().orderId as string;
+    clock += 1;
+    const match = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: signed(buyer, buyerDid, {
+        buyerDid,
+        receiveAddress: RECEIVE_ADDRESS,
+        requestMethod: "POST",
+        requestPath: `/orders/${orderId}/match`,
+      }),
+    });
+    expect(match.statusCode).toBe(409);
+    expect(match.json().error).toContain("no payment profile for wechat");
+    expect((await store.getOrder(orderId))?.status).toBe("ACTIVE");
+    expect(await store.listSwaps()).toHaveLength(0);
+  });
 });
 
 describe("seller-anchored order intake (orderId + L1-SOCIAL txid)", () => {

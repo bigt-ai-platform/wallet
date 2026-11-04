@@ -179,7 +179,10 @@ describe("settlement server", () => {
     store.paymentProfiles.clear();
     store.paymentProofs.clear();
     anchored.length = 0;
-    await saveProfile(await app());
+    const seeding = await app();
+    for (const method of ["wechat", "alipay", "bank", "paypal"]) {
+      await saveProfile(seeding, method);
+    }
   });
 
   it("reports the enabled fiat rails, including paypal", async () => {
@@ -921,6 +924,7 @@ describe("open swap cap", () => {
       now: () => clock,
       anchor: async () => ({ txid: "a".repeat(64) }),
     });
+    await saveProfile(a);
     const o = await a.inject({
       method: "POST",
       url: "/orders",

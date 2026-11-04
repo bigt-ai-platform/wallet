@@ -249,7 +249,7 @@ afterAll(async () => {
   await new Promise<void>((resolve) => mockMcp.close(() => resolve()));
 });
 
-beforeEach(() => {
+beforeEach(async () => {
   clock = T_ORDER;
   mcpCalls.length = 0;
   screenOverride = undefined;
@@ -260,6 +260,13 @@ beforeEach(() => {
   store.paymentProofs.clear();
   store.paymentVerifications.clear();
   store.pairings.clear();
+  await store.upsertProfile({
+    sellerDid,
+    method: "wechat",
+    accountName: "Zhang San",
+    account: "wxid_pay888",
+    updatedAt: clock,
+  });
 });
 
 /** Engine with the REAL default device reader (no injected fake). */
