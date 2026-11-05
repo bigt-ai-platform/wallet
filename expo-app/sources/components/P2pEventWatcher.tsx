@@ -3,6 +3,7 @@ import { useWallet } from '@/state/wallet';
 import { p2pIdentityFromWallet } from '@/lib/p2pIdentity';
 import { mySwaps, p2pConfigured, type P2pIdentity, type P2pSwapStatus } from '@/services/p2p';
 import { notifySystemMessage } from '@/services/systemMessages';
+import { railLabel } from '@/lib/p2pRails';
 import i18n from '@/lib/i18n';
 
 const POLL_MS = 30000;
@@ -73,6 +74,21 @@ export default function P2pEventWatcher() {
           if (!seeded || previous === undefined || previous === swap.status) continue;
           // The seller already got the action-specific notice above.
           if (swap.status === 'MATCHED' && swap.sellerDid === identity.did) continue;
+          // Buyer marked "I have paid": the seller must check the rail and
+          // confirm — a generic "status changed" is not actionable enough.
+          if (swap.status === 'PAYMENT_CLAIMED' && swap.sellerDid === identity.did) {
+            notifySystemMessage({
+              tone: 'info',
+              title: i18n.t('system.p2pPaidTitle'),
+              body: i18n.t('system.p2pPaidBody', {
+                id: swap.swapId.slice(0, 12),
+                amount: swap.wantAmount ?? '',
+                currency: swap.wantCurrency ?? '',
+                rail: railLabel(i18n.t, swap.wantRail ?? ''),
+              }),
+            });
+            continue;
+          }
           notifySystemMessage({
             tone: toneFor(swap.status),
             title: i18n.t('system.p2pUpdateTitle'),

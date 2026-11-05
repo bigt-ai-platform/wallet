@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
   View, Text, ScrollView, ActivityIndicator, TouchableOpacity,
-  TextInput, Image, Linking,
+  TextInput, Image, Linking, AppState,
 } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
 import { useTranslation } from 'react-i18next';
@@ -234,6 +234,26 @@ export default function P2pScreen() {
   }, [tab, loadOrders, loadSwaps, loadBalances]);
 
   React.useEffect(() => { refresh(); }, [refresh]);
+
+  // Keep My swaps live: the counterparty's actions (paid, confirmed, released)
+  // must appear without tapping Refresh. Silent (no spinner) every 15 s and on
+  // returning to the app, so a "buyer says they paid" state is visible quickly.
+  const refreshSilently = React.useCallback(async () => {
+    if (!p2pConfigured() || !identity) return;
+    try { await loadSwaps(); } catch { /* keep the last list on a transient failure */ }
+  }, [identity, loadSwaps]);
+
+  React.useEffect(() => {
+    if (!identity || !p2pConfigured() || tab !== 'mine') return undefined;
+    const timer = setInterval(() => { void refreshSilently(); }, 15000);
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshSilently();
+    });
+    return () => {
+      clearInterval(timer);
+      sub.remove();
+    };
+  }, [identity, tab, refreshSilently]);
 
   // Capability report (public, unsigned) once at mount. getCapabilities()
   // resolves null rather than throwing, so an older engine without

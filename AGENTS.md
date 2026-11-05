@@ -430,3 +430,12 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   / "first time failed, second fine" report). `lockAndPresign` now retries the
   transition up to 4 times, 4 s apart, for chain-verification errors only; the
   existing `fundedEscrowTx` pre-check keeps a retry from sending twice.
+
+- **My swaps refreshes itself and "buyer paid" is a specific notice.** The P2P
+  screen only refreshed on mount/tab change (or a manual Refresh tap), so the
+  counterparty's "I have paid" sat invisible until the user reloaded. The Mine
+  tab now polls `mySwaps` silently every 15 s and on app foreground, and
+  `P2pEventWatcher` raises `system.p2pPaidTitle`/`p2pPaidBody` for a
+  `PAYMENT_CLAIMED` transition where this wallet is the seller ("{{amount}}
+  {{currency}} … check your {{rail}} account, then tap Confirm received")
+  instead of the generic status line.
