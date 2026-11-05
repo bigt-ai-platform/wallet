@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
 import { toBigInt, formatValue } from '@/lib/amountformat';
+import { formatDateTime } from '@/lib/timeformat';
 import { decimalsFor } from '@/lib/tokenformat';
 import { sumByAddress, TOP_HOLDERS_LIMIT, type HolderTotal } from '@/lib/topHolders';
 import { MONO_FONT } from '@/constants/fonts';
@@ -347,9 +348,8 @@ export default function PublicBalanceScreen() {
                 : u.spendPending
                   ? t('balance.statePendingSpend')
                   : t('balance.stateLocked');
-            const fromLabel = u.fromAddress ? u.fromAddress.slice(0, 18) : '...';
-            const toLabel = u.address ? u.address.slice(0, 18) : '...';
-            const dateSuffix = u.time ? ` · ${new Date(u.time * 1000).toISOString().slice(0, 10)}` : '';
+            const fromLabel = u.fromAddress || '…';
+            const toLabel = u.address || '…';
             return (
               <View key={key} style={s.card}>
                 <View style={s.cardHeader}>
@@ -357,7 +357,11 @@ export default function PublicBalanceScreen() {
                   <Text style={s.tokenValue}>{formatValue(toBigInt(u.value), decimalsOf(u.tokenid || 'bc'), locale)}</Text>
                 </View>
                 <Text style={s.tokenMeta}>{t('balance.metaLineNoLayer', { confirm: confirmLabel, state: stateLabel })}</Text>
-                <Text style={s.tokenMeta}>{t('balance.fromTo', { from: fromLabel, to: toLabel })}{dateSuffix}</Text>
+                <Text style={s.tokenMeta} testID="pbalance-utxo-from">{t('balance.detailFrom', { address: fromLabel })}</Text>
+                <Text style={s.tokenMeta} testID="pbalance-utxo-to">{t('balance.detailTo', { address: toLabel })}</Text>
+                {u.time ? (
+                  <Text style={s.tokenMeta} testID="pbalance-utxo-time">{t('balance.detailTime', { time: formatDateTime(u.time) })}</Text>
+                ) : null}
                 {u.memo ? <Text style={s.tokenMeta}>{t('balance.detailMemo', { memo: u.memo })}</Text> : null}
                 <Text style={s.tokenId}>{(u.txhash || '').slice(0, 20)}</Text>
                 {expandedKey === key && (

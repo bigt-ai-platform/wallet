@@ -9,6 +9,13 @@ export function utcOffsetLabelFromMinutes(minutes: number): string {
   return `UTC${sign}${h}${m ? `:${String(m).padStart(2, '0')}` : ''}`;
 }
 
+/** Local `YYYY-MM-DD HH:mm` for a chain output timestamp (epoch seconds). */
+export function formatDateTime(epochSeconds: number): string {
+  const d = new Date(epochSeconds * 1000);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 /** Timezone label of the device at the given instant, e.g. "UTC+2". */
 export function utcOffsetLabel(ms: number): string {
   return utcOffsetLabelFromMinutes(-new Date(ms).getTimezoneOffset());

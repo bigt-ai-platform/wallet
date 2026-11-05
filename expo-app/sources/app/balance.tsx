@@ -10,6 +10,7 @@ import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { decimalsFor } from '@/lib/tokenformat';
 import { toBigInt, formatValue } from '@/lib/amountformat';
+import { formatDateTime } from '@/lib/timeformat';
 import { MONO_FONT } from '@/constants/fonts';
 import WalletUnlock from '@/components/WalletUnlock';
 import type { UTXO } from '@/types/api';
@@ -309,9 +310,8 @@ export default function BalanceScreen() {
                 : u.spendPending
                   ? t('balance.statePendingSpend')
                   : t('balance.stateLocked');
-            const fromLabel = u.fromAddress ? u.fromAddress.slice(0, 18) : '...';
-            const toLabel = u.address ? u.address.slice(0, 18) : '...';
-            const dateSuffix = u.time ? ` · ${new Date(u.time * 1000).toISOString().slice(0, 10)}` : '';
+            const fromLabel = u.fromAddress || '…';
+            const toLabel = u.address || '…';
             return (
             <View key={key} style={s.card}>
               <View style={s.aggHeader}>
@@ -319,7 +319,11 @@ export default function BalanceScreen() {
                 <Text style={s.tokenValue}>{formatValue(toBigInt(u.value), decimalsOf(u.tokenid || 'bc'), locale)}</Text>
               </View>
               <Text style={s.tokenMeta}>{t('balance.metaLine', { layerName: u.layerName, confirm: confirmLabel, state: stateLabel })}</Text>
-              <Text style={s.tokenMeta}>{t('balance.fromTo', { from: fromLabel, to: toLabel })}{dateSuffix}</Text>
+              <Text style={s.tokenMeta} testID="balance-utxo-from">{t('balance.detailFrom', { address: fromLabel })}</Text>
+              <Text style={s.tokenMeta} testID="balance-utxo-to">{t('balance.detailTo', { address: toLabel })}</Text>
+              {u.time ? (
+                <Text style={s.tokenMeta} testID="balance-utxo-time">{t('balance.detailTime', { time: formatDateTime(u.time) })}</Text>
+              ) : null}
               <Text style={s.tokenId}>{(u.txhash || '').slice(0, 20)}</Text>
               {expandedKey === key && (
                 <View style={s.detailBox}>
