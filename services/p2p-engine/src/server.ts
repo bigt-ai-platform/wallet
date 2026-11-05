@@ -2525,6 +2525,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     return {
       ...redact(swap),
       presigned: !!(await deps.store.getEscrowSigning(swap.swapId)),
+      hasReceiveAddress: !!swap.receiveAddress,
     };
   }
 
@@ -3330,6 +3331,55 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
    * pull it over this signed, escrow-only endpoint instead of widening the
    * view. `presigned` mirrors the wallet-view flag for the retry flow.
    */
+  /**
+   * Buyer: (re)set the release address. The `social.p2p-swap` record omits it
+   * (privacy), so a projection rebuild before the store-only copy existed can
+   * lose it — without it the seller cannot pre-sign or release the escrow.
+   * Only the buyer may choose where their tokens are released.
+   */
+  app.post<{ Params: { swapId: string } }>(
+    "/swaps/:swapId/receive-address",
+    async (request, reply) => {
+      const { swapId } = request.params;
+      if (!SWAP_ID_RE.test(swapId))
+        return reply.code(400).send({ error: "invalid swapId" });
+      const body = (request.body ?? {}) as Record<string, unknown>;
+      const did = typeof body.did === "string" ? body.did : "";
+      if (!did) return reply.code(400).send({ error: "did required" });
+      const swap = await deps.store.getSwap(swapId);
+      if (!swap) return reply.code(404).send({ error: "unknown swap" });
+      if (did !== swap.buyerDid)
+        return reply.code(403).send({ error: "buyer signer required" });
+      const signed = validateSignedRequest(
+        body,
+        did,
+        guard,
+        "write",
+        request.url.split("?")[0],
+      );
+      if (!signed.ok)
+        return reply.code(signed.status ?? 400).send({ error: signed.error });
+      if (
+        ![
+          "MATCHED",
+          "ESCROW_LOCKED",
+          "PAYMENT_PENDING",
+          "PAYMENT_CLAIMED",
+          "PAYMENT_VERIFIED",
+        ].includes(swap.status)
+      ) {
+        return reply.code(409).send({ error: `swap is ${swap.status}` });
+      }
+      const address =
+        typeof body.address === "string" ? body.address.trim() : "";
+      if (!address || address.length > 128 || !destAddress(address)) {
+        return reply.code(400).send({ error: "invalid receiveAddress" });
+      }
+      await deps.store.setSwapReceiveAddress(swapId, address);
+      return { swapId, receiveAddress: address };
+    },
+  );
+
   app.post<{ Params: { swapId: string } }>(
     "/swaps/:swapId/escrow/context",
     async (request, reply) => {

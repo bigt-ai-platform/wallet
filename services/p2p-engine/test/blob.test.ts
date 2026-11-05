@@ -170,6 +170,31 @@ describe("BlobSettlementStore", () => {
     expect((await two.listOrders())[0]?.fundsHash).toBe(hash);
   });
 
+  it("persists the buyer release address across a projection rebuild", async () => {
+    const blobs = new FsBlobStore(dir);
+    const swap = {
+      swapId: "swap-cccccccccccccccc",
+      seq: 0,
+      status: "MATCHED" as const,
+      eventType: "match" as const,
+      actorDid: "did:key:zSELLER",
+      sellerDid: "did:key:zSELLER",
+      buyerDid: "did:key:zBUYER",
+      receiveAddress: "1BuyerReleaseAddress",
+      at: 1,
+    };
+    const one = new BlobSettlementStore(blobs);
+    await one.appendEvent(swap);
+    // A restart replays the swap record, which omits the private address.
+    const two = new BlobSettlementStore(blobs);
+    const { receiveAddress: _r, ...withoutAddress } = swap;
+    await two.appendEvent(withoutAddress);
+    expect((await two.getSwap(swap.swapId))?.receiveAddress).toBe("1BuyerReleaseAddress");
+    // The buyer can also repair/replace it explicitly.
+    await two.setSwapReceiveAddress(swap.swapId, "1RepairedAddress");
+    expect((await two.getSwap(swap.swapId))?.receiveAddress).toBe("1RepairedAddress");
+  });
+
   it("round-trips device pairings keyed by pairingId", async () => {
     const store = new BlobSettlementStore(new EncryptedBlobStore(new FsBlobStore(dir), KEY));
     const grant = {

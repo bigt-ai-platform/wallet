@@ -67,6 +67,14 @@ CREATE TABLE IF NOT EXISTS p2p_swap_events (
 CREATE INDEX IF NOT EXISTS p2p_swap_events_swap_idx ON p2p_swap_events (swap_id, event_seq);
 CREATE UNIQUE INDEX IF NOT EXISTS p2p_swap_events_seq_uidx ON p2p_swap_events (swap_id, event_seq);
 
+-- Buyer's release destination (store-only: the social.p2p-swap record omits it,
+-- so a projection rebuild would lose the address needed to pre-sign/release).
+-- Additive: created on boot by ensureWatchSchema.
+CREATE TABLE IF NOT EXISTS p2p_swap_receive (
+  swap_id         TEXT PRIMARY KEY,
+  receive_address TEXT NOT NULL
+);
+
 -- Fiat rails (docs/p2p.md §11): the seller's collection profile (PII — never
 -- anchored, party-scoped reads only) and the buyer's payment proofs (receipt
 -- bytes live here, never on the swap event or the chain).

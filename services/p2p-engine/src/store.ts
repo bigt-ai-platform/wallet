@@ -36,6 +36,10 @@ export interface SettlementStore {
   /** Attach the verified legacy-EC funding key on an idempotent re-post (the
    *  chain projector may have indexed the order first, without the proof). */
   setOrderFundsHash(orderId: string, fundsHash: string): Promise<void>;
+  /** Buyer's release destination. Store-only: the on-chain `social.p2p-swap`
+   *  record omits it, so a projection rebuild would otherwise lose the address
+   *  needed to pre-sign/release the escrow. */
+  setSwapReceiveAddress(swapId: string, address: string): Promise<void>;
   listOrders(status?: string): Promise<P2pOrder[]>;
   /** ACTIVE → MATCHED when the whole order is taken; a partial fill passes
    *  `remainingGive` and the order stays ACTIVE with that reduced amount.
@@ -85,6 +89,8 @@ export class MemSettlementStore implements SettlementStore {
   readonly paymentVerifications = new Map<string, PaymentVerification[]>();
   readonly pairings = new Map<string, StoredPairing>();
   readonly escrowSignings = new Map<string, EscrowSigning>();
+  /** swapId → buyer receive address (store-only, survives a projection wipe). */
+  readonly swapReceive = new Map<string, string>();
 
   async createOrder(o: P2pOrder): Promise<void> {
     if (!this.orders.has(o.orderId)) this.orders.set(o.orderId, o);
@@ -164,6 +170,7 @@ export class MemSettlementStore implements SettlementStore {
         throw new SettlementConflict("conflicting swap event");
       }
       if (!existing) list.push(stored);
+      if (stored.receiveAddress) this.swapReceive.set(stored.swapId, stored.receiveAddress);
       list.sort((first, second) => first.seq - second.seq);
       this.swapEvents.set(e.swapId, list);
       if (stored.orderId && returnsOrderQuantity(stored)) {
@@ -185,19 +192,32 @@ export class MemSettlementStore implements SettlementStore {
 
   async getSwap(swapId: string): Promise<P2pSwapEvent | null> {
     const list = this.swapEvents.get(swapId) ?? [];
-    return list.length ? list[list.length - 1] : null;
+    return list.length ? this.withReceive(list[list.length - 1]) : null;
+  }
+
+  private withReceive(swap: P2pSwapEvent): P2pSwapEvent {
+    if (swap.receiveAddress) return swap;
+    const address = this.swapReceive.get(swap.swapId);
+    return address ? { ...swap, receiveAddress: address } : swap;
+  }
+
+  async setSwapReceiveAddress(swapId: string, address: string): Promise<void> {
+    this.swapReceive.set(swapId, address);
+    const list = this.swapEvents.get(swapId);
+    const latest = list?.[list.length - 1];
+    if (latest) latest.receiveAddress = address;
   }
 
   async listSwaps(limit = 100): Promise<P2pSwapEvent[]> {
     return [...this.swapEvents.values()]
-      .map((list) => list[list.length - 1])
+      .map((list) => this.withReceive(list[list.length - 1]))
       .sort((a, b) => b.at - a.at)
       .slice(0, limit);
   }
 
   async listSwapsForDid(did: string, limit = 100): Promise<P2pSwapEvent[]> {
     return [...this.swapEvents.values()]
-      .map((list) => list[list.length - 1])
+      .map((list) => this.withReceive(list[list.length - 1]))
       .filter((s) => s.sellerDid === did || s.buyerDid === did)
       .sort((a, b) => b.at - a.at)
       .slice(0, limit);
@@ -475,6 +495,13 @@ export class PgSettlementStore implements SettlementStore {
         throw new SettlementConflict("conflicting swap event");
       }
     }
+    if (e.receiveAddress) {
+      await db.query(
+        `INSERT INTO p2p_swap_receive (swap_id, receive_address) VALUES ($1,$2)
+         ON CONFLICT (swap_id) DO UPDATE SET receive_address = EXCLUDED.receive_address`,
+        [e.swapId, e.receiveAddress],
+      );
+    }
     if (e.orderId && returnsOrderQuantity(e)) {
       await this.restoreReservation(e.orderId, e.swapId, db);
     }
@@ -495,33 +522,48 @@ export class PgSettlementStore implements SettlementStore {
 
   async getSwap(swapId: string): Promise<P2pSwapEvent | null> {
     const res = await this.db.query(
-      `SELECT payload FROM p2p_swap_events WHERE swap_id = $1 ORDER BY event_seq DESC LIMIT 1`,
+      `SELECT e.payload, m.receive_address AS meta_receive
+         FROM p2p_swap_events e
+         LEFT JOIN p2p_swap_receive m ON m.swap_id = e.swap_id
+        WHERE e.swap_id = $1 ORDER BY e.event_seq DESC LIMIT 1`,
       [swapId],
     );
-    return res.rows[0] ? rowEvent(res.rows[0]) : null;
+    return res.rows[0] ? rowEventWithReceive(res.rows[0]) : null;
+  }
+
+  async setSwapReceiveAddress(swapId: string, address: string): Promise<void> {
+    await this.db.query(
+      `INSERT INTO p2p_swap_receive (swap_id, receive_address) VALUES ($1,$2)
+       ON CONFLICT (swap_id) DO UPDATE SET receive_address = EXCLUDED.receive_address`,
+      [swapId, address],
+    );
   }
 
   async listSwaps(limit = 100): Promise<P2pSwapEvent[]> {
     const res = await this.db.query(
-      `SELECT payload FROM p2p_swap_events e
-       JOIN (SELECT swap_id, MAX(event_seq) AS seq FROM p2p_swap_events GROUP BY swap_id) t
-         ON t.swap_id = e.swap_id AND t.seq = e.event_seq
-       ORDER BY e.created_at DESC LIMIT $1`,
+      `SELECT e.payload, m.receive_address AS meta_receive
+         FROM p2p_swap_events e
+         JOIN (SELECT swap_id, MAX(event_seq) AS seq FROM p2p_swap_events GROUP BY swap_id) t
+           ON t.swap_id = e.swap_id AND t.seq = e.event_seq
+         LEFT JOIN p2p_swap_receive m ON m.swap_id = e.swap_id
+        ORDER BY e.created_at DESC LIMIT $1`,
       [limit],
     );
-    return res.rows.map(rowEvent);
+    return res.rows.map(rowEventWithReceive);
   }
 
   async listSwapsForDid(did: string, limit = 100): Promise<P2pSwapEvent[]> {
     const res = await this.db.query(
-      `SELECT payload FROM p2p_swap_events e
-       JOIN (SELECT swap_id, MAX(event_seq) AS seq FROM p2p_swap_events GROUP BY swap_id) t
-         ON t.swap_id = e.swap_id AND t.seq = e.event_seq
-       WHERE e.payload->>'sellerDid' = $1 OR e.payload->>'buyerDid' = $1
-       ORDER BY e.created_at DESC LIMIT $2`,
+      `SELECT e.payload, m.receive_address AS meta_receive
+         FROM p2p_swap_events e
+         JOIN (SELECT swap_id, MAX(event_seq) AS seq FROM p2p_swap_events GROUP BY swap_id) t
+           ON t.swap_id = e.swap_id AND t.seq = e.event_seq
+         LEFT JOIN p2p_swap_receive m ON m.swap_id = e.swap_id
+        WHERE e.payload->>'sellerDid' = $1 OR e.payload->>'buyerDid' = $1
+        ORDER BY e.created_at DESC LIMIT $2`,
       [did, limit],
     );
-    return res.rows.map(rowEvent);
+    return res.rows.map(rowEventWithReceive);
   }
 
   async getProfile(sellerDid: string, method: string): Promise<PaymentProfile | null> {
@@ -745,4 +787,11 @@ function profileFromRow(row: any): PaymentProfile {
 function rowEvent(row: { payload: unknown }): P2pSwapEvent {
   const payload = row.payload;
   return typeof payload === "string" ? (JSON.parse(payload) as P2pSwapEvent) : (payload as P2pSwapEvent);
+}
+
+/** The event plus the store-only release address, when the payload lacks it. */
+function rowEventWithReceive(row: { payload: unknown; meta_receive?: unknown }): P2pSwapEvent {
+  const event = rowEvent(row);
+  const address = typeof row.meta_receive === "string" ? row.meta_receive : "";
+  return !event.receiveAddress && address ? { ...event, receiveAddress: address } : event;
 }

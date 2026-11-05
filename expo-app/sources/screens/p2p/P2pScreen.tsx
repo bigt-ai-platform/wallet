@@ -27,7 +27,7 @@ import type { TokenItem, WalletAccountItem } from '@/types/api';
 import {
   cancelOrder, confirmPayment, cosignEscrow, createOrder, escrowContext, fetchInstructions, getCapabilities,
   getMyProfiles, getSwap, listOpenOrders, matchOrder, mySwaps, openDispute, p2pConfigured, presignEscrow,
-  saveProfile, submitProof, transition,
+  saveProfile, setSwapReceiveAddress, submitProof, transition,
   type P2pAutoReleasePolicy, type P2pCapabilities, type P2pCnyRail, type P2pIdentity, type P2pOrder,
   type P2pPaymentInstructions, type P2pPaymentProfile, type P2pSwap, type P2pSwapAction,
 } from '@/services/p2p';
@@ -763,6 +763,23 @@ export default function P2pScreen() {
     return null;
   };
 
+  /** Buyer: repair the release address when the engine lost it (old rebuild). */
+  const fixReceiveAddress = async (swap: P2pSwap, address: string) => {
+    const id = requireIdentity();
+    if (!id) return;
+    if (!address) { setNotice({ ok: false, text: t('p2p.actionFailed') }); return; }
+    setBusy(true);
+    try {
+      await setSwapReceiveAddress(id, swap.swapId, address);
+      setNotice({ ok: true, text: t('p2p.profileSaved') });
+      await reload();
+    } catch (e) {
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const presignNow = async (swap: P2pSwap) => {
     const id = requireIdentity();
     if (!id) return;
@@ -1312,6 +1329,8 @@ export default function P2pScreen() {
                 txId={txIds[sw.swapId] ?? ''}
                 onTxId={(v) => setTxIds((m) => ({ ...m, [sw.swapId]: v }))}
                 onCopy={copyValue}
+                defaultReceiveAddress={publicInfo?.address ?? ''}
+                onFixAddress={(address) => fixReceiveAddress(sw, address)}
                 onLock={() => lockAndPresign(sw)}
                 onFundLock={() => fundEscrowAndLock(sw)}
                 onExpire={() => runTransition(sw, 'expire')}
@@ -1373,9 +1392,10 @@ function Field({ label, value, onChange, placeholder, keyboardType, mono, testID
   );
 }
 
-function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, onLock, onFundLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, onVerify, instruction, index, autoReleaseOn }: {
+function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, defaultReceiveAddress, onFixAddress, onLock, onFundLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, onVerify, instruction, index, autoReleaseOn }: {
   swap: P2pSwap; myDid?: string; busy: boolean; txHash: string; onTxHash: (v: string) => void;
   txId: string; onTxId: (v: string) => void; onCopy: (v: string) => void;
+  defaultReceiveAddress: string; onFixAddress: (address: string) => void;
   onLock: () => void; onFundLock: () => void; onExpire: () => void; onRefund: () => void;
   onRelease: () => void; onPresign: () => void; onCancel: () => void;
   onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void;
@@ -1384,6 +1404,7 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, o
 }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
+  const [recvDraft, setRecvDraft] = React.useState(defaultReceiveAddress);
   const isSeller = !!myDid && swap.sellerDid === myDid;
   const isBuyer = !!myDid && swap.buyerDid === myDid;
   const isParty = isSeller || isBuyer;
@@ -1433,6 +1454,27 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, o
       ) : null}
       {swap.remark && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <Text style={s.subMono}>{t('p2p.remark')}: {swap.remark}</Text>
+      ) : null}
+      {/* The swap record omits the release address, so an old projection rebuild
+          can lose it. The buyer (and only the buyer) can save it again. */}
+      {isBuyer && swap.hasReceiveAddress === false &&
+      ['ESCROW_LOCKED', 'PAYMENT_PENDING', 'PAYMENT_CLAIMED', 'PAYMENT_VERIFIED'].includes(st) ? (
+        <View style={{ marginTop: 8 }}>
+          <Text style={s.warn} testID={`p2p-swap-${index}-receive-missing`}>{t('p2p.fixAddressHint')}</Text>
+          <Field
+            label={t('p2p.receiveAddress')}
+            value={recvDraft}
+            onChange={setRecvDraft}
+            testID={`p2p-swap-${index}-receive-fix`}
+          />
+          <Action
+            label={t('p2p.aSaveAddress')}
+            color={theme.colors.primary}
+            onPress={() => onFixAddress(recvDraft.trim())}
+            disabled={busy}
+            testID={`p2p-swap-${index}-save-receive`}
+          />
+        </View>
       ) : null}
       {swap.dispute ? <Text style={s.sub}>{t('p2p.aDispute')}: {swap.dispute}{swap.disputeOutcome ? ` (${swap.disputeOutcome})` : ''}</Text> : null}
       {isSeller && swap.presigned ? (

@@ -363,3 +363,16 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   reason instead of hiding it; Presign remains for a retry. Presigning is still
   the seller's own key (the engine cannot sign for a party); it arms
   release/refund for automatic settlement.
+
+- **P2P release address is store-only; a lost one can be repaired by the buyer.**
+  `social.p2p-swap` omits the buyer's `receiveAddress` (privacy), and blob mode
+  rebuilt swaps from that record, so after an engine restart a locked swap had
+  no release destination: presign failed with `Address is too short` and
+  `verifyChainPayment` had nowhere to pay. Stores now keep a `swap_receive`
+  copy (`setSwapReceiveAddress`; blob meta, pg table) merged back into
+  `getSwap`/`listSwaps*`, and every match event writes it. `/swaps/:id/receive-address`
+  lets the **buyer** (only) repair an already-locked swap; `walletView` exposes
+  `hasReceiveAddress` (boolean) so the buyer's card shows the save field. The
+  seller cannot set it (that would let them redirect the buyer's tokens). If a
+  swap is locked without it, the buyer must save it before the seller can
+  presign/release. Tests: `blob.test.ts` restart merge, `funds.test.ts` route.

@@ -404,6 +404,33 @@ describe("order funds gate", () => {
     });
     expect(match.statusCode).toBe(201);
     expect(seen.hash).toBe(fundsHash);
+    const swapId = (match.json() as { swapId: string }).swapId;
+    // On a buy bid the POSTER is the buyer (and the release destination's
+    // owner); the taker is the seller. Only the buyer may repair it.
+    const fix = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/receive-address`,
+      payload: signed(seller, sellerDid, {
+        swapId,
+        address: RECEIVE_ADDRESS,
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/receive-address`,
+      }),
+    });
+    expect(fix.statusCode).toBe(200);
+    expect((await store.getSwap(swapId))?.receiveAddress).toBe(RECEIVE_ADDRESS);
+    // The taker-seller may not redirect the buyer's tokens.
+    const nope = await a.inject({
+      method: "POST",
+      url: `/swaps/${swapId}/receive-address`,
+      payload: signed(buyer, buyerDid, {
+        swapId,
+        address: RECEIVE_ADDRESS,
+        requestMethod: "POST",
+        requestPath: `/swaps/${swapId}/receive-address`,
+      }),
+    });
+    expect(nope.statusCode).toBe(403);
     await a.close();
   });
 

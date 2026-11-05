@@ -181,6 +181,9 @@ export interface P2pSwapEvent {
 export type P2pSwapView = Omit<P2pSwapEvent, "receiveAddress"> & {
   /** Seller pre-signed both spend skeletons (the escrow hook is armed). Party-scoped reads only. */
   presigned?: boolean;
+  /** Whether the engine still holds the buyer's release address (the value is
+   *  private). A buyer can repair it via `/swaps/:id/receive-address`. */
+  hasReceiveAddress?: boolean;
 };
 
 /** Seller's CNY collection profile — PII: engine store + instruction reveals only, never anchored. */

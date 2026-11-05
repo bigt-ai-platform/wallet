@@ -22,6 +22,8 @@ const PAIRINGS = "pairings";
 const ESCROW = "escrow_signings";
 const ORDER_FUNDS = "order_funds";
 const ORDER_FUNDS_KEY = "by-order";
+const SWAP_META = "swap_meta";
+const SWAP_META_KEY = "by-swap";
 
 export class BlobSettlementStore implements SettlementStore {
   /** orderId → verified legacy-EC funds h160. Orders themselves are rebuilt
@@ -29,6 +31,10 @@ export class BlobSettlementStore implements SettlementStore {
    *  persisted store-only and merged back on read (docs/p2p.md §11). */
   private fundsHashes: Map<string, string> | null = null;
   private fundsLoading: Promise<Map<string, string>> | null = null;
+  /** swapId → buyer receive address (store-only; the swap record omits it,
+   *  and losing it makes presign/release impossible after a rebuild). */
+  private swapMeta: Map<string, string> | null = null;
+  private swapMetaLoading: Promise<Map<string, string>> | null = null;
 
   constructor(
     private readonly blobs: BlobStore,
@@ -56,6 +62,27 @@ export class BlobSettlementStore implements SettlementStore {
     const map = await this.loadFundsHashes();
     const hash = map.get(o.orderId);
     return hash ? { ...o, fundsHash: hash } : o;
+  }
+
+  private async loadSwapMeta(): Promise<Map<string, string>> {
+    if (this.swapMeta) return this.swapMeta;
+    if (!this.swapMetaLoading) {
+      this.swapMetaLoading = (async () => {
+        const saved = (await this.blobs
+          .get(SWAP_META, SWAP_META_KEY)
+          .catch(() => null)) as Record<string, string> | null;
+        const map = new Map(Object.entries(saved ?? {}));
+        this.swapMeta = map;
+        return map;
+      })();
+    }
+    return this.swapMetaLoading;
+  }
+
+  private async withReceive(e: P2pSwapEvent | null): Promise<P2pSwapEvent | null> {
+    if (!e || e.receiveAddress) return e;
+    const address = (await this.loadSwapMeta()).get(e.swapId);
+    return address ? { ...e, receiveAddress: address } : e;
   }
 
   // ── chain-derived projection (delegated to the mem projection) ──────────
@@ -90,20 +117,37 @@ export class BlobSettlementStore implements SettlementStore {
   hasOrderReservation(orderId: string, swapId: string): Promise<boolean> {
     return this.projection.hasOrderReservation(orderId, swapId);
   }
-  appendEvent(e: P2pSwapEvent, prepare?: () => Promise<P2pSwapEvent>): Promise<void> {
-    return this.projection.appendEvent(e, prepare);
+  async appendEvent(e: P2pSwapEvent, prepare?: () => Promise<P2pSwapEvent>): Promise<void> {
+    await this.projection.appendEvent(e, prepare);
+    // The buyer's release destination is store-only (not in the swap record):
+    // keep it across projection rebuilds, not just in the volatile projection.
+    const stored = await this.projection.getSwap(e.swapId);
+    if (stored?.receiveAddress) {
+      await this.setSwapReceiveAddress(e.swapId, stored.receiveAddress);
+    }
   }
   events(swapId: string): Promise<P2pSwapEvent[]> {
     return this.projection.events(swapId);
   }
-  getSwap(swapId: string): Promise<P2pSwapEvent | null> {
-    return this.projection.getSwap(swapId);
+  async getSwap(swapId: string): Promise<P2pSwapEvent | null> {
+    return this.withReceive(await this.projection.getSwap(swapId));
   }
-  listSwaps(limit?: number): Promise<P2pSwapEvent[]> {
-    return this.projection.listSwaps(limit);
+  async setSwapReceiveAddress(swapId: string, address: string): Promise<void> {
+    await this.projection.setSwapReceiveAddress(swapId, address);
+    const map = await this.loadSwapMeta();
+    if (map.get(swapId) === address) return;
+    map.set(swapId, address);
+    await this.blobs.put(SWAP_META, SWAP_META_KEY, Object.fromEntries(map)).catch(() => {});
   }
-  listSwapsForDid(did: string, limit?: number): Promise<P2pSwapEvent[]> {
-    return this.projection.listSwapsForDid(did, limit);
+  async listSwaps(limit?: number): Promise<P2pSwapEvent[]> {
+    const rows = await this.projection.listSwaps(limit);
+    const merged = await Promise.all(rows.map((e) => this.withReceive(e)));
+    return merged.filter((e): e is P2pSwapEvent => !!e);
+  }
+  async listSwapsForDid(did: string, limit?: number): Promise<P2pSwapEvent[]> {
+    const rows = await this.projection.listSwapsForDid(did, limit);
+    const merged = await Promise.all(rows.map((e) => this.withReceive(e)));
+    return merged.filter((e): e is P2pSwapEvent => !!e);
   }
   allEvents(): Promise<P2pSwapEvent[]> {
     return this.projection.allEvents();

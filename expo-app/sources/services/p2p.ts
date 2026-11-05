@@ -131,6 +131,9 @@ export interface P2pSwap {
   txid?: string;
   /** Seller pre-signed both escrow spend skeletons (the auto-settle hook is armed). */
   presigned?: boolean;
+  /** False when the engine no longer holds the buyer's release address (an old
+   *  projection rebuild); the buyer can repair it from the swap card. */
+  hasReceiveAddress?: boolean;
   at: number;
 }
 
@@ -434,6 +437,24 @@ export async function matchOrder(
 ): Promise<{ swapId: string; status: string; escrowAddress: string | null }> {
   const body = signedBody(id.key, id.did, { ...input, buyerDid: id.did, requestPath: `/orders/${orderId}/match` }, Date.now(), id.fundsKey);
   return parseP2pMatch(await request<unknown>(`/orders/${orderId}/match`, body));
+}
+
+/**
+ * Buyer: (re)save the release address. The swap record omits it (privacy), so
+ * a projection rebuild before the store-only copy existed loses it and the
+ * seller cannot pre-sign/release. Only the buyer may set where their tokens go.
+ */
+export async function setSwapReceiveAddress(
+  id: P2pIdentity,
+  swapId: string,
+  address: string,
+): Promise<void> {
+  const body = signedBody(id.key, id.did, {
+    swapId,
+    address,
+    requestPath: `/swaps/${swapId}/receive-address`,
+  });
+  await request(`/swaps/${swapId}/receive-address`, body);
 }
 
 /**

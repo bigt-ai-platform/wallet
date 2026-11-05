@@ -89,6 +89,12 @@ export async function ensureWatchSchema(db: Queryable): Promise<void> {
   }
   await db.query(`ALTER TABLE p2p_payment_proofs ADD COLUMN IF NOT EXISTS receipt_ref TEXT`);
   await db.query(
+    `CREATE TABLE IF NOT EXISTS p2p_swap_receive (
+       swap_id         TEXT PRIMARY KEY,
+       receive_address TEXT NOT NULL
+     )`,
+  );
+  await db.query(
     `CREATE TABLE IF NOT EXISTS p2p_watch_cursor (
        id         BOOLEAN PRIMARY KEY DEFAULT true,
        block_hash TEXT NOT NULL,
