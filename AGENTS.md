@@ -310,3 +310,12 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   public book like `buyerReceiveAddress`. Tests: `funds.test.ts` (EC sell ad,
   buy-bid taker, tampered proof) and `p2pIdentity.test.ts`. The deployed
   `wallet-p2p-engine:latest` must be rebuilt/redeployed to pick this up.
+
+- **P2P payment profiles are per rail; PayPal was only off in the engine env.**
+  The Mine-tab profile form re-used one set of inputs for every method, so a
+  WeChat account typed once was still in the fields when saving Alipay/bank.
+  The form now loads the selected rail's saved profile (or clears) whenever the
+  method or the saved list changes. PayPal never appeared because the shared
+  engine's `SETTLEMENT_CNY_RAILS` was `wechat,alipay,bank`; it now includes
+  `paypal` (`SETTLEMENT_FIAT_RAILS` is the newer name, `CNY_RAILS` still read).
+  The rails are already protocol-supported, so no engine code changed.

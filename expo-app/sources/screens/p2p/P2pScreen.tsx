@@ -280,6 +280,16 @@ export default function P2pScreen() {
     if (identity && p2pConfigured()) loadProfiles();
   }, [identity, loadProfiles]);
 
+  // The profile form is shared by every rail: switching must show that rail's
+  // own saved account, or clear it — never carry WeChat's details into a
+  // WeChat→Alipay/Bank/PayPal save (each profile is stored per method).
+  React.useEffect(() => {
+    const saved = profiles.find((p) => p.method === profileMethod);
+    setProfileName(saved?.accountName ?? '');
+    setProfileAccount(saved?.account ?? '');
+    setProfileBank(saved?.bankName ?? '');
+  }, [profileMethod, profiles]);
+
   const pickRail = (rail: string) => {
     // Multi-select: toggle the method; never allow an empty set.
     setRails((cur) => {
@@ -1140,7 +1150,7 @@ export default function P2pScreen() {
             <TouchableOpacity style={[s.btn, { backgroundColor: theme.colors.primary }]} onPress={saveProfileForm} disabled={busy} testID="p2p-profile-save">
               <Text style={s.btnText}>{t('p2p.profileSave')}</Text>
             </TouchableOpacity>
-            {profiles.length ? <Text style={s.sub}>{profiles.map((p) => p.method).join(' · ')}</Text> : null}
+            {profiles.length ? <Text style={s.sub}>{profiles.map((p) => railLabel(t, p.method)).join(' · ')}</Text> : null}
           </View>
 
           {verifySwap && identity ? (

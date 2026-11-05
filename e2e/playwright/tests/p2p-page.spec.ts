@@ -160,6 +160,38 @@ test.describe('P2P Page', () => {
     await expect(page.getByTestId('p2p-buy-fill')).toHaveValue('100');
   });
 
+  test('shows each payment method its own saved account', async ({ page }) => {
+    test.skip(!process.env.E2E_P2P_ENGINE_URL, 'requires a P2P-enabled web build');
+    await page.route('**/public/orders?*', (route) => route.fulfill({ json: { orders: [] } }));
+    await page.route('**/capabilities', (route) => route.fulfill({
+      json: { rails: ['wechat', 'alipay', 'bank', 'paypal'] },
+    }));
+    await page.route('**/profiles/mine', (route) => route.fulfill({
+      json: { profiles: [
+        { sellerDid: 'did:pq:self', method: 'wechat', accountName: 'Zhang San', account: 'wxid_1', updatedAt: 1 },
+        { sellerDid: 'did:pq:self', method: 'alipay', accountName: 'Li Si', account: 'ali@example.com', updatedAt: 1 },
+      ] },
+    }));
+    await createWallet(page, 'P2pFixturePassword123');
+    await clickTab(page, 'P2P');
+    await page.getByTestId('p2p-tab-mine').click();
+    // The form opens on WeChat's saved details.
+    await expect(page.getByTestId('p2p-profile-name')).toHaveValue('Zhang San');
+    await expect(page.getByTestId('p2p-profile-account')).toHaveValue('wxid_1');
+    // Each rail shows its own account, not the previous rail's.
+    await page.getByTestId('p2p-profile-method-alipay').click();
+    await expect(page.getByTestId('p2p-profile-name')).toHaveValue('Li Si');
+    await expect(page.getByTestId('p2p-profile-account')).toHaveValue('ali@example.com');
+    // No saved bank details: the previous rail's values must be cleared, never
+    // carried into a bank profile save.
+    await page.getByTestId('p2p-profile-method-bank').click();
+    await expect(page.getByTestId('p2p-profile-name')).toHaveValue('');
+    await expect(page.getByTestId('p2p-profile-account')).toHaveValue('');
+    await expect(page.getByTestId('p2p-profile-bank')).toHaveValue('');
+    // PayPal is offered when the engine serves it.
+    await expect(page.getByTestId('p2p-profile-method-paypal')).toBeVisible();
+  });
+
   test('a newly listed buy bid appears in the Sell book', async ({ page }) => {
     test.skip(!process.env.E2E_P2P_ENGINE_URL, 'requires a P2P-enabled web build');
     let posted = false;
