@@ -1176,6 +1176,7 @@ export default function P2pScreen() {
                 onTxHash={(v) => setTxHashes((m) => ({ ...m, [sw.swapId]: v }))}
                 txId={txIds[sw.swapId] ?? ''}
                 onTxId={(v) => setTxIds((m) => ({ ...m, [sw.swapId]: v }))}
+                onCopy={copyValue}
                 onLock={() => lockAndPresign(sw)}
                 onExpire={() => runTransition(sw, 'expire')}
                 onRefund={() => refundEscrow(sw)}
@@ -1236,9 +1237,9 @@ function Field({ label, value, onChange, placeholder, keyboardType, mono, testID
   );
 }
 
-function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, onVerify, instruction, index, autoReleaseOn }: {
+function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, onLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, onVerify, instruction, index, autoReleaseOn }: {
   swap: P2pSwap; myDid?: string; busy: boolean; txHash: string; onTxHash: (v: string) => void;
-  txId: string; onTxId: (v: string) => void;
+  txId: string; onTxId: (v: string) => void; onCopy: (v: string) => void;
   onLock: () => void; onExpire: () => void; onRefund: () => void;
   onRelease: () => void; onPresign: () => void; onCancel: () => void;
   onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void;
@@ -1278,7 +1279,22 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
       </View>
       <Text style={s.subMono}>{swap.swapId}</Text>
       <Text style={s.sub}>{t('p2p.giveChain')}: {swap.giveChain ?? '-'} · {swap.wantRail ? railLabel(t, swap.wantRail) : '-'}</Text>
-      {swap.escrowAddress ? <Text style={s.sub}>{t('p2p.escrowAddress')}: {swap.escrowAddress.slice(0, 20)}…</Text> : null}
+      {swap.escrowAddress ? (
+        <View style={s.didRow}>
+          <Text style={[s.sub, s.didText]} testID={`p2p-swap-${index}-escrow`}>
+            {t('p2p.escrowAddress')}: {swap.escrowAddress}
+          </Text>
+          <TouchableOpacity
+            onPress={() => onCopy(swap.escrowAddress!)}
+            style={s.copyBtn}
+            accessibilityRole="button"
+            accessibilityLabel={t('receive.copy')}
+            testID={`p2p-swap-${index}-copy-escrow`}
+          >
+            <Text style={s.copyText}>{t('receive.copy')}</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
       {swap.remark && (st === 'PAYMENT_PENDING' || st === 'PAYMENT_CLAIMED') ? (
         <Text style={s.subMono}>{t('p2p.remark')}: {swap.remark}</Text>
       ) : null}
@@ -1315,6 +1331,13 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onLock, o
         <View style={s.actions}>
           {st === 'MATCHED' ? (
             <>
+              <Text style={s.hint} testID={`p2p-swap-${index}-lock-hint`}>
+                {t('p2p.lockHint', {
+                  amount: swap.giveAmount,
+                  token: swap.giveToken,
+                  chain: swap.giveChain ?? 'L0',
+                })}
+              </Text>
               <Field label="txHash" value={txHash} onChange={onTxHash} testID={`p2p-swap-${index}-txhash`} />
               <Action label={t('p2p.aLock')} color={theme.colors.primary} onPress={onLock} disabled={busy} testID={`p2p-swap-${index}-lock`} />
             </>
