@@ -195,6 +195,36 @@ describe("BlobSettlementStore", () => {
     expect((await two.getSwap(swap.swapId))?.receiveAddress).toBe("1RepairedAddress");
   });
 
+  it("persists engine-intake orders across a projection rebuild", async () => {
+    // The web posts orders engine-side (no P2P_SOCIAL_URL), so a restart used
+    // to wipe every open ad. The order now lives in the blob store too.
+    const blobs = new FsBlobStore(dir);
+    const order = {
+      orderId: "ord-dddddddddddddddd",
+      type: "limit_sell" as const,
+      sellerDid: "did:key:zSELLER",
+      giveToken: "BIG",
+      giveAmount: "1000",
+      giveChain: "L0",
+      wantCurrency: "CNY",
+      wantAmount: "3",
+      wantRail: "wechat",
+      validUntil: 9_999_999_999,
+      status: "ACTIVE" as const,
+      signature: "s",
+      createdAt: 1,
+    };
+    const one = new BlobSettlementStore(blobs);
+    await one.createOrder(order);
+    const two = new BlobSettlementStore(blobs);
+    expect((await two.getOrder(order.orderId))?.giveAmount).toBe("1000");
+    expect((await two.listOrders()).map((o) => o.orderId)).toContain(order.orderId);
+    await two.markOrderCancelled(order.orderId);
+    const three = new BlobSettlementStore(blobs);
+    expect((await three.getOrder(order.orderId))?.status).toBe("CANCELLED");
+    expect((await three.listOrders("ACTIVE")).map((o) => o.orderId)).not.toContain(order.orderId);
+  });
+
   it("round-trips device pairings keyed by pairingId", async () => {
     const store = new BlobSettlementStore(new EncryptedBlobStore(new FsBlobStore(dir), KEY));
     const grant = {

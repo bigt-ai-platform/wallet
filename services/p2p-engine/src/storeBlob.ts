@@ -24,6 +24,10 @@ const ORDER_FUNDS = "order_funds";
 const ORDER_FUNDS_KEY = "by-order";
 const SWAP_META = "swap_meta";
 const SWAP_META_KEY = "by-swap";
+/** One blob per order: the projection is rebuilt from L1-SOCIAL, which cannot
+ *  carry an engine-intake order (the web has no P2P_SOCIAL_URL), so without
+ *  this every open ad vanishes on an engine restart. */
+const ORDERS = "orders";
 
 export class BlobSettlementStore implements SettlementStore {
   /** orderId → verified legacy-EC funds h160. Orders themselves are rebuilt
@@ -35,6 +39,9 @@ export class BlobSettlementStore implements SettlementStore {
    *  and losing it makes presign/release impossible after a rebuild). */
   private swapMeta: Map<string, string> | null = null;
   private swapMetaLoading: Promise<Map<string, string>> | null = null;
+  /** orderId → the latest persisted order (engine-intake orders survive a rebuild). */
+  private persistedOrders: Map<string, P2pOrder> | null = null;
+  private ordersLoading: Promise<Map<string, P2pOrder>> | null = null;
 
   constructor(
     private readonly blobs: BlobStore,
@@ -85,34 +92,88 @@ export class BlobSettlementStore implements SettlementStore {
     return address ? { ...e, receiveAddress: address } : e;
   }
 
+  private async loadPersistedOrders(): Promise<Map<string, P2pOrder>> {
+    if (this.persistedOrders) return this.persistedOrders;
+    if (!this.ordersLoading) {
+      this.ordersLoading = (async () => {
+        const map = new Map<string, P2pOrder>();
+        const keys = await this.blobs.list(ORDERS).catch(() => []);
+        for (const key of keys) {
+          const o = (await this.blobs.get(ORDERS, key).catch(() => null)) as P2pOrder | null;
+          if (o && typeof o.orderId === "string") map.set(o.orderId, o);
+        }
+        this.persistedOrders = map;
+        return map;
+      })();
+    }
+    return this.ordersLoading;
+  }
+
+  private async persistOrder(o: P2pOrder): Promise<void> {
+    const map = await this.loadPersistedOrders();
+    map.set(o.orderId, o);
+    await this.blobs.put(ORDERS, o.orderId, o).catch(() => {});
+  }
+
+  private async persistCurrentOrder(orderId: string): Promise<void> {
+    const o = await this.projection.getOrder(orderId);
+    if (o) await this.persistOrder(o);
+  }
+
   // ── chain-derived projection (delegated to the mem projection) ──────────
-  createOrder(o: P2pOrder): Promise<void> {
-    return this.projection.createOrder(o);
+  async createOrder(o: P2pOrder): Promise<void> {
+    await this.projection.createOrder(o);
+    await this.persistOrder(o);
   }
   async getOrder(orderId: string): Promise<P2pOrder | null> {
-    return this.withFundsHash(await this.projection.getOrder(orderId));
+    const projected = await this.projection.getOrder(orderId);
+    if (projected) return this.withFundsHash(projected);
+    const saved = (await this.loadPersistedOrders()).get(orderId) ?? null;
+    if (!saved) return null;
+    // Re-seed the projection so markOrderMatched/markOrderCancelled can work.
+    await this.projection.createOrder(saved).catch(() => {});
+    return this.withFundsHash(saved);
   }
   async setOrderFundsHash(orderId: string, fundsHash: string): Promise<void> {
     await this.projection.setOrderFundsHash(orderId, fundsHash);
     const map = await this.loadFundsHashes();
-    if (map.get(orderId) === fundsHash) return;
-    map.set(orderId, fundsHash);
-    // Advisory data: a blob write failure must not fail the order itself.
-    await this.blobs.put(ORDER_FUNDS, ORDER_FUNDS_KEY, Object.fromEntries(map)).catch(() => {});
+    if (map.get(orderId) !== fundsHash) {
+      map.set(orderId, fundsHash);
+      // Advisory data: a blob write failure must not fail the order itself.
+      await this.blobs.put(ORDER_FUNDS, ORDER_FUNDS_KEY, Object.fromEntries(map)).catch(() => {});
+    }
+    await this.persistCurrentOrder(orderId);
   }
   async listOrders(status?: string): Promise<P2pOrder[]> {
     const rows = await this.projection.listOrders(status);
-    const merged = await Promise.all(rows.map((o) => this.withFundsHash(o)));
-    return merged.filter((o): o is P2pOrder => !!o);
+    const byId = new Map(rows.map((o) => [o.orderId, o]));
+    for (const o of (await this.loadPersistedOrders()).values()) {
+      if (status && o.status !== status) continue;
+      if (!byId.has(o.orderId)) byId.set(o.orderId, o);
+    }
+    const merged = [...byId.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 100);
+    // Seed persisted orders missing from the volatile projection (fresh boot).
+    for (const o of merged) {
+      if (!rows.some((r) => r.orderId === o.orderId)) {
+        await this.projection.createOrder(o).catch(() => {});
+      }
+    }
+    const withFunds = await Promise.all(merged.map((o) => this.withFundsHash(o)));
+    return withFunds.filter((o): o is P2pOrder => !!o);
   }
-  markOrderMatched(orderId: string, swapId: string, remainingGive?: string, expectedRemaining?: string): Promise<boolean> {
-    return this.projection.markOrderMatched(orderId, swapId, remainingGive, expectedRemaining);
+  async markOrderMatched(orderId: string, swapId: string, remainingGive?: string, expectedRemaining?: string): Promise<boolean> {
+    const ok = await this.projection.markOrderMatched(orderId, swapId, remainingGive, expectedRemaining);
+    if (ok) await this.persistCurrentOrder(orderId);
+    return ok;
   }
-  markOrderCancelled(orderId: string): Promise<boolean> {
-    return this.projection.markOrderCancelled(orderId);
+  async markOrderCancelled(orderId: string): Promise<boolean> {
+    const ok = await this.projection.markOrderCancelled(orderId);
+    if (ok) await this.persistCurrentOrder(orderId);
+    return ok;
   }
-  reopenOrder(orderId: string, swapId: string): Promise<void> {
-    return this.projection.reopenOrder(orderId, swapId);
+  async reopenOrder(orderId: string, swapId: string): Promise<void> {
+    await this.projection.reopenOrder(orderId, swapId);
+    await this.persistCurrentOrder(orderId);
   }
   hasOrderReservation(orderId: string, swapId: string): Promise<boolean> {
     return this.projection.hasOrderReservation(orderId, swapId);

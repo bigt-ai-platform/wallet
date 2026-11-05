@@ -410,3 +410,14 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   empty, and uses `transaction.errRecipient` for the message). Also the taker
   profile gate now applies only to a **buy bid** (taker = seller); a buyer on a
   sell ad needs no collection profile.
+
+- **Open P2P ads survive an engine restart.** Blob mode rebuilds orders from
+  L1-SOCIAL, but the web/native client has no `P2P_SOCIAL_URL`, so ads are
+  engine-intake and were lost on every deploy (the reported "seller p2p
+  disappeared": the 1000 BIG / 3 CNY ad vanished at the v1.0.139 restart).
+  `BlobSettlementStore` now persists each order to the `orders` collection
+  (loaded into a cache once), re-seeds missing orders into the projection on
+  `getOrder`/`listOrders`, and rewrites the stored copy on
+  match/cancel/reopen/funds-hash changes. Chain-anchored orders still win in
+  the projection; the blob copy is only the engine-intake fallback. Test:
+  `blob.test.ts` "persists engine-intake orders across a projection rebuild".
