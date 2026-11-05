@@ -626,7 +626,26 @@ export default function P2pScreen() {
     setBusy(true);
     try {
       const txHash = (txHashArg ?? txHashes[swap.swapId] ?? '').trim();
-      await transition(id, swap.swapId, 'escrow_lock', { txHash });
+      // The app's L0 view can confirm a funding tx before the engine's node
+      // does (separate reads), so a lock can fail with "transaction is PENDING,
+      // expected CONFIRMED". Retry the transition briefly instead of leaving
+      // the escrow funded but unlocked (which looked like "sent, nothing
+      // happened" and needed a manual second tap).
+      let lastLockError: unknown = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          await transition(id, swap.swapId, 'escrow_lock', { txHash });
+          lastLockError = null;
+          break;
+        } catch (e) {
+          lastLockError = e;
+          const message = e instanceof Error ? e.message : String(e);
+          const retryable = /CONFIRMED|not found|insufficient|unreachable|expected|timeout|502|503|504/i.test(message);
+          if (!retryable || attempt === 3) break;
+          await new Promise((resolve) => setTimeout(resolve, 4000));
+        }
+      }
+      if (lastLockError) throw lastLockError;
       // Always attempt the presign: the engine rejects it when it has no chain
       // client, and an old `/capabilities` (or a failed fetch) must not leave a
       // freshly locked escrow unarmed. Retry because the app's selected L0 node

@@ -421,3 +421,12 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   match/cancel/reopen/funds-hash changes. Chain-anchored orders still win in
   the projection; the blob copy is only the engine-intake fallback. Test:
   `blob.test.ts` "persists engine-intake orders across a projection rebuild".
+
+- **A funded escrow no longer stays unlocked on a chain-read race.** After
+  "Pay escrow & lock" sends the tokens, the app polls its own L0 view for
+  CONFIRMED and then submits `escrow_lock` once. The engine reads a different
+  node; if that node still says PENDING the transition fails 422 and the swap
+  stays MATCHED with the tokens already in escrow (the "sent, nothing happened"
+  / "first time failed, second fine" report). `lockAndPresign` now retries the
+  transition up to 4 times, 4 s apart, for chain-verification errors only; the
+  existing `fundedEscrowTx` pre-check keeps a retry from sending twice.
