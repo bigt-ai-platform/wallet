@@ -388,3 +388,16 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   a match made while the app was closed is not missed. The generic status
   notice still covers the other transitions. `matchNotified` is per session, so
   reopening the app re-reminds until the escrow is locked.
+
+- **Incoming payments get a finality notification too.** `ChainEventWatcher`
+  only followed *outgoing* tracked payments, so money arriving produced no
+  message. `IncomingPaymentWatcher` (mounted beside it) polls this wallet's L0
+  `getOutputsHistory` every 30 s with a `starttime` window (last poll − 10 min),
+  groups confirmed outputs by tx+token, and raises `system.paymentReceivedTitle`
+  / `paymentReceivedBody` ("{{amount}} {{token}} received. Tx …"). It skips
+  change/self transfers (`fromaddress` = us), transactions in the local outgoing
+  tracker, and coinbase outputs; the first run only seeds `lastTime=now`, so the
+  wallet's history is not replayed as notifications, and at most 5 notices fire
+  per tick after a long offline period. State (`seen` keys + `lastTime`) is
+  persisted under `notifications/incoming`. Same process-alive/WebView poller
+  limitation as the other watchers.

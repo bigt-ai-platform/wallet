@@ -18,6 +18,7 @@ import BootScreen from '@/components/BootScreen';
 import BottomNav from '@/components/BottomNav';
 import SystemMessageHost from '@/components/SystemMessageHost';
 import ChainEventWatcher from '@/components/ChainEventWatcher';
+import IncomingPaymentWatcher from '@/components/IncomingPaymentWatcher';
 import P2pEventWatcher from '@/components/P2pEventWatcher';
 import PredictionEventWatcher from '@/components/PredictionEventWatcher';
 import { TransactionConfirmProvider } from '@/components/TransactionConfirm';
@@ -200,6 +201,7 @@ export default function RootLayout() {
                                     before the watchers fire their first poll. */}
                                 <SystemMessageHost />
                                 <ChainEventWatcher />
+                                <IncomingPaymentWatcher />
                                 <P2pEventWatcher />
                                 <PredictionEventWatcher />
                             </SidebarProvider>
