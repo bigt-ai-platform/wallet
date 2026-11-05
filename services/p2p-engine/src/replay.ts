@@ -375,18 +375,25 @@ async function applyRecord(
     if (prior.some((e) => e.seq === event.seq)) return;
     if (event.status === "MATCHED" && event.orderId && !(await store.hasOrderReservation(event.orderId, event.swapId))) {
       // Rebuild the order's remaining from the anchored match amounts, so a
-      // wipe replays the same partial fills (docs/p2p.md).
+      // wipe replays the same partial fills (docs/p2p.md). The order can be
+      // missing entirely (an engine-intake ad, or its OPEN record not applied
+      // yet); the anchored swap is still the parties' trade and must never be
+      // dropped from /swaps/mine — only the ad's projection is best-effort.
       const o = await store.getOrder(event.orderId);
-      const prevRemaining = o?.remainingGive ?? o?.giveAmount ?? "0";
-      const filled = event.giveAmount ?? "0";
-      if (compareAmounts(filled, "0") <= 0 || compareAmounts(filled, prevRemaining) > 0) {
-        result.conflicts.push(`match ${event.swapId}: invalid fill amount`);
-        return;
-      }
-      const nextRemaining = subtractAmounts(prevRemaining, filled);
-      if (!(await store.markOrderMatched(event.orderId, event.swapId, nextRemaining, prevRemaining))) {
-        if (o && o.status === "CANCELLED") {
-          result.conflicts.push(`match ${event.swapId}: order ${event.orderId} already cancelled`);
+      if (!o) {
+        result.conflicts.push(`match ${event.swapId}: order ${event.orderId} unknown; swap kept`);
+      } else {
+        const prevRemaining = o.remainingGive ?? o.giveAmount ?? "0";
+        const filled = event.giveAmount ?? "0";
+        if (compareAmounts(filled, "0") <= 0 || compareAmounts(filled, prevRemaining) > 0) {
+          result.conflicts.push(`match ${event.swapId}: invalid fill amount; swap kept`);
+        } else {
+          const nextRemaining = subtractAmounts(prevRemaining, filled);
+          if (!(await store.markOrderMatched(event.orderId, event.swapId, nextRemaining, prevRemaining))) {
+            if (o.status === "CANCELLED") {
+              result.conflicts.push(`match ${event.swapId}: order ${event.orderId} already cancelled`);
+            }
+          }
         }
       }
     }

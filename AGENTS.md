@@ -319,3 +319,14 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   engine's `SETTLEMENT_CNY_RAILS` was `wechat,alipay,bank`; it now includes
   `paypal` (`SETTLEMENT_FIAT_RAILS` is the newer name, `CNY_RAILS` still read).
   The rails are already protocol-supported, so no engine code changed.
+
+- **A matched swap no longer vanishes when the engine rebuilds its projection.**
+  In blob mode orders/swaps are replayed from L1-SOCIAL at boot. The replay
+  dropped a `MATCHED` `social.p2p-swap` record whenever the ad's
+  `social.p2p-order` was missing (engine-intake ads never anchor one) or its
+  fill exceeded the projected remaining — `replay.ts` returned before
+  `appendEvent`, so `/swaps/mine` lost the trade with no later transition to
+  bring it back. The swap is now always appended (the order bookkeeping stays
+  best-effort and reports a conflict), so a matched trade survives restarts and
+  its parties can continue. Test: `replay.test.ts` "keeps an anchored swap when
+  its engine-intake order is not on chain".

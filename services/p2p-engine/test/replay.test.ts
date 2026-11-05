@@ -189,6 +189,20 @@ describe("syncOnce — order-book projection from the chain", () => {
     expect(order).toMatchObject({ status: "MATCHED", swapId: "swap-0123456789abcdef" });
   });
 
+  it("keeps an anchored swap when its engine-intake order is not on chain", async () => {
+    // Orders placed through the engine (no P2P_SOCIAL_URL) have no
+    // social.p2p-order record, so a projection rebuild has no ad to reserve.
+    // The swap record is signed and anchored: dropping it made a matched trade
+    // vanish from /swaps/mine and the parties could never advance it.
+    const src = chain([GENESIS, block("h1", 1, "h0", [rec(swapRec())])]);
+    const store = new MemSettlementStore();
+    const r = await syncOnce(src, store, new MemCursorStore());
+    expect(r.swapsAppended).toBe(1);
+    expect(r.conflicts.some((c) => c.includes("order ord-0123456789abcdef unknown"))).toBe(true);
+    expect((await store.getSwap("swap-0123456789abcdef"))?.status).toBe("MATCHED");
+    expect(await store.getOrder("ord-0123456789abcdef")).toBeNull();
+  });
+
   it("skips records with a bad signature or unknown type", async () => {
     const forged = { ...orderRec(), sig: "00".repeat(64) };
     const src = chain([
