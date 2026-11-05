@@ -401,3 +401,12 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   per tick after a long offline period. State (`seen` keys + `lastTime`) is
   persisted under `notifications/incoming`. Same process-alive/WebView poller
   limitation as the other watchers.
+
+- **Taking a sell ad prefilled the buyer's release address.** `toggleOrder`
+  cleared `buyRecv` for every ad, so tapping Buy on a `limit_sell` hit the
+  app-side `!buyRecv.trim()` guard and showed the generic "Match failed" (the
+  engine requires `receiveAddress` for the taker-buyer). It now defaults to
+  `publicInfo.address` (and `submitBuy` falls back to it, disables Buy when
+  empty, and uses `transaction.errRecipient` for the message). Also the taker
+  profile gate now applies only to a **buy bid** (taker = seller); a buyer on a
+  sell ad needs no collection profile.

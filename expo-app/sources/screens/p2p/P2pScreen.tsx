@@ -440,12 +440,19 @@ export default function P2pScreen() {
     const id = requireIdentity();
     if (!id) return;
     const cny = isCnyRail(order.wantRail);
-    // The taker must also have channel details for the rail it trades through.
-    if (cny && !requireChannel(chosenRail || order.wantRail)) return;
-    // A `limit_buy` bid is filled by a seller: no receive address is asked (the
-    // poster's is used). A `limit_sell` is taken by a buyer, who gives theirs.
     const isBid = order.type === 'limit_buy';
-    if (!cny || (!isBid && !buyRecv.trim())) { setNotice({ ok: false, text: t('p2p.buyFailed') }); return; }
+    // On a buy bid the taker is the seller, so it is the one that must have
+    // collection details. Taking a sell ad makes this wallet the buyer — it
+    // pays fiat and needs no profile (the poster's is checked engine-side).
+    if (cny && isBid && !requireChannel(chosenRail || order.wantRail)) return;
+    // A `limit_buy` bid is filled by a seller: no receive address is asked (the
+    // poster's is used). A `limit_sell` is taken by a buyer, who gives theirs —
+    // default to this wallet's address when the user left it blank.
+    const receiveAddress = (buyRecv.trim() || (publicInfo?.address ?? '')).trim();
+    if (!cny || (!isBid && !receiveAddress)) {
+      setNotice({ ok: false, text: t('transaction.errRecipient') });
+      return;
+    }
     // Important transaction (signs with the wallet key): device unlock first.
     const summary = t('p2pFill.preview', { amount: fill.fill, token: order.giveToken, fiat: fill.fiat, currency: order.wantCurrency });
     const approved = await confirmImportant({
@@ -456,7 +463,7 @@ export default function P2pScreen() {
     setBusy(true);
     try {
       const res = await matchOrder(id, order.orderId, {
-        receiveAddress: isBid ? '' : buyRecv.trim(),
+        receiveAddress: isBid ? '' : receiveAddress,
         fillAmount: fill.fill,
         ...(chosenRail ? { rail: chosenRail } : {}),
       });
@@ -889,7 +896,10 @@ export default function P2pScreen() {
       return;
     }
     setSelected(o);
-    setBuyRecv('');
+    // Taking a sell ad makes this wallet the buyer, so the tokens need a
+    // destination. Prefill it like the create form does — leaving it blank made
+    // Buy fail with a generic "Match failed" (the engine requires it).
+    setBuyRecv(o.type === 'limit_sell' ? (publicInfo?.address ?? '') : '');
     setChosenRail(o.wantRails?.[0] ?? o.wantRail);
     const rem = o.remainingGive ?? o.giveAmount;
     setBuyFill(rem);
@@ -1117,6 +1127,9 @@ export default function P2pScreen() {
               const unit = perUnitPrice(o.wantAmount, o.giveAmount);
               const fill = checkP2pFill(o, buyFill);
               const fundsBad = o.funds?.checked === true && !o.funds.sufficient;
+              // Taking a sell ad needs the buyer's release address (prefilled;
+              // the button is disabled if the user clears it).
+              const needsRecv = o.type !== 'limit_buy' && !(buyRecv.trim() || (publicInfo?.address ?? ''));
               const fundsText = o.funds
                 ? o.funds.checked
                   ? o.funds.sufficient
@@ -1227,7 +1240,7 @@ export default function P2pScreen() {
                       keyboardType="decimal-pad" mono testID="p2p-buy-fill-fiat"
                     />
                     {o.type !== 'limit_buy' ? (
-                      <Field label={t('p2p.receiveAddress')} value={buyRecv} onChange={setBuyRecv} testID="p2p-buy-recv" />
+                      <Field label={t('p2p.receiveAddress')} value={buyRecv} onChange={setBuyRecv} placeholder={publicInfo?.address ?? ''} testID="p2p-buy-recv" />
                     ) : null}
                     {(o.wantRails?.length ?? 0) > 1 ? (
                       <View style={s.field}>
@@ -1256,9 +1269,9 @@ export default function P2pScreen() {
                       {fill.ok ? t('p2pFill.preview', { amount: fill.fill, token: o.giveToken, fiat: fill.fiat, currency: o.wantCurrency }) : fillError(fill, o)}
                     </Text>
                     <TouchableOpacity
-                      style={[s.btn, { backgroundColor: theme.colors.accent.emerald, opacity: busy || !fill.ok || fundsBad ? 0.5 : 1 }]}
-                      onPress={() => submitBuy(o)} disabled={busy || !fill.ok || fundsBad}
-                      accessibilityRole="button" accessibilityState={{ disabled: busy || !fill.ok || fundsBad }}
+                      style={[s.btn, { backgroundColor: theme.colors.accent.emerald, opacity: busy || !fill.ok || fundsBad || needsRecv ? 0.5 : 1 }]}
+                      onPress={() => submitBuy(o)} disabled={busy || !fill.ok || fundsBad || needsRecv}
+                      accessibilityRole="button" accessibilityState={{ disabled: busy || !fill.ok || fundsBad || needsRecv }}
                       testID="p2p-buy-confirm"
                     >
                       <Text style={s.btnText}>{o.type === 'limit_buy' ? t('order.sell') : t('p2p.buy')}</Text>
