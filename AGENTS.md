@@ -376,3 +376,15 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   seller cannot set it (that would let them redirect the buyer's tokens). If a
   swap is locked without it, the buyer must save it before the seller can
   presign/release. Tests: `blob.test.ts` restart merge, `funds.test.ts` route.
+
+- **P2P match reminds the seller to fund the escrow.** The global
+  `P2pEventWatcher` only emitted a generic "swap is now MATCHED" and skipped
+  legacy EC wallets entirely (`keyType === 'EC'` → no identity), so a seller
+  could sit on an unfunded match forever (and the user's wallet is EC). It now
+  derives the identity with `p2pIdentityFromWallet` and, for a `MATCHED` swap
+  where `sellerDid` is this wallet, raises an actionable
+  `system.p2pFundEscrowTitle` / `p2pFundEscrowBody` notice ("You sold …
+  fund the escrow and tap Pay escrow & lock") — including on the first poll, so
+  a match made while the app was closed is not missed. The generic status
+  notice still covers the other transitions. `matchNotified` is per session, so
+  reopening the app re-reminds until the escrow is locked.
