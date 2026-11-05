@@ -33,6 +33,9 @@ function returnsOrderQuantity(event: P2pSwapEvent): boolean {
 export interface SettlementStore {
   createOrder(o: P2pOrder): Promise<void>;
   getOrder(orderId: string): Promise<P2pOrder | null>;
+  /** Attach the verified legacy-EC funding key on an idempotent re-post (the
+   *  chain projector may have indexed the order first, without the proof). */
+  setOrderFundsHash(orderId: string, fundsHash: string): Promise<void>;
   listOrders(status?: string): Promise<P2pOrder[]>;
   /** ACTIVE → MATCHED when the whole order is taken; a partial fill passes
    *  `remainingGive` and the order stays ACTIVE with that reduced amount.
@@ -89,6 +92,11 @@ export class MemSettlementStore implements SettlementStore {
 
   async getOrder(orderId: string): Promise<P2pOrder | null> {
     return this.orders.get(orderId) ?? null;
+  }
+
+  async setOrderFundsHash(orderId: string, fundsHash: string): Promise<void> {
+    const o = this.orders.get(orderId);
+    if (o) o.fundsHash = fundsHash;
   }
 
   async listOrders(status?: string): Promise<P2pOrder[]> {
@@ -296,6 +304,7 @@ function orderFromRow(row: any): P2pOrder {
     timeLimit: row.time_limit ?? undefined,
     remarks: row.remarks ?? undefined,
     remainingGive: row.remaining_give ?? undefined,
+    ...(row.funds_hash ? { fundsHash: row.funds_hash } : {}),
     ...(row.want_rails ? { wantRails: safeParseRails(row.want_rails) } : {}),
     createdAt: new Date(row.created_at).getTime(),
   };
@@ -324,8 +333,9 @@ export class PgSettlementStore implements SettlementStore {
     await this.db.query(
       `INSERT INTO p2p_orders (order_id, seller_did, type, give_token, give_amount, give_chain,
          want_currency, want_amount, want_rail, valid_until, status, signature, swap_id, txid, engine_pubkey,
-         buyer_receive_address, min_order, max_order, time_limit, remarks, remaining_give, want_rails, created_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+         buyer_receive_address, min_order, max_order, time_limit, remarks, remaining_give, want_rails,
+         funds_hash, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
        ON CONFLICT (order_id) DO NOTHING`,
       [
         o.orderId,
@@ -350,6 +360,7 @@ export class PgSettlementStore implements SettlementStore {
         o.remarks ?? null,
         o.remainingGive ?? null,
         o.wantRails ? JSON.stringify(o.wantRails) : null,
+        o.fundsHash ?? null,
         new Date(o.createdAt),
       ],
     );
@@ -358,6 +369,13 @@ export class PgSettlementStore implements SettlementStore {
   async getOrder(orderId: string): Promise<P2pOrder | null> {
     const res = await this.db.query(`SELECT * FROM p2p_orders WHERE order_id = $1`, [orderId]);
     return res.rows[0] ? orderFromRow(res.rows[0]) : null;
+  }
+
+  async setOrderFundsHash(orderId: string, fundsHash: string): Promise<void> {
+    await this.db.query(`UPDATE p2p_orders SET funds_hash = $2 WHERE order_id = $1`, [
+      orderId,
+      fundsHash,
+    ]);
   }
 
   async listOrders(status?: string): Promise<P2pOrder[]> {

@@ -1,4 +1,4 @@
-import { Base58, PQKey, Sha256Hash, Utils } from 'bigtangle-ts';
+import { Base58, ECKey, PQKey, Sha256Hash, Utils } from 'bigtangle-ts';
 
 /**
  * App-local P2P identity helpers.
@@ -11,6 +11,7 @@ import { Base58, PQKey, Sha256Hash, Utils } from 'bigtangle-ts';
  * `node:crypto` (Metro-hostile).
  */
 const MULTICODEC_MLDSA87 = 0x300001;
+const MULTICODEC_SECP256K1 = 0xe7;
 const DID_PREFIX = 'did:key:z';
 
 function encodeUvarint(value: number): Uint8Array {
@@ -51,7 +52,7 @@ export function pqKeyFromPrivateHex(privateKeyHex: string): PQKey {
 export function p2pIdentityFromWallet(
   privateKeyHex: string | undefined,
   keyType?: 'PQ' | 'EC',
-): { key: PQKey; did: string } | null {
+): { key: PQKey; did: string; fundsKey?: ECKey } | null {
   const hex = (privateKeyHex ?? '').trim();
   if (!hex) return null;
   try {
@@ -61,10 +62,30 @@ export function p2pIdentityFromWallet(
     const key = keyType === 'EC'
       ? PQKey.fromPrivateKeyHex(hex)
       : pqKeyFromPrivateHex(hex);
-    return { key, did: pqDidFromKey(key) };
+    // A legacy EC wallet's funds live at its EC address, not at the derived
+    // ML-DSA DID's address. `signedBody` proves that address to the engine so
+    // its advisory balance check reads the right key (docs/p2p.md §11). A key
+    // that cannot back a proof simply leaves the old DID-key behavior.
+    let fundsKey: ECKey | undefined;
+    if (keyType === 'EC') {
+      try { fundsKey = ECKey.fromPrivate(Utils.HEX.decode(hex), true); } catch { fundsKey = undefined; }
+    }
+    return { key, did: pqDidFromKey(key), ...(fundsKey ? { fundsKey } : {}) };
   } catch {
     return null;
   }
+}
+
+/** did:key over a compressed secp256k1 pubkey — the classic keycode the
+ *  engine's funds-proof verifier accepts. Implemented locally (like the PQ
+ *  form above) because importing the `did` package pulls in `node:crypto`. */
+export function ecDidFromKey(key: ECKey): string {
+  const mc = encodeUvarint(MULTICODEC_SECP256K1);
+  const pub = key.getPubKeyBytes();
+  const combined = new Uint8Array(mc.length + pub.length);
+  combined.set(mc, 0);
+  combined.set(pub, mc.length);
+  return `${DID_PREFIX}${Base58.encode(combined)}`;
 }
 
 /** did:key over the PQ public key (codec 0x300001, base58btc) — matches the engine. */
@@ -146,13 +167,25 @@ function randomHex(bytes: number): string {
 /**
  * Attach `did`/`nonce`/`timestamp` and a PQ signature, the exact shape the
  * engine's `validateSignedRequest` expects.
+ *
+ * `fundsKey` (legacy EC wallets only) additionally attaches a proof of the
+ * wallet's real chain address: `fundsDid` + `fundsSignature`. The main
+ * signature covers both fields, so they cannot be changed in flight; the
+ * engine verifies the EC signature over the canonical payload (docs/p2p.md
+ * §11) before trusting it for the advisory balance check.
  */
 export function signedBody(
   key: PQKey,
   did: string,
   fields: Record<string, unknown>,
   now: number = Date.now(),
+  fundsKey?: ECKey | null,
 ): Record<string, unknown> {
-  const payload = { ...fields, requestMethod: 'POST', did, nonce: randomHex(16), timestamp: now };
+  const base = { ...fields, requestMethod: 'POST', did, nonce: randomHex(16), timestamp: now };
+  if (!fundsKey) return { ...base, signature: signP2pPayload(key, base) };
+  const fundsDid = ecDidFromKey(fundsKey);
+  const fundsDigest = Sha256Hash.hash(new TextEncoder().encode(canonicalJson({ ...base, fundsDid })));
+  const fundsSignature = Utils.HEX.encode(fundsKey.sign(Sha256Hash.wrap(fundsDigest)).toCompact());
+  const payload = { ...base, fundsDid, fundsSignature };
   return { ...payload, signature: signP2pPayload(key, payload) };
 }

@@ -1,6 +1,6 @@
 import { P2P_ENGINE_URL, P2P_SOCIAL_URL } from '@/constants/app';
 import { serverErrorMessage } from '@/lib/httpError';
-import type { PQKey } from 'bigtangle-ts';
+import type { ECKey, PQKey } from 'bigtangle-ts';
 import { p2pOrderRecord, type P2pReleaseRecord } from 'p2p-protocol';
 import { newOrderId, signP2pRecord, signedBody } from '@/lib/p2pIdentity';
 import { parseP2pMatch, parseP2pOrders, parseP2pSwap, parseP2pSwaps } from '@/lib/p2pOrderBook';
@@ -137,6 +137,9 @@ export interface P2pSwap {
 export interface P2pIdentity {
   key: PQKey;
   did: string;
+  /** Legacy EC wallet's funding key — `signedBody` proves its address so the
+   *  engine checks the balance where the tokens actually are. */
+  fundsKey?: ECKey;
 }
 
 export interface CreateOrderInput {
@@ -357,7 +360,7 @@ export async function createOrder(
       ...(receiveAddress ? { receiveAddress } : {}),
       sellerDid: id.did,
       requestPath: '/orders',
-    });
+    }, Date.now(), id.fundsKey);
     return request<{ orderId: string; status: string; txid?: string | null }>('/orders', body);
   }
   const orderId = newOrderId();
@@ -382,7 +385,7 @@ export async function createOrder(
     ...(receiveAddress ? { receiveAddress } : {}),
     sellerDid: id.did,
     requestPath: '/orders',
-  });
+  }, Date.now(), id.fundsKey);
   return request<{ orderId: string; status: string; txid?: string | null }>('/orders', body);
 }
 
@@ -429,7 +432,7 @@ export async function matchOrder(
   orderId: string,
   input: MatchOrderInput,
 ): Promise<{ swapId: string; status: string; escrowAddress: string | null }> {
-  const body = signedBody(id.key, id.did, { ...input, buyerDid: id.did, requestPath: `/orders/${orderId}/match` });
+  const body = signedBody(id.key, id.did, { ...input, buyerDid: id.did, requestPath: `/orders/${orderId}/match` }, Date.now(), id.fundsKey);
   return parseP2pMatch(await request<unknown>(`/orders/${orderId}/match`, body));
 }
 

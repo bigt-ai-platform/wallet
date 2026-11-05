@@ -103,12 +103,13 @@ export default function P2pScreen() {
   }, [notice]);
   const [instructions, setInstructions] = React.useState<Record<string, P2pPaymentInstructions>>({});
 
-  // USDT is the market base (Binance-P2P style): sellers list USDT, buyers
-  // pay fiat and receive USDT. Default fiat is CNY on the WeChat rail.
-  const [giveToken, setGiveToken] = React.useState('USDT');
+  // BIG is the market base on wallet.bigt.ai/p2p: sellers list BIG, buyers pay
+  // fiat and receive BIG. Default fiat is CNY on the WeChat rail.
+  const [giveToken, setGiveToken] = React.useState('BIG');
   // The id of the token picked from the search list, when known — the balance
-  // check matches on it; a free-typed name falls back to a name match.
-  const [giveTokenId, setGiveTokenId] = React.useState<string | null>(null);
+  // check matches on it; a free-typed name falls back to a name match. Native
+  // BIG's token id is `bc` (no token-index row to select from).
+  const [giveTokenId, setGiveTokenId] = React.useState<string | null>('bc');
   const [tokenResults, setTokenResults] = React.useState<TokenItem[]>([]);
   const [tokenSearching, setTokenSearching] = React.useState(false);
   // Advisory: the seller's balances on L0 and the active L1 chain, to warn when
@@ -805,7 +806,7 @@ export default function P2pScreen() {
                 style={s.input}
                 value={giveToken}
                 onChangeText={searchTokens}
-                placeholder="USDT"
+                placeholder="BIG"
                 placeholderTextColor={theme.colors.text.secondary}
                 autoCapitalize="none"
                 autoCorrect={false}

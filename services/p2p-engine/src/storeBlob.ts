@@ -20,23 +20,63 @@ const PROOFS = "proofs";
 const VERIFICATIONS = "verifications";
 const PAIRINGS = "pairings";
 const ESCROW = "escrow_signings";
+const ORDER_FUNDS = "order_funds";
+const ORDER_FUNDS_KEY = "by-order";
 
 export class BlobSettlementStore implements SettlementStore {
+  /** orderId → verified legacy-EC funds h160. Orders themselves are rebuilt
+   *  from L1-SOCIAL, which cannot carry this engine-local proof, so it is
+   *  persisted store-only and merged back on read (docs/p2p.md §11). */
+  private fundsHashes: Map<string, string> | null = null;
+  private fundsLoading: Promise<Map<string, string>> | null = null;
+
   constructor(
     private readonly blobs: BlobStore,
     /** Chain-derived projection (orders + swap events). Default: empty mem store. */
     readonly projection: MemSettlementStore = new MemSettlementStore(),
   ) {}
 
+  private async loadFundsHashes(): Promise<Map<string, string>> {
+    if (this.fundsHashes) return this.fundsHashes;
+    if (!this.fundsLoading) {
+      this.fundsLoading = (async () => {
+        const saved = (await this.blobs
+          .get(ORDER_FUNDS, ORDER_FUNDS_KEY)
+          .catch(() => null)) as Record<string, string> | null;
+        const map = new Map(Object.entries(saved ?? {}));
+        this.fundsHashes = map;
+        return map;
+      })();
+    }
+    return this.fundsLoading;
+  }
+
+  private async withFundsHash(o: P2pOrder | null): Promise<P2pOrder | null> {
+    if (!o || o.fundsHash) return o;
+    const map = await this.loadFundsHashes();
+    const hash = map.get(o.orderId);
+    return hash ? { ...o, fundsHash: hash } : o;
+  }
+
   // ── chain-derived projection (delegated to the mem projection) ──────────
   createOrder(o: P2pOrder): Promise<void> {
     return this.projection.createOrder(o);
   }
-  getOrder(orderId: string): Promise<P2pOrder | null> {
-    return this.projection.getOrder(orderId);
+  async getOrder(orderId: string): Promise<P2pOrder | null> {
+    return this.withFundsHash(await this.projection.getOrder(orderId));
   }
-  listOrders(status?: string): Promise<P2pOrder[]> {
-    return this.projection.listOrders(status);
+  async setOrderFundsHash(orderId: string, fundsHash: string): Promise<void> {
+    await this.projection.setOrderFundsHash(orderId, fundsHash);
+    const map = await this.loadFundsHashes();
+    if (map.get(orderId) === fundsHash) return;
+    map.set(orderId, fundsHash);
+    // Advisory data: a blob write failure must not fail the order itself.
+    await this.blobs.put(ORDER_FUNDS, ORDER_FUNDS_KEY, Object.fromEntries(map)).catch(() => {});
+  }
+  async listOrders(status?: string): Promise<P2pOrder[]> {
+    const rows = await this.projection.listOrders(status);
+    const merged = await Promise.all(rows.map((o) => this.withFundsHash(o)));
+    return merged.filter((o): o is P2pOrder => !!o);
   }
   markOrderMatched(orderId: string, swapId: string, remainingGive?: string, expectedRemaining?: string): Promise<boolean> {
     return this.projection.markOrderMatched(orderId, swapId, remainingGive, expectedRemaining);

@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { PQKey, Sha256Hash, Utils, SignatureBundle } from 'bigtangle-ts';
+import { ECKey, PQKey, Sha256Hash, Utils, SignatureBundle } from 'bigtangle-ts';
+import { ECKey as DidECKey } from 'did';
 import { verifyRecordSig, type AnchoredRecord } from 'record-sig';
 import { P2P_ORDER_ID_RE } from 'p2p-protocol';
 import {
-  canonicalJson, canonicalRecordJson, newOrderId, p2pIdentityFromWallet, pqDidFromKey,
+  canonicalJson, canonicalRecordJson, ecDidFromKey, newOrderId, p2pIdentityFromWallet, pqDidFromKey,
   pqKeyFromPrivateHex, shortDid, signP2pPayload, signP2pRecord, signedBody,
 } from '../p2pIdentity';
 
@@ -100,9 +101,35 @@ describe('p2pIdentity', () => {
   it('keeps the stored-bundle path for PQ wallets and rejects missing keys', () => {
     const pq = p2pIdentityFromWallet(STORED_HEX, 'PQ');
     expect(pq?.did).toBe(pqDidFromKey(pqKeyFromPrivateHex(STORED_HEX)));
+    expect(pq?.fundsKey).toBeUndefined();
     expect(p2pIdentityFromWallet(undefined)).toBeNull();
     expect(p2pIdentityFromWallet('')).toBeNull();
     expect(p2pIdentityFromWallet('00', 'PQ')).toBeNull();
+  });
+
+  it('proves a legacy EC wallet address with fundsDid + fundsSignature', () => {
+    const ecHex = Utils.HEX.encode(new Uint8Array(32).fill(0x33));
+    const id = p2pIdentityFromWallet(ecHex, 'EC')!;
+    expect(id.fundsKey).toBeDefined();
+    const body = signedBody(id.key, id.did, { foo: 'bar' }, 1000, id.fundsKey) as Record<string, unknown>;
+    expect(body.fundsDid).toBe(ecDidFromKey(id.fundsKey!));
+    expect(typeof body.fundsSignature).toBe('string');
+    // The main PQ signature still binds every field, funds proof included.
+    const { signature, ...payload } = body;
+    expect(engineVerifies(payload, signature as string, id.key.getPrefixedPublicKeyBytes())).toBe(true);
+    // The funds proof verifies over the payload WITHOUT fundsSignature, exactly
+    // as services/p2p-engine `verifyFundsProof` does.
+    const { signature: _sig, fundsSignature, ...fundsPayload } = body;
+    const digest = Sha256Hash.hash(new TextEncoder().encode(canonicalJson(fundsPayload as Record<string, unknown>)));
+    const compact = Utils.HEX.decode(fundsSignature as string);
+    const ec = ECKey.fromPrivate(Utils.HEX.decode(ecHex), true);
+    // Mirrors services/p2p-engine `verifyFundsProof` (did's secp256k1 verifier).
+    const engineKey = DidECKey.fromPublicBytes(ec.getPubKeyBytes());
+    expect(engineKey.verify(digest, compact)).toBe(true);
+    // Tampering with the address breaks the proof.
+    const bad = { ...fundsPayload, fundsDid: ecDidFromKey(ECKey.createNewKey()) };
+    const badDigest = Sha256Hash.hash(new TextEncoder().encode(canonicalJson(bad)));
+    expect(engineKey.verify(badDigest, compact)).toBe(false);
   });
 
   it('shortens a long did:key to head…tail', () => {

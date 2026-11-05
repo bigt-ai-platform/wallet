@@ -36,6 +36,10 @@ CREATE TABLE IF NOT EXISTS p2p_orders (
   remaining_give TEXT,
   reservations JSONB NOT NULL DEFAULT '{}'::jsonb,
   want_rails    TEXT,
+  -- h160 (hex) of the seller's proven funding key when it is not the
+  -- DID-derived key (legacy EC wallets, docs/p2p.md §11). Additive: ALTERed in
+  -- on boot. Internal — never exposed in the public book.
+  funds_hash    TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS p2p_orders_open_idx ON p2p_orders (status, created_at DESC);

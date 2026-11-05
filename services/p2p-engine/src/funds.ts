@@ -86,9 +86,18 @@ function decimalsForRow(row: { tokenId?: string; decimals?: number }): number | 
  */
 export async function checkDidTokenFunds(
   chain: ChainClient,
-  opts: { did: string; token: string; amount: string },
+  opts: { did: string; token: string; amount: string; fundsHash?: string },
 ): Promise<FundsSnapshot> {
-  const hash = didPubKeyHashHex(opts.did);
+  // A verified funds proof (docs/p2p.md §11) names the wallet's real chain
+  // key — for a legacy EC wallet that is its EC address, not the derived
+  // ML-DSA DID key. It is the same RIPEMD160(SHA256(pub)) query the wallet's
+  // `getBalances` uses.
+  const proofHash = opts.fundsHash?.trim().toLowerCase();
+  const hash = proofHash
+    ? /^[0-9a-f]{40}$/.test(proofHash)
+      ? proofHash
+      : null
+    : didPubKeyHashHex(opts.did);
   if (!hash) {
     return { checked: false, sufficient: false, available: "0", reason: "unsupported did" };
   }

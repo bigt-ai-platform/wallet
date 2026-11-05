@@ -62,6 +62,13 @@ export interface P2pOrderInput {
   remarks?: string;
   /** Enabled payment methods (Binance allows several; the taker picks one). */
   wantRails?: string[];
+  /**
+   * h160 (hex) of the seller's proven funding key, when the request carried a
+   * `fundsDid`/`fundsSignature` proof (docs/p2p.md §11) and it differs from the
+   * DID-derived key — legacy EC wallets. Internal: never part of the public
+   * book or the on-chain order record.
+   */
+  fundsHash?: string;
 }
 
 export interface P2pOrder extends Omit<P2pOrderInput, "validUntil"> {

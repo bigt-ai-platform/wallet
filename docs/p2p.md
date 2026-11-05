@@ -586,6 +586,17 @@ settlement gate. The public book exposes only the booleans, never the seller's
 balance; the UI labels the amount **Advertised** and disables Buy for
 `checked && !sufficient`.
 
+A legacy EC wallet signs with an ML-DSA DID derived from its secret, so that
+DID's key is **not** the wallet address that holds the tokens, and the check
+above would see 0. Those clients therefore attach a **funds proof** to the
+sell-ad and match bodies: `fundsDid` (a classic `did:key` over the wallet's
+secp256k1 public key) and `fundsSignature` (a signature over the canonical
+request payload including `fundsDid`). The engine verifies the proof, derives
+the EC address h160, and checks the balance at that key instead; the proven
+h160 is stored on the order (never exposed in the public book) so later book
+reads and matches keep checking the right key. The proof is optional — without
+it the DID-derived key is used exactly as before.
+
 - `POST /swaps/:swapId/payment-instructions` — matched profile fields + exact
   amount + remark code; 403 for non-parties; only after `ESCROW_LOCKED`
   (idempotent while `PAYMENT_PENDING`).

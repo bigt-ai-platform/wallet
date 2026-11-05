@@ -85,6 +85,7 @@ import {
   RATE_WINDOW_MS,
   ReplayGuard,
   validateSignedRequest,
+  verifyFundsProof,
   type RateLimits,
 } from "./sign.js";
 import { PgNonceStore, type NonceStore } from "./nonceStore.js";
@@ -505,7 +506,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     token: string,
     chainName: string,
     amount: string,
-    opts: { fresh?: boolean } = {},
+    opts: { fresh?: boolean; fundsHash?: string } = {},
   ): Promise<FundsSnapshot> {
     if (!deps.chain || chainName.trim().toUpperCase() !== "L0") {
       return {
@@ -515,10 +516,16 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         reason: "only L0 balances are checked",
       };
     }
-    const key = `${did}|${token}|${chainName}|${amount}`;
+    const fundsHash = opts.fundsHash?.trim().toLowerCase() || undefined;
+    const key = `${did}|${fundsHash ?? ""}|${token}|${chainName}|${amount}`;
     const hit = fundsCache.get(key);
     if (!opts.fresh && hit && now() - hit.at < 30_000) return hit.value;
-    const value = await checkDidTokenFunds(deps.chain, { did, token, amount });
+    const value = await checkDidTokenFunds(deps.chain, {
+      did,
+      token,
+      amount,
+      ...(fundsHash ? { fundsHash } : {}),
+    });
     fundsCache.set(key, { at: now(), value });
     if (fundsCache.size > 1000) fundsCache.clear();
     return value;
@@ -1726,6 +1733,13 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     );
     if (!signed.ok)
       return reply.code(signed.status ?? 400).send({ error: signed.error });
+    // Legacy EC wallets sign as a derived ML-DSA DID, so the funds proof is what
+    // names the wallet's real chain address (docs/p2p.md §11). It is bound by the
+    // body signature above; absent means "no proof" (the old DID-key check).
+    const fundsProof = verifyFundsProof(body);
+    if (!fundsProof.ok)
+      return reply.code(400).send({ error: fundsProof.error ?? "invalid funds proof" });
+    const fundsHash = fundsProof.hashHex;
     if (txid !== undefined) {
       const gate = await orderTxVerified({
         txid,
@@ -1753,6 +1767,12 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       // response); a different seller/order collision is a hard conflict.
       if (existing.sellerDid !== sellerDid)
         return reply.code(409).send({ error: "orderId already in use" });
+      // The chain projector may have indexed this order before the signed
+      // intake arrived (it has no funds proof); attach the verified legacy-EC
+      // funding key now so later book reads check the right address.
+      if (type === "limit_sell" && fundsHash && existing.fundsHash !== fundsHash) {
+        await deps.store.setOrderFundsHash(orderId, fundsHash);
+      }
       return reply
         .code(200)
         .send({
@@ -1788,7 +1808,13 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     // checked at match time. `warn` keeps the order but flags it in the public
     // book; `reject` (default) stops an unfunded ad before it is indexed.
     if (type === "limit_sell" && fundsCheckMode !== "off") {
-      const funds = await giverFunds(sellerDid, giveToken, giveChain, giveAmount);
+      const funds = await giverFunds(
+        sellerDid,
+        giveToken,
+        giveChain,
+        giveAmount,
+        { fundsHash },
+      );
       if (funds.checked && !funds.sufficient && fundsCheckMode === "reject") {
         return reply.code(409).send({
           error: `seller balance insufficient: ${funds.available} ${giveToken} on ${giveChain} (advertised ${giveAmount})`,
@@ -1829,6 +1855,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       ...(timeLimit !== undefined ? { timeLimit } : {}),
       ...(remarks ? { remarks } : {}),
       ...(wantRails ? { wantRails } : {}),
+      ...(type === "limit_sell" && fundsHash ? { fundsHash } : {}),
       createdAt: now(),
     };
     await deps.store.createOrder(order);
@@ -1949,7 +1976,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
         : orders;
     const map = await reputationMap();
     const enriched = await Promise.all(
-      book.map(async ({ signature: _s, buyerReceiveAddress: _b, ...o }) => {
+      book.map(async ({ signature: _s, buyerReceiveAddress: _b, fundsHash, ...o }) => {
         // Advisory balance snapshot for a sell ad (the poster is the token
         // giver). Only the boolean verdict is public — never the seller's
         // exact balance. A buy bid's taker supplies the tokens, so the book
@@ -1961,6 +1988,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
             o.giveToken,
             o.giveChain,
             o.remainingGive ?? o.giveAmount,
+            { fundsHash },
           );
           funds = { checked: f.checked, sufficient: f.sufficient };
         }
@@ -2059,6 +2087,15 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
       );
       if (!signed.ok)
         return reply.code(signed.status ?? 400).send({ error: signed.error });
+      // On a buy bid the taker is the seller who funds the escrow. Its funds
+      // proof (docs/p2p.md §11) names the wallet address that really holds the
+      // tokens — the derived DID key of a legacy EC wallet holds none.
+      const fundsProof = verifyFundsProof(body);
+      if (!fundsProof.ok)
+        return reply
+          .code(400)
+          .send({ error: fundsProof.error ?? "invalid funds proof" });
+      const takerFundsHash = fundsProof.hashHex;
 
       // Anti-griefing: a taking buyer may hold only a few sellers' escrows open at once.
       if (!isBuy) {
@@ -2172,7 +2209,10 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
           order.giveToken,
           order.giveChain,
           fill,
-          { fresh: true },
+          {
+            fresh: true,
+            fundsHash: isBuy ? takerFundsHash : order.fundsHash,
+          },
         );
         if (funds.checked && !funds.sufficient) {
           return reply.code(409).send({

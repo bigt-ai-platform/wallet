@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { randomBytes } from "node:crypto";
-import { Ed25519Key, didFromEd25519Key, pubKeyHashFromPub } from "did";
+import { createHash, randomBytes } from "node:crypto";
+import { Ed25519Key, didFromEd25519Key, pubKeyHashFromPub, didFromECKey, ECKey as DidECKey, bytesToHex } from "did";
 import { didFromPQKey } from "did/pq";
 import { PQKey, Utils } from "bigtangle-ts";
 import type { SettlementOutput } from "p2p-protocol";
 import { buildApp } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
-import { ReplayGuard, signPayload } from "../src/sign.js";
+import { ReplayGuard, canonicalJson, signPayload } from "../src/sign.js";
 import type { ChainClient } from "../src/chain.js";
 import {
   checkDidTokenFunds,
@@ -94,6 +94,79 @@ function orderPayload(overrides: Record<string, unknown> = {}) {
   });
 }
 
+/** A BIG balance row as the L0 node returns it (token id `bc`, 6 decimals). */
+function bigRow(amount: string): SettlementOutput {
+  return {
+    address: "unused",
+    token: "BIG",
+    amount,
+    tokenId: "bc",
+    name: "BIG",
+    decimals: 6,
+    spent: false,
+    confirmed: true,
+  };
+}
+
+/** A body with the legacy-EC funds proof: the wallet's real chain key is an
+ *  EC address, while the signer is the derived ML-DSA DID (docs/p2p.md §11). */
+function withFundsProof(
+  signer: Ed25519Key,
+  did: string,
+  fields: Record<string, unknown>,
+  fundsKey: DidECKey,
+) {
+  const base = {
+    ...fields,
+    did,
+    nonce: randomBytes(8).toString("hex"),
+    timestamp: clock,
+  };
+  const fundsDid = didFromECKey(fundsKey);
+  const fundsPayload = { ...base, fundsDid };
+  const digest = createHash("sha256")
+    .update(canonicalJson(fundsPayload))
+    .digest();
+  const fundsSignature = bytesToHex(fundsKey.sign(digest).compact);
+  const payload = { ...fundsPayload, fundsSignature };
+  return { ...payload, signature: signPayload(payload, signer.getPrivHex()!) };
+}
+
+/** Balance rows only under `only` — everything else reads as empty. */
+function hashChain(
+  only: string,
+  rows: SettlementOutput[],
+  seen?: { hash?: string },
+): ChainClient {
+  return {
+    balances: async (hash: string) => {
+      if (seen) seen.hash = hash;
+      return hash.toLowerCase() === only.toLowerCase() ? rows : [];
+    },
+    transactionStatus: async () => ({}),
+    outputsHistory: async () => [],
+    transactionsStatusByAddress: async () => [],
+    submitTransaction: async () => undefined,
+  } as unknown as ChainClient;
+}
+
+function bigSellFields(orderId: string) {
+  return {
+    type: "limit_sell",
+    sellerDid,
+    giveToken: "BIG",
+    giveAmount: "1000",
+    giveChain: "L0",
+    wantCurrency: "CNY",
+    wantAmount: "10",
+    wantRail: "wechat",
+    validUntil: Math.floor(clock / 1000) + 3600,
+    orderId,
+    requestMethod: "POST",
+    requestPath: "/orders",
+  };
+}
+
 async function app(chain: ChainClient | null, extraEnv: NodeJS.ProcessEnv = {}) {
   return buildApp({
     store,
@@ -139,6 +212,30 @@ describe("did balance key", () => {
     expect(rawToDecimal("99500000", 6)).toBe("99.5");
     expect(rawToDecimal("1", 8)).toBe("0.00000001");
     expect(rawToDecimal("0", 6)).toBe("0");
+  });
+
+  it("attaches a late funds hash to an order the chain projector indexed", async () => {
+    // The L1-SOCIAL watcher can insert the OPEN record before the signed
+    // intake (which carries the funds proof) reaches /orders.
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    await store.createOrder({
+      orderId,
+      type: "limit_sell",
+      sellerDid,
+      giveToken: "BIG",
+      giveAmount: "1000",
+      giveChain: "L0",
+      wantCurrency: "CNY",
+      wantAmount: "10",
+      wantRail: "wechat",
+      validUntil: Math.floor(clock / 1000) + 3600,
+      status: "ACTIVE",
+      signature: "00",
+      createdAt: clock,
+    });
+    const fundsHash = "ab".repeat(20);
+    await store.setOrderFundsHash(orderId, fundsHash);
+    expect((await store.getOrder(orderId))?.fundsHash).toBe(fundsHash);
   });
 });
 
@@ -210,6 +307,103 @@ describe("order funds gate", () => {
       payload: orderPayload({ orderId }),
     });
     expect(r.statusCode).toBe(201);
+    await a.close();
+  });
+
+  it("checks the proven legacy-EC address, not the derived DID key", async () => {
+    const fundsKey = DidECKey.createNewKey();
+    const fundsHash = bytesToHex(pubKeyHashFromPub(fundsKey.getPubBytes()));
+    const seen: { hash?: string } = {};
+    // The BIG lives at the EC address only: the DID-derived key reads empty.
+    const a = await app(hashChain(fundsHash, [bigRow("1000000000")], seen));
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    const r = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: withFundsProof(seller, sellerDid, bigSellFields(orderId), fundsKey),
+    });
+    expect(r.statusCode).toBe(201);
+    expect(seen.hash).toBe(fundsHash);
+    await a.close();
+  });
+
+  it("still rejects a BIG sell ad that is unfunded at both keys", async () => {
+    // Without a proof the derived DID key is checked and reads empty.
+    const fundsKey = DidECKey.createNewKey();
+    const fundsHash = bytesToHex(pubKeyHashFromPub(fundsKey.getPubBytes()));
+    const a = await app(hashChain(fundsHash, [bigRow("1000000000")]));
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    const r = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, bigSellFields(orderId)),
+    });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/seller balance insufficient: 0 BIG on L0/);
+    await a.close();
+  });
+
+  it("rejects a tampered funds proof", async () => {
+    const fundsKey = DidECKey.createNewKey();
+    const fundsHash = bytesToHex(pubKeyHashFromPub(fundsKey.getPubBytes()));
+    const a = await app(hashChain(fundsHash, [bigRow("1000000000")]));
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    const body = withFundsProof(seller, sellerDid, bigSellFields(orderId), fundsKey);
+    // A malicious client can re-sign the main body; the funds proof itself must
+    // still verify against the address it names.
+    const { signature: _old, ...rest } = body;
+    const tampered = { ...rest, fundsSignature: "00".repeat(64) };
+    const resigned = { ...tampered, signature: signPayload(tampered, seller.getPrivHex()!) };
+    const r = await a.inject({ method: "POST", url: "/orders", payload: resigned });
+    expect(r.statusCode).toBe(400);
+    expect(r.json().error).toMatch(/invalid funds signature/);
+    await a.close();
+  });
+
+  it("checks a buy bid taker at its proven legacy-EC address", async () => {
+    const fundsKey = DidECKey.createNewKey();
+    const fundsHash = bytesToHex(pubKeyHashFromPub(fundsKey.getPubBytes()));
+    const seen: { hash?: string } = {};
+    // The taker is the seller on a buy bid; BIG sits at its EC address.
+    const a = await app(hashChain(fundsHash, [bigRow("1000000000")], seen));
+    await store.upsertProfile({
+      sellerDid: buyerDid,
+      method: "wechat",
+      accountName: "Li Si",
+      account: "wxid_taker888",
+      updatedAt: clock,
+    });
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    const created = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: orderPayload({
+        orderId,
+        type: "limit_buy",
+        giveToken: "BIG",
+        giveAmount: "1000",
+        wantAmount: "10",
+        receiveAddress: RECEIVE_ADDRESS,
+      }),
+    });
+    expect(created.statusCode).toBe(201);
+    clock += 1;
+    const match = await a.inject({
+      method: "POST",
+      url: `/orders/${orderId}/match`,
+      payload: withFundsProof(
+        buyer,
+        buyerDid,
+        {
+          buyerDid,
+          requestMethod: "POST",
+          requestPath: `/orders/${orderId}/match`,
+        },
+        fundsKey,
+      ),
+    });
+    expect(match.statusCode).toBe(201);
+    expect(seen.hash).toBe(fundsHash);
     await a.close();
   });
 

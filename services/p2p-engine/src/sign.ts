@@ -11,7 +11,14 @@
  * this): with more than one instance they belong in a shared store.
  */
 import { createHash } from "node:crypto";
-import { Ed25519Key, ECKey, pubFromDid, hexToBytes, bytesToHex } from "did";
+import {
+  Ed25519Key,
+  ECKey,
+  pubFromDid,
+  pubKeyHashFromPub,
+  hexToBytes,
+  bytesToHex,
+} from "did";
 import { isValidPQDid, verifyChallengeWithPQDid } from "did/pq";
 import type { NonceStore, StoredNonce } from "./nonceStore.js";
 
@@ -84,6 +91,62 @@ export interface SignedRequestResult {
   ok: boolean;
   error?: string;
   status?: number;
+}
+
+export interface FundsProofResult {
+  ok: boolean;
+  /** h160 (hex) of the key that holds the funds — the same query key the
+   *  wallet's `getBalances` uses. Present only when a proof was supplied. */
+  hashHex?: string;
+  error?: string;
+}
+
+/**
+ * Optional proof that the wallet's **chain funding key** is a legacy EC key
+ * (docs/p2p.md §11). A P2P signer is always an ML-DSA `did:key`, so a legacy
+ * EC wallet's identity is derived from its secret and its DID key is *not* the
+ * wallet address that holds the tokens. Without this, the advisory balance
+ * check looks at an empty derived address and rejects a funded seller.
+ *
+ * The client adds `fundsDid` (the classic did:key over the wallet's
+ * secp256k1/Ed25519 public key) and `fundsSignature` (a signature over the
+ * canonical request payload including `fundsDid`). The main `signature` still
+ * covers the whole body, so neither field can be altered in flight. Absent
+ * fields mean "no proof" and keep the old DID-key behavior.
+ */
+export function verifyFundsProof(body: Record<string, unknown>): FundsProofResult {
+  const did = body.fundsDid;
+  const sigHex = body.fundsSignature;
+  if (did === undefined && sigHex === undefined) return { ok: true };
+  if (typeof did !== "string" || typeof sigHex !== "string" || !did || !sigHex)
+    return { ok: false, error: "invalid funds proof" };
+  const { signature: _s, fundsSignature: _f, ...payload } = body;
+  const msg = new TextEncoder().encode(canonicalJson(payload));
+  let pub: { pubBytes: Uint8Array; codec: number };
+  try {
+    pub = pubFromDid(did);
+  } catch {
+    return { ok: false, error: "invalid fundsDid" };
+  }
+  let sig: Uint8Array;
+  try {
+    sig = hexToBytes(sigHex);
+  } catch {
+    return { ok: false, error: "invalid funds signature" };
+  }
+  try {
+    const ok =
+      pub.codec === 0xed
+        ? Ed25519Key.fromPublicBytes(pub.pubBytes).verify(msg, sig)
+        : ECKey.fromPublicBytes(pub.pubBytes).verify(
+            createHash("sha256").update(msg).digest(),
+            sig,
+          );
+    if (!ok) return { ok: false, error: "invalid funds signature" };
+  } catch {
+    return { ok: false, error: "invalid funds signature" };
+  }
+  return { ok: true, hashHex: bytesToHex(pubKeyHashFromPub(pub.pubBytes)) };
 }
 
 /** Nonce replay + rate-limit guard (process-local; inject a clock in tests). */

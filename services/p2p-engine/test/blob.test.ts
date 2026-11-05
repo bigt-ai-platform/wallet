@@ -139,6 +139,37 @@ describe("BlobSettlementStore", () => {
     expect(await two.getSwap("swap-1")).toBeNull();
   });
 
+  it("persists a verified EC funds hash across a projection rebuild", async () => {
+    const blobs = new FsBlobStore(dir);
+    const order = {
+      orderId: "ord-bbbbbbbbbbbbbbbb",
+      type: "limit_sell" as const,
+      sellerDid: "did:key:zSELLER",
+      giveToken: "BIG",
+      giveAmount: "1000",
+      giveChain: "L0",
+      wantCurrency: "CNY",
+      wantAmount: "10",
+      wantRail: "wechat",
+      validUntil: 9_999_999_999,
+      status: "ACTIVE" as const,
+      signature: "s",
+      createdAt: 1,
+    };
+    const hash = "ab".repeat(20);
+    const one = new BlobSettlementStore(blobs);
+    await one.createOrder(order);
+    await one.setOrderFundsHash(order.orderId, hash);
+    expect((await one.getOrder(order.orderId))?.fundsHash).toBe(hash);
+
+    // A restart rebuilds orders from L1-SOCIAL (no funds proof there) with a
+    // fresh projection; the store-only hash is merged back on read.
+    const two = new BlobSettlementStore(blobs);
+    await two.createOrder(order);
+    expect((await two.getOrder(order.orderId))?.fundsHash).toBe(hash);
+    expect((await two.listOrders())[0]?.fundsHash).toBe(hash);
+  });
+
   it("round-trips device pairings keyed by pairingId", async () => {
     const store = new BlobSettlementStore(new EncryptedBlobStore(new FsBlobStore(dir), KEY));
     const grant = {

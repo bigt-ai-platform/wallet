@@ -290,3 +290,23 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   and reinstall the release APK afterwards. Mobile PDF:
   `DOCS_PDF_MOBILE=1 npx tsx scripts/docs-pdf.mts --md docs/p2p-demo/p2p.zh.md --out docs/p2p-demo/assets/p2p-android.zh.mobile.pdf --lang zh`
   (390×844 page, one section per page). Screenshots/PDFs stay gitignored.
+
+## Notes as of 2026-11-05
+
+- **Legacy EC wallets can sell BIG again (P2P funds gate).** The advisory
+  `SETTLEMENT_ORDER_FUNDS_CHECK` read the token giver's balance at the
+  **P2P DID's** key hash. A legacy EC wallet signs as an ML-DSA DID derived
+  from its secret, so that key is not the wallet's EC address: a funded seller
+  was rejected with `seller balance insufficient: 0 BIG on L0` (or, on a buy
+  bid, `counterparty has insufficient BIG balance for this match`), e.g.
+  selling 1000 BIG into a 1,000,000 BIG / 10 CNY bid (quoted 0.01 CNY). The
+  client now attaches a funds proof to sell-ad and match bodies — `fundsDid`
+  (classic did:key over the secp256k1 pubkey) + `fundsSignature` over the
+  canonical payload including `fundsDid` — and the engine verifies it in
+  `verifyFundsProof` (`src/sign.ts`), checks that EC h160, and stores it as
+  `p2p_orders.funds_hash` (added by the boot ALTER) so book reads and matches
+  keep using the right key. PQ wallets are unchanged (their DID key *is* the
+  address) and send no proof. `funds_hash` is internal: stripped from the
+  public book like `buyerReceiveAddress`. Tests: `funds.test.ts` (EC sell ad,
+  buy-bid taker, tampered proof) and `p2pIdentity.test.ts`. The deployed
+  `wallet-p2p-engine:latest` must be rebuilt/redeployed to pick this up.

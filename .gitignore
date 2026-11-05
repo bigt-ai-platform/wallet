@@ -79,5 +79,8 @@ docs/prediction-demo/assets/*.pdf
 # deploy: locally built web image tar (deploy/region.sh loads it onto VMs)
 deploy/.image/
 
+# deploy: P2P engine secrets (deploy/env/.env.p2p.<region>) — never commit
+deploy/env/
+
 # core dumps (native crashes, e.g. expo dev server)
 core.[0-9]*

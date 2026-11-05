@@ -83,6 +83,7 @@ export async function ensureWatchSchema(db: Queryable): Promise<void> {
     "remaining_give TEXT",
     "reservations JSONB NOT NULL DEFAULT '{}'::jsonb",
     "want_rails TEXT",
+    "funds_hash TEXT",
   ]) {
     await db.query(`ALTER TABLE p2p_orders ADD COLUMN IF NOT EXISTS ${col}`);
   }
