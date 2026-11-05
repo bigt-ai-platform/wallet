@@ -612,7 +612,7 @@ export default function P2pScreen() {
     try { await loadSwaps(); } catch { /* keep the last list on a refresh failure */ }
   };
 
-  /** escrow_lock, then arm the hook when this engine has a chain client. */
+  /** escrow_lock, then arm the settlement hook (presign both spend paths). */
   const lockAndPresign = async (swap: P2pSwap, txHashArg?: string) => {
     const id = requireIdentity();
     if (!id) return;
@@ -620,11 +620,27 @@ export default function P2pScreen() {
     try {
       const txHash = (txHashArg ?? txHashes[swap.swapId] ?? '').trim();
       await transition(id, swap.swapId, 'escrow_lock', { txHash });
-      if (caps?.chain?.l0) {
-        const fresh = await getSwap(id, swap.swapId);
-        await presignSwap(id, fresh);
-        setNotice({ ok: true, text: t('p2p.presignOk') });
+      // Always attempt the presign: the engine rejects it when it has no chain
+      // client, and an old `/capabilities` (or a failed fetch) must not leave a
+      // freshly locked escrow unarmed. Retry because the app's selected L0 node
+      // may not index the just-confirmed lock output on the first read.
+      let presignError = '';
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const fresh = await getSwap(id, swap.swapId);
+          await presignSwap(id, fresh);
+          presignError = '';
+          break;
+        } catch (e) {
+          presignError = e instanceof Error ? e.message : String(e);
+          if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 2500));
+        }
       }
+      setNotice(
+        presignError
+          ? { ok: false, text: t('p2p.presignFailed', { reason: presignError }) }
+          : { ok: true, text: t('p2p.presignOk') },
+      );
     } catch (e) {
       setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
     } finally {

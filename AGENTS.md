@@ -353,3 +353,13 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   confirmed output covering the amount (`fundedEscrowTx`) and reuses that tx
   hash instead of sending again, so a second click only locks. The notice effect
   scrolls the page to the banner, making every P2P result visible.
+
+- **P2P presign is attempted automatically after every escrow lock.** The lock
+  path skipped it when `caps.chain.l0` was falsy (an older/failed
+  `/capabilities` fetch), leaving a locked escrow unarmed with only a manual
+  Presign button — the reported "why not automatic presign?". It now always
+  presigns after `escrow_lock` (3 attempts, 2.5 s apart: the app's selected L0
+  node can lag the just-confirmed output) and shows `presignFailed` with the
+  reason instead of hiding it; Presign remains for a retry. Presigning is still
+  the seller's own key (the engine cannot sign for a party); it arms
+  release/refund for automatic settlement.
