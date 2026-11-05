@@ -94,11 +94,14 @@ export default function P2pScreen() {
   // result (including the CNY payment instructions the buyer must read) has to
   // render in the screen itself.
   const [notice, setNotice] = React.useState<{ ok: boolean; text: string } | null>(null);
+  const scrollRef = React.useRef<ScrollView>(null);
   // Inline feedback replaces Alert.alert (a no-op on react-native-web); the
   // banner clears itself so a stale success message cannot be mistaken for the
-  // result of a later action.
+  // result of a later action. Scroll it into view: the action buttons live far
+  // down the page, so a top banner was easy to miss ("nothing happened").
   React.useEffect(() => {
     if (!notice) return undefined;
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
     const timer = setTimeout(() => setNotice(null), 10000);
     return () => clearTimeout(timer);
   }, [notice]);
@@ -653,53 +656,67 @@ export default function P2pScreen() {
     const item = findBalance(l0, { tokenId: swap.giveToken, tokenName: swap.giveToken });
     const giveAmount = swap.giveAmount ?? '';
     const raw = item && giveAmount ? amountToRaw(giveAmount, item.decimals) : null;
-    let rawBalance: bigint | null = null;
-    if (item) {
-      try {
-        rawBalance = item.raw !== undefined && item.raw !== ''
-          ? BigInt(item.raw)
-          : amountToRaw(item.balance, item.decimals);
-      } catch {
-        rawBalance = null;
-      }
-    }
-    // payOnLayer0 also needs the fee (1000 raw) in the same token.
-    if (!item || raw === null || rawBalance === null || raw + 1000n > rawBalance) {
+    if (!item || raw === null) {
       setNotice({
         ok: false,
-        text: t('p2p.overBalance', {
-          amount: item ? `${item.balance} ${item.tokenname}` : `0 ${swap.giveToken}`,
-        }),
+        text: t('p2p.overBalance', { amount: `0 ${swap.giveToken}` }),
       });
       return;
     }
+    // A previous click may already have funded the escrow (the send succeeds
+    // even if the lock step times out). Reuse that payment — never send twice.
+    const already = await fundedEscrowTx(swap.escrowAddress, item.tokenid, raw);
+    if (already) setTxHashes((m) => ({ ...m, [swap.swapId]: already }));
+
     const approved = await confirmImportant({
       subtitle: t('p2p.aFundLock'),
-      reason: `${swap.giveAmount} ${swap.giveToken} → ${swap.escrowAddress}`,
+      reason: already
+        ? t('p2p.aLock') + ` ${swap.escrowAddress}`
+        : `${swap.giveAmount} ${swap.giveToken} → ${swap.escrowAddress}`,
     });
     if (!approved) { setNotice({ ok: false, text: t('confirm.cancelled') }); return; }
     setBusy(true);
     try {
-      setNotice({ ok: true, text: t('p2p.fundingEscrow', { amount: swap.giveAmount, token: swap.giveToken }) });
-      const txHash = await payOnLayer0({
-        privateKeyHex: unlocked.wallet.privateKey,
-        keyType: unlocked.wallet.keyType,
-        toAddress: swap.escrowAddress,
-        amount: raw,
-        tokenId: item.tokenid,
-      });
-      setTxHashes((m) => ({ ...m, [swap.swapId]: txHash }));
-      // The engine accepts only a CONFIRMED funding tx; poll L0 before locking.
-      let confirmed = false;
-      for (let i = 0; i < 50 && !confirmed; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 3000));
-        const st = await httpService.getTransactionStatus(txHash).catch(() => null);
-        confirmed = !!st?.success && String(st.data?.status ?? '').toUpperCase() === 'CONFIRMED';
+      let txHash = already;
+      if (!txHash) {
+        let rawBalance: bigint | null = null;
+        try {
+          rawBalance = item.raw !== undefined && item.raw !== ''
+            ? BigInt(item.raw)
+            : amountToRaw(item.balance, item.decimals);
+        } catch {
+          rawBalance = null;
+        }
+        // payOnLayer0 also needs the fee (1000 raw) in the same token.
+        if (rawBalance === null || raw + 1000n > rawBalance) {
+          setNotice({
+            ok: false,
+            text: t('p2p.overBalance', { amount: `${item.balance} ${item.tokenname}` }),
+          });
+          return;
+        }
+        setNotice({ ok: true, text: t('p2p.fundingEscrow', { amount: swap.giveAmount, token: swap.giveToken }) });
+        txHash = await payOnLayer0({
+          privateKeyHex: unlocked.wallet.privateKey,
+          keyType: unlocked.wallet.keyType,
+          toAddress: swap.escrowAddress,
+          amount: raw,
+          tokenId: item.tokenid,
+        });
+        setTxHashes((m) => ({ ...m, [swap.swapId]: txHash! }));
+        // The engine accepts only a CONFIRMED funding tx; poll L0 before locking.
+        let confirmed = false;
+        for (let i = 0; i < 50 && !confirmed; i += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          const st = await httpService.getTransactionStatus(txHash).catch(() => null);
+          confirmed = !!st?.success && String(st.data?.status ?? '').toUpperCase() === 'CONFIRMED';
+        }
+        if (!confirmed) {
+          setNotice({ ok: false, text: t('p2p.fundPending', { hash: txHash }) });
+          return;
+        }
       }
-      if (!confirmed) {
-        setNotice({ ok: false, text: t('p2p.fundPending', { hash: txHash }) });
-        return;
-      }
+      if (!txHash) { setNotice({ ok: false, text: t('p2p.actionFailed') }); return; }
       await lockAndPresign(swap, txHash);
     } catch (e) {
       setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
@@ -707,6 +724,27 @@ export default function P2pScreen() {
       await reload();
       setBusy(false);
     }
+  };
+
+  /** A confirmed, unspent escrow output already covering this swap's amount. */
+  const fundedEscrowTx = async (address: string, tokenId: string, minRaw: bigint): Promise<string | null> => {
+    const res = await httpService.getOutputsHistory({ toAddress: address }).catch(() => null);
+    const rows = res?.success && res.data ? (res.data as any[]) : [];
+    for (const u of rows) {
+      if (u.spent === true || u.confirmed === false) continue;
+      const coin = u.value;
+      const value = coin && typeof coin === 'object' ? coin.value : coin;
+      const token = u.tokenId ?? u.tokenid ?? (coin && typeof coin === 'object' ? coin.tokenHex : undefined);
+      if (String(token ?? '').toLowerCase() !== tokenId.toLowerCase()) continue;
+      try {
+        if (BigInt(String(value ?? '0')) >= minRaw) {
+          return String(u.hashHex ?? u.txhash ?? '') || null;
+        }
+      } catch {
+        /* malformed row: keep looking */
+      }
+    }
+    return null;
   };
 
   const presignNow = async (swap: P2pSwap) => {
@@ -977,7 +1015,7 @@ export default function P2pScreen() {
   const myDid = identity?.did;
 
   return (
-    <ScrollView style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
+    <ScrollView ref={scrollRef} style={s.container} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled">
       <View style={s.tabs}>
         <TabButton label={t('order.buy')} active={tab === 'open' && bookSide === 'buy'} onPress={() => { setNotice(null); setTab('open'); setBookSide('buy'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-open" />
         <TabButton label={t('order.sell')} active={tab === 'open' && bookSide === 'sell'} onPress={() => { setNotice(null); setTab('open'); setBookSide('sell'); setExpandedOrder(null); setSelected(null); }} testID="p2p-tab-sell" />

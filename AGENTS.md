@@ -344,3 +344,12 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   node's `tokennames` metadata to each row and `sameToken` matches any of
   token/id/symbol/name, so both spellings verify. Tests:
   `p2p-protocol/test/settlement.test.ts`, `chain.test.ts` metadata row.
+
+- **P2P escrow funding is idempotent and its feedback is visible.** A first
+  "Pay escrow & lock" click sent 1000 BIG but the auto-lock did not complete
+  (the tx confirmed after the client's poll/while the tab was throttled), so the
+  user saw "nothing happened" — the result banner is at the top of a long
+  scroll page. The action now checks the escrow address for an existing
+  confirmed output covering the amount (`fundedEscrowTx`) and reuses that tx
+  hash instead of sending again, so a second click only locks. The notice effect
+  scrolls the page to the banner, making every P2P result visible.
