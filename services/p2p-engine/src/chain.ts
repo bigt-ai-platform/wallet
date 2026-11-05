@@ -55,6 +55,11 @@ export interface RawUtxo {
   /** Hex of the output's scriptPubKey. */
   scriptHex?: string;
   index?: number;
+  /** Token metadata attached by `outputsHistory` from the node's
+   *  `tokennames` map, so a name/symbol order matches an id-only output. */
+  tokenname?: string;
+  tokensymbol?: string;
+  decimals?: number;
 }
 
 interface RawBalances {
@@ -79,7 +84,9 @@ export function normalizeOutputs(
 ): SettlementOutput[] {
   return outputs.map((o) => {
     const id = String(o.tokenid ?? o.tokenId ?? "");
-    const meta = tokennames[id];
+    const meta = tokennames[id] ?? (o.tokenname || o.tokensymbol || typeof o.decimals === "number"
+      ? { tokenname: o.tokenname, tokensymbol: o.tokensymbol, decimals: o.decimals }
+      : undefined);
     return {
       address: String(o.address ?? ""),
       token: meta?.tokensymbol || meta?.tokenname || id,
@@ -172,7 +179,21 @@ export class HttpChainClient implements ChainClient {
     });
     if (!res.ok) throw new Error(`getOutputsHistory ${res.status}`);
     const raw = (await res.json()) as RawBalances;
-    return raw.outputs ?? [];
+    // Attach the node's token metadata to each row: an order may carry the
+    // symbol/name (BIG) while the raw output only carries the id (bc).
+    const toks = raw.tokennames ?? {};
+    return (raw.outputs ?? []).map((o) => {
+      const id = String(o.tokenid ?? o.tokenId ?? "");
+      const meta = toks[id];
+      return meta
+        ? {
+            ...o,
+            tokenname: meta.tokenname,
+            tokensymbol: meta.tokensymbol,
+            decimals: meta.decimals,
+          }
+        : o;
+    });
   }
 
   /** Raw bytes, exactly like the wallet's broadcast path (octet-stream). */

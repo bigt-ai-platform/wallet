@@ -60,6 +60,19 @@ function toUnits(v: string | number): bigint | null {
 }
 
 /**
+ * Token identity across the node's naming forms: an order/record may carry the
+ * symbol or name (`BIG`) while an output row only carries the token id (`bc`),
+ * or the reverse. Match any known alias instead of requiring byte equality.
+ */
+function sameToken(o: SettlementOutput, want: string): boolean {
+  const w = want.trim().toLowerCase();
+  if (!w) return false;
+  return [o.token, o.tokenId, o.symbol, o.name].some(
+    (v) => typeof v === "string" && v.trim().toLowerCase() === w,
+  );
+}
+
+/**
  * True when at least `amount` of `token` reached `toAddress` in the supplied
  * outputs, honoring the confirmation/spent policy. Pure and total: malformed
  * amounts simply never match.
@@ -78,7 +91,7 @@ export function verifySettlement(
   let total = 0n;
   for (const o of outputs) {
     if (o.address !== expected.toAddress) continue;
-    if (o.token !== expected.token) continue;
+    if (!sameToken(o, expected.token)) continue;
     if (requireConfirmed && o.confirmed !== true) continue;
     if (requireUnspent && o.spent === true) continue;
     const amount = toUnits(o.amount);

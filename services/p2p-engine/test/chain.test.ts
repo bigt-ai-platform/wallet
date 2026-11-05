@@ -209,6 +209,20 @@ describe("HttpChainClient.outputsHistory", () => {
       endtime: null,
     });
   });
+
+  it("attaches the node's token metadata to each output row", async () => {
+    const fetchImpl: typeof fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        outputs: [{ tokenid: "bc", value: { value: "1000000000" }, address: escrow, confirmed: true }],
+        tokennames: { bc: { tokenname: "BIG", decimals: 6 } },
+      }),
+    } as Response);
+    const http = new HttpChainClient("http://l0", fetchImpl);
+    const rows = await http.outputsHistory(escrow);
+    expect(rows[0]).toMatchObject({ tokenname: "BIG", decimals: 6 });
+  });
 });
 
 describe("confirmedTxToAddress", () => {

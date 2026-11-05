@@ -16,12 +16,13 @@ import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { deviceVerifyDue } from '@/lib/p2pDeviceRead';
 import { p2pIdentityFromWallet, shortDid } from '@/lib/p2pIdentity';
-import { exceedsBalance, findBalance, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
+import { exceedsBalance, findBalance, amountToRaw, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
 import { checkP2pFill, filterP2pOrders } from '@/lib/p2pOrderBook';
 import { railLabel } from '@/lib/p2pRails';
 import { BIG_TOKEN, includeNativeBig } from '@/lib/tokenSearch';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
+import { payOnLayer0 } from '@/services/transaction';
 import type { TokenItem, WalletAccountItem } from '@/types/api';
 import {
   cancelOrder, confirmPayment, cosignEscrow, createOrder, escrowContext, fetchInstructions, getCapabilities,
@@ -609,17 +610,97 @@ export default function P2pScreen() {
   };
 
   /** escrow_lock, then arm the hook when this engine has a chain client. */
-  const lockAndPresign = async (swap: P2pSwap) => {
+  const lockAndPresign = async (swap: P2pSwap, txHashArg?: string) => {
     const id = requireIdentity();
     if (!id) return;
     setBusy(true);
     try {
-      await transition(id, swap.swapId, 'escrow_lock', { txHash: (txHashes[swap.swapId] ?? '').trim() });
+      const txHash = (txHashArg ?? txHashes[swap.swapId] ?? '').trim();
+      await transition(id, swap.swapId, 'escrow_lock', { txHash });
       if (caps?.chain?.l0) {
         const fresh = await getSwap(id, swap.swapId);
         await presignSwap(id, fresh);
         setNotice({ ok: true, text: t('p2p.presignOk') });
       }
+    } catch (e) {
+      setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
+    } finally {
+      await reload();
+      setBusy(false);
+    }
+  };
+
+  /**
+   * One-click token leg: send the swap's amount from this wallet to the escrow
+   * address, wait for L0 to confirm it, then submit escrow_lock with that hash.
+   * The buyer's fiat leg stays manual (the wallet cannot move WeChat/Alipay
+   * money); only the seller's on-chain funding is automatable.
+   */
+  const fundEscrowAndLock = async (swap: P2pSwap) => {
+    const id = requireIdentity();
+    if (!id) return;
+    const unlocked = getUnlockedWallet();
+    if (!unlocked) { setNotice({ ok: false, text: t('p2p.unlockFirst') }); return; }
+    if (!swap.escrowAddress) { setNotice({ ok: false, text: t('p2p.actionFailed') }); return; }
+    if ((swap.giveChain ?? 'L0').trim().toUpperCase() !== 'L0') {
+      setNotice({ ok: false, text: t('p2p.actionFailed') });
+      return;
+    }
+    const balances = await httpService
+      .getBalances(unlocked.wallet.privateKey, unlocked.wallet.keyType)
+      .catch(() => null);
+    const l0 = balances?.success && balances.data ? balances.data : l0Balances;
+    const item = findBalance(l0, { tokenId: swap.giveToken, tokenName: swap.giveToken });
+    const giveAmount = swap.giveAmount ?? '';
+    const raw = item && giveAmount ? amountToRaw(giveAmount, item.decimals) : null;
+    let rawBalance: bigint | null = null;
+    if (item) {
+      try {
+        rawBalance = item.raw !== undefined && item.raw !== ''
+          ? BigInt(item.raw)
+          : amountToRaw(item.balance, item.decimals);
+      } catch {
+        rawBalance = null;
+      }
+    }
+    // payOnLayer0 also needs the fee (1000 raw) in the same token.
+    if (!item || raw === null || rawBalance === null || raw + 1000n > rawBalance) {
+      setNotice({
+        ok: false,
+        text: t('p2p.overBalance', {
+          amount: item ? `${item.balance} ${item.tokenname}` : `0 ${swap.giveToken}`,
+        }),
+      });
+      return;
+    }
+    const approved = await confirmImportant({
+      subtitle: t('p2p.aFundLock'),
+      reason: `${swap.giveAmount} ${swap.giveToken} → ${swap.escrowAddress}`,
+    });
+    if (!approved) { setNotice({ ok: false, text: t('confirm.cancelled') }); return; }
+    setBusy(true);
+    try {
+      setNotice({ ok: true, text: t('p2p.fundingEscrow', { amount: swap.giveAmount, token: swap.giveToken }) });
+      const txHash = await payOnLayer0({
+        privateKeyHex: unlocked.wallet.privateKey,
+        keyType: unlocked.wallet.keyType,
+        toAddress: swap.escrowAddress,
+        amount: raw,
+        tokenId: item.tokenid,
+      });
+      setTxHashes((m) => ({ ...m, [swap.swapId]: txHash }));
+      // The engine accepts only a CONFIRMED funding tx; poll L0 before locking.
+      let confirmed = false;
+      for (let i = 0; i < 50 && !confirmed; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+        const st = await httpService.getTransactionStatus(txHash).catch(() => null);
+        confirmed = !!st?.success && String(st.data?.status ?? '').toUpperCase() === 'CONFIRMED';
+      }
+      if (!confirmed) {
+        setNotice({ ok: false, text: t('p2p.fundPending', { hash: txHash }) });
+        return;
+      }
+      await lockAndPresign(swap, txHash);
     } catch (e) {
       setNotice({ ok: false, text: e instanceof Error ? e.message : t('p2p.actionFailed') });
     } finally {
@@ -1178,6 +1259,7 @@ export default function P2pScreen() {
                 onTxId={(v) => setTxIds((m) => ({ ...m, [sw.swapId]: v }))}
                 onCopy={copyValue}
                 onLock={() => lockAndPresign(sw)}
+                onFundLock={() => fundEscrowAndLock(sw)}
                 onExpire={() => runTransition(sw, 'expire')}
                 onRefund={() => refundEscrow(sw)}
                 onRelease={() => releaseEscrow(sw)}
@@ -1237,10 +1319,10 @@ function Field({ label, value, onChange, placeholder, keyboardType, mono, testID
   );
 }
 
-function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, onLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, onVerify, instruction, index, autoReleaseOn }: {
+function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, onLock, onFundLock, onExpire, onRefund, onRelease, onPresign, onCancel, onInstructions, onPaid, onConfirm, onDispute, onVerify, instruction, index, autoReleaseOn }: {
   swap: P2pSwap; myDid?: string; busy: boolean; txHash: string; onTxHash: (v: string) => void;
   txId: string; onTxId: (v: string) => void; onCopy: (v: string) => void;
-  onLock: () => void; onExpire: () => void; onRefund: () => void;
+  onLock: () => void; onFundLock: () => void; onExpire: () => void; onRefund: () => void;
   onRelease: () => void; onPresign: () => void; onCancel: () => void;
   onInstructions: () => void; onPaid: () => void; onConfirm: () => void; onDispute: () => void;
   onVerify: () => void;
@@ -1331,6 +1413,13 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, o
         <View style={s.actions}>
           {st === 'MATCHED' ? (
             <>
+              <Action
+                label={t('p2p.aFundLock')}
+                color={theme.colors.accent.emerald}
+                onPress={onFundLock}
+                disabled={busy}
+                testID={`p2p-swap-${index}-fund-lock`}
+              />
               <Text style={s.hint} testID={`p2p-swap-${index}-lock-hint`}>
                 {t('p2p.lockHint', {
                   amount: swap.giveAmount,

@@ -330,3 +330,17 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   best-effort and reports a conflict), so a matched trade survives restarts and
   its parties can continue. Test: `replay.test.ts` "keeps an anchored swap when
   its engine-intake order is not on chain".
+
+- **P2P: the seller can fund the escrow with one click, and the lock check accepts
+  token aliases.** The matched-seller card had only a manual `txHash` field (send
+  the tokens yourself, paste the hash). `fundEscrowAndLock` now sends
+  `giveAmount` from the wallet to the swap's escrow address (`payOnLayer0`,
+  P2SH-capable), polls L0 until CONFIRMED, then submits `escrow_lock` and
+  presigns — the fiat leg stays manual (no WeChat/Alipay API; it is gated until
+  ESCROW_LOCKED on purpose). Under it, `verifySettlement` compared the order's
+  `giveToken` ("BIG", the token **name** the picker stores) with the escrow
+  output's `token` ("bc", the id) **strictly**, so a correctly funded BIG lock
+  failed with `insufficient`. `normalizeOutputs`/`outputsHistory` now attach the
+  node's `tokennames` metadata to each row and `sameToken` matches any of
+  token/id/symbol/name, so both spellings verify. Tests:
+  `p2p-protocol/test/settlement.test.ts`, `chain.test.ts` metadata row.
