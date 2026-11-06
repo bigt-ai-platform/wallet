@@ -10,8 +10,10 @@
  *   - the seller key is funded from a prod validator keystore
  *     (../blockchain/helper/prod/validators/SendFromKeystore.java);
  *   - the seller's key funds the 2-of-3 P2SH vault with `BIG_UNITS` of BIG
- *     (the same `payToScript` the wallet would use) — the engine only accepts
- *     the escrow after `verifyChainLock` sees it CONFIRMED on L0;
+ *     plus the escrow-spend fee (`Coin.FEE_DEFAULT`), so the buyer receives the
+ *     full advertised amount (the same `payToScript` the wallet would use) —
+ *     the engine only accepts the escrow after `verifyChainLock` sees it
+ *     CONFIRMED on L0;
  *   - the engine's settlement hook releases the escrow to the buyer's own
  *     address after the seller confirms.
  *
@@ -54,9 +56,13 @@ const ALLOW_REAL_FUNDS = process.env.ALLOW_REAL_FUNDS === '1';
 const RAILS = (process.env.RAILS || 'wechat,alipay,bank').split(',').map((r) => r.trim()).filter(Boolean);
 /** 10 BIG in base units (BIG has 6 decimals on the prod chain params). */
 const BIG_UNITS = BigInt(process.env.BIG_UNITS || '10000000');
-/** Fund the seller with 30 BIG: 10 goes into the vault, and the engine's
- *  advisory balance gate still requires the seller to *hold* the advertised
- *  10 BIG when the ad is posted (a listing is not funded). */
+/** The BIG spend fee `Escrow.escrowSpendAmount` burns from the escrow UTXO
+ *  (`Coin.FEE_DEFAULT` = 1000 raw units). The seller locks amount + fee so the
+ *  buyer receives the advertised amount in full. */
+const ESCROW_FEE_UNITS = 1000n;
+/** Fund the seller with 30 BIG: 10.001 goes into the vault (+ the funding tx
+ *  fee), and the engine's advisory balance gate still requires the seller to
+ *  *hold* the advertised 10 BIG + the escrow fee when the ad is posted. */
 const FUND_UNITS = BigInt(process.env.FUND_UNITS || '30000000');
 mkdirSync(SHOTS, { recursive: true });
 
@@ -207,7 +213,7 @@ async function findVaultLock(escrowAddress, vault, ms = 20_000) {
       const hit = (j.outputs ?? []).find(
         (o) => o.spent !== true && o.confirmed !== false
           && (o.tokenId ?? o.tokenid) === 'bc'
-          && BigInt(o.value?.value ?? 0) >= BIG_UNITS,
+          && BigInt(o.value?.value ?? 0) >= BIG_UNITS + ESCROW_FEE_UNITS,
       );
       if (hit?.hashHex) return hit.hashHex;
     } catch { /* keep polling */ }
@@ -498,7 +504,7 @@ async function captureRail(browser, rail, enginePubHex) {
       log(`  reusing confirmed escrow lock ${escrowTxHash} → ${escrowAddress}`);
     } else {
       const w = walletFor([sellerKey]);
-      const tx = await w.payToScript(null, Coin.valueOf(BIG_UNITS), null, vault.outputScript);
+      const tx = await w.payToScript(null, Coin.valueOf(BIG_UNITS + ESCROW_FEE_UNITS), null, vault.outputScript);
       escrowTxHash = tx.getHash().toString();
       log(`  escrow lock ${escrowTxHash} → ${escrowAddress}`);
       await waitTxConfirmed(escrowTxHash);

@@ -57,6 +57,9 @@ test.describe('P2P Page', () => {
       await page.getByTestId('p2p-order-0-toggle').click();
       await expect(page.getByTestId('p2p-order-0-limit')).toContainText('Advertised: 25 USDT');
       await expect(page.getByTestId('p2p-order-0-funds')).toHaveText('Funds verified');
+      // The ad shows when it was listed and when it expires (local time).
+      await expect(page.getByTestId('p2p-order-0-time')).toContainText('Listed');
+      await expect(page.getByTestId('p2p-order-0-time')).toContainText('Expires');
       await expect(page.getByTestId('p2p-order-1')).toBeVisible();
       await expect(page.getByTestId('p2p-buy-fill')).toHaveValue('25');
       const fill = page.getByTestId('p2p-buy-fill');

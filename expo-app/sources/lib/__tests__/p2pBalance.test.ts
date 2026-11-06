@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findBalance, amountToRaw, exceedsBalance, perUnitPrice, totalAmount } from '../p2pBalance';
+import { findBalance, amountToRaw, exceedsBalance, perUnitPrice, totalAmount, sellerEscrowDeposit } from '../p2pBalance';
 import type { WalletAccountItem } from '@/types/api';
 
 function bal(partial: Partial<WalletAccountItem>): WalletAccountItem {
@@ -60,6 +60,19 @@ describe('exceedsBalance', () => {
     delete (noRaw as { raw?: string }).raw;
     expect(exceedsBalance('2.5', noRaw)).toBe(false);
     expect(exceedsBalance('2.50000001', noRaw)).toBe(true);
+  });
+});
+
+describe('sellerEscrowDeposit', () => {
+  it('adds the BIG escrow fee so the buyer receives the advertised amount', () => {
+    expect(sellerEscrowDeposit('100', 'BIG')).toBe('100.001');
+    expect(sellerEscrowDeposit('100', 'bc')).toBe('100.001');
+    // The token can be spelled differently in the order, the picker and the row.
+    expect(sellerEscrowDeposit('100', 'bc', 'BIG')).toBe('100.001');
+  });
+  it('leaves non-BIG tokens unchanged (they pay out in full)', () => {
+    expect(sellerEscrowDeposit('100', 'USDT')).toBe('100');
+    expect(sellerEscrowDeposit('100')).toBe('100');
   });
 });
 

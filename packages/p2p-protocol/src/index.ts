@@ -1,4 +1,14 @@
-export { addAmounts, subtractAmounts, compareAmounts, checkP2pFill, type P2pFillCheck } from "./amounts.js";
+export {
+  addAmounts,
+  subtractAmounts,
+  compareAmounts,
+  checkP2pFill,
+  P2P_BIG_FEE,
+  isBigToken,
+  escrowDepositAmount,
+  escrowDepositFee,
+  type P2pFillCheck,
+} from "./amounts.js";
 export {
   P2P_SWAP_TYPE,
   P2P_SWAP_STATUSES,

@@ -55,6 +55,7 @@ import {
   checkP2pFill,
   compareAmounts,
   subtractAmounts,
+  escrowDepositAmount,
   grantAllows,
   machineConfirm,
   normalizeAutoReleasePolicy,
@@ -1808,16 +1809,18 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
     // checked at match time. `warn` keeps the order but flags it in the public
     // book; `reject` (default) stops an unfunded ad before it is indexed.
     if (type === "limit_sell" && fundsCheckMode !== "off") {
+      // The seller locks the advertised amount + the BIG escrow-spend fee.
+      const deposit = escrowDepositAmount(giveAmount, giveToken);
       const funds = await giverFunds(
         sellerDid,
         giveToken,
         giveChain,
-        giveAmount,
+        deposit,
         { fundsHash },
       );
       if (funds.checked && !funds.sufficient && fundsCheckMode === "reject") {
         return reply.code(409).send({
-          error: `seller balance insufficient: ${funds.available} ${giveToken} on ${giveChain} (advertised ${giveAmount})`,
+          error: `seller balance insufficient: ${funds.available} ${giveToken} on ${giveChain} (needs ${deposit} ${giveToken} incl. the escrow fee)`,
         });
       }
     }
@@ -1987,7 +1990,7 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
             o.sellerDid,
             o.giveToken,
             o.giveChain,
-            o.remainingGive ?? o.giveAmount,
+            escrowDepositAmount(o.remainingGive ?? o.giveAmount, o.giveToken),
             { fundsHash },
           );
           funds = { checked: f.checked, sufficient: f.sufficient };
@@ -2208,7 +2211,8 @@ export async function buildApp(deps: SettlementDeps): Promise<FastifyInstance> {
           sellerDid,
           order.giveToken,
           order.giveChain,
-          fill,
+          // A partial fill's escrow also carries the BIG spend fee.
+          escrowDepositAmount(fill, order.giveToken),
           {
             fresh: true,
             fundsHash: isBuy ? takerFundsHash : order.fundsHash,

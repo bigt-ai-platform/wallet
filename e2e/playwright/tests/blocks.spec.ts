@@ -86,12 +86,12 @@ test.describe('Blocks Screen', () => {
     // user manages them in settings).
     await page.getByTestId('blocks-chain-select').click();
     await expect(page.getByTestId('blocks-chain-options').getByText('L0', { exact: true })).toBeVisible();
-    await expect(page.getByTestId('blocks-chain-options').getByText('Default', { exact: true })).toBeVisible();
+    await expect(page.getByTestId('blocks-chain-options').getByText('L1-order', { exact: true })).toBeVisible();
 
     // Select the L1 order chain and load its latest blocks.
-    await page.getByTestId('blocks-chain-options').getByText('Default', { exact: true }).click();
+    await page.getByTestId('blocks-chain-options').getByText('L1-order', { exact: true }).click();
     await expect(page.getByTestId('blocks-chain-options')).toBeHidden();
-    await expect(page.getByTestId('blocks-chain-select')).toContainText('Default');
+    await expect(page.getByTestId('blocks-chain-select')).toContainText('L1-order');
     await page.getByTestId('blocks-apply').click();
 
     // The L1 order chain always has blocks (genesis and later).

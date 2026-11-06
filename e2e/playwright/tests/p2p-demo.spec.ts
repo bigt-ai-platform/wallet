@@ -14,8 +14,7 @@ import { waitForApp, configureServerUrl, goToKeys, goToPayment, clickTab } from 
  *
  *   1. a real 2-of-3 P2SH escrow output is funded and CONFIRMED on L0;
  *   2. the engine's `escrow_lock` passes its `verifyChainLock` gate against it
- *      (CONFIRMED + pays the escrow address + holds the order amount);
- *   3. the engine releases the escrow with a real spend (seller presign + the
+ *      (CONFIRMED + pays the escrow address + holds the order amount); *   3. the engine releases the escrow with a real spend (seller presign + the
  *      engine key), CONFIRMED at the buyer's receive address, which the harness
  *      re-checks on L0 (e2etest.sh verify_p2p_escrow).
  *
@@ -37,6 +36,11 @@ const READY = HAS_SERVER && !!ENGINE_URL && !!ENGINE_PUB && !!ENGINE_KEY_HEX;
 
 const PASSWORD = 'P2pRealPass123!';
 const GIVE_UNITS = 100000n; // token units the escrow is funded with (integer)
+// The BIG escrow spend burns `Coin.FEE_DEFAULT` (1000 raw) from the UTXO, so
+// the vault is funded with the order amount + fee: the release then pays the
+// advertised amount in full.
+const ESCROW_FEE_UNITS = 1000n;
+const ESCROW_FUND_UNITS = GIVE_UNITS + ESCROW_FEE_UNITS;
 const SHOTS = path.resolve(process.cwd(), '..', 'docs', 'p2p-demo', 'assets', 'screenshots');
 const HANDOFF = path.join(process.cwd(), 'test-results', 'p2p-demo.json');
 
@@ -177,7 +181,7 @@ test.describe('P2P Demo (real L0)', () => {
         if (cands.some((c) => c.getUTXO()?.getTokenId() === 'bc' && c.getUTXO()?.isConfirmed())) break;
         await sleep(2000);
       }
-      const fundTx = await genesisWallet.payToScript(null, sdk.Coin.valueOf(GIVE_UNITS), null, vault.outputScript);
+      const fundTx = await genesisWallet.payToScript(null, sdk.Coin.valueOf(ESCROW_FUND_UNITS), null, vault.outputScript);
       escrowTxHash = fundTx.getHash().toString();
       console.log(`escrow funded (attempt ${attempt + 1}):`, escrowTxHash, '→', escrowAddress);
       escrowTx = await waitConfirmedByAddress(request, escrowAddress, 45);

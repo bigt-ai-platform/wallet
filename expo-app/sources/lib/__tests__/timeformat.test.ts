@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { formatDateTime, utcOffsetLabelFromMinutes } from '../timeformat';
+import {
+  formatDateTime,
+  formatDateTimeZone,
+  timeZoneLabel,
+  utcOffsetLabelFromMinutes,
+} from '../timeformat';
 
 describe('utcOffsetLabelFromMinutes', () => {
   it('formats whole-hour offsets', () => {
@@ -18,5 +23,14 @@ describe('formatDateTime', () => {
   it('renders an output timestamp as local YYYY-MM-DD HH:mm', () => {
     const d = new Date(2026, 0, 2, 3, 4, 5); // local time
     expect(formatDateTime(Math.floor(d.getTime() / 1000))).toBe('2026-01-02 03:04');
+  });
+
+  it('labels the timezone in effect at that instant', () => {
+    const d = new Date(2026, 0, 2, 3, 4, 5);
+    const sec = Math.floor(d.getTime() / 1000);
+    const offsetMinutes = -d.getTimezoneOffset();
+    const label = offsetMinutes === 0 ? 'UTC' : utcOffsetLabelFromMinutes(offsetMinutes);
+    expect(timeZoneLabel(sec)).toBe(label);
+    expect(formatDateTimeZone(sec)).toBe(`2026-01-02 03:04 (${label})`);
   });
 });

@@ -10,7 +10,8 @@ import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { decimalsFor } from '@/lib/tokenformat';
 import { toBigInt, formatValue } from '@/lib/amountformat';
-import { formatDateTime } from '@/lib/timeformat';
+import { formatDateTimeZone } from '@/lib/timeformat';
+import { layerLabel } from '@/lib/layerLabel';
 import { MONO_FONT } from '@/constants/fonts';
 import WalletUnlock from '@/components/WalletUnlock';
 import type { UTXO } from '@/types/api';
@@ -196,8 +197,8 @@ export default function BalanceScreen() {
         setTokenDecimals(map);
       }
       const results = await Promise.all([
-        loadLayer(undefined, 0, 'L0'),
-        ...l1Chains.map((c, i) => loadLayer(c.url, i + 1, c.name)),
+        loadLayer(undefined, 0, layerLabel(0, l1Chains)),
+        ...l1Chains.map((c, i) => loadLayer(c.url, i + 1, layerLabel(i + 1, l1Chains))),
       ]);
       // Only unspent outputs count as balance — spent history is excluded.
       setUtxos(results.flat().filter((u) => !u.spent));
@@ -215,11 +216,12 @@ export default function BalanceScreen() {
     activeLayer === 'all' ? true : u.layer === activeLayer
   );
 
-  // Every layer as a list entry: All Layers, L0, then one per L1 chain.
+  // Every layer as a list entry: All Layers, L0, then one per L1 chain, named
+  // after the chain (L1-order / L1-Prediction) rather than a numeric layer.
   const layerList: Array<{ key: 'all' | number; label: string }> = [
     { key: 'all', label: t('balance.allLayers') },
-    { key: 0, label: 'L0' },
-    ...l1Chains.map((c, i) => ({ key: i + 1, label: c.name || `L1-${i + 1}` })),
+    { key: 0, label: layerLabel(0, l1Chains) },
+    ...l1Chains.map((_c, i) => ({ key: i + 1, label: layerLabel(i + 1, l1Chains) })),
   ];
 
   const agg = React.useMemo(() => {
@@ -290,7 +292,7 @@ export default function BalanceScreen() {
                   <Text style={s.tokenName}>{a.tokenName}</Text>
                   <Text style={s.tokenValue}>{formatValue(a.total, decimalsOf(a.tokenId), locale)}</Text>
                 </View>
-                <Text style={s.tokenMeta}>{t('balance.metaUtxos', { count: a.count, layers: a.layers.sort((x, y) => x - y).map((l) => (l === 0 ? 'L0' : `L1-${l}`)).join(', ') })}</Text>
+                <Text style={s.tokenMeta}>{t('balance.metaUtxos', { count: a.count, layers: a.layers.sort((x, y) => x - y).map((l) => layerLabel(l, l1Chains)).join(', ') })}</Text>
                 <Text style={s.tokenId}>{a.tokenId.slice(0, 18)}...</Text>
               </View>
             ))
@@ -322,7 +324,7 @@ export default function BalanceScreen() {
               <Text style={s.tokenMeta} testID="balance-utxo-from">{t('balance.detailFrom', { address: fromLabel })}</Text>
               <Text style={s.tokenMeta} testID="balance-utxo-to">{t('balance.detailTo', { address: toLabel })}</Text>
               {u.time ? (
-                <Text style={s.tokenMeta} testID="balance-utxo-time">{t('balance.detailTime', { time: formatDateTime(u.time) })}</Text>
+                <Text style={s.tokenMeta} testID="balance-utxo-time">{t('balance.detailTime', { time: formatDateTimeZone(u.time) })}</Text>
               ) : null}
               <Text style={s.tokenId}>{(u.txhash || '').slice(0, 20)}</Text>
               {expandedKey === key && (

@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { Ed25519Key, didFromEd25519Key, pubKeyHashFromPub, didFromECKey, ECKey as DidECKey, bytesToHex } from "did";
 import { didFromPQKey } from "did/pq";
-import { PQKey, Utils } from "bigtangle-ts";
-import type { SettlementOutput } from "p2p-protocol";
+import { Coin, NetworkParameters, PQKey, Utils } from "bigtangle-ts";
+import { P2P_BIG_FEE, type SettlementOutput } from "p2p-protocol";
 import { buildApp } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
 import { ReplayGuard, canonicalJson, signPayload } from "../src/sign.js";
@@ -207,6 +207,18 @@ describe("did balance key", () => {
     expect(didPubKeyHashHex("not-a-did")).toBeNull();
   });
 
+  it("keeps the BIG escrow fee in sync with the chain fee constant", () => {
+    // The protocol's decimal fee must stay equal to Coin.FEE_DEFAULT at BIG's
+    // 6 decimals (1000 raw = 0.001 BIG); otherwise the deposit the wallet locks
+    // no longer matches what Escrow.escrowSpendAmount burns.
+    expect(
+      rawToDecimal(
+        Coin.FEE_DEFAULT.getValue().toString(),
+        NetworkParameters.BIGTANGLE_DECIMAL,
+      ),
+    ).toBe(P2P_BIG_FEE);
+  });
+
   it("formats raw units exactly", () => {
     expect(rawToDecimal("100000000", 6)).toBe("100");
     expect(rawToDecimal("99500000", 6)).toBe("99.5");
@@ -310,12 +322,28 @@ describe("order funds gate", () => {
     await a.close();
   });
 
+  it("requires the BIG escrow fee on top of the advertised amount", async () => {
+    // 1000 BIG exactly is not enough: the settlement spend burns 0.001 BIG from
+    // the escrow UTXO, so the seller must hold 1000.001 BIG for the buyer to
+    // receive the full advertised 1000 BIG.
+    const a = await app(hashChain(sellerHash, [bigRow("1000000000")]));
+    const orderId = `ord-${randomBytes(8).toString("hex")}`;
+    const r = await a.inject({
+      method: "POST",
+      url: "/orders",
+      payload: signed(seller, sellerDid, bigSellFields(orderId)),
+    });
+    expect(r.statusCode).toBe(409);
+    expect(r.json().error).toMatch(/seller balance insufficient/);
+    await a.close();
+  });
+
   it("checks the proven legacy-EC address, not the derived DID key", async () => {
     const fundsKey = DidECKey.createNewKey();
     const fundsHash = bytesToHex(pubKeyHashFromPub(fundsKey.getPubBytes()));
     const seen: { hash?: string } = {};
     // The BIG lives at the EC address only: the DID-derived key reads empty.
-    const a = await app(hashChain(fundsHash, [bigRow("1000000000")], seen));
+    const a = await app(hashChain(fundsHash, [bigRow("1000001000")], seen));
     const orderId = `ord-${randomBytes(8).toString("hex")}`;
     const r = await a.inject({
       method: "POST",
@@ -331,7 +359,7 @@ describe("order funds gate", () => {
     // Without a proof the derived DID key is checked and reads empty.
     const fundsKey = DidECKey.createNewKey();
     const fundsHash = bytesToHex(pubKeyHashFromPub(fundsKey.getPubBytes()));
-    const a = await app(hashChain(fundsHash, [bigRow("1000000000")]));
+    const a = await app(hashChain(fundsHash, [bigRow("1000001000")]));
     const orderId = `ord-${randomBytes(8).toString("hex")}`;
     const r = await a.inject({
       method: "POST",
@@ -346,7 +374,7 @@ describe("order funds gate", () => {
   it("rejects a tampered funds proof", async () => {
     const fundsKey = DidECKey.createNewKey();
     const fundsHash = bytesToHex(pubKeyHashFromPub(fundsKey.getPubBytes()));
-    const a = await app(hashChain(fundsHash, [bigRow("1000000000")]));
+    const a = await app(hashChain(fundsHash, [bigRow("1000001000")]));
     const orderId = `ord-${randomBytes(8).toString("hex")}`;
     const body = withFundsProof(seller, sellerDid, bigSellFields(orderId), fundsKey);
     // A malicious client can re-sign the main body; the funds proof itself must
@@ -365,7 +393,7 @@ describe("order funds gate", () => {
     const fundsHash = bytesToHex(pubKeyHashFromPub(fundsKey.getPubBytes()));
     const seen: { hash?: string } = {};
     // The taker is the seller on a buy bid; BIG sits at its EC address.
-    const a = await app(hashChain(fundsHash, [bigRow("1000000000")], seen));
+    const a = await app(hashChain(fundsHash, [bigRow("1000001000")], seen));
     await store.upsertProfile({
       sellerDid: buyerDid,
       method: "wechat",

@@ -10,7 +10,8 @@ import * as WebBrowser from "expo-web-browser";
 import { useWallet } from "@/state/wallet";
 import { httpService } from "@/services/http";
 import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
-import { BC_DECIMALS, decimalsFor } from "@/lib/tokenformat";
+import { BC_DECIMALS, decimalsFor, formatTokenAmount, parseTokenAmount } from "@/lib/tokenformat";
+import { txFeeAmount, txFeeRaw } from "@/lib/txFee";
 import { listPayments, recordPayment, refreshAllStatuses } from "@/services/tracking";
 import { QrScanIcon } from "@/components/Icons";
 import WalletUnlock from "@/components/WalletUnlock";
@@ -306,25 +307,76 @@ export default function TransactionScreen() {
     return () => clearInterval(timer);
   }, [activeTab]);
 
+  // What a send actually spends: the chain fee is always 1000 raw **BIG**
+  // (`Coin.FEE_DEFAULT`). Sending BIG debits `amount + fee` in one tx; sending
+  // another token leaves its amount untouched and pays the fee in a separate
+  // BIG transaction, so the wallet needs a little BIG too. L1 has no fee.
+  const sendDecimals = selectedToken
+    ? decimalsFor(selectedToken.tokenid, selectedToken.decimals)
+    : 0;
+  const sendLayer = selectedToken?.layer ?? 0;
+  const sendFeeRaw = txFeeRaw(sendLayer);
+  const sendFeeText = txFeeAmount(sendLayer);
+  const sendIsBig = selectedToken?.tokenid.trim().toLowerCase() === 'bc';
+  const amountText = amount.trim();
+  const sendAmountRaw = /^\d+(\.\d+)?$/.test(amountText)
+    ? parseTokenAmount(amountText, sendDecimals)
+    : 0n;
+  const sendTotalText = sendIsBig && sendAmountRaw > 0n
+    ? formatTokenAmount(sendAmountRaw + sendFeeRaw, sendDecimals)
+    : null;
+
   const handleSend = async () => {
     const wallet = getUnlockedWallet();
     const password = getPassword();
     if (!wallet || !isUnlocked) { showAlert(t('transaction.error'), t('transaction.errUnlock')); return; }
     if (!selectedToken) { showAlert(t('transaction.error'), t('transaction.errSelectToken')); return; }
     if (!toAddress) { showAlert(t('transaction.error'), t('transaction.errRecipient')); return; }
-    if (!amount || parseFloat(amount) <= 0) { showAlert(t('transaction.error'), t('transaction.errAmount')); return; }
+    const amountText = amount.trim();
+    if (!amountText || !/^\d+(\.\d+)?$/.test(amountText) || parseFloat(amountText) <= 0) {
+      showAlert(t('transaction.error'), t('transaction.errAmount')); return;
+    }
 
-    const amountNum = parseFloat(amount);
-    const balance = parseFloat(selectedToken.balance);
-    if (amountNum > balance) { showAlert(t('transaction.error'), t('transaction.insufficient')); return; }
-
+    // The fee is denominated in BIG: a BIG send needs `amount + fee` in BIG, any
+    // other token needs `amount` of itself plus the BIG fee balance (the builder
+    // submits a separate BIG fee transaction). L1 is fee-free.
     const decimals = decimalsFor(selectedToken.tokenid, selectedToken.decimals);
-    const satoshis = Math.floor(amountNum * Math.pow(10, decimals));
+    const amountRaw = parseTokenAmount(amountText, decimals);
+    const balanceRaw = parseTokenAmount(selectedToken.balance || '0', decimals);
+    const feeRaw = txFeeRaw(selectedToken.layer);
+    const isBig = selectedToken.tokenid.trim().toLowerCase() === 'bc';
+    if (amountRaw <= 0n) { showAlert(t('transaction.error'), t('transaction.insufficient')); return; }
+    if (isBig) {
+      if (amountRaw + feeRaw > balanceRaw) {
+        showAlert(t('transaction.error'), t('transaction.insufficient')); return;
+      }
+    } else {
+      if (amountRaw > balanceRaw) {
+        showAlert(t('transaction.error'), t('transaction.insufficient')); return;
+      }
+      if (feeRaw > 0n) {
+        const bigToken = tokens.find((tk) => tk.layer === 0 && tk.tokenid === 'bc');
+        const bigBalanceRaw = parseTokenAmount(bigToken?.balance ?? '0', BC_DECIMALS);
+        if (bigBalanceRaw < feeRaw) {
+          showAlert(t('transaction.error'), t('transaction.insufficientFee')); return;
+        }
+      }
+    }
+    const satoshis = amountRaw;
 
     // Confirm the send. react-native-web's Alert.alert ignores the buttons
     // array, so on web use window.confirm (which Playwright/browsers can drive);
     // on native keep the Alert with Cancel/Send buttons.
-    const confirmBody = t('transaction.confirmBody', { amount, token: selectedToken.tokenname, to: toAddress });
+    const confirmBase = t('transaction.confirmBody', { amount, token: selectedToken.tokenname, to: toAddress });
+    const confirmExtra = isBig
+      ? t('transaction.totalDebit', {
+          total: formatTokenAmount(amountRaw + feeRaw, decimals),
+          token: selectedToken.tokenname,
+        })
+      : feeRaw > 0n
+        ? t('transaction.networkFee', { fee: txFeeAmount(selectedToken.layer), token: 'BIG' })
+        : '';
+    const confirmBody = confirmExtra ? `${confirmBase}\n${confirmExtra}` : confirmBase;
     const confirmed = await new Promise<boolean>((resolve) => {
       if (Platform.OS === "web") {
         resolve(
@@ -577,6 +629,12 @@ export default function TransactionScreen() {
               placeholder="0.00" placeholderTextColor={s.placeholder.color}
               keyboardType="decimal-pad" testID="amount-input" />
             {selectedToken && <Text style={s.hint}>{t('transaction.available')}: {selectedToken.balance} {selectedToken.tokenname}</Text>}
+            {selectedToken && sendFeeRaw > 0n ? (
+              <Text style={s.hint} testID="send-fee">
+                {t('transaction.networkFee', { fee: sendFeeText, token: 'BIG' })}
+                {sendTotalText ? ` · ${t('transaction.totalDebit', { total: sendTotalText, token: selectedToken.tokenname })}` : ''}
+              </Text>
+            ) : null}
           </View>
           <View style={s.card}>
             <Text style={s.cardLabel}>{t('transaction.memo')}</Text>

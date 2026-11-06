@@ -332,12 +332,33 @@ pair shares the engine, but any two keys sign"). Consequences:
 
 ### Lock — step 2
 
-The seller sends `giveAmount` of `giveToken` to `escrowAddress` with an ordinary
-transfer. Nothing about the swap is encoded in the funding tx. The engine learns
-the hold exists from the index: `ServiceBaseConnect` sets
+The seller sends `giveAmount` of `giveToken` (plus the settlement fee — see
+below) to `escrowAddress` with an ordinary transfer. Nothing about the swap is
+encoded in the funding tx. The engine learns the hold exists from the index:
+`ServiceBaseConnect` sets
 `minsignnumber = script.getNumberOfSignaturesRequiredToSpend()` and inserts one
 `OutputsMulti(txHash, toAddress, index)` row per participant pubkey
 (`srv/server/service/base/ServiceBaseConnect.java:105-123`).
+
+**The seller pays the settlement fee.** A BIG escrow spend releases
+`value − Coin.FEE_DEFAULT` (`Escrow.escrowSpendAmount`: the mempool requires
+`input >= output + fee`), so a lock of exactly `giveAmount` would pay the buyer
+`giveAmount − 0.001 BIG`. The seller therefore locks
+`giveAmount + P2P_BIG_FEE` (`p2p-protocol`), and both the release and a timeout
+refund pay out the advertised amount in full. Non-BIG tokens (e.g. USDT) pay no
+spend fee from the escrow and need no extra. The wallet computes the deposit with
+`escrowDepositAmount` and shows it in the one-click *Pay escrow & lock* card;
+the engine's advisory balance check uses the same amount, so an ad cannot be
+listed with exactly the advertised balance. A lock that covers only
+`giveAmount` is still accepted (legacy), but its counterparty receives
+`giveAmount − fee` — the fee is never silently taken from the buyer by a current
+wallet.
+
+Independently of the locked token, the **funding transaction** itself pays the
+chain fee in BIG (1000 raw = 0.001 BIG): a BIG transfer takes it from its own
+inputs, a non-BIG transfer is fee-free and the wallet submits a separate BIG fee
+transaction (`Wallet.payToList` → `feeTransaction`), so the seller needs a small
+BIG balance even when locking a non-BIG token.
 
 Registration is optional bookkeeping via `launchPayMultiSign`, which is **only**
 a consent registry: it validates nothing beyond "this output was indexed as
@@ -1672,7 +1693,7 @@ sequenceDiagram
     B->>E: GET /public/orders — browse the book
     B->>E: POST /orders/:id/match (DID-signed, receiveAddress)
     Note over E,L1: anchor social.p2p-swap MATCHED (best-effort)
-    S->>L0: fund the 2-of-3 P2SH escrow (seller pays the fee)
+    S->>L0: fund the 2-of-3 P2SH escrow (seller locks amount + fee)
     S->>E: transitions {escrow_lock, txHash}
     E->>L0: verifyChainLock (CONFIRMED + escrow addr + token + amount)
     Note over E,L1: anchor ESCROW_LOCKED

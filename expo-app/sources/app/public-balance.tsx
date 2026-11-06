@@ -8,7 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
 import { toBigInt, formatValue } from '@/lib/amountformat';
-import { formatDateTime } from '@/lib/timeformat';
+import { formatDateTimeZone } from '@/lib/timeformat';
 import { decimalsFor } from '@/lib/tokenformat';
 import { sumByAddress, TOP_HOLDERS_LIMIT, type HolderTotal } from '@/lib/topHolders';
 import { MONO_FONT } from '@/constants/fonts';
@@ -360,7 +360,7 @@ export default function PublicBalanceScreen() {
                 <Text style={s.tokenMeta} testID="pbalance-utxo-from">{t('balance.detailFrom', { address: fromLabel })}</Text>
                 <Text style={s.tokenMeta} testID="pbalance-utxo-to">{t('balance.detailTo', { address: toLabel })}</Text>
                 {u.time ? (
-                  <Text style={s.tokenMeta} testID="pbalance-utxo-time">{t('balance.detailTime', { time: formatDateTime(u.time) })}</Text>
+                  <Text style={s.tokenMeta} testID="pbalance-utxo-time">{t('balance.detailTime', { time: formatDateTimeZone(u.time) })}</Text>
                 ) : null}
                 {u.memo ? <Text style={s.tokenMeta}>{t('balance.detailMemo', { memo: u.memo })}</Text> : null}
                 <Text style={s.tokenId}>{(u.txhash || '').slice(0, 20)}</Text>

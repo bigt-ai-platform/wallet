@@ -357,14 +357,86 @@ export async function broadcastPegIn(rawTx: string): Promise<ApiResponse<string>
   }
 }
 
+/** Sign every input of a locally built transfer with the wallet key. */
+async function signLocalInputs(tx: any, signKey: ECKey | PQKey): Promise<void> {
+  const inputs = tx.getInputs();
+  for (let i = 0; i < inputs.length; i++) {
+    const input = inputs[i];
+    const connected = input.getConnectedOutput();
+    const scriptBytes = connected?.getScriptBytes() ?? new Uint8Array(0);
+    const sigHashBytes = tx.hashForSignatureScript(i, new Script(scriptBytes), 1 as any, false);
+    const signatureBundle = await signKey.signWithAesKey(sigHashBytes, null);
+    const scriptSig = ScriptBuilder.createInputScript(signatureBundle, signKey);
+    input.setScriptSig(scriptSig!);
+  }
+}
+
+/**
+ * The BIG network fee for a **non-BIG** L0 transfer (Java
+ * `Wallet.payToList` → `feeTransaction`): a separate transaction spends
+ * unspent BIG, burns `Coin.FEE_DEFAULT` and returns the change to the wallet.
+ * The BIG fee is paid no matter which token is transferred; a BIG transfer
+ * instead subtracts it from its own change.
+ */
+async function submitBigFee(params: {
+  netParams: NetworkParameters;
+  signKey: ECKey | PQKey;
+  outputs: any[];
+}): Promise<string> {
+  const { netParams, signKey, outputs } = params;
+  const bigId = NetworkParameters.BIGTANGLE_TOKENID_STRING;
+  const fee = Coin.FEE_DEFAULT.getValue();
+  const utxos = outputs
+    .filter((u) => (u.tokenId || u.tokenHex || u.value?.tokenHex) === bigId && u.confirmed !== false)
+    .map((u) => SdkUTXO.fromJSONObject(u))
+    .sort((a, b) => {
+      const av = a.getValue().getValue();
+      const bv = b.getValue().getValue();
+      return av < bv ? 1 : av > bv ? -1 : 0;
+    });
+
+  let total = BigInt(0);
+  const selected: any[] = [];
+  for (const u of utxos) {
+    selected.push(u);
+    total += u.getValue().getValue();
+    if (total >= fee) break;
+  }
+  if (total < fee) {
+    throw new Error(i18n.t('errors.insufficientBIGFee'));
+  }
+
+  const tx = new Transaction(netParams);
+  tx.setMemo('fee');
+  for (const u of selected) {
+    tx.addInput2(u.getBlockHash(), new FreeStandingTransactionOutput(netParams, u));
+  }
+  const change = total - fee;
+  // Java `Wallet.feeTransaction` always writes the change output (even zero):
+  // it also makes the BIG output map carry the fee so the block check sees it.
+  tx.addOutputAddress(new Coin(change, hexToBytes(bigId)), Address.fromKey(netParams, signKey));
+  await signLocalInputs(tx, signKey);
+
+  const result = await broadcastTransaction(bytesToHex(tx.bitcoinSerialize()));
+  if (!result.success) {
+    throw new Error(result.error || i18n.t('errors.broadcast'));
+  }
+  return tx.getHash().toString();
+}
+
 /**
  * Pay a token transfer on Layer 0.
  *
- * Builds and signs the transaction with the SDK crypto primitives (no SDK
- * Wallet HTTP layer — that uses Node's `http.Agent`/`jackson-js`, neither of
- * which works in the web bundle). UTXOs come from the app's own fetch-based
- * httpService (the server returns the Java UTXO JSON shape), and the raw tx is
- * broadcast via the app's fetch-based `broadcastTransaction`.
+ * The chain fee is always 1000 raw **BIG** (`Coin.FEE_DEFAULT`): a BIG transfer
+ * pays it from the same inputs (`amount + fee`, recipient gets `amount`); any
+ * other token's transfer is fee-free itself and pays the BIG fee in a separate
+ * BIG transaction (Java `Wallet.payToList` → `feeTransaction`). This port used
+ * to add 1000 raw of the *transferred* token instead, which neither paid the
+ * BIG fee nor matched the node's fee rule.
+ *
+ * The transaction is built with the app's own fetch-based httpService (the SDK
+ * wallet path pulls in node-only modules that do not bundle for web), and the
+ * raw tx is broadcast via the app's fetch-based `broadcastTransaction`.
  */
 export async function payOnLayer0(params: {
   privateKeyHex: string;
@@ -379,6 +451,7 @@ export async function payOnLayer0(params: {
 
   const signKey = keyFromPrivateKey(privateKeyHex, keyType);
   const tokenBytes = hexToBytes(tokenId);
+  const isBig = tokenId.trim().toLowerCase() === NetworkParameters.BIGTANGLE_TOKENID_STRING;
 
   // 1. Fetch spendable UTXOs (correct pubkey-hash format).
   const utxosResponse = await httpService.getOutputs(privateKeyHex, keyType);
@@ -387,7 +460,9 @@ export async function payOnLayer0(params: {
   }
 
   // 2. Select confirmed UTXOs of the target token to cover amount + fee.
-  const fee = BigInt(1000);
+  // Only a BIG spend carries the fee in the same token; other tokens are
+  // transferred in full and the BIG fee is a separate transaction below.
+  const fee = isBig ? Coin.FEE_DEFAULT.getValue() : BigInt(0);
   const needed = amount + fee;
   const utxos = (utxosResponse.data as any[])
     .filter((u) => (u.tokenId || u.value?.tokenHex) === tokenId && u.confirmed !== false)
@@ -425,22 +500,22 @@ export async function payOnLayer0(params: {
   }
 
   // 4. Sign each input.
-  const inputs = tx.getInputs();
-  for (let i = 0; i < inputs.length; i++) {
-    const input = inputs[i];
-    const connected = input.getConnectedOutput();
-    const scriptBytes = connected?.getScriptBytes() ?? new Uint8Array(0);
-    const sigHashBytes = tx.hashForSignatureScript(i, new Script(scriptBytes), 1 as any, false);
-    const signatureBundle = await signKey.signWithAesKey(sigHashBytes, null);
-    const scriptSig = ScriptBuilder.createInputScript(signatureBundle, signKey);
-    input.setScriptSig(scriptSig!);
-  }
+  await signLocalInputs(tx, signKey);
 
   // 5. Broadcast the raw transaction to the L0 server.
   const txHex = bytesToHex(tx.bitcoinSerialize());
   const broadcastResult = await broadcastTransaction(txHex);
   if (!broadcastResult.success) {
     throw new Error(broadcastResult.error || i18n.t('errors.broadcast'));
+  }
+
+  // 6. A non-BIG transfer still owes the BIG fee: submit it as its own tx.
+  if (!isBig) {
+    await submitBigFee({
+      netParams,
+      signKey,
+      outputs: utxosResponse.data as any[],
+    });
   }
 
   return tx.getHash().toString();

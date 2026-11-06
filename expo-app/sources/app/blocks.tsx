@@ -9,8 +9,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import { httpService } from '@/services/http';
 import { toBlockRow, type BlockRow } from '@/lib/blockinfo';
 import { IS_DEV } from '@/constants/app';
-import { Utils, TestParams, MainNetParams } from 'bigtangle-ts';
 import { MONO_FONT } from '@/constants/fonts';
+import { Utils, TestParams, MainNetParams } from 'bigtangle-ts';
+import { layerLabel } from '@/lib/layerLabel';
 
 /**
  * Block explorer (port of the server webapp's /public/blocks.jsf): list the
@@ -67,10 +68,13 @@ export default function BlocksScreen() {
   // L0 is the default node; the configured L1 chains complete the dropdown
   // (the web page discovers extra chains from a seeds registry — here the
   // user manages them in settings).
-  const chains: ChainOption[] = React.useMemo(() => [
-    { key: 'l0', label: 'L0' },
-    ...httpService.getL1Chains().map((c, i) => ({ key: i as number, label: c.name || `L1-${i + 1}`, url: c.url })),
-  ], []);
+  const chains: ChainOption[] = React.useMemo(() => {
+    const l1 = httpService.getL1Chains();
+    return [
+      { key: 'l0', label: layerLabel(0, l1) },
+      ...l1.map((c, i) => ({ key: i as number, label: layerLabel(i + 1, l1), url: c.url })),
+    ];
+  }, []);
   const [activeChain, setActiveChain] = React.useState<'l0' | number>('l0');
   const [blockhash, setBlockhash] = React.useState('');
   const [lastNum, setLastNum] = React.useState('50');

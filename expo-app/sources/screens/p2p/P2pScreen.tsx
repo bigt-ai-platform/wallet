@@ -16,9 +16,12 @@ import PhoneVerifyCard from './PhoneVerifyCard';
 import { p2pPdfUrl, tzRegion } from '@/lib/docs';
 import { deviceVerifyDue } from '@/lib/p2pDeviceRead';
 import { p2pIdentityFromWallet, shortDid } from '@/lib/p2pIdentity';
-import { exceedsBalance, findBalance, amountToRaw, perUnitPrice, totalAmount } from '@/lib/p2pBalance';
+import { formatDateTimeZone } from '@/lib/timeformat';
+import { exceedsBalance, findBalance, amountToRaw, perUnitPrice, totalAmount, sellerEscrowDeposit } from '@/lib/p2pBalance';
 import { checkP2pFill, filterP2pOrders } from '@/lib/p2pOrderBook';
 import { railLabel } from '@/lib/p2pRails';
+import { P2P_BIG_FEE, escrowDepositFee } from 'p2p-protocol';
+import { txFeeRaw } from '@/lib/txFee';
 import { BIG_TOKEN, includeNativeBig } from '@/lib/tokenSearch';
 import { buildEscrowSighash, escrowVault, signEscrow, vaultEnginePubkey, vaultMatchesAddress, type EscrowHistoryOutput } from '@/lib/p2pEscrow';
 import { httpService } from '@/services/http';
@@ -165,8 +168,12 @@ export default function P2pScreen() {
   const availOnL0 = (giveChain.trim().toUpperCase() || 'L0') === 'L0';
   const availItem = findBalance(availOnL0 ? l0Balances : l1Balances, { tokenId: giveTokenId, tokenName: giveToken });
   const availText = availItem ? `${availItem.balance} ${availItem.tokenname}` : '';
-  // A seller must hold the token; a buyer pays fiat (an unfunded buyer is fine).
-  const overBalance = orderSide === 'sell' && exceedsBalance(giveAmount, availItem);
+  // The seller funds the escrow with the advertised amount **plus** the BIG
+  // escrow-spend fee (`escrowSpendAmount`), so the buyer receives the full
+  // amount. A seller must hold the token; a buyer pays fiat (an unfunded buyer
+  // is fine).
+  const sellerDeposit = sellerEscrowDeposit(giveAmount, giveToken, giveTokenId, availItem?.tokenid, availItem?.tokenname);
+  const overBalance = orderSide === 'sell' && exceedsBalance(sellerDeposit, availItem);
   // `wantAmount` (the TOTAL fiat, what the instructions charge) is derived from
   // the Binance-style unit **price** × the crypto amount.
   const formTotal = totalAmount(wantPrice, giveAmount);
@@ -717,8 +724,13 @@ export default function P2pScreen() {
     const l0 = balances?.success && balances.data ? balances.data : l0Balances;
     const item = findBalance(l0, { tokenId: swap.giveToken, tokenName: swap.giveToken });
     const giveAmount = swap.giveAmount ?? '';
+    // The escrow spend burns the BIG fee out of the locked UTXO
+    // (`escrowSpendAmount`), so the seller locks the advertised amount plus the
+    // fee and the buyer receives exactly `giveAmount`.
+    const deposit = sellerEscrowDeposit(giveAmount, swap.giveToken, item?.tokenid, item?.tokenname);
     const raw = item && giveAmount ? amountToRaw(giveAmount, item.decimals) : null;
-    if (!item || raw === null) {
+    const depositRaw = item && deposit ? amountToRaw(deposit, item.decimals) : null;
+    if (!item || raw === null || depositRaw === null) {
       setNotice({
         ok: false,
         text: t('p2p.overBalance', { amount: `0 ${swap.giveToken}` }),
@@ -727,6 +739,9 @@ export default function P2pScreen() {
     }
     // A previous click may already have funded the escrow (the send succeeds
     // even if the lock step times out). Reuse that payment — never send twice.
+    // The advertised amount is enough to reuse: a deposit made before this fee
+    // rule holds exactly that much, and one escrow outpoint is spent at
+    // settlement, so re-sending would only strand the first UTXO.
     const already = await fundedEscrowTx(swap.escrowAddress, item.tokenid, raw);
     if (already) setTxHashes((m) => ({ ...m, [swap.swapId]: already }));
 
@@ -734,35 +749,54 @@ export default function P2pScreen() {
       subtitle: t('p2p.aFundLock'),
       reason: already
         ? t('p2p.aLock') + ` ${swap.escrowAddress}`
-        : `${swap.giveAmount} ${swap.giveToken} → ${swap.escrowAddress}`,
+        : `${deposit} ${swap.giveToken} → ${swap.escrowAddress}`,
     });
     if (!approved) { setNotice({ ok: false, text: t('confirm.cancelled') }); return; }
     setBusy(true);
     try {
       let txHash = already;
       if (!txHash) {
-        let rawBalance: bigint | null = null;
-        try {
-          rawBalance = item.raw !== undefined && item.raw !== ''
-            ? BigInt(item.raw)
-            : amountToRaw(item.balance, item.decimals);
-        } catch {
-          rawBalance = null;
-        }
-        // payOnLayer0 also needs the fee (1000 raw) in the same token.
-        if (rawBalance === null || raw + 1000n > rawBalance) {
+        const rawOf = (it: WalletAccountItem | null): bigint | null => {
+          if (!it) return null;
+          try {
+            return it.raw !== undefined && it.raw !== ''
+              ? BigInt(it.raw)
+              : amountToRaw(it.balance, it.decimals);
+          } catch {
+            return null;
+          }
+        };
+        const rawBalance = rawOf(item);
+        const isBig = item.tokenid.trim().toLowerCase() === 'bc';
+        // The funding tx fee is 1000 raw BIG, not of the transferred token:
+        // sending BIG debits `deposit + fee`; another token pays the fee in a
+        // separate BIG transaction, so only the BIG balance has to cover it.
+        const fundFee = txFeeRaw(0);
+        const bigRaw = isBig ? rawBalance : rawOf(findBalance(l0, { tokenId: 'bc' }));
+        if (rawBalance === null) {
           setNotice({
             ok: false,
             text: t('p2p.overBalance', { amount: `${item.balance} ${item.tokenname}` }),
           });
           return;
         }
-        setNotice({ ok: true, text: t('p2p.fundingEscrow', { amount: swap.giveAmount, token: swap.giveToken }) });
+        if (isBig ? depositRaw + fundFee > rawBalance : depositRaw > rawBalance) {
+          setNotice({
+            ok: false,
+            text: t('p2p.overBalance', { amount: `${item.balance} ${item.tokenname}` }),
+          });
+          return;
+        }
+        if (!isBig && (bigRaw === null || bigRaw < fundFee)) {
+          setNotice({ ok: false, text: t('transaction.insufficientFee') });
+          return;
+        }
+        setNotice({ ok: true, text: t('p2p.fundingEscrow', { amount: deposit, token: swap.giveToken }) });
         txHash = await payOnLayer0({
           privateKeyHex: unlocked.wallet.privateKey,
           keyType: unlocked.wallet.keyType,
           toAddress: swap.escrowAddress,
-          amount: raw,
+          amount: depositRaw,
           tokenId: item.tokenid,
         });
         setTxHashes((m) => ({ ...m, [swap.swapId]: txHash! }));
@@ -1044,6 +1078,11 @@ export default function P2pScreen() {
                   : t('p2p.available', { amount: availText })}
               </Text>
             ) : null}
+            {orderSide === 'sell' && sellerDeposit !== giveAmount.trim() ? (
+              <Text style={s.hint} testID="p2p-give-deposit">
+                {t('p2p.escrowNeed', { deposit: sellerDeposit, fee: P2P_BIG_FEE, token: giveToken })}
+              </Text>
+            ) : null}
             <Field label={t('p2p.price')} value={wantPrice} onChange={setWantPrice} placeholder="0.00" keyboardType="decimal-pad" mono testID="p2p-want-amount" />
             {formTotal ? (
               <Text style={s.hint} testID="p2p-total">
@@ -1217,6 +1256,12 @@ export default function P2pScreen() {
                 <Text style={s.sub} testID={`p2p-order-${i}-total`}>
                   {t('p2p.total')}: {o.wantAmount} {o.wantCurrency} · {t('p2p.giveChain')}: {o.giveChain}{o.timeLimit ? ` · ${o.timeLimit} min` : ''}
                 </Text>
+                {o.createdAt ? (
+                  <Text style={s.sub} testID={`p2p-order-${i}-time`}>
+                    {t('p2p.listed', { time: formatDateTimeZone(Math.floor(o.createdAt / 1000)) })}
+                    {o.validUntil ? ` · ${t('p2p.expires', { time: formatDateTimeZone(o.validUntil) })}` : ''}
+                  </Text>
+                ) : null}
                 {o.remarks ? <Text style={s.subMono} testID={`p2p-order-${i}-remarks`}>{o.remarks}</Text> : null}
                 <View style={s.didRow}>
                   <Text style={[s.subMono, s.didText]} testID={`p2p-order-${i}-did`}>{shortDid(o.sellerDid)}</Text>
@@ -1462,6 +1507,10 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, d
   const isParty = isSeller || isBuyer;
   const cny = isCnyRail(swap.wantRail);
   const st = swap.status;
+  // The seller funds `giveAmount` + the BIG escrow-spend fee so the buyer
+  // receives the full amount (the spend burns the fee out of the UTXO).
+  const deposit = sellerEscrowDeposit(swap.giveAmount ?? '', swap.giveToken);
+  const depositFee = escrowDepositFee(swap.giveToken);
   // Re-render once a minute so the delayed-release action appears without a
   // manual refresh.
   const [now, setNow] = React.useState(() => Date.now());
@@ -1544,7 +1593,7 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, d
           </Text>
           <Text style={s.instrAmount}>{instruction.amount} {instruction.currency}</Text>
           <Text style={s.instrLine}>{t('p2p.remark')}: {instruction.remark}</Text>
-          <Text style={s.sub}>{t('p2p.payBy')}: {new Date(instruction.payBy * 1000).toLocaleString()}</Text>
+          <Text style={s.sub}>{t('p2p.payBy')}: {formatDateTimeZone(instruction.payBy)}</Text>
           {instruction.qr ? <Image source={{ uri: instruction.qr }} style={s.instrQr} /> : null}
         </View>
       ) : null}
@@ -1570,11 +1619,20 @@ function SwapCard({ swap, myDid, busy, txHash, onTxHash, txId, onTxId, onCopy, d
               />
               <Text style={s.hint} testID={`p2p-swap-${index}-lock-hint`}>
                 {t('p2p.lockHint', {
-                  amount: swap.giveAmount,
+                  amount: deposit,
                   token: swap.giveToken,
                   chain: swap.giveChain ?? 'L0',
                 })}
               </Text>
+              {depositFee !== '0' ? (
+                <Text style={s.hint} testID={`p2p-swap-${index}-fee-hint`}>
+                  {t('p2p.escrowFeeNote', {
+                    fee: P2P_BIG_FEE,
+                    amount: swap.giveAmount,
+                    token: swap.giveToken,
+                  })}
+                </Text>
+              ) : null}
               <Field label="txHash" value={txHash} onChange={onTxHash} testID={`p2p-swap-${index}-txhash`} />
               <Action label={t('p2p.aLock')} color={theme.colors.primary} onPress={onLock} disabled={busy} testID={`p2p-swap-${index}-lock`} />
             </>

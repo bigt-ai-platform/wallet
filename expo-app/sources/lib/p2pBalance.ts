@@ -1,4 +1,5 @@
 import type { WalletAccountItem } from '@/types/api';
+import { escrowDepositAmount, isBigToken } from 'p2p-protocol';
 
 /**
  * Advisory availability check for the P2P sell form.
@@ -88,4 +89,18 @@ export function exceedsBalance(amount: string, item: WalletAccountItem | null): 
   const amt = amountToRaw(amount, item.decimals);
   if (amt === null) return false;
   return amt > raw;
+}
+
+/**
+ * The amount the seller must lock into the escrow for an advertised amount:
+ * the BIG escrow-spend fee is taken from the escrowed UTXO, so the deposit is
+ * `amount + fee` and the buyer still receives the full amount. Pass every
+ * spelling of the token (order/swap name, picker id, balance row) — the name
+ * `BIG` and the id `bc` are both recognized.
+ */
+export function sellerEscrowDeposit(
+  amount: string,
+  ...tokens: (string | null | undefined)[]
+): string {
+  return escrowDepositAmount(amount, tokens.find((t) => isBigToken(t)));
 }

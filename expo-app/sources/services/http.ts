@@ -355,8 +355,12 @@ export class HttpService {
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
     const singleUrl = this.normalizeLegacyL1Url(savedUrl || defaultL1Url(useTestnet));
     const defaults = useTestnet ? DEFAULT_L1_CHAINS_TESTNET : DEFAULT_L1_CHAINS_MAINNET;
+    // Name the order chain after its configured network ("Main"/"Test"/"Local")
+    // instead of the old meaningless "Default"; the layer screens further name
+    // it by role ("L1-order") — see lib/layerLabel.
+    const orderDefault = defaults.find((c) => c.chainId === 'ordermatch');
     return [
-      { chainId: 'ordermatch', name: 'Default', url: singleUrl },
+      { chainId: 'ordermatch', name: orderDefault?.name ?? 'order', url: singleUrl },
       ...defaults
         .filter((c) => c.chainId !== 'ordermatch')
         .map((c) => ({ chainId: c.chainId, name: c.name, url: c.url })),

@@ -18,7 +18,7 @@
  * `RIPEMD160(SHA256(prefixedPubKey))` for a PQ ML-DSA-87 DID, and the classic
  * h160 for an Ed25519/secp256k1 DID.
  */
-import { Utils } from "bigtangle-ts";
+import { NetworkParameters, Utils } from "bigtangle-ts";
 import { pubFromDid, pubKeyHashFromPub } from "did";
 import { pqPubFromDid } from "did/pq";
 import { compareAmounts } from "p2p-protocol";
@@ -71,8 +71,11 @@ function sameToken(row: { token: string; tokenId?: string; symbol?: string; name
 
 function decimalsForRow(row: { tokenId?: string; decimals?: number }): number | null {
   if (typeof row.decimals === "number" && row.decimals >= 0) return row.decimals;
-  // BIG is the only token whose decimals are fixed by the chain params.
-  if ((row.tokenId ?? "").toLowerCase() === "bc") return 8;
+  // BIG's decimals are fixed by the chain params (`NetworkParameters`:
+  // BIGTANGLE_DECIMAL = 6), used when the node omitted token metadata.
+  if ((row.tokenId ?? "").toLowerCase() === "bc") {
+    return NetworkParameters.BIGTANGLE_DECIMAL;
+  }
   return null;
 }
 

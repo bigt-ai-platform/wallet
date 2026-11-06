@@ -16,7 +16,26 @@ export function formatDateTime(epochSeconds: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** Timezone label of the device at the given instant, e.g. "UTC+2". */
+/**
+ * Timezone label in effect for an instant, e.g. "UTC", "UTC+2", "UTC+5:30".
+ * Unlike {@link utcOffsetLabel} (which labels *now*), this uses the offset at
+ * `epochSeconds`, so a date rendered across a DST boundary is labelled with the
+ * offset that was actually in force.
+ */
+export function timeZoneLabel(epochSeconds: number): string {
+  const minutes = -new Date(epochSeconds * 1000).getTimezoneOffset();
+  return minutes === 0 ? 'UTC' : utcOffsetLabelFromMinutes(minutes);
+}
+
+/**
+ * `YYYY-MM-DD HH:mm (UTC)` — the instant in the device/user timezone, with the
+ * zone spelled out so the reader never has to guess which clock it is.
+ */
+export function formatDateTimeZone(epochSeconds: number): string {
+  return `${formatDateTime(epochSeconds)} (${timeZoneLabel(epochSeconds)})`;
+}
+
+/** Timezone label of the device at the given instant (ms), e.g. "UTC", "UTC+2". */
 export function utcOffsetLabel(ms: number): string {
-  return utcOffsetLabelFromMinutes(-new Date(ms).getTimezoneOffset());
+  return timeZoneLabel(Math.floor(ms / 1000));
 }
