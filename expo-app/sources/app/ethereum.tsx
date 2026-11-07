@@ -16,7 +16,9 @@ import {
   prepareNativeTransfer, prepareTokenTransfer, sendNativeTransfer, sendTokenTransfer,
   waitForReceipt, type EthAsset, type EthAssetBalance, type PreparedTransfer,
 } from '@/services/eth';
-import { addEthToken, getEthChain, isEthRpcConfigured, removeEthToken } from '@/services/ethRpc';
+import {
+  addEthToken, ETH_RPC_NOT_CONFIGURED, getEthChain, isEthRpcConfigured, removeEthToken,
+} from '@/services/ethRpc';
 import { buildEthPaymentUri } from '@/lib/eth/eip681';
 import { formatUnits, parseUnits, shortAddress } from '@/lib/eth/units';
 import { ethExplorerTx } from '@/lib/eth/chains';
@@ -92,7 +94,8 @@ export default function EthereumScreen() {
       const rows = await loadBalances(account, chain);
       setBalances(rows);
     } catch (e) {
-      setError((e as Error).message || t('eth.errRpc'));
+      const msg = (e as Error).message;
+      setError(msg === ETH_RPC_NOT_CONFIGURED || !msg ? t('eth.notConfigured') : msg);
     } finally {
       setLoading(false);
     }

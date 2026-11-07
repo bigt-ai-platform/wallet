@@ -20,6 +20,9 @@ export interface EthSettings {
   rpcUrl: string;
 }
 
+/** Error code used when the endpoint is missing or is not a JSON-RPC proxy. */
+export const ETH_RPC_NOT_CONFIGURED = 'eth-rpc-not-configured';
+
 export class EthRpcError extends Error {
   constructor(
     readonly code: number,
@@ -134,7 +137,7 @@ export async function ethRpc<T>(
   opts: { url?: string; timeoutMs?: number } = {}
 ): Promise<T> {
   const url = opts.url ?? ethRpcUrl();
-  if (!url) throw new EthRpcError(-32000, 'No Ethereum RPC endpoint configured');
+  if (!url) throw new EthRpcError(-32000, ETH_RPC_NOT_CONFIGURED);
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   const timer = controller
     ? setTimeout(() => controller.abort(), opts.timeoutMs ?? 20000)
@@ -146,8 +149,20 @@ export async function ethRpc<T>(
       body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }),
       signal: controller?.signal,
     });
-    if (!res.ok) throw new EthRpcError(res.status, `Ethereum RPC HTTP ${res.status}`);
-    const body = (await res.json()) as RpcResponse<T>;
+    if (!res.ok) {
+      // 404/405 means the deploy stack has no `/eth` route yet.
+      const notConfigured = res.status === 404 || res.status === 405;
+      throw new EthRpcError(res.status, notConfigured ? ETH_RPC_NOT_CONFIGURED : `Ethereum RPC HTTP ${res.status}`);
+    }
+    const text = await res.text();
+    let body: RpcResponse<T>;
+    try {
+      body = JSON.parse(text) as RpcResponse<T>;
+    } catch {
+      // The SPA fallback (or any HTML page) answered instead of a JSON-RPC
+      // proxy — treat it as "no endpoint configured", not a parse error.
+      throw new EthRpcError(-32000, ETH_RPC_NOT_CONFIGURED);
+    }
     if (body.error) throw new EthRpcError(body.error.code, body.error.message);
     if (body.result === undefined) throw new EthRpcError(-32603, 'Empty Ethereum RPC result');
     return body.result;
