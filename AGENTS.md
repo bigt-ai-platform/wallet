@@ -478,3 +478,15 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   the "Deposits" card says tokens only. Fees have Binance-style
   slow/standard/fast presets (priority ×0.8/1/1.5, maxFee keeps the 2× base
   headroom). Both are covered by the mock + spec.
+- **Ethereum test layers.** `sources/lib/eth/__tests__/*` = unit (vectors,
+  EIP-55, RLP, sign→recover, low-S, ABI, EIP-681, units);
+  `e2e/playwright/tests/ethereum.spec.ts` = 7 browser specs against
+  `e2e/eth-rpc-mock.mjs` (no chain, no funds; picked up by e2etest.sh's
+  final `--grep-invert` run); `sources/lib/eth/__tests__/integration.test.ts` =
+  **real EVM**, run by `./e2e/eth-integration.sh` (anvil in docker; the image's
+  entrypoint is `/bin/sh -c`, so pass `--entrypoint anvil` or `--host` is
+  ignored; funds via `anvil_setBalance`, token from
+  `e2e/fixtures/eth-test-token.bin` compiled with `solc`). It is skipped unless
+  `ETH_INTEGRATION_RPC` is set, so plain `vitest run sources/lib` stays offline.
+  `e2e/playwright/tests/ethereum-prod.spec.ts` is a read-only smoke against a
+  deployed URL, skipped unless `ETH_PROD=1`.

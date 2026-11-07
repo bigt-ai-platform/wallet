@@ -235,6 +235,16 @@ Total ≈ 12–16 working days for P0–P3 + release.
 
 ## 8. Testing
 
+* **Integration (real EVM)** — `./e2e/eth-integration.sh` starts anvil in docker
+  (`--entrypoint anvil`), funds the test key with `anvil_setBalance`, deploys the
+  fixture ERC-20 (`e2e/fixtures/eth-test-token.bin`), then runs
+  `sources/lib/eth/__tests__/integration.test.ts`: a wallet-signed native
+  transfer (balance delta = value + gasUsed×price, nonce +1) and a wallet-signed
+  ERC-20 `transfer` (state change + the `Transfer` log query the deposit scan
+  uses). Skipped unless `ETH_INTEGRATION_RPC` is set.
+* **Live read-only smoke** — `ETH_PROD=1 npx playwright test ethereum-prod.spec.ts`
+  against a deployed URL: real `/eth` proxy, account/balances, deposit QR and a
+  live fee estimate. No funds.
 * **Unit (vitest, `sources/lib/eth/__tests__/`)** — address vectors
   (`0x…01` → `0x7E5F…5Bdf`, `0x4c0883…` → `0x2c75…5c23`), EIP-55 checksum
   accept/reject, RLP vectors, EIP-1559 signing against a known transaction
