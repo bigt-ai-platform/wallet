@@ -11,6 +11,7 @@ import { toBigInt, formatValue } from '@/lib/amountformat';
 import { formatDateTimeZone } from '@/lib/timeformat';
 import { decimalsFor } from '@/lib/tokenformat';
 import { sumByAddress, TOP_HOLDERS_LIMIT, type HolderTotal } from '@/lib/topHolders';
+import { summarizeBalances } from '@/lib/balanceSummary';
 import { MONO_FONT } from '@/constants/fonts';
 import type { UTXO } from '@/types/api';
 
@@ -36,13 +37,6 @@ interface HistoryUtxo extends UTXO {
   spent?: boolean;
   /** Whether a pending outgoing transaction currently reserves this output. */
   spendPending?: boolean;
-}
-
-interface Aggregated {
-  tokenId: string;
-  tokenName: string;
-  total: bigint;
-  count: number;
 }
 
 export default function PublicBalanceScreen() {
@@ -204,17 +198,7 @@ export default function PublicBalanceScreen() {
     void load(addr);
   };
 
-  const agg = React.useMemo(() => {
-    const map = new Map<string, Aggregated>();
-    for (const u of utxos) {
-      const key = u.tokenid || 'unknown';
-      const cur = map.get(key) || { tokenId: key, tokenName: u.tokenname || key.slice(0, 8), total: BigInt(0), count: 0 };
-      cur.total += toBigInt(u.value);
-      cur.count += 1;
-      map.set(key, cur);
-    }
-    return Array.from(map.values()).sort((a, b) => (a.total > b.total ? -1 : 1));
-  }, [utxos]);
+  const agg = React.useMemo(() => summarizeBalances(utxos), [utxos]);
 
   const totalCount = utxos.length;
 

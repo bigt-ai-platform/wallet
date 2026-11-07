@@ -10,6 +10,7 @@ import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { decimalsFor } from '@/lib/tokenformat';
 import { toBigInt, formatValue } from '@/lib/amountformat';
+import { directionSign, summarizeBalances } from '@/lib/balanceSummary';
 import { formatDateTimeZone } from '@/lib/timeformat';
 import { layerLabel } from '@/lib/layerLabel';
 import { MONO_FONT } from '@/constants/fonts';
@@ -27,14 +28,6 @@ interface LayerUtxo extends UTXO {
   spent?: boolean;
   /** Whether a pending outgoing transaction currently reserves this output. */
   spendPending?: boolean;
-}
-
-interface Aggregated {
-  tokenId: string;
-  tokenName: string;
-  total: bigint;
-  count: number;
-  layers: number[];
 }
 
 function LayerDropdown({ value, options, onChange }: {
@@ -85,6 +78,12 @@ export default function BalanceScreen() {
   const [fromDate, setFromDate] = React.useState('');
   const [toDate, setToDate] = React.useState('');
   const [aggregate, setAggregate] = React.useState(true);
+  // Ports of the server page's checkboxes (WalletBalanceAction):
+  //   sent    = `fromaddressbalance` — balance of the outputs this wallet sent
+  //             (query by fromaddress, amounts shown with a "−" sign)
+  //   history = `history` — include outputs already consumed by a later tx
+  const [sent, setSent] = React.useState(false);
+  const [history, setHistory] = React.useState(false);
   const [activeLayer, setActiveLayer] = React.useState<'all' | number>('all');
   // Per-UTXO detail fetched on demand by the "… more" button (key = hash:index).
   const [detailData, setDetailData] = React.useState<Record<string, { detail?: any; finalized?: boolean }>>({});
@@ -92,7 +91,7 @@ export default function BalanceScreen() {
 
   React.useEffect(() => {
     if (publicInfo?.address && isUnlocked) loadAll();
-  }, [publicInfo, isUnlocked]);
+  }, [publicInfo, isUnlocked, sent, history]);
 
   const parseDate = (v: string): number | null => {
     if (!v) return null;
@@ -108,10 +107,12 @@ export default function BalanceScreen() {
     const fromTime = parseDate(fromDate);
     const toTime = parseDate(toDate);
     // getOutputsHistory is exposed on both L0 and L1 (BaseDispatcherController).
-    // Query by toAddress: the outputs the wallet owns (getOutputsHistory matches
-    // outputs.fromaddress AND toaddress, so the wallet goes in the to slot).
+    // The wallet goes in the `toaddress` slot for the received balance and in
+    // the `fromaddress` slot for the sent balance (Java
+    // WalletBalanceAction.historyUTXOList).
     const res = await httpService.getOutputsHistory({
-      toAddress: publicInfo?.address,
+      address: sent ? publicInfo?.address : undefined,
+      toAddress: sent ? undefined : publicInfo?.address,
       fromTime: fromTime ?? undefined,
       toTime: toTime ?? undefined,
       baseUrl,
@@ -171,6 +172,7 @@ export default function BalanceScreen() {
   const loadAll = async () => {
     if (!publicInfo?.address) return;
     setLoading(true);
+    setExpandedKey(null);
     try {
       // Collect per-token decimals from the balances API so formatted amounts
       // use the right divisor (BIG = 8 decimals).
@@ -200,8 +202,12 @@ export default function BalanceScreen() {
         loadLayer(undefined, 0, layerLabel(0, l1Chains)),
         ...l1Chains.map((c, i) => loadLayer(c.url, i + 1, layerLabel(i + 1, l1Chains))),
       ]);
-      // Only unspent outputs count as balance — spent history is excluded.
-      setUtxos(results.flat().filter((u) => !u.spent));
+      // Without the history toggle only unspent outputs count as balance; with
+      // it the spent rows are kept (their meta line says "spent"). Newest
+      // first, like the Java page's sort().
+      const rows = results.flat().filter((u) => history || !u.spent);
+      rows.sort((a, b) => Number(b.time ?? 0) - Number(a.time ?? 0));
+      setUtxos(rows);
     } catch (e) {
       console.error('Error loading balance UTXOs:', e);
     } finally {
@@ -224,18 +230,11 @@ export default function BalanceScreen() {
     ...l1Chains.map((_c, i) => ({ key: i + 1, label: layerLabel(i + 1, l1Chains) })),
   ];
 
-  const agg = React.useMemo(() => {
-    const map = new Map<string, Aggregated>();
-    for (const u of filtered) {
-      const key = u.tokenid || 'unknown';
-      const cur = map.get(key) || { tokenId: key, tokenName: u.tokenname || key.slice(0, 8), total: BigInt(0), count: 0, layers: [] };
-      cur.total += toBigInt(u.value);
-      cur.count += 1;
-      if (!cur.layers.includes(u.layer)) cur.layers.push(u.layer);
-      map.set(key, cur);
-    }
-    return Array.from(map.values()).sort((a, b) => (a.total > b.total ? -1 : 1));
-  }, [filtered]);
+  const agg = React.useMemo(() => summarizeBalances(filtered), [filtered]);
+
+  // Java WalletBalanceAction.getAddress() renders "+" for the received balance
+  // and "−" for the from-address (sent) balance.
+  const sign = directionSign(sent);
 
   if (!isUnlocked) {
     return (
@@ -267,6 +266,14 @@ export default function BalanceScreen() {
             autoCapitalize="none" testID="balance-to-date" />
         </View>
         <View style={s.optionRow}>
+          <TouchableOpacity onPress={() => setSent(!sent)} style={[s.filterToggle, sent && s.aggToggleOn]} testID="balance-direction">
+            <Text style={[s.filterToggleText, sent && s.aggToggleTextOn]}>{sent ? t('balance.sent') : t('balance.received')}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => setHistory(!history)} style={[s.filterToggle, history && s.aggToggleOn]} testID="balance-history">
+            <Text style={[s.filterToggleText, history && s.aggToggleTextOn]}>{t('balance.history')}</Text>
+          </TouchableOpacity>
+        </View>
+        <View style={s.optionRow}>
           <TouchableOpacity onPress={() => setAggregate(!aggregate)} style={[s.aggToggle, aggregate && s.aggToggleOn]} testID="balance-aggregate-toggle">
             <Text style={[s.aggToggleText, aggregate && s.aggToggleTextOn]}>{aggregate ? t('balance.aggregated') : t('balance.listUtxos')}</Text>
           </TouchableOpacity>
@@ -290,9 +297,13 @@ export default function BalanceScreen() {
               <View key={a.tokenId} style={s.card}>
                 <View style={s.aggHeader}>
                   <Text style={s.tokenName}>{a.tokenName}</Text>
-                  <Text style={s.tokenValue}>{formatValue(a.total, decimalsOf(a.tokenId), locale)}</Text>
+                  <Text style={s.tokenValue}>{sign}{formatValue(a.total, decimalsOf(a.tokenId), locale)}</Text>
                 </View>
-                <Text style={s.tokenMeta}>{t('balance.metaUtxos', { count: a.count, layers: a.layers.sort((x, y) => x - y).map((l) => layerLabel(l, l1Chains)).join(', ') })}</Text>
+                <Text style={s.tokenMeta}>
+                  {a.layers.length
+                    ? t('balance.metaUtxos', { count: a.count, layers: a.layers.map((l) => layerLabel(l, l1Chains)).join(', ') })
+                    : t('balance.metaUtxosNoLayer', { count: a.count })}
+                </Text>
                 <Text style={s.tokenId}>{a.tokenId.slice(0, 18)}...</Text>
               </View>
             ))
@@ -318,13 +329,16 @@ export default function BalanceScreen() {
             <View key={key} style={s.card}>
               <View style={s.aggHeader}>
                 <Text style={s.tokenName}>{u.tokenname || u.tokenid?.slice(0, 8) || t('balance.tokenFallback')}</Text>
-                <Text style={s.tokenValue}>{formatValue(toBigInt(u.value), decimalsOf(u.tokenid || 'bc'), locale)}</Text>
+                <Text style={s.tokenValue}>{sign}{formatValue(toBigInt(u.value), decimalsOf(u.tokenid || 'bc'), locale)}</Text>
               </View>
               <Text style={s.tokenMeta}>{t('balance.metaLine', { layerName: u.layerName, confirm: confirmLabel, state: stateLabel })}</Text>
               <Text style={s.tokenMeta} testID="balance-utxo-from">{t('balance.detailFrom', { address: fromLabel })}</Text>
               <Text style={s.tokenMeta} testID="balance-utxo-to">{t('balance.detailTo', { address: toLabel })}</Text>
               {u.time ? (
                 <Text style={s.tokenMeta} testID="balance-utxo-time">{t('balance.detailTime', { time: formatDateTimeZone(u.time) })}</Text>
+              ) : null}
+              {u.memo ? (
+                <Text style={s.tokenMeta} testID="balance-utxo-memo">{t('balance.detailMemo', { memo: u.memo })}</Text>
               ) : null}
               <Text style={s.tokenId}>{(u.txhash || '').slice(0, 20)}</Text>
               {expandedKey === key && (
@@ -370,7 +384,9 @@ const s = StyleSheet.create((theme) => ({
   dateRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   dateInput: { flex: 1, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.background, color: theme.colors.text.primary, padding: 10, fontSize: 14 },
   placeholder: { color: theme.colors.text.secondary },
-  optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 },
+  filterToggle: { flex: 1, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 8 },
+  filterToggleText: { fontSize: 12, fontWeight: '600', color: theme.colors.text.primary, textAlign: 'center' },
   aggToggle: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   aggToggleOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
   aggToggleText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.primary },
