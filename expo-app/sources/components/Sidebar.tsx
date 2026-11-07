@@ -98,6 +98,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
         { label: t('order.myOrders'), key: 'order', icon: OrderIcon, route: '/order' },
         { label: t('sidebar.portfolio'), key: 'dashboard', icon: DataIcon, route: '/dashboard' },
         { label: t('sidebar.deposit'), key: 'deposit', icon: WalletIcon, route: '/deposit' },
+        { label: t('sidebar.withdraw'), key: 'withdraw', icon: SendIcon, route: '/withdraw' },
       ],
     },
     {

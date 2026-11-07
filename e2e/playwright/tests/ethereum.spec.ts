@@ -89,6 +89,15 @@ async function gotoDeposit(page: Page) {
   await expect(page.getByTestId('deposit-screen')).toBeAttached({ timeout: 15000 });
 }
 
+/** Open the drawer and go to Withdraw (client-side navigation). */
+async function gotoWithdraw(page: Page) {
+  await page.getByRole('button', { name: 'Open navigation menu' }).click();
+  const item = page.getByTestId('sidebar').getByRole('button', { name: 'Withdraw', exact: true });
+  await expect(item).toBeVisible({ timeout: 10000 });
+  await item.click();
+  await expect(page.getByTestId('withdraw-screen')).toBeAttached({ timeout: 15000 });
+}
+
 /** Open the drawer and go to Keys (client-side navigation). */
 async function gotoKeys(page: Page) {
   await page.getByRole('button', { name: 'Open navigation menu' }).click();
@@ -276,6 +285,48 @@ test.describe('USDT deposit (exchange style)', () => {
     expect(raw).toContain(USDT_CONTRACT);
     expect(raw).toContain('2222222222222222222222222222222222222222');
     expect(raw).toContain('a9059cbb');
+  });
+});
+
+test.describe('Withdraw (exchange style)', () => {
+  test('asset -> network -> address/amount signs an ERC-20 transfer', async ({ page }) => {
+    await injectEcWallet(page);
+    await page.goto('/');
+    await page.waitForTimeout(1500);
+    await gotoWithdraw(page);
+
+    await page.getByTestId('withdraw-asset-USDT').click();
+    await page.getByTestId('withdraw-network-ethereum').click();
+    await page.getByTestId('withdraw-to').fill(RECIPIENT);
+    await page.getByTestId('withdraw-amount').fill('1.5');
+    await expect(page.getByTestId('withdraw-fee')).toContainText('Network fee up to', { timeout: 15000 });
+    await expect(page.getByTestId('withdraw-gas-presets')).toContainText('Slow');
+    await page.getByTestId('withdraw-submit').click();
+
+    await expect(page.getByTestId('withdraw-notice')).toContainText('Transaction sent', { timeout: 20000 });
+    await expect(page.getByTestId('withdraw-history')).toContainText('Confirmed', { timeout: 20000 });
+
+    expect(mock.sent).toHaveLength(1);
+    const raw = mock.sent[0].raw.toLowerCase();
+    expect(raw.startsWith('0x02')).toBe(true);
+    expect(raw).toContain(USDT_CONTRACT);
+    expect(raw).toContain('a9059cbb');
+  });
+
+  test('refuses to send to the wallet own address', async ({ page }) => {
+    await injectEcWallet(page);
+    await page.goto('/');
+    await page.waitForTimeout(1500);
+    await gotoWithdraw(page);
+    await page.getByTestId('withdraw-asset-USDT').click();
+    await page.getByTestId('withdraw-network-ethereum').click();
+    await page.getByTestId('withdraw-to').fill(ETH_ADDRESS);
+    await page.getByTestId('withdraw-amount').fill('1');
+    // No fee estimate is possible for the wallet's own address (the builder
+    // rejects it), so submit straight away and assert the rejection.
+    await page.getByTestId('withdraw-submit').click();
+    await expect(page.getByTestId('withdraw-error')).toContainText('own address', { timeout: 20000 });
+    expect(mock.sent).toHaveLength(0);
   });
 });
 

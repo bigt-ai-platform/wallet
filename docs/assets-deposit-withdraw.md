@@ -277,3 +277,18 @@ With no API, a single static issuer address is used (vmproject's
 credits the **same token** (USDT created on the L1 order chain) to the user's L1
 address; the app cannot do that leg (it would need the issuer's L1 key).
 Configured in Settings → Ethereum (`issuerAddress`, `apiUrl`, `minUsdt`).
+
+## 15. Implemented: exchange-style withdraw (`/withdraw`)
+
+Sidebar → TRADE → **Withdraw** (below Deposit), the counterpart of the deposit
+page and the destination of its `Withdraw` tab:
+
+1. **Select Asset** — ETH + the chain's ERC-20 tokens (USDT/USDC + user-added),
+   with balances and badges.
+2. **Select Network** — the configured EVM network (Ethereum / Sepolia).
+3. **Form** — recipient (EIP-55 checked), amount, available balance,
+   Slow/Standard/Fast gas presets, the live fee estimate (for native coins the
+   **total debit = amount + max fee**; for tokens the fee is paid in the native
+   coin), the confirm sheet, then on-device signing and broadcast. History rows
+   go pending → confirmed/failed with a notification and an explorer link.
+   Sending to the wallet's own address is rejected with a translated message.

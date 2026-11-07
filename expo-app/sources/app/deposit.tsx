@@ -266,7 +266,7 @@ export default function DepositScreen() {
           </TouchableOpacity>
           <TouchableOpacity
             style={s.tab}
-            onPress={() => router.push('/ethereum' as RouteTarget)}
+            onPress={() => router.push('/withdraw' as RouteTarget)}
             accessibilityRole="button"
             testID="deposit-tab-withdraw"
           >

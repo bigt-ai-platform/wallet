@@ -516,3 +516,12 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   issuer's L1 key, so it is not in the app. e2e: `ethereum.spec.ts` "USDT
   deposit (exchange style)" (mock serves the issuer API; asserts per-user
   address, min rejection, and the ERC-20 transfer payload).
+- **Withdraw page (exchange style).** `/withdraw` (sidebar TRADE, below
+  Deposit; the Deposit page's Withdraw tab links here) is Select Asset -> Select
+  Network -> address/amount/fee/review. Assets come from `assetsOf(chain)` and
+  balances from `loadBalances`; it reuses `prepare*/send*Transfer` and
+  `waitForReceipt` from `services/eth.ts`. Native shows the total debit
+  (amount + max fee), tokens show the fee in the native coin. The builder
+  already rejects sending to your own address, so no fee estimate appears in
+  that case — the spec submits directly and asserts `eth.errSelf`. e2e:
+  "Withdraw (exchange style)" specs (ERC-20 payload + own-address rejection).

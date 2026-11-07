@@ -85,6 +85,7 @@ function AppShell() {
                         <Stack.Screen name="trade" options={{ headerShown: false }} />
                         <Stack.Screen name="ethereum" options={{ headerShown: false }} />
                         <Stack.Screen name="deposit" options={{ headerShown: false }} />
+                        <Stack.Screen name="withdraw" options={{ headerShown: false }} />
                         <Stack.Screen name="notifications" options={{ title: t('notifications.title') }} />
                         <Stack.Screen name="p2p" options={{ title: t('p2p.title') }} />
                         <Stack.Screen name="device" options={{ title: t('device.title') }} />
