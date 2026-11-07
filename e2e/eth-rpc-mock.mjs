@@ -19,6 +19,8 @@ const DEPOSIT_FROM = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf';
 /** Custom token used by the "add token" spec (not in the built-in list). */
 const CUSTOM_TOKEN = '0x1111111111111111111111111111111111111111';
 const CUSTOM_SYMBOL = 'TESTX';
+/** Per-user deposit address returned by the bridge API. */
+const DEPOSIT_TARGET = '0x2222222222222222222222222222222222222222';
 
 function word(value) {
   return `0x${value.toString(16).padStart(64, '0')}`;
@@ -48,6 +50,17 @@ export function startEthRpcMock(port = 0) {
     if (req.url === '/sent') {
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
       res.end(JSON.stringify(sent));
+      return;
+    }
+    // USDT deposit bridge API (services/ethBridge.ts contract).
+    if (req.method === 'GET' && req.url.startsWith('/deposit-address')) {
+      res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ address: DEPOSIT_TARGET }));
+      return;
+    }
+    if (req.method === 'GET' && req.url.startsWith('/deposits')) {
+      res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ items: [] }));
       return;
     }
     // Address index (Blockscout v2 shape): one incoming 0.5 ETH transfer.

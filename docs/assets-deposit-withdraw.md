@@ -1,6 +1,6 @@
 # Multi-asset deposit / withdraw (Binance-style) — plan
 
-**Status: the EVM slice is implemented** (Ethereum mainnet/Sepolia: ETH, USDT,
+**Status: the EVM slice (incl. the USDT deposit page) is implemented** (Ethereum mainnet/Sepolia: ETH, USDT,
 USDC deposit + withdraw, network picker, fee/minimum display, EC-only gate, e2e
 with a mock RPC). TRON and Bitcoin remain at plan stage. This is the follow-up to [`docs/ethereum.md`](./ethereum.md):
 that document brings **ETH + ERC-20** into the wallet for legacy EC keys; this
@@ -248,3 +248,32 @@ Same shape as the existing routes (`/l0`, `/l1`, `/p2p`), all server-side:
    release) or fetched from our proxy.
 4. **BTC derivation** — BIP44 (recommended) vs reusing the EC key as a legacy
    WIF (vmproject compatibility).
+
+## 14. Implemented: exchange-style USDT deposit (`/deposit`)
+
+Sidebar → TRADE → **Deposit** (below Portfolio), matching the exchange flow
+**Select Asset → Select Network → Deposit Address**:
+
+1. Asset list (`lib/depositAssets.ts`, badge + symbol; USDT today, more rows are
+   data-only additions) and a `Deposit | Withdraw` tab shell — Withdraw routes to
+   `/ethereum`, and the fiat entry links to the P2P rails.
+2. Network picker (`Ethereum (ERC-20)`), showing where the credit lands (the
+   L1-order USDT token).
+3. Address step: QR (EIP-681), checksummed address, memo/tag when the issuer
+   returns one, the "send only X on network Y" warning, minimum, the L1 credit
+   address and its USDT balance, plus deposit history.
+4. Optional **Pay from this wallet**: signs an ERC-20 `transfer` to the issuer
+   address on Ethereum (same signer as `/ethereum`) and adds a pending row.
+
+Issuer side (contract in `services/ethBridge.ts`):
+
+```
+GET <api>/deposit-address?account=<l1 address>  -> { address, memo? }
+GET <api>/deposits?account=<l1 address>         -> { items: [{ hash, amount, status }] }
+```
+
+With no API, a single static issuer address is used (vmproject's
+`BinanceETHPayADDRESS` model: track deposits by balance delta). The issuer
+credits the **same token** (USDT created on the L1 order chain) to the user's L1
+address; the app cannot do that leg (it would need the issuer's L1 key).
+Configured in Settings → Ethereum (`issuerAddress`, `apiUrl`, `minUsdt`).

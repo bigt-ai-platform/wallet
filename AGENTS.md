@@ -503,3 +503,16 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   (`Promise.allSettled`).
 - **Sidebar:** the Ethereum entry lives in the NETWORK group (first item, right
   under the heading), not under HOME.
+- **Deposit page (exchange style).** `/deposit` (sidebar TRADE, below
+  Portfolio) is Select Asset -> Select Network -> Deposit Address for the
+  Ethereum-USDT -> L1-order-USDT bridge. `lib/depositAssets.ts` is the asset
+  registry; `services/ethBridge.ts` holds `eth.bridge` settings
+  (`apiUrl`/`issuerAddress`/`minUsdt`, Settings -> Ethereum) and the issuer
+  contract `GET /deposit-address?account=` / `GET /deposits?account=`. With no
+  API it shows a single static issuer address (vmproject's
+  `BinanceETHPayADDRESS` model). "Pay from this wallet" reuses
+  `sendTokenTransfer`; locally-sent rows merge with issuer-reported ones so a
+  pending deposit is not lost when the API is empty. The credit leg needs the
+  issuer's L1 key, so it is not in the app. e2e: `ethereum.spec.ts` "USDT
+  deposit (exchange style)" (mock serves the issuer API; asserts per-user
+  address, min rejection, and the ERC-20 transfer payload).

@@ -25,6 +25,7 @@ import {
   setEthRpcUrl,
 } from '@/services/ethRpc';
 import { shortAddress } from '@/lib/eth/units';
+import { getBridgeSettings, setBridgeSettings } from '@/services/ethBridge';
 import { useWallet } from '@/state/wallet';
 import { getRememberDeviceUnlock, setRememberDeviceUnlock } from '@/services/walletRecall';
 import type { L1ChainConfig } from '@/types/api';
@@ -85,6 +86,10 @@ export default function SettingsScreen() {
   const [activeChainId, setActiveChainId] = React.useState(() => httpService.getActiveL1ChainId());
   const [ethNetwork, setEthNetworkState] = React.useState(() => getEthSettings().network);
   const [ethRpc, setEthRpcState] = React.useState(() => getEthSettings().rpcUrl);
+  const bridgeSettings = React.useMemo(() => getBridgeSettings(), []);
+  const [bridgeIssuer, setBridgeIssuer] = React.useState(bridgeSettings.issuerAddress);
+  const [bridgeApi, setBridgeApi] = React.useState(bridgeSettings.apiUrl);
+  const [bridgeMin, setBridgeMin] = React.useState(bridgeSettings.minUsdt);
   const { publicInfo } = useWallet();
   const [newChainId, setNewChainId] = React.useState('');
   const [newChainName, setNewChainName] = React.useState('');
@@ -144,6 +149,11 @@ export default function SettingsScreen() {
   const saveEthSettings = () => {
     setEthNetwork(ethNetwork);
     setEthRpcUrl(ethRpc);
+    setBridgeSettings({
+      issuerAddress: bridgeIssuer,
+      apiUrl: bridgeApi,
+      minUsdt: bridgeMin,
+    });
     Alert.alert(t('settings.saved'), t('settings.ethSaved'));
   };
 
@@ -287,6 +297,18 @@ export default function SettingsScreen() {
         {publicInfo?.address ? (
           <Text style={s.settingDesc} testID="settings-eth-address">{t('settings.ethAccount', { address: shortAddress(publicInfo.address) })}</Text>
         ) : null}
+
+        <Text style={[s.cardLabel, s.settingRowSpaced]}>{t('settings.bridgeTitle')}</Text>
+        <Text style={s.settingDesc}>{t('settings.bridgeDesc')}</Text>
+        <TextInput style={s.input} value={bridgeApi} onChangeText={setBridgeApi}
+          placeholder={t('settings.bridgeApiPh')} placeholderTextColor={s.placeholder.color}
+          autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="bridge-api-input" />
+        <TextInput style={s.input} value={bridgeIssuer} onChangeText={setBridgeIssuer}
+          placeholder={t('settings.bridgeIssuerPh')} placeholderTextColor={s.placeholder.color}
+          autoCapitalize="none" autoCorrect={false} testID="bridge-issuer-input" />
+        <TextInput style={s.input} value={bridgeMin} onChangeText={setBridgeMin}
+          placeholder={t('settings.bridgeMinPh')} placeholderTextColor={s.placeholder.color}
+          keyboardType="decimal-pad" testID="bridge-min-input" />
       </View>
 
       <View style={s.card}>

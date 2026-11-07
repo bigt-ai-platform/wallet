@@ -26,6 +26,7 @@ const ETH_ADDRESS = '0x2c7536E3605D9C16a7a3D7b1898e529396a65c23';
 const RECIPIENT = '0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf';
 const USDT_CONTRACT = 'dac17f958d2ee523a2206206994597c13d831ec7';
 const CUSTOM_TOKEN = '0x1111111111111111111111111111111111111111';
+const DEPOSIT_TARGET = '0x2222222222222222222222222222222222222222';
 
 let mock: Mock;
 
@@ -77,6 +78,15 @@ async function gotoEthereum(page: Page) {
   await expect(item).toBeVisible({ timeout: 10000 });
   await item.click();
   await expect(page.getByTestId('eth-screen')).toBeAttached({ timeout: 15000 });
+}
+
+/** Open the drawer and go to Deposit (client-side navigation). */
+async function gotoDeposit(page: Page) {
+  await page.getByRole('button', { name: 'Open navigation menu' }).click();
+  const item = page.getByTestId('sidebar').getByRole('button', { name: 'Deposit', exact: true });
+  await expect(item).toBeVisible({ timeout: 10000 });
+  await item.click();
+  await expect(page.getByTestId('deposit-screen')).toBeAttached({ timeout: 15000 });
 }
 
 /** Open the drawer and go to Keys (client-side navigation). */
@@ -216,6 +226,56 @@ test.describe('Ethereum deposit / withdraw', () => {
     await expect(page.getByTestId('eth-error')).toContainText('No Ethereum RPC endpoint configured', {
       timeout: 20000,
     });
+  });
+});
+
+test.describe('USDT deposit (exchange style)', () => {
+  test('coin -> network -> per-user address, pays the issuer and tracks the deposit', async ({ page }) => {
+    await injectEcWallet(page);
+    await page.addInitScript(
+      ([api]) => {
+        localStorage.setItem(
+          'eth.bridge',
+          JSON.stringify({ apiUrl: api, issuerAddress: '', minUsdt: '1' })
+        );
+      },
+      [mock.url] as const
+    );
+    await page.goto('/');
+    await page.waitForTimeout(1500);
+    await gotoDeposit(page);
+
+    // Step 1: coin, step 2: network (Binance-style pickers).
+    await page.getByTestId('deposit-coin-USDT').click();
+    await page.getByTestId('deposit-network-ethereum').click();
+
+    // Step 3: the user's own address from the issuer API, warnings + min.
+    await expect(page.getByTestId('deposit-address')).toHaveText(DEPOSIT_TARGET, { timeout: 15000 });
+    await expect(page.getByTestId('deposit-warning')).toContainText('Ethereum (ERC-20)');
+    await expect(page.getByTestId('deposit-address-card')).toContainText('personal deposit address');
+    await expect(page.getByTestId('deposit-address-card')).toContainText('Minimum deposit: 1');
+    expect(await page.locator('[data-testid="deposit-address-card"] svg').count()).toBeGreaterThan(0);
+
+    // Below the minimum is rejected without broadcasting.
+    await page.getByTestId('deposit-amount').fill('0.5');
+    await page.getByTestId('deposit-submit').click();
+    await expect(page.getByTestId('deposit-error')).toContainText('Minimum deposit is 1');
+    expect(mock.sent).toHaveLength(0);
+
+    // Pay the deposit from this wallet: an ERC-20 transfer to the issuer
+    // address, tracked as a pending deposit row.
+    await page.getByTestId('deposit-amount').fill('2');
+    await page.getByTestId('deposit-submit').click();
+    await expect(page.getByTestId('deposit-notice')).toContainText('Deposit sent', { timeout: 20000 });
+    await expect(page.getByTestId('deposit-history')).toContainText('+2 USDT');
+    await expect(page.getByTestId('deposit-history')).toContainText('Pending');
+
+    expect(mock.sent).toHaveLength(1);
+    const raw = mock.sent[0].raw.toLowerCase();
+    expect(raw.startsWith('0x02')).toBe(true);
+    expect(raw).toContain(USDT_CONTRACT);
+    expect(raw).toContain('2222222222222222222222222222222222222222');
+    expect(raw).toContain('a9059cbb');
   });
 });
 
