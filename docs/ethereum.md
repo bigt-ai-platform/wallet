@@ -275,3 +275,9 @@ Total ≈ 12–16 working days for P0–P3 + release.
    proxy/own node is settled.
 4. **History** — local tracking only for v1 (recommended), or block on an
    explorer/indexer API before shipping.
+
+---
+
+**See also:** [`docs/assets-deposit-withdraw.md`](./assets-deposit-withdraw.md)
+— the Binance-style Deposit / Withdraw surface for the other assets (network
+picker, memo/tag, fees/minimums, deposit history, TRON and Bitcoin phases).
