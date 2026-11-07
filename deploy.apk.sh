@@ -3,7 +3,7 @@
 #
 #   ./deploy.apk.sh                          # preview debug APK
 #   ./deploy.apk.sh --release                # signed release APK
-#   ./deploy.apk.sh --env production --release
+#   ./deploy.apk.sh --env=production --release
 #   ./deploy.apk.sh --skip-build             # upload the APK already in out/
 #   ./deploy.apk.sh --no-latest              # skip the -latest aliases/manifest
 #   ./deploy.apk.sh --no-prune               # keep older versioned artifacts in the prefix
