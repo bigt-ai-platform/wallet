@@ -86,16 +86,18 @@ test.describe('Genesis wallet balance (helper/test/wallet/genesis-wallet.json)',
     const parsed = parseInt((count || '').replace(/\D+/g, ''), 10);
     expect(parsed).toBeGreaterThan(0);
 
-    // 3) Server-page parity (WalletBalanceAction): the direction toggle queries
-    //    the from-address (sent) balance, the history toggle keeps spent
+    // 3) Server-page parity (WalletBalanceAction): the direction control has
+    //    both options visible — Received queries the outputs paid to this
+    //    wallet (+), Sent the outputs it created (−) — and history keeps spent
     //    outputs. Both re-query the chain in place.
-    await page.getByTestId('balance-direction').click();
-    await expect(page.getByTestId('balance-direction')).toContainText('Sent');
+    await expect(page.getByTestId('balance-direction-received')).toHaveAttribute('aria-selected', 'true');
+    await page.getByTestId('balance-direction-sent').click();
+    await expect(page.getByTestId('balance-direction-sent')).toHaveAttribute('aria-selected', 'true');
     await page.getByTestId('balance-history').click();
     await expect(page.getByTestId('balance-screen')).toBeAttached();
-    await expect(page.getByTestId('balance-direction')).toContainText('Sent');
-    await page.getByTestId('balance-direction').click();
-    await expect(page.getByTestId('balance-direction')).toContainText('Received');
+    await expect(page.getByTestId('balance-direction-sent')).toHaveAttribute('aria-selected', 'true');
+    await page.getByTestId('balance-direction-received').click();
+    await expect(page.getByTestId('balance-direction-received')).toHaveAttribute('aria-selected', 'true');
 
     // The genesis address shows in the loaded wallet info (Keys screen).
     // The balance screen has no sidebar (stack screen, Back instead of the

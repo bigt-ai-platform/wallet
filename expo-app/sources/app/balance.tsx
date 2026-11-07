@@ -266,9 +266,30 @@ export default function BalanceScreen() {
             autoCapitalize="none" testID="balance-to-date" />
         </View>
         <View style={s.optionRow}>
-          <TouchableOpacity onPress={() => setSent(!sent)} style={[s.filterToggle, sent && s.aggToggleOn]} testID="balance-direction">
-            <Text style={[s.filterToggleText, sent && s.aggToggleTextOn]}>{sent ? t('balance.sent') : t('balance.received')}</Text>
-          </TouchableOpacity>
+          {/* Both directions stay visible: a single label that flips was
+              ambiguous ("why is a received UTXO −100?" — it was the Sent
+              view). The active side is highlighted, like the Java page's two
+              checkboxes. */}
+          <View style={s.segment} accessibilityRole="radiogroup">
+            <TouchableOpacity
+              onPress={() => setSent(false)}
+              style={[s.segmentBtn, !sent && s.aggToggleOn]}
+              accessibilityRole="radio"
+              aria-selected={!sent}
+              testID="balance-direction-received"
+            >
+              <Text style={[s.segmentText, !sent && s.aggToggleTextOn]}>{t('balance.received')}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setSent(true)}
+              style={[s.segmentBtn, sent && s.aggToggleOn]}
+              accessibilityRole="radio"
+              aria-selected={sent}
+              testID="balance-direction-sent"
+            >
+              <Text style={[s.segmentText, sent && s.aggToggleTextOn]}>{t('balance.sent')}</Text>
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity onPress={() => setHistory(!history)} style={[s.filterToggle, history && s.aggToggleOn]} testID="balance-history">
             <Text style={[s.filterToggleText, history && s.aggToggleTextOn]}>{t('balance.history')}</Text>
           </TouchableOpacity>
@@ -387,6 +408,9 @@ const s = StyleSheet.create((theme) => ({
   optionRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 },
   filterToggle: { flex: 1, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 8 },
   filterToggleText: { fontSize: 12, fontWeight: '600', color: theme.colors.text.primary, textAlign: 'center' },
+  segment: { flex: 1.2, flexDirection: 'row', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, overflow: 'hidden' },
+  segmentBtn: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6, paddingVertical: 8 },
+  segmentText: { fontSize: 12, fontWeight: '600', color: theme.colors.text.primary, textAlign: 'center' },
   aggToggle: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 },
   aggToggleOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
   aggToggleText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.primary },
