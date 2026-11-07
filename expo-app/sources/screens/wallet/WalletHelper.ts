@@ -64,6 +64,54 @@ export function isPlainWalletJson(content: string): boolean {
   }
 }
 
+/**
+ * Network parameters for a legacy EC key: the stored network when present,
+ * else the one the app is currently pointed at.
+ */
+function ecParams(network?: string) {
+  if (network === 'Test' || network === 'test') return TestParams.get();
+  if (network === 'Main' || network === 'main') return MainNetParams.get();
+  return IS_DEV || httpService.getUseTestnet() ? TestParams.get() : MainNetParams.get();
+}
+
+/**
+ * Create a legacy secp256k1 (EC) wallet. Needed for Ethereum/TRON support:
+ * those chains use the secp256k1 key directly, and a PQ key has no such
+ * counterpart. The Bigtangle address is the legacy P2PKH form.
+ */
+export function createEcWallet(): WalletFile {
+  const ecKey = ECKey.createNew();
+  const params = ecParams();
+  const wallet: Key = {
+    address: ecKey.toAddressString(params),
+    pubkey: Utils.HEX.encode(ecKey.getPubKey()),
+    privateKey: ecKey.getPrivateKeyAsHex(),
+    keyType: 'EC',
+    network: params === TestParams.get() ? 'Test' : 'Main',
+  };
+  return { wallet };
+}
+
+/**
+ * Import a raw 32-byte secp256k1 private key as an EC wallet (Ethereum /
+ * TRON compatible). Unlike {@link importPrivateKey}, which derives a PQ key,
+ * this keeps the secp256k1 key intact.
+ */
+export function importEcPrivateKey(privateKeyInput: string): WalletFile {
+  const hex = privateKeyInput.trim().replace(/^0x/i, '');
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error('EC private key must be 32 bytes of hex');
+  const ecKey = ECKey.fromPrivate(Utils.HEX.decode(hex), true);
+  const params = ecParams();
+  const wallet: Key = {
+    address: ecKey.toAddressString(params),
+    pubkey: Utils.HEX.encode(ecKey.getPubKey()),
+    privateKey: ecKey.getPrivateKeyAsHex(),
+    keyType: 'EC',
+    network: params === TestParams.get() ? 'Test' : 'Main',
+  };
+  return { wallet };
+}
+
 // Default context root for bigtangle network
 const DEFAULT_CONTEXT_ROOT = 'http://localhost:8088/';
 

@@ -82,6 +82,15 @@ DEPLOY_REGIONS="europa asia" ./deploy/deploy.sh   # restrict the fleet
 ./deploy/deploy.sh --dry-run          # print the plan, do nothing
 ```
 
+## Ethereum RPC proxy (`/eth`)
+
+The web build calls a **same-origin** `/eth` JSON-RPC path (native builds use
+`https://wallet.bigt.ai/eth`), so provider credentials never ship in the bundle
+(`docs/ethereum.md`). `region.sh config_caddy` adds the route when
+`ETH_RPC_URL` is exported or `deploy/env/.env.eth.<region>` (gitignored) contains
+`ETH_RPC_URL=https://…`. Without it the route is omitted and the app shows
+"no Ethereum RPC endpoint configured" in Settings → Ethereum.
+
 ## Region setup
 
 Edit `region.conf` (`REGION_VM` IP, `REGION_SSH_KEY`, `REGION_SSH_USER`,

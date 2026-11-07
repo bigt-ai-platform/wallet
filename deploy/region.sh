@@ -260,6 +260,22 @@ config_caddy() {
   else
     p2p_verb="handle"; p2p_upstream="https://${P2P_DOMAIN}"
   fi
+  # Ethereum JSON-RPC proxy (docs/ethereum.md): the web bundle calls the
+  # same-origin /eth path and provider credentials stay in this vhost. Read the
+  # upstream from deploy/env/.env.eth.<region> (gitignored) unless the caller
+  # already exported ETH_RPC_URL; with no upstream the route is omitted and the
+  # Ethereum screen shows "RPC not configured".
+  local eth_env="${SCRIPT_DIR}/env/.env.eth.${r}"
+  if [ -z "${ETH_RPC_URL:-}" ] && [ -f "$eth_env" ]; then
+    ETH_RPC_URL="$(grep -E '^ETH_RPC_URL=' "$eth_env" | tail -1 | cut -d= -f2- | tr -d '\r\"' || true)"
+  fi
+  local eth_route=""
+  if [ -n "${ETH_RPC_URL:-}" ]; then
+    eth_route="    # Ethereum JSON-RPC (same-origin /eth, provider key stays server-side).
+    handle_path /eth/* {
+        reverse_proxy ${ETH_RPC_URL}
+    }"
+  fi
   echo -e "${GREEN}--- Caddy vhosts for $dom on $(vm_ip "$r") ---${NC}"
   ssh ${SSH_OPTS} -i "$(vm_key "$r")" "$(vm_user "$r")@$(vm_ip "$r")" \
     "${sudo} tee /etc/caddy/Caddyfile.d/wallet-${r}.caddy > /dev/null" <<CADDYEOF
@@ -300,6 +316,7 @@ ${dom}, www.${dom} {
     handle_path /l1/* {
         reverse_proxy ${L1_API}
     }
+${eth_route}
     # P2P settlement engine (services/p2p-engine) — ONE shared engine for every
     # region (region.conf P2P_REGION). The host region proxies to its local
     # container and strips /p2p (the engine serves /orders…); other regions
@@ -370,6 +387,7 @@ ${apex}, www.${apex} {
     handle_path /l1/* {
         reverse_proxy ${L1_API}
     }
+${eth_route}
     # P2P settlement engine (services/p2p-engine) — ONE shared engine for every
     # region (region.conf P2P_REGION). The host region proxies to its local
     # container and strips /p2p (the engine serves /orders…); other regions

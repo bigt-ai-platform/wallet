@@ -18,7 +18,9 @@ import { useTranslation } from "react-i18next";
 
 import { useWallet } from "@/state/wallet";
 import {
+  createEcWallet,
   createWallet,
+  importEcPrivateKey,
   importPrivateKey,
   importOldWalletFile,
   isPlainWalletJson,
@@ -79,6 +81,7 @@ export default function KeysScreen() {
 
   // State for import private key flow
   const [importStep, setImportStep] = useState<ImportKeyStep>("idle");
+  const [importKind, setImportKind] = useState<"PQ" | "EC">("PQ");
   const [privateKeyInput, setPrivateKeyInput] = useState("");
   const [importedWallet, setImportedWallet] = useState<WalletFile | null>(null);
 
@@ -107,6 +110,24 @@ export default function KeysScreen() {
       setStep("created");
     } catch (error) {
       console.error("Error creating wallet:", error);
+      const msg = (error as Error).message;
+      setErrorMessage(t("keys.errCreate", { message: msg }));
+      Alert.alert(t("keys.errorHead"), t("keys.errCreate", { message: msg }));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [t]);
+
+  // Create a legacy EC wallet (Ethereum / TRON compatible).
+  const handleCreateEcWallet = useCallback(async () => {
+    setIsLoading(true);
+    setErrorMessage("");
+    try {
+      const wallet = createEcWallet();
+      setNewWallet(wallet);
+      setWalletAddress(wallet.wallet.address);
+      setStep("created");
+    } catch (error) {
       const msg = (error as Error).message;
       setErrorMessage(t("keys.errCreate", { message: msg }));
       Alert.alert(t("keys.errorHead"), t("keys.errCreate", { message: msg }));
@@ -260,6 +281,7 @@ export default function KeysScreen() {
     setLoadPassword("");
     setLoadedWallet(null);
     setImportStep("idle");
+    setImportKind("PQ");
     setPrivateKeyInput("");
     setImportedWallet(null);
     setLoadFileStep("idle");
@@ -392,8 +414,10 @@ export default function KeysScreen() {
     }
   }, [loadedFileContent, loadFilePassword, storeEncryptedWallet, t]);
 
-  // Start import private key flow
-  const handleStartImport = useCallback(() => {
+  // Start import private key flow (PQ by default, EC for Ethereum/TRON).
+  const handleStartImport = useCallback((kind: "PQ" | "EC" = "PQ") => {
+    setImportKind(kind);
+    setPrivateKeyInput("");
     setImportStep("enterKey");
     setErrorMessage("");
   }, []);
@@ -409,7 +433,7 @@ export default function KeysScreen() {
     setErrorMessage("");
 
     try {
-      const wallet = await importPrivateKey(privateKeyInput);
+      const wallet = importKind === "EC" ? importEcPrivateKey(privateKeyInput) : await importPrivateKey(privateKeyInput);
       setImportedWallet(wallet);
       setWalletAddress(wallet.wallet.address);
       setImportStep("enterPassword");
@@ -421,7 +445,7 @@ export default function KeysScreen() {
     } finally {
       setIsLoading(false);
     }
-  }, [privateKeyInput, t]);
+  }, [privateKeyInput, importKind, t]);
 
   // Save imported wallet
   const handleSaveImportedWallet = useCallback(async () => {
@@ -721,10 +745,28 @@ export default function KeysScreen() {
 
       <TouchableOpacity
         style={[styles.button, styles.buttonPrimary]}
-        onPress={handleStartImport}
+        onPress={() => handleStartImport("PQ")}
         disabled={isLoading}
       >
         <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.importKey")}</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.button, styles.buttonPrimary]}
+        onPress={handleCreateEcWallet}
+        disabled={isLoading}
+        testID="keys-create-ec"
+      >
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.createEc")}</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity
+        style={[styles.button, styles.buttonPrimary]}
+        onPress={() => handleStartImport("EC")}
+        disabled={isLoading}
+        testID="keys-import-ec"
+      >
+        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.importEcKey")}</Text>
       </TouchableOpacity>
 
       <TouchableOpacity
@@ -870,10 +912,10 @@ export default function KeysScreen() {
 
   const renderImportEnterKeyState = () => (
     <View style={styles.container}>
-      <Text style={styles.title}>{t("keys.importKey")}</Text>
+      <Text style={styles.title}>{importKind === "EC" ? t("keys.importEcKey") : t("keys.importKey")}</Text>
 
       <Text style={styles.description}>
-        {t("keys.importKeyDesc")}
+        {importKind === "EC" ? t("keys.importEcKeyDesc") : t("keys.importKeyDesc")}
       </Text>
 
       <View style={styles.inputGroup}>

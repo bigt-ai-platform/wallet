@@ -1,7 +1,9 @@
 # Ethereum in the wallet — plan (port of `../vmproject`'s ETH support)
 
-**Status: plan, not implemented.** Scope below is ETH + ERC-20 on EVM chains for
-**legacy EC wallets only**. Post-quantum (PQ, ML-DSA) wallets cannot use it: the
+**Status: P0–P2 implemented.** EC wallet creation/import, EVM balances, the
+deposit address/EIP-681 QR, EIP-1559 withdrawals for ETH + ERC-20, the Settings
+card and the `/eth` proxy are in the app (§11 lists what remains). Scope is
+ETH + ERC-20 on EVM chains for **legacy EC wallets only**. Post-quantum (PQ, ML-DSA) wallets cannot use it: the
 Bigtangle PQ key has no secp256k1 counterpart, so it cannot derive an Ethereum
 address or sign an Ethereum transaction.
 
@@ -281,3 +283,24 @@ Total ≈ 12–16 working days for P0–P3 + release.
 **See also:** [`docs/assets-deposit-withdraw.md`](./assets-deposit-withdraw.md)
 — the Binance-style Deposit / Withdraw surface for the other assets (network
 picker, memo/tag, fees/minimums, deposit history, TRON and Bitcoin phases).
+
+## 11. Implementation status (this release)
+
+| Piece | Where |
+|---|---|
+| Key → address, EIP-55 checksum | `expo-app/sources/lib/eth/address.ts` (+ tests, verified vectors) |
+| RLP + EIP-1559 signing (chain-id bound, low-S), signer recovery | `lib/eth/rlp.ts`, `lib/eth/tx.ts` (+ tests incl. `ecdsaRecover`) |
+| ERC-20 ABI (balanceOf/decimals/symbol/transfer) | `lib/eth/abi.ts` (+ tests) |
+| Amounts + EIP-681 URIs | `lib/eth/units.ts`, `lib/eth/eip681.ts` (+ tests) |
+| Chain registry (mainnet, Sepolia, USDT/USDC) | `lib/eth/chains.ts` |
+| JSON-RPC + per-device network/RPC settings + token list | `services/ethRpc.ts` |
+| Balances, fees, nonce, send (native + ERC-20), receipts | `services/eth.ts` |
+| Deposit/withdraw screen (EC gate, QR, fee, confirm, activity) | `expo-app/sources/app/ethereum.tsx` (sidebar → Ethereum) |
+| Settings → Ethereum (network, RPC, wallet address) | `app/(tabs)/settings.tsx` |
+| EC wallet create/import | `screens/wallet/WalletHelper.ts`, `screens/wallet/Keys.tsx` |
+| `/eth` same-origin proxy (provider key server-side) | `deploy/region.sh` (`ETH_RPC_URL` / `deploy/env/.env.eth.<region>`) |
+| e2e without a chain | `e2e/eth-rpc-mock.mjs`, `e2e/playwright/tests/ethereum.spec.ts` |
+
+Still to do: deposit history/indexer (tracked sends only today), ERC-20 logo/
+price metadata, gas presets, `eth_getLogs` incoming detection, TRON and Bitcoin
+phases, and a mainnet read-only smoke run.

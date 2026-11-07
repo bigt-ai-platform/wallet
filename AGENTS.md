@@ -439,3 +439,26 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   `PAYMENT_CLAIMED` transition where this wallet is the seller ("{{amount}}
   {{currency}} … check your {{rail}} account, then tap Confirm received")
   instead of the generic status line.
+
+## Notes as of 2026-11-07
+
+- **Ethereum (EVM) deposit/withdraw for legacy EC wallets** (docs/ethereum.md,
+  docs/assets-deposit-withdraw.md). The wallet's EC key is used directly as the
+  Ethereum key (vmproject parity): address = `0x` + keccak256(uncompressed
+  pubkey)[12..], EIP-55 display. PQ keys have no secp256k1 point, so the
+  Ethereum screen gates on `keyType === 'EC'` and points at Keys, which now
+  offers "Create legacy EC wallet (Ethereum)" and "Import EC key (Ethereum)"
+  (`createEcWallet`/`importEcPrivateKey` in `screens/wallet/WalletHelper.ts`).
+  Signing is EIP-1559 with the chain id (never vmproject's replayable legacy
+  tx), and the EC private key never leaves the device — only the signed raw
+  transaction is broadcast (unlike `getBalances`, which posts the key to L0).
+  Crypto uses libs already in the bundle: `secp256k1.ecdsaSign` (gives the
+  recovery id) and `@noble/hashes/sha3.js` keccak.
+- **`/eth` is a same-origin proxy.** `region.sh config_caddy` adds
+  `handle_path /eth/*` → `$ETH_RPC_URL` (env or `deploy/env/.env.eth.<region>`);
+  native builds use `https://wallet.bigt.ai/eth`. No provider key in the bundle.
+- **Testing without a chain**: `e2e/eth-rpc-mock.mjs` (deterministic balances/
+  fees/receipts, captures the raw tx) + `e2e/playwright/tests/ethereum.spec.ts`
+  inject a plain EC wallet (`0x4c08…` → `0x2c7536E3…`) and drive deposit +
+  withdraw. Unit tests: `expo-app/sources/lib/eth/__tests__/*` (address vectors,
+  EIP-55, RLP vectors, type-2 sign/recover/low-S, ERC-20 ABI, EIP-681, units).

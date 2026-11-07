@@ -1,6 +1,8 @@
 # Multi-asset deposit / withdraw (Binance-style) — plan
 
-**Status: plan.** This is the follow-up to [`docs/ethereum.md`](./ethereum.md):
+**Status: the EVM slice is implemented** (Ethereum mainnet/Sepolia: ETH, USDT,
+USDC deposit + withdraw, network picker, fee/minimum display, EC-only gate, e2e
+with a mock RPC). TRON and Bitcoin remain at plan stage. This is the follow-up to [`docs/ethereum.md`](./ethereum.md):
 that document brings **ETH + ERC-20** into the wallet for legacy EC keys; this
 one turns it into a **Binance-style Deposit / Withdraw surface for the other
 assets** (BTC, USDT on several networks, BSC/Polygon tokens, …), with the same

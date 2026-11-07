@@ -18,6 +18,14 @@ import {
   setSystemNotificationsEnabled,
 } from '@/services/systemNotifications';
 import { isDeviceUnlockSupported } from '@/services/deviceAuth';
+import {
+  getEthSettings,
+  selectableEthChains,
+  setEthNetwork,
+  setEthRpcUrl,
+} from '@/services/ethRpc';
+import { shortAddress } from '@/lib/eth/units';
+import { useWallet } from '@/state/wallet';
 import { getRememberDeviceUnlock, setRememberDeviceUnlock } from '@/services/walletRecall';
 import type { L1ChainConfig } from '@/types/api';
 
@@ -75,6 +83,9 @@ export default function SettingsScreen() {
   // folded away, and show it expanded only when there is no chain at all.
   const [chainsOpen, setChainsOpen] = React.useState(() => httpService.getL1Chains().length === 0);
   const [activeChainId, setActiveChainId] = React.useState(() => httpService.getActiveL1ChainId());
+  const [ethNetwork, setEthNetworkState] = React.useState(() => getEthSettings().network);
+  const [ethRpc, setEthRpcState] = React.useState(() => getEthSettings().rpcUrl);
+  const { publicInfo } = useWallet();
   const [newChainId, setNewChainId] = React.useState('');
   const [newChainName, setNewChainName] = React.useState('');
   const [newChainUrl, setNewChainUrl] = React.useState('');
@@ -128,6 +139,12 @@ export default function SettingsScreen() {
   const toggleRememberUnlock = (val: boolean) => {
     setRememberDeviceUnlock(val);
     setRememberUnlock(val);
+  };
+
+  const saveEthSettings = () => {
+    setEthNetwork(ethNetwork);
+    setEthRpcUrl(ethRpc);
+    Alert.alert(t('settings.saved'), t('settings.ethSaved'));
   };
 
   const saveServer = () => {
@@ -245,6 +262,34 @@ export default function SettingsScreen() {
       )}
 
       <View style={s.card}>
+        <Text style={s.cardLabel}>{t('settings.ethTitle')}</Text>
+        <Text style={s.settingDesc}>{t('settings.ethDesc')}</Text>
+        <View style={s.ethNetworks}>
+          {selectableEthChains().map((c) => (
+            <TouchableOpacity
+              key={c.id}
+              onPress={() => setEthNetworkState(c.id)}
+              style={[s.ethNetwork, ethNetwork === c.id && s.ethNetworkOn]}
+              accessibilityRole="button"
+              testID={`eth-network-${c.id}`}
+            >
+              <Text style={[s.ethNetworkText, ethNetwork === c.id && s.ethNetworkTextOn]}>{c.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <Text style={s.cardLabel}>{t('settings.ethRpc')}</Text>
+        <TextInput style={s.input} value={ethRpc} onChangeText={setEthRpcState}
+          placeholder={t('settings.ethRpcPh')} placeholderTextColor={s.placeholder.color}
+          autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="eth-rpc-input" />
+        <TouchableOpacity style={s.saveBtn} onPress={saveEthSettings} testID="eth-rpc-save">
+          <Text style={s.saveBtnText}>{t('settings.save')}</Text>
+        </TouchableOpacity>
+        {publicInfo?.address ? (
+          <Text style={s.settingDesc} testID="settings-eth-address">{t('settings.ethAccount', { address: shortAddress(publicInfo.address) })}</Text>
+        ) : null}
+      </View>
+
+      <View style={s.card}>
         <TouchableOpacity style={s.chainHeader} onPress={() => setChainsOpen((v) => !v)}
           accessibilityRole="button" accessibilityState={{ expanded: chainsOpen }} testID="l1-chains-toggle">
           <View style={s.settingLeft}>
@@ -329,6 +374,11 @@ const s = StyleSheet.create((theme) => ({
     borderWidth: 1, borderColor: theme.colors.card?.border ?? theme.colors.border, padding: 16, marginBottom: 12,
   },
   cardLabel: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginBottom: 10, textTransform: 'uppercase', letterSpacing: 0.5 },
+  ethNetworks: { flexDirection: 'row', gap: 8, marginBottom: 6 },
+  ethNetwork: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingVertical: 8, paddingHorizontal: 14 },
+  ethNetworkOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  ethNetworkText: { fontSize: 13, fontWeight: '600', color: theme.colors.text.primary },
+  ethNetworkTextOn: { color: '#FFFFFF' },
   settingRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   settingRowSpaced: { marginTop: 16 },
   settingLeft: { flex: 1, marginRight: 12 },
