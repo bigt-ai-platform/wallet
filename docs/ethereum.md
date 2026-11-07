@@ -300,7 +300,9 @@ picker, memo/tag, fees/minimums, deposit history, TRON and Bitcoin phases).
 | EC wallet create/import | `screens/wallet/WalletHelper.ts`, `screens/wallet/Keys.tsx` |
 | `/eth` same-origin proxy (provider key server-side) | `deploy/region.sh` (`ETH_RPC_URL` / `deploy/env/.env.eth.<region>`) |
 | e2e without a chain | `e2e/eth-rpc-mock.mjs`, `e2e/playwright/tests/ethereum.spec.ts` |
+| Gas presets (slow/standard/fast) | `getFeeData(chain, preset)` + chips in the withdraw form |
+| Deposit history (ERC-20) | `getIncomingTokenTransfers` — bounded `eth_getLogs` Transfer scan (last ~50k blocks) with a "Deposits" card; native-coin deposits still need a full block indexer |
 
-Still to do: deposit history/indexer (tracked sends only today), ERC-20 logo/
-price metadata, gas presets, `eth_getLogs` incoming detection, TRON and Bitcoin
-phases, and a mainnet read-only smoke run.
+Still to do: a native-deposit indexer (or an Etherscan-style history proxy),
+ERC-20 logo/price metadata, TRON and Bitcoin phases, and a mainnet read-only
+smoke run.

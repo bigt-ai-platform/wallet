@@ -13,6 +13,9 @@ import http from 'node:http';
 
 const USDT_BALANCE = 2_500_000n; // 2.5 USDT (6 decimals)
 const NATIVE_BALANCE = 10n ** 18n; // 1 ETH
+const USDT_CONTRACT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
+const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const DEPOSIT_FROM = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf';
 
 function word(value) {
   return `0x${value.toString(16).padStart(64, '0')}`;
@@ -56,6 +59,31 @@ export function startEthRpcMock(port = 0) {
           case 'eth_chainId':
             result = '0x1';
             break;
+          case 'eth_blockNumber':
+            result = '0x1000';
+            break;
+          case 'eth_getLogs': {
+            const topics = params[0]?.topics || [];
+            // One incoming 1 USDT transfer, only for a Transfer-to filter.
+            result =
+              topics[0] === TRANSFER_TOPIC && topics[2]
+                ? [
+                    {
+                      address: USDT_CONTRACT,
+                      topics: [
+                        TRANSFER_TOPIC,
+                        `0x${'0'.repeat(24)}${DEPOSIT_FROM.slice(2)}`,
+                        topics[2],
+                      ],
+                      data: word(1_000_000n),
+                      blockNumber: '0xff0',
+                      transactionHash: `0x${'ef'.repeat(32)}`,
+                      logIndex: '0x1',
+                    },
+                  ]
+                : [];
+            break;
+          }
           case 'eth_getBalance':
             result = `0x${NATIVE_BALANCE.toString(16)}`;
             break;
@@ -131,7 +159,13 @@ export function startEthRpcMock(port = 0) {
       resolve({
         url: `http://127.0.0.1:${actual}`,
         sent,
-        close: () => new Promise((r) => server.close(r)),
+        // The page's keep-alive sockets would otherwise hold server.close()
+        // open for ~90 s at the end of the test.
+        close: () =>
+          new Promise((r) => {
+            server.closeAllConnections?.();
+            server.close(r);
+          }),
       });
     });
   });

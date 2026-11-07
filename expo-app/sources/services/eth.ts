@@ -46,6 +46,18 @@ export interface EthFeeData {
   maxPriorityFeePerGas: bigint;
 }
 
+/**
+ * Fee presets, Binance-style: the priority fee is scaled around the network
+ * median while maxFee keeps the 2x base-fee headroom.
+ */
+export type GasPreset = 'slow' | 'standard' | 'fast';
+
+const PRESET_PRIORITY: Record<GasPreset, { num: bigint; den: bigint }> = {
+  slow: { num: 8n, den: 10n },
+  standard: { num: 1n, den: 1n },
+  fast: { num: 15n, den: 10n },
+};
+
 function toQuantity(value: bigint | number): string {
   const big = typeof value === 'number' ? BigInt(value) : value;
   return `0x${big.toString(16)}`;
@@ -144,8 +156,16 @@ export async function loadBalances(
 }
 
 /** EIP-1559 fees: base fee from the latest block plus a priority fee. */
-export async function getFeeData(chain?: EthChain): Promise<EthFeeData> {
+export async function getFeeData(
+  chain?: EthChain,
+  preset: GasPreset = 'standard'
+): Promise<EthFeeData> {
   chainOr(chain);
+  const scale = PRESET_PRIORITY[preset];
+  const scaled = (value: bigint): bigint => {
+    const next = (value * scale.num) / scale.den;
+    return next > 0n ? next : 1_000_000_000n;
+  };
   try {
     const history = await ethRpc<{
       baseFeePerGas?: string[];
@@ -158,14 +178,16 @@ export async function getFeeData(chain?: EthChain): Promise<EthFeeData> {
       ? rewards.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))[Math.floor(rewards.length / 2)]
       : 1_000_000_000n;
     if (base > 0n) {
-      return { maxPriorityFeePerGas: priority, maxFeePerGas: base * 2n + priority };
+      const tip = scaled(priority);
+      return { maxPriorityFeePerGas: tip, maxFeePerGas: base * 2n + tip };
     }
   } catch {
     /* fall back to eth_gasPrice */
   }
   const gasPrice = fromQuantity(await ethRpc<string>('eth_gasPrice'));
   const price = gasPrice > 0n ? gasPrice : 20_000_000_000n;
-  return { maxPriorityFeePerGas: price, maxFeePerGas: price };
+  const tip = scaled(price);
+  return { maxPriorityFeePerGas: tip, maxFeePerGas: tip };
 }
 
 export interface TransferRequest {
@@ -176,6 +198,8 @@ export interface TransferRequest {
   chain?: EthChain;
   /** Estimate multiplied up for safety; defaults to 1.2x with a floor. */
   gasLimitOverride?: bigint;
+  /** Fee preset (defaults to standard). */
+  preset?: GasPreset;
 }
 
 export interface PreparedTransfer {
@@ -203,7 +227,7 @@ async function prepare(
   if (!isAddress(to)) throw new Error('Invalid recipient address');
   if (sameAddress(from, to)) throw new Error('Cannot send to your own address');
 
-  const fee = await getFeeData(chain);
+  const fee = await getFeeData(chain, req.preset ?? 'standard');
   const estimate = await ethRpc<string>('eth_estimateGas', [
     {
       from,
@@ -284,6 +308,97 @@ export async function sendTokenTransfer(
   const tokenBalance = await getErc20Balance(req.token.address, prepared.from, chain);
   if (req.amount > tokenBalance) throw new Error('Insufficient token balance');
   return broadcast(prepared, req.privateKeyHex, chain);
+}
+
+/** keccak256("Transfer(address,address,uint256)") */
+const TRANSFER_TOPIC =
+  '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+export interface IncomingTransfer {
+  hash: string;
+  blockNumber: number;
+  logIndex: number;
+  token: EthToken;
+  from: string;
+  to: string;
+  amount: bigint;
+}
+
+/**
+ * Incoming ERC-20 deposits: `eth_getLogs` for Transfer events addressed to the
+ * account, newest first. Native-coin deposits cannot be found this way — they
+ * need a full block indexer — so the list covers tokens only (the screen says
+ * so). The scan is bounded to the recent window: public RPCs cap the block
+ * range per call, and the wallet has no indexer of its own yet.
+ */
+export async function getIncomingTokenTransfers(
+  address: string,
+  chain?: EthChain,
+  opts: { lookbackBlocks?: number; chunkBlocks?: number } = {}
+): Promise<IncomingTransfer[]> {
+  const c = chainOr(chain);
+  const to = requireAddress(address);
+  const tokens = getEthTokens(c);
+  const topicTo = `0x${'0'.repeat(24)}${stripHexPrefix(to).toLowerCase()}`;
+  const latest = Number(fromQuantity(await ethRpc<string>('eth_blockNumber')));
+  const lookback = opts.lookbackBlocks ?? 50_000;
+  const chunk = opts.chunkBlocks ?? 2_000;
+  const from = Math.max(0, latest - lookback);
+
+  const ranges: Array<[number, number]> = [];
+  for (let start = from; start <= latest; start += chunk) {
+    ranges.push([start, Math.min(latest, start + chunk - 1)]);
+  }
+
+  type Log = {
+    address: string;
+    topics: string[];
+    data: string;
+    blockNumber: string;
+    transactionHash: string;
+    logIndex: string;
+  };
+  const logs: Log[] = [];
+  // Sequential in small batches: public endpoints rate-limit bursts of getLogs.
+  for (let i = 0; i < ranges.length; i += 4) {
+    const batch = ranges.slice(i, i + 4).map(([a, b]) =>
+      ethRpc<Log[]>('eth_getLogs', [
+        {
+          fromBlock: toQuantity(a),
+          toBlock: toQuantity(b),
+          topics: [TRANSFER_TOPIC, null, topicTo],
+        },
+      ]).catch(() => [] as Log[])
+    );
+    for (const part of await Promise.all(batch)) logs.push(...part);
+  }
+
+  const byAddress = new Map(tokens.map((t) => [t.address.toLowerCase(), t]));
+  const out: IncomingTransfer[] = [];
+  for (const log of logs) {
+    // Transfer(address,address,uint256): the value is the only data word.
+    const amount = decodeUint(log.data);
+    if (amount <= 0n) continue;
+    const tokenAddress = requireAddress(log.address);
+    let token = byAddress.get(tokenAddress.toLowerCase());
+    if (!token) {
+      token = await getErc20Meta(tokenAddress, c).catch(() => undefined);
+      if (!token) continue;
+      byAddress.set(tokenAddress.toLowerCase(), token);
+    }
+    const fromTopic = log.topics?.[1] ?? '';
+    out.push({
+      hash: log.transactionHash,
+      blockNumber: Number(fromQuantity(log.blockNumber)),
+      logIndex: Number(fromQuantity(log.logIndex)),
+      token,
+      from: `0x${fromTopic.slice(26)}`,
+      to,
+      amount,
+    });
+  }
+  out.sort((a, b) => b.blockNumber - a.blockNumber || b.logIndex - a.logIndex);
+  return out;
 }
 
 /** Receipt status, or null while the transaction is still pending. */

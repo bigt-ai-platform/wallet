@@ -50,6 +50,9 @@ test.describe('Ethereum deposit / withdraw', () => {
       await expect(page.getByTestId('eth-asset-ETH')).toContainText('1');
       await expect(page.getByTestId('eth-asset-USDT')).toContainText('2.5');
 
+      // Deposit history: the mock returns one incoming 1 USDT transfer.
+      await expect(page.getByTestId('eth-deposits')).toContainText('+1 USDT', { timeout: 20000 });
+
       // Deposit: address card + QR + network warning.
       await page.getByTestId('eth-deposit-ETH').click();
       await expect(page.getByTestId('eth-deposit-card')).toBeAttached();
@@ -63,6 +66,10 @@ test.describe('Ethereum deposit / withdraw', () => {
       await page.getByTestId('eth-withdraw-to').fill(RECIPIENT);
       await page.getByTestId('eth-withdraw-amount').fill('1.5');
       await expect(page.getByTestId('eth-fee')).toContainText('Network fee up to', { timeout: 15000 });
+      // Gas presets: switching to Fast re-estimates with a higher tip.
+      const standardFee = await page.getByTestId('eth-fee').innerText();
+      await page.getByTestId('eth-gas-fast').click();
+      await expect(page.getByTestId('eth-fee')).not.toHaveText(standardFee, { timeout: 15000 });
       await page.getByTestId('eth-withdraw-submit').click();
 
       await expect(page.getByTestId('eth-screen')).toContainText('Transaction sent', { timeout: 20000 });

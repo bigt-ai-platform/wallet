@@ -470,3 +470,11 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   inject a plain EC wallet (`0x4c08…` → `0x2c7536E3…`) and drive deposit +
   withdraw. Unit tests: `expo-app/sources/lib/eth/__tests__/*` (address vectors,
   EIP-55, RLP vectors, type-2 sign/recover/low-S, ERC-20 ABI, EIP-681, units).
+- **Ethereum history + gas presets.** Deposit history is
+  `getIncomingTokenTransfers` (ERC-20 `Transfer` logs only): a bounded
+  `eth_getLogs` scan of the last ~50k blocks in 2k chunks, 4 calls in flight,
+  because public RPCs cap the range and the wallet has no indexer yet. Native
+  ETH deposits are **not** discoverable this way (they need a block indexer), so
+  the "Deposits" card says tokens only. Fees have Binance-style
+  slow/standard/fast presets (priority ×0.8/1/1.5, maxFee keeps the 2× base
+  headroom). Both are covered by the mock + spec.

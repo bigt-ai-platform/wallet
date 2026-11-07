@@ -12,9 +12,10 @@ import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
 import { notifySystemMessage } from '@/services/systemMessages';
 import {
-  accountFromPrivateKey, assetsOf, getErc20Meta, loadBalances,
+  accountFromPrivateKey, assetsOf, getErc20Meta, getIncomingTokenTransfers, loadBalances,
   prepareNativeTransfer, prepareTokenTransfer, sendNativeTransfer, sendTokenTransfer,
-  waitForReceipt, type EthAsset, type EthAssetBalance, type PreparedTransfer,
+  waitForReceipt, type EthAsset, type EthAssetBalance, type GasPreset,
+  type IncomingTransfer, type PreparedTransfer,
 } from '@/services/eth';
 import {
   addEthToken, ETH_RPC_NOT_CONFIGURED, getEthChain, isEthRpcConfigured, removeEthToken,
@@ -70,6 +71,9 @@ export default function EthereumScreen() {
   const [amount, setAmount] = React.useState('');
   const [prepared, setPrepared] = React.useState<PreparedTransfer | null>(null);
   const [preparing, setPreparing] = React.useState(false);
+  const [preset, setPreset] = React.useState<GasPreset>('standard');
+  const [deposits, setDeposits] = React.useState<IncomingTransfer[]>([]);
+  const [depositsLoading, setDepositsLoading] = React.useState(false);
   const [sending, setSending] = React.useState(false);
   const [activity, setActivity] = React.useState<ActivityItem[]>([]);
 
@@ -110,6 +114,27 @@ export default function EthereumScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account, chain.id, isUnlocked]);
 
+  // Incoming ERC-20 deposits (bounded eth_getLogs scan; no indexer yet).
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!account || !isEthRpcConfigured()) return;
+    setDepositsLoading(true);
+    getIncomingTokenTransfers(account, chain)
+      .then((rows) => {
+        if (!cancelled) setDeposits(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDeposits([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDepositsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, chain.id, balances.length]);
+
   // Recompute the fee preview whenever the withdraw inputs change.
   React.useEffect(() => {
     let cancelled = false;
@@ -125,7 +150,7 @@ export default function EthereumScreen() {
     setPreparing(true);
     const run = async () => {
       try {
-        const req = { privateKeyHex: privateKey, to, amount: raw, chain };
+        const req = { privateKeyHex: privateKey, to, amount: raw, chain, preset };
         const next = withdraw.token
           ? await prepareTokenTransfer({ ...req, token: withdraw.token })
           : await prepareNativeTransfer(req);
@@ -141,7 +166,7 @@ export default function EthereumScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [withdraw?.key, to, amount, chain.id, isEc, privateKey]);
+  }, [withdraw?.key, to, amount, chain.id, isEc, privateKey, preset]);
 
   const copy = async (value: string) => {
     await Clipboard.setStringAsync(value);
@@ -385,6 +410,28 @@ export default function EthereumScreen() {
               ) : null}
             </View>
 
+            <View style={s.card} testID="eth-deposits">
+              <Text style={s.cardTitle}>{t('eth.deposits')}</Text>
+              <Text style={s.meta}>{t('eth.depositNote')}</Text>
+              {depositsLoading && deposits.length === 0 ? (
+                <Text style={s.meta}>{t('eth.scanning')}</Text>
+              ) : deposits.length === 0 ? (
+                <Text style={s.meta}>{t('eth.emptyDeposits')}</Text>
+              ) : (
+                deposits.map((d) => (
+                  <View key={`${d.hash}:${d.logIndex}`} style={s.activityRow} testID="eth-deposit-row">
+                    <Text style={s.assetBalance}>
+                      +{formatUnits(d.amount, d.token.decimals, locale)} {d.token.symbol}
+                    </Text>
+                    <Text style={s.meta}>{t('eth.depositFrom', { address: shortAddress(d.from) })}</Text>
+                    <Text style={s.hash} selectable onPress={() => void copy(ethExplorerTx(chain, d.hash))}>
+                      {t('eth.depositBlock', { block: d.blockNumber })} · {shortHex(d.hash)}
+                    </Text>
+                  </View>
+                ))
+              )}
+            </View>
+
             {deposit ? (
               <View style={s.card} testID="eth-deposit-card">
                 <Text style={s.cardTitle}>{t('eth.depositTitle', { symbol: deposit.symbol })}</Text>
@@ -441,6 +488,22 @@ export default function EthereumScreen() {
                       })
                       : t('eth.feeUnknown')}
                 </Text>
+                <Text style={s.label}>{t('eth.gasPreset')}</Text>
+                <View style={s.row} testID="eth-gas-presets">
+                  {(['slow', 'standard', 'fast'] as GasPreset[]).map((p) => (
+                    <TouchableOpacity
+                      key={p}
+                      onPress={() => setPreset(p)}
+                      style={[s.btnSmall, preset === p && s.presetOn]}
+                      accessibilityRole="button"
+                      testID={`eth-gas-${p}`}
+                    >
+                      <Text style={[s.btnSmallText, preset === p && s.presetTextOn]}>
+                        {t(`eth.gas_${p}`)}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
                 <View style={s.row}>
                   <TouchableOpacity
                     style={[s.btn, sending && s.btnDisabled]}
@@ -534,6 +597,8 @@ const s = StyleSheet.create((theme) => ({
   activityRow: { paddingVertical: 6, borderTopWidth: 1, borderTopColor: theme.colors.border, gap: 2 },
   hash: { fontFamily: MONO_FONT, fontSize: 11, color: theme.colors.text.link },
   remove: { fontSize: 16, fontWeight: '700', color: theme.colors.text.secondary, paddingHorizontal: 4 },
+  presetOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
+  presetTextOn: { color: '#FFFFFF' },
   input: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.background, color: theme.colors.text.primary, padding: 10, fontSize: 13 },
   addBox: { marginTop: 8 },
   qrBox: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 10, padding: 12, marginVertical: 8 },
