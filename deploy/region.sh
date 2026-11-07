@@ -274,6 +274,14 @@ config_caddy() {
     local eth_host
     eth_host="$(printf '%s' "$ETH_RPC_URL" | sed -E 's#^https?://##; s#/.*$##')"
     eth_route="    # Ethereum JSON-RPC (same-origin /eth, provider key stays server-side).
+    # The app POSTs to the bare /eth base; also cover /eth/<path> so a proxy
+    # base with a path prefix works. (Note: /ethereum is the SPA route and must
+    # NOT match — hence the exact + wildcard pair rather than /eth*.)
+    handle_path /eth {
+        reverse_proxy ${ETH_RPC_URL} {
+            header_up Host ${eth_host}
+        }
+    }
     handle_path /eth/* {
         reverse_proxy ${ETH_RPC_URL} {
             header_up Host ${eth_host}

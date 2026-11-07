@@ -455,8 +455,16 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   Crypto uses libs already in the bundle: `secp256k1.ecdsaSign` (gives the
   recovery id) and `@noble/hashes/sha3.js` keccak.
 - **`/eth` is a same-origin proxy.** `region.sh config_caddy` adds
-  `handle_path /eth/*` → `$ETH_RPC_URL` (env or `deploy/env/.env.eth.<region>`);
-  native builds use `https://wallet.bigt.ai/eth`. No provider key in the bundle.
+  `handle_path /eth` **and** `handle_path /eth/*` → `$ETH_RPC_URL`
+  (`region.conf` default `https://ethereum-rpc.publicnode.com`, override with the
+  env, or `deploy/env/.env.eth.<region>`); native builds use
+  `https://wallet.bigt.ai/eth`. No provider key in the bundle. Both matchers are
+  needed and both must use `handle_path`: the app POSTs to the bare `/eth`, which
+  `handle_path /eth/*` does not match, and a plain `handle /eth` leaves the
+  `/eth` prefix on the upstream path (publicnode answers
+  `{"error":{"code":-32001,"message":"Resource not found"}}`). `/ethereum` is the
+  SPA route, so `/eth*` must not be used. The Caddy `reverse_proxy` sets
+  `header_up Host <provider host>` — public endpoints reject a foreign Host.
 - **Testing without a chain**: `e2e/eth-rpc-mock.mjs` (deterministic balances/
   fees/receipts, captures the raw tx) + `e2e/playwright/tests/ethereum.spec.ts`
   inject a plain EC wallet (`0x4c08…` → `0x2c7536E3…`) and drive deposit +
