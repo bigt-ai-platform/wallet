@@ -374,8 +374,13 @@ export async function getIncomingTokenTransfers(
   }
 
   const byAddress = new Map(tokens.map((t) => [t.address.toLowerCase(), t]));
+  const seen = new Set<string>();
   const out: IncomingTransfer[] = [];
   for (const log of logs) {
+    // Overlapping/duplicated ranges must not list the same transfer twice.
+    const key = `${log.transactionHash}:${log.logIndex}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     // Transfer(address,address,uint256): the value is the only data word.
     const amount = decodeUint(log.data);
     if (amount <= 0n) continue;

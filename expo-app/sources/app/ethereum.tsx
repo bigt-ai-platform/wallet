@@ -82,7 +82,9 @@ export default function EthereumScreen() {
   const [tokenAddress, setTokenAddress] = React.useState('');
   const [adding, setAdding] = React.useState(false);
 
-  const assets = React.useMemo(() => assetsOf(chain), [chain]);
+  // Read on every render: adding/removing a token must show up immediately
+  // (the device token list is not part of the chain object).
+  const assets = assetsOf(chain);
   const balanceOf = (asset: EthAsset): bigint =>
     balances.find((b) => b.asset.key === asset.key)?.raw ?? 0n;
 

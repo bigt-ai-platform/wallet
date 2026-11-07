@@ -16,6 +16,9 @@ const NATIVE_BALANCE = 10n ** 18n; // 1 ETH
 const USDT_CONTRACT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
 const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 const DEPOSIT_FROM = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf';
+/** Custom token used by the "add token" spec (not in the built-in list). */
+const CUSTOM_TOKEN = '0x1111111111111111111111111111111111111111';
+const CUSTOM_SYMBOL = 'TESTX';
 
 function word(value) {
   return `0x${value.toString(16).padStart(64, '0')}`;
@@ -64,9 +67,14 @@ export function startEthRpcMock(port = 0) {
             break;
           case 'eth_getLogs': {
             const topics = params[0]?.topics || [];
-            // One incoming 1 USDT transfer, only for a Transfer-to filter.
+            const from = Number(BigInt(params[0]?.fromBlock || '0x0'));
+            const to = Number(BigInt(params[0]?.toBlock || '0x0'));
+            const inRange = from <= 0xff0 && 0xff0 <= to;
+            // One incoming 1 USDT transfer, only for a Transfer-to filter and
+            // only for the chunk that contains its block (real nodes never
+            // repeat the same log across ranges).
             result =
-              topics[0] === TRANSFER_TOPIC && topics[2]
+              inRange && topics[0] === TRANSFER_TOPIC && topics[2]
                 ? [
                     {
                       address: USDT_CONTRACT,
@@ -89,10 +97,17 @@ export function startEthRpcMock(port = 0) {
             break;
           case 'eth_call': {
             const data = params[0]?.data || '0x';
-            if (data.startsWith('0x70a08231')) result = word(USDT_BALANCE);
-            else if (data.startsWith('0x313ce567')) result = word(6n);
-            else if (data.startsWith('0x95d89b41')) result = abiString('USDT');
-            else result = word(0n);
+            const to = String(params[0]?.to || '').toLowerCase();
+            const custom = to === CUSTOM_TOKEN;
+            if (data.startsWith('0x70a08231')) {
+              result = word(custom ? 0n : USDT_BALANCE);
+            } else if (data.startsWith('0x313ce567')) {
+              result = word(custom ? 8n : 6n);
+            } else if (data.startsWith('0x95d89b41')) {
+              result = abiString(custom ? CUSTOM_SYMBOL : 'USDT');
+            } else {
+              result = word(0n);
+            }
             break;
           }
           case 'eth_feeHistory':
