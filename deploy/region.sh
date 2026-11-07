@@ -271,9 +271,13 @@ config_caddy() {
   fi
   local eth_route=""
   if [ -n "${ETH_RPC_URL:-}" ]; then
+    local eth_host
+    eth_host="$(printf '%s' "$ETH_RPC_URL" | sed -E 's#^https?://##; s#/.*$##')"
     eth_route="    # Ethereum JSON-RPC (same-origin /eth, provider key stays server-side).
     handle_path /eth/* {
-        reverse_proxy ${ETH_RPC_URL}
+        reverse_proxy ${ETH_RPC_URL} {
+            header_up Host ${eth_host}
+        }
     }"
   fi
   echo -e "${GREEN}--- Caddy vhosts for $dom on $(vm_ip "$r") ---${NC}"
