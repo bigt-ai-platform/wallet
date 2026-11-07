@@ -12,10 +12,10 @@ import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
 import { notifySystemMessage } from '@/services/systemMessages';
 import {
-  accountFromPrivateKey, assetsOf, getErc20Meta, getIncomingTokenTransfers, loadBalances,
+  accountFromPrivateKey, assetsOf, getErc20Meta, getIncomingDeposits, loadBalances,
   prepareNativeTransfer, prepareTokenTransfer, sendNativeTransfer, sendTokenTransfer,
-  waitForReceipt, type EthAsset, type EthAssetBalance, type GasPreset,
-  type IncomingTransfer, type PreparedTransfer,
+  waitForReceipt, type DepositRow, type EthAsset, type EthAssetBalance, type GasPreset,
+  type PreparedTransfer,
 } from '@/services/eth';
 import {
   addEthToken, ETH_RPC_NOT_CONFIGURED, getEthChain, isEthRpcConfigured, removeEthToken,
@@ -72,7 +72,8 @@ export default function EthereumScreen() {
   const [prepared, setPrepared] = React.useState<PreparedTransfer | null>(null);
   const [preparing, setPreparing] = React.useState(false);
   const [preset, setPreset] = React.useState<GasPreset>('standard');
-  const [deposits, setDeposits] = React.useState<IncomingTransfer[]>([]);
+  const [deposits, setDeposits] = React.useState<DepositRow[]>([]);
+  const [depositsTick, setDepositsTick] = React.useState(0);
   const [depositsLoading, setDepositsLoading] = React.useState(false);
   const [sending, setSending] = React.useState(false);
   const [activity, setActivity] = React.useState<ActivityItem[]>([]);
@@ -99,6 +100,9 @@ export default function EthereumScreen() {
     try {
       const rows = await loadBalances(account, chain);
       setBalances(rows);
+      // Re-read the deposit list on every explicit refresh (a new deposit does
+      // not change the number of assets).
+      setDepositsTick((t) => t + 1);
     } catch (e) {
       const msg = (e as Error).message;
       setError(msg === ETH_RPC_NOT_CONFIGURED || !msg ? t('eth.notConfigured') : msg);
@@ -116,12 +120,12 @@ export default function EthereumScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account, chain.id, isUnlocked]);
 
-  // Incoming ERC-20 deposits (bounded eth_getLogs scan; no indexer yet).
+  // Incoming deposits: native transfers via the address index + ERC-20 logs.
   React.useEffect(() => {
     let cancelled = false;
     if (!account || !isEthRpcConfigured()) return;
     setDepositsLoading(true);
-    getIncomingTokenTransfers(account, chain)
+    getIncomingDeposits(account, chain)
       .then((rows) => {
         if (!cancelled) setDeposits(rows);
       })
@@ -135,7 +139,7 @@ export default function EthereumScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account, chain.id, balances.length]);
+  }, [account, chain.id, depositsTick]);
 
   // Recompute the fee preview whenever the withdraw inputs change.
   React.useEffect(() => {
@@ -420,12 +424,12 @@ export default function EthereumScreen() {
               ) : deposits.length === 0 ? (
                 <Text style={s.meta}>{t('eth.emptyDeposits')}</Text>
               ) : (
-                deposits.map((d) => (
-                  <View key={`${d.hash}:${d.logIndex}`} style={s.activityRow} testID="eth-deposit-row">
+                deposits.map((d, i) => (
+                  <View key={`${d.hash}:${d.kind}:${i}`} style={s.activityRow} testID="eth-deposit-row">
                     <Text style={s.assetBalance}>
-                      +{formatUnits(d.amount, d.token.decimals, locale)} {d.token.symbol}
+                      +{formatUnits(d.amount, d.decimals, locale)} {d.symbol}
                     </Text>
-                    <Text style={s.meta}>{t('eth.depositFrom', { address: shortAddress(d.from) })}</Text>
+                    <Text style={s.meta}>{t('eth.depositFrom', { address: shortAddress(d.from || '…') })}</Text>
                     <Text style={s.hash} selectable onPress={() => void copy(ethExplorerTx(chain, d.hash))}>
                       {t('eth.depositBlock', { block: d.blockNumber })} · {shortHex(d.hash)}
                     </Text>

@@ -311,8 +311,15 @@ picker, memo/tag, fees/minimums, deposit history, TRON and Bitcoin phases).
 | `/eth` same-origin proxy (provider key server-side) | `deploy/region.sh` (`ETH_RPC_URL` / `deploy/env/.env.eth.<region>`) |
 | e2e without a chain | `e2e/eth-rpc-mock.mjs`, `e2e/playwright/tests/ethereum.spec.ts` |
 | Gas presets (slow/standard/fast) | `getFeeData(chain, preset)` + chips in the withdraw form |
-| Deposit history (ERC-20) | `getIncomingTokenTransfers` — bounded `eth_getLogs` Transfer scan (last ~50k blocks) with a "Deposits" card; native-coin deposits still need a full block indexer |
+| Deposit history | `getIncomingDeposits` merges **native ETH** (Blockscout-compatible address index behind `/ethindex`) with **ERC-20** `Transfer` logs (bounded `eth_getLogs` scan, last ~50k blocks); both feed the "Deposits" card |
 
-Still to do: a native-deposit indexer (or an Etherscan-style history proxy),
-ERC-20 logo/price metadata, TRON and Bitcoin phases, and a mainnet read-only
-smoke run.
+Still to do: ERC-20 logo/price metadata, TRON and Bitcoin phases, and a
+mainnet read-only smoke run (the npm-run smoke exists:
+`ETH_PROD=1 npx playwright test ethereum-prod.spec.ts`).
+
+Transport: `/eth` (JSON-RPC) and `/ethindex` (address index) are same-origin
+proxies on the web build, region-host URLs on native; `ETH_RPC_URL` /
+`ETH_INDEX_URL` in `deploy/region.conf` (or `deploy/env/.env.eth.<region>`)
+point them at a provider or your own node/indexer. The app also accepts a
+per-device RPC override (Settings → Ethereum) and an index override in the
+stored `eth.settings` (`indexUrl`).

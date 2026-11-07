@@ -8,7 +8,10 @@
  */
 
 import { device } from '@/storage';
-import { defaultEthRpcUrl, findEthChain, ETH_CHAINS, type EthChain, type EthToken } from '@/lib/eth/chains';
+import {
+  defaultEthIndexUrl, defaultEthRpcUrl, findEthChain, ETH_CHAINS,
+  type EthChain, type EthToken,
+} from '@/lib/eth/chains';
 import { isAddress } from '@/lib/eth/address';
 
 const SETTINGS_KEY = ['eth', 'settings'];
@@ -18,6 +21,8 @@ export interface EthSettings {
   network: 'mainnet' | 'sepolia';
   /** Empty = use the platform default (proxy). */
   rpcUrl: string;
+  /** Address index for native deposit history; empty = platform default. */
+  indexUrl: string;
 }
 
 /** Error code used when the endpoint is missing or is not a JSON-RPC proxy. */
@@ -41,12 +46,13 @@ export function getEthSettings(): EthSettings {
       return {
         network: parsed.network === 'sepolia' ? 'sepolia' : 'mainnet',
         rpcUrl: typeof parsed.rpcUrl === 'string' ? parsed.rpcUrl : '',
+        indexUrl: typeof parsed.indexUrl === 'string' ? parsed.indexUrl : '',
       };
     } catch {
       /* fall through to defaults */
     }
   }
-  return { network: 'mainnet', rpcUrl: '' };
+  return { network: 'mainnet', rpcUrl: '', indexUrl: '' };
 }
 
 function writeSettings(next: EthSettings): void {
@@ -61,6 +67,11 @@ export function setEthRpcUrl(rpcUrl: string): void {
   writeSettings({ ...getEthSettings(), rpcUrl: rpcUrl.trim() });
 }
 
+/** Empty restores the platform default index. */
+export function setEthIndexUrl(indexUrl: string): void {
+  writeSettings({ ...getEthSettings(), indexUrl: indexUrl.trim() });
+}
+
 export function getEthChain(): EthChain {
   return findEthChain(getEthSettings().network);
 }
@@ -73,6 +84,12 @@ export function ethRpcUrl(): string {
 
 export function isEthRpcConfigured(): boolean {
   return ethRpcUrl().length > 0;
+}
+
+/** Address-index base for native transfer history (Blockscout-compatible). */
+export function ethIndexUrl(): string {
+  const custom = getEthSettings().indexUrl.trim();
+  return custom || process.env.EXPO_PUBLIC_ETH_INDEX_URL || defaultEthIndexUrl();
 }
 
 /** Built-in tokens of the chain plus the ones the user added by contract. */

@@ -270,6 +270,17 @@ config_caddy() {
     ETH_RPC_URL="$(grep -E '^ETH_RPC_URL=' "$eth_env" | tail -1 | cut -d= -f2- | tr -d '\r\"' || true)"
   fi
   local eth_route=""
+  local eth_index_route=""
+  if [ -n "${ETH_INDEX_URL:-}" ]; then
+    local eth_index_host
+    eth_index_host="$(printf '%s' "$ETH_INDEX_URL" | sed -E 's#^https?://##; s#/.*$##')"
+    eth_index_route="    # Address index for native deposit history (docs/ethereum.md).
+    handle_path /ethindex/* {
+        reverse_proxy ${ETH_INDEX_URL} {
+            header_up Host ${eth_index_host}
+        }
+    }"
+  fi
   if [ -n "${ETH_RPC_URL:-}" ]; then
     local eth_host
     eth_host="$(printf '%s' "$ETH_RPC_URL" | sed -E 's#^https?://##; s#/.*$##')"
@@ -329,6 +340,7 @@ ${dom}, www.${dom} {
         reverse_proxy ${L1_API}
     }
 ${eth_route}
+${eth_index_route}
     # P2P settlement engine (services/p2p-engine) — ONE shared engine for every
     # region (region.conf P2P_REGION). The host region proxies to its local
     # container and strips /p2p (the engine serves /orders…); other regions
@@ -400,6 +412,7 @@ ${apex}, www.${apex} {
         reverse_proxy ${L1_API}
     }
 ${eth_route}
+${eth_index_route}
     # P2P settlement engine (services/p2p-engine) — ONE shared engine for every
     # region (region.conf P2P_REGION). The host region proxies to its local
     # container and strips /p2p (the engine serves /orders…); other regions

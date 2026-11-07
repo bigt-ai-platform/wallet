@@ -37,6 +37,19 @@ export const ETH_PROXY_URL = 'https://wallet.bigt.ai/eth';
 /** Same-origin path on the web production build (`deploy/region.sh`). */
 export const ETH_PROXY_PATH = '/eth';
 
+/**
+ * Address-index proxy (Blockscout-compatible): the JSON-RPC node cannot list an
+ * address's native transfers, so deposit history reads this index. Same-origin
+ * on web, the region host on native, `EXPO_PUBLIC_ETH_INDEX_URL` overrides.
+ */
+export const ETH_INDEX_PROXY_PATH = '/ethindex';
+export const ETH_INDEX_PROXY_URL = 'https://wallet.bigt.ai/ethindex';
+
+export function defaultEthIndexUrl(): string {
+  if (process.env.EXPO_PUBLIC_ETH_INDEX_URL) return process.env.EXPO_PUBLIC_ETH_INDEX_URL;
+  return IS_WEB_BROWSER ? ETH_INDEX_PROXY_PATH : ETH_INDEX_PROXY_URL;
+}
+
 /** Base URL for the JSON-RPC proxy on the current platform. */
 export function defaultEthRpcUrl(): string {
   if (process.env.EXPO_PUBLIC_ETH_RPC_URL) return process.env.EXPO_PUBLIC_ETH_RPC_URL;

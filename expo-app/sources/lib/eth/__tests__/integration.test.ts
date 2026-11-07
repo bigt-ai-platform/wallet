@@ -183,7 +183,7 @@ suite('Ethereum signer against a real EVM (anvil)', () => {
       'eth_getLogs',
       [
         {
-          fromBlock: q(deployed.blockNumber),
+          fromBlock: q(BigInt(deployed.blockNumber)),
           toBlock: 'latest',
           address: token,
           topics: [

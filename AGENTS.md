@@ -490,3 +490,16 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   `ETH_INTEGRATION_RPC` is set, so plain `vitest run sources/lib` stays offline.
   `e2e/playwright/tests/ethereum-prod.spec.ts` is a read-only smoke against a
   deployed URL, skipped unless `ETH_PROD=1`.
+- **Native ETH deposits use an address index.** A JSON-RPC node cannot list an
+  address's native transfers, so `getIncomingDeposits` merges
+  `getIncomingNativeTransfers` (Blockscout v2 `/addresses/<addr>/transactions?filter=to`
+  through the same-origin `/ethindex` proxy, default
+  `https://eth.blockscout.com/api/v2`) with the ERC-20 `eth_getLogs` scan.
+  `region.conf` has `ETH_INDEX_URL`; the per-device override is
+  `eth.settings.indexUrl`. Pitfall: index `to.hash` is 0x-prefixed while
+  `requireAddress` output is not — compare with `stripHexPrefix` on both sides
+  (the first version silently dropped every native row). The "Deposits" card
+  now lists native + tokens; a missing index degrades to token rows only
+  (`Promise.allSettled`).
+- **Sidebar:** the Ethereum entry lives in the NETWORK group (first item, right
+  under the heading), not under HOME.

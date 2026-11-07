@@ -6,7 +6,7 @@
  * Nothing here sends the private key over the network.
  */
 
-import { ethRpc, getEthChain, getEthTokens, assertEthChain } from './ethRpc';
+import { ethIndexUrl, ethRpc, getEthChain, getEthTokens, assertEthChain } from './ethRpc';
 import {
   addressFromPrivateKey,
   requireAddress,
@@ -404,6 +404,99 @@ export async function getIncomingTokenTransfers(
   }
   out.sort((a, b) => b.blockNumber - a.blockNumber || b.logIndex - a.logIndex);
   return out;
+}
+
+/** One row in the Deposits card, from either the logs scan or the index. */
+export interface DepositRow {
+  kind: 'native' | 'token';
+  hash: string;
+  blockNumber: number;
+  symbol: string;
+  decimals: number;
+  amount: bigint;
+  from: string;
+}
+
+interface IndexItem {
+  hash?: string;
+  value?: string;
+  block_number?: number | string;
+  status?: string;
+  from?: { hash?: string | null } | null;
+  to?: { hash?: string | null } | null;
+}
+
+/**
+ * Native-coin deposits. A JSON-RPC node cannot answer "list the transfers to
+ * this address", so this reads the Blockscout-compatible address index through
+ * our `/ethindex` proxy (provider URL stays server-side). Failed/reverted
+ * transactions are skipped — nothing moved.
+ */
+export async function getIncomingNativeTransfers(
+  address: string,
+  chain?: EthChain,
+  limit = 25
+): Promise<DepositRow[]> {
+  const c = chainOr(chain);
+  const base = ethIndexUrl();
+  if (!base) return [];
+  const account = requireAddress(address);
+  const res = await fetch(`${base}/addresses/${account}/transactions?filter=to`);
+  if (!res.ok) throw new Error(`Ethereum index HTTP ${res.status}`);
+  const body = (await res.json()) as { items?: IndexItem[] };
+  const rows: DepositRow[] = [];
+  for (const item of body.items ?? []) {
+    if (!item?.hash || (item.status && item.status !== 'ok')) continue;
+    const amount = BigInt(item.value ?? '0');
+    if (amount <= 0n) continue;
+    // The index returns 0x-prefixed hashes; compare without the prefix.
+    const to = item.to?.hash;
+    if (to && stripHexPrefix(to).toLowerCase() !== stripHexPrefix(account).toLowerCase()) continue;
+    rows.push({
+      kind: 'native',
+      hash: item.hash,
+      blockNumber: Number(item.block_number ?? 0),
+      symbol: c.nativeSymbol,
+      decimals: ETH_DECIMALS,
+      amount,
+      from: item.from?.hash ?? '',
+    });
+    if (rows.length >= limit) break;
+  }
+  return rows;
+}
+
+/**
+ * Deposits for the screen: native transfers from the index plus ERC-20
+ * `Transfer` logs, newest first. Each source fails independently — a missing
+ * index still shows token deposits, and vice versa.
+ */
+export async function getIncomingDeposits(
+  address: string,
+  chain?: EthChain
+): Promise<DepositRow[]> {
+  const c = chainOr(chain);
+  const [tokens, native] = await Promise.allSettled([
+    getIncomingTokenTransfers(address, c),
+    getIncomingNativeTransfers(address, c),
+  ]);
+  const rows: DepositRow[] = [];
+  if (tokens.status === 'fulfilled') {
+    for (const t of tokens.value) {
+      rows.push({
+        kind: 'token',
+        hash: t.hash,
+        blockNumber: t.blockNumber,
+        symbol: t.token.symbol,
+        decimals: t.token.decimals,
+        amount: t.amount,
+        from: t.from,
+      });
+    }
+  }
+  if (native.status === 'fulfilled') rows.push(...native.value);
+  rows.sort((a, b) => b.blockNumber - a.blockNumber);
+  return rows;
 }
 
 /** Receipt status, or null while the transaction is still pending. */

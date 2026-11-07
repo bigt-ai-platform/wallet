@@ -46,7 +46,10 @@ async function injectEcWallet(page: Page, rpcUrl = mock.url) {
       };
       localStorage.setItem('device.walletEncryptedContent', JSON.stringify(wallet));
       localStorage.setItem('device.walletAddress', address);
-      localStorage.setItem('eth.settings', JSON.stringify({ network: 'mainnet', rpcUrl: rpc }));
+      localStorage.setItem(
+        'eth.settings',
+        JSON.stringify({ network: 'mainnet', rpcUrl: rpc, indexUrl: rpc })
+      );
     },
     [EC_KEY, EC_PUB, BTC_ADDRESS, rpcUrl] as const
   );
@@ -96,9 +99,10 @@ test.describe('Ethereum deposit / withdraw', () => {
     await expect(page.getByTestId('eth-asset-ETH')).toContainText('1');
     await expect(page.getByTestId('eth-asset-USDT')).toContainText('2.5');
 
-    // Deposit history from the mock's Transfer log.
+    // Deposit history: native transfer from the address index + the ERC-20 log.
     await expect(page.getByTestId('eth-deposits')).toContainText('+1 USDT', { timeout: 20000 });
-    await expect(page.getByTestId('eth-deposit-row')).toHaveCount(1);
+    await expect(page.getByTestId('eth-deposits')).toContainText('+0.5 ETH', { timeout: 20000 });
+    await expect(page.getByTestId('eth-deposit-row')).toHaveCount(2);
 
     // Deposit: address card + QR + network warning.
     await page.getByTestId('eth-deposit-ETH').click();

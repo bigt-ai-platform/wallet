@@ -50,6 +50,22 @@ export function startEthRpcMock(port = 0) {
       res.end(JSON.stringify(sent));
       return;
     }
+    // Address index (Blockscout v2 shape): one incoming 0.5 ETH transfer.
+    if (req.method === 'GET' && req.url.startsWith('/addresses/')) {
+      const items = [
+        {
+          hash: `0x${'aa'.repeat(32)}`,
+          value: '500000000000000000',
+          block_number: 4090,
+          status: 'ok',
+          from: { hash: DEPOSIT_FROM },
+          to: { hash: '0x2c7536e3605d9c16a7a3d7b1898e529396a65c23' },
+        },
+      ];
+      res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ items, next_page_params: null }));
+      return;
+    }
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {

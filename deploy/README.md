@@ -84,12 +84,15 @@ DEPLOY_REGIONS="europa asia" ./deploy/deploy.sh   # restrict the fleet
 
 ## Ethereum RPC proxy (`/eth`)
 
-The web build calls a **same-origin** `/eth` JSON-RPC path (native builds use
-`https://wallet.bigt.ai/eth`), so provider credentials never ship in the bundle
-(`docs/ethereum.md`). `region.sh config_caddy` adds the route when
-`ETH_RPC_URL` is exported or `deploy/env/.env.eth.<region>` (gitignored) contains
-`ETH_RPC_URL=https://…`. Without it the route is omitted and the app shows
-"no Ethereum RPC endpoint configured" in Settings → Ethereum.
+The web build calls **same-origin** `/eth` (JSON-RPC) and `/ethindex` (address
+index for native deposit history) paths; native builds use
+`https://wallet.bigt.ai/eth[…index]`. Provider credentials never ship in the
+bundle (`docs/ethereum.md`). `region.sh config_caddy` adds the routes from
+`ETH_RPC_URL` / `ETH_INDEX_URL` (env, or `deploy/env/.env.eth.<region>`,
+gitignored), defaulting to `https://ethereum-rpc.publicnode.com` and
+`https://eth.blockscout.com/api/v2` in `region.conf`. Without an RPC upstream the
+route is omitted and the app shows "no Ethereum RPC endpoint configured" in
+Settings → Ethereum.
 
 ## Region setup
 
