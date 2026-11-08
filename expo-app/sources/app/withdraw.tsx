@@ -1,25 +1,33 @@
 import * as React from 'react';
 import {
-  ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View,
+  ActivityIndicator, Linking, ScrollView, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
+import * as Clipboard from 'expo-clipboard';
 import { useWallet } from '@/state/wallet';
 import { ethereumKey } from '@/lib/walletKeys';
 import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
 import { notifySystemMessage } from '@/services/systemMessages';
 import {
-  accountFromPrivateKey, assetsOf, loadBalances, prepareNativeTransfer,
+  accountFromPrivateKey, assetsOf, getFeeData, loadBalances, prepareNativeTransfer,
   prepareTokenTransfer, sendNativeTransfer, sendTokenTransfer, waitForReceipt,
   type EthAsset, type GasPreset, type PreparedTransfer,
 } from '@/services/eth';
 import { getEthChain } from '@/services/ethRpc';
 import { ethExplorerTx } from '@/lib/eth/chains';
 import { formatUnits, parseUnits, shortAddress } from '@/lib/eth/units';
-import { isAddress, requireAddress } from '@/lib/eth/address';
+import { isAddress, requireAddress, sameAddress } from '@/lib/eth/address';
 import { MONO_FONT } from '@/constants/fonts';
+
+/** Plain decimal string (no grouping) that `parseUnits` accepts back. */
+function toPlainUnits(raw: bigint, decimals: number): string {
+  const base = 10n ** BigInt(decimals);
+  const frac = (raw % base).toString().padStart(decimals, '0').replace(/0+$/, '');
+  return frac ? `${raw / base}.${frac}` : `${raw / base}`;
+}
 
 /**
  * Withdraw (exchange style): Select Asset -> Select Network -> address, amount,
@@ -42,6 +50,7 @@ type RouteTarget = Parameters<ReturnType<typeof useRouter>['push']>[0];
 export default function WithdrawScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
+  const params = useLocalSearchParams<{ symbol?: string }>();
   const confirmTx = useTransactionConfirm();
   const { isUnlocked, getUnlockedWallet } = useWallet();
   const locale = i18n.language || 'en';
@@ -58,8 +67,12 @@ export default function WithdrawScreen() {
   );
 
   const [chain] = React.useState(() => getEthChain());
-  const [step, setStep] = React.useState<Step>('asset');
-  const [asset, setAsset] = React.useState<EthAsset | null>(null);
+  const assets = assetsOf(chain);
+  // A route param (e.g. the Ethereum screen's Withdraw button) opens the form
+  // for that asset directly.
+  const initialAsset = assets.find((a) => a.symbol === params.symbol) ?? null;
+  const [step, setStep] = React.useState<Step>(initialAsset ? 'form' : 'asset');
+  const [asset, setAsset] = React.useState<EthAsset | null>(initialAsset);
   const [balances, setBalances] = React.useState<Record<string, bigint>>({});
   const [loading, setLoading] = React.useState(false);
 
@@ -72,8 +85,6 @@ export default function WithdrawScreen() {
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
   const [activity, setActivity] = React.useState<Activity[]>([]);
-
-  const assets = assetsOf(chain);
 
   const refreshBalances = React.useCallback(async () => {
     if (!account) return;
@@ -90,18 +101,52 @@ export default function WithdrawScreen() {
     }
   }, [account, chain]);
 
+  // Balances are needed on every step (a route param can open the form
+  // directly, skipping the asset picker).
   React.useEffect(() => {
-    if (step !== 'asset') return;
     void refreshBalances();
-  }, [step, refreshBalances]);
+  }, [refreshBalances]);
 
   const balanceOf = (a: EthAsset): bigint => balances[a.key] ?? 0n;
+  const nativeBalance = balances.native ?? 0n;
+
+  const toTrimmed = to.trim();
+  const addressError = !toTrimmed
+    ? ''
+    : !isAddress(toTrimmed)
+      ? t('eth.errAddress')
+      : account && sameAddress(toTrimmed, account)
+        ? t('eth.errSelf')
+        : '';
+
+  const setMax = async () => {
+    if (!asset) return;
+    const bal = balanceOf(asset);
+    if (asset.token) {
+      setAmount(toPlainUnits(bal, asset.decimals));
+      return;
+    }
+    // Native: leave room for the worst-case fee (21000 gas x 1.2 headroom).
+    try {
+      const gas = prepared?.gasLimit ?? 25200n;
+      const fee = await getFeeData(chain, preset);
+      const max = bal - gas * fee.maxFeePerGas;
+      setAmount(toPlainUnits(max > 0n ? max : 0n, asset.decimals));
+    } catch {
+      setAmount(toPlainUnits(bal, asset.decimals));
+    }
+  };
+
+  const paste = async () => {
+    const text = (await Clipboard.getStringAsync()).trim();
+    if (text) setTo(text);
+  };
 
   // Fee preview, recomputed on every change (same rules as /ethereum).
   React.useEffect(() => {
     let cancelled = false;
     setPrepared(null);
-    if (!asset || !privateKey || !isAddress(to) || !amount) return;
+    if (!asset || !privateKey || !isAddress(toTrimmed) || addressError || !amount) return;
     let raw: bigint;
     try {
       raw = parseUnits(amount, asset.decimals);
@@ -112,7 +157,7 @@ export default function WithdrawScreen() {
     setPreparing(true);
     const run = async () => {
       try {
-        const req = { privateKeyHex: privateKey, to, amount: raw, chain, preset };
+        const req = { privateKeyHex: privateKey, to: toTrimmed, amount: raw, chain, preset };
         const next = asset.token
           ? await prepareTokenTransfer({ ...req, token: asset.token })
           : await prepareNativeTransfer(req);
@@ -128,7 +173,7 @@ export default function WithdrawScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asset?.key, to, amount, preset, chain.id, privateKey]);
+  }, [asset?.key, toTrimmed, addressError, amount, preset, chain.id, privateKey]);
 
   const track = async (row: Activity) => {
     const receipt = await waitForReceipt(row.hash, chain, { attempts: 45, intervalMs: 4000 });
@@ -159,28 +204,52 @@ export default function WithdrawScreen() {
       return;
     }
     try {
-      requireAddress(to);
+      requireAddress(toTrimmed);
     } catch {
       setError(t('eth.errAddress'));
+      return;
+    }
+    if (addressError) {
+      setError(addressError);
       return;
     }
     if (raw > balanceOf(asset)) {
       setError(t('eth.errInsufficient'));
       return;
     }
+    // The fee is paid in the native coin on top of the amount (native) or
+    // alongside the token transfer.
+    if (prepared) {
+      const nativeNeeded = asset.token ? prepared.maxFeeWei : raw + prepared.maxFeeWei;
+      if (nativeNeeded > nativeBalance) {
+        setError(asset.token
+          ? t('withdraw.errGas', { symbol: chain.nativeSymbol })
+          : t('eth.errInsufficient'));
+        return;
+      }
+    }
     const ok = await confirmTx({
       title: t('eth.confirmTitle'),
-      subtitle: t('eth.confirmSubtitle', {
-        amount: formatUnits(raw, asset.decimals, locale),
-        symbol: asset.symbol,
-        to: shortAddress(to),
-      }),
+      subtitle: prepared
+        ? t('withdraw.confirmSubtitle', {
+          amount: formatUnits(raw, asset.decimals, locale),
+          symbol: asset.symbol,
+          to: shortAddress(toTrimmed),
+          network: chain.name,
+          fee: formatUnits(prepared.maxFeeWei, 18, locale),
+          native: chain.nativeSymbol,
+        })
+        : t('eth.confirmSubtitle', {
+          amount: formatUnits(raw, asset.decimals, locale),
+          symbol: asset.symbol,
+          to: shortAddress(toTrimmed),
+        }),
     });
     if (!ok) return;
     setSending(true);
     setError('');
     try {
-      const req = { privateKeyHex: privateKey, to, amount: raw, chain, preset };
+      const req = { privateKeyHex: privateKey, to: toTrimmed, amount: raw, chain, preset };
       const sent = asset.token
         ? await sendTokenTransfer({ ...req, token: asset.token })
         : await sendNativeTransfer(req);
@@ -291,8 +360,9 @@ export default function WithdrawScreen() {
               testID="withdraw-network-ethereum"
             >
               <View style={{ flex: 1 }}>
-                <Text style={s.rowTitle}>{chain.name}</Text>
+                <Text style={s.rowTitle}>{chain.name}{asset?.token ? ' (ERC-20)' : ''}</Text>
                 <Text style={s.meta}>{t('withdraw.networkHint', { chain: chain.name })}</Text>
+                <Text style={s.meta}>{t('withdraw.feeIn', { symbol: chain.nativeSymbol })}</Text>
               </View>
               <Text style={s.chevron}>›</Text>
             </TouchableOpacity>
@@ -303,28 +373,44 @@ export default function WithdrawScreen() {
           <>
             <View style={s.card} testID="withdraw-form">
               <Text style={s.cardTitle}>{t('eth.withdrawTitle', { symbol: asset.symbol })}</Text>
-              <Text style={s.meta}>{t('eth.available', { amount: formatUnits(balanceOf(asset), asset.decimals, locale), symbol: asset.symbol })}</Text>
 
               <Text style={s.label}>{t('eth.recipient')}</Text>
-              <TextInput
-                style={s.input}
-                value={to}
-                onChangeText={setTo}
-                placeholder={t('eth.recipientPh')}
-                autoCapitalize="none"
-                autoCorrect={false}
-                testID="withdraw-to"
-              />
+              <View style={s.inputRow}>
+                <TextInput
+                  style={[s.input, s.inputFlex]}
+                  value={to}
+                  onChangeText={setTo}
+                  placeholder={t('eth.recipientPh')}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  testID="withdraw-to"
+                />
+                <TouchableOpacity onPress={() => void paste()} style={s.inputAction} accessibilityRole="button" testID="withdraw-paste">
+                  <Text style={s.inputActionText}>{t('withdraw.paste')}</Text>
+                </TouchableOpacity>
+              </View>
+              {addressError ? <Text style={s.fieldError} testID="withdraw-address-error">{addressError}</Text> : null}
+
+              <Text style={s.label}>{t('withdraw.network')}</Text>
+              <TouchableOpacity style={s.input} onPress={() => setStep('network')} accessibilityRole="button">
+                <Text style={s.inputText}>{chain.name}{asset.token ? ' (ERC-20)' : ''}</Text>
+              </TouchableOpacity>
 
               <Text style={s.label}>{t('eth.amount')}</Text>
-              <TextInput
-                style={s.input}
-                value={amount}
-                onChangeText={setAmount}
-                placeholder="0.0"
-                keyboardType="decimal-pad"
-                testID="withdraw-amount"
-              />
+              <View style={s.inputRow}>
+                <TextInput
+                  style={[s.input, s.inputFlex]}
+                  value={amount}
+                  onChangeText={setAmount}
+                  placeholder="0.0"
+                  keyboardType="decimal-pad"
+                  testID="withdraw-amount"
+                />
+                <TouchableOpacity onPress={() => void setMax()} style={s.inputAction} accessibilityRole="button" testID="withdraw-max">
+                  <Text style={s.inputActionText}>{t('withdraw.max')}</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={s.meta}>{t('eth.available', { amount: formatUnits(balanceOf(asset), asset.decimals, locale), symbol: asset.symbol })}</Text>
 
               <Text style={s.label}>{t('eth.gasPreset')}</Text>
               <View style={s.row} testID="withdraw-gas-presets">
@@ -359,6 +445,12 @@ export default function WithdrawScreen() {
               {asset.token && prepared ? (
                 <Text style={s.meta}>{t('withdraw.feePaidIn', { symbol: chain.nativeSymbol })}</Text>
               ) : null}
+              {prepared ? (
+                <View style={s.receiveRow} testID="withdraw-receive">
+                  <Text style={s.label}>{t('withdraw.receiveAmount')}</Text>
+                  <Text style={s.receiveValue}>{formatUnits(prepared.amount, asset.decimals, locale)} {asset.symbol}</Text>
+                </View>
+              ) : null}
 
               <TouchableOpacity
                 style={[s.btn, sending && s.btnDisabled]}
@@ -380,7 +472,9 @@ export default function WithdrawScreen() {
                   <View key={a.hash} style={s.historyRow} testID="withdraw-history-row">
                     <Text style={s.rowTitle}>{a.amount} {a.symbol}</Text>
                     <Text style={s.meta}>{t(`eth.state_${a.status}`)}</Text>
-                    <Text style={s.hash} selectable>{ethExplorerTx(chain, a.hash)}</Text>
+                    <Text style={s.hash} onPress={() => void Linking.openURL(ethExplorerTx(chain, a.hash))}>
+                      {t('deposit.txid')}: {shortAddress(a.hash)}
+                    </Text>
                   </View>
                 ))
               )}
@@ -445,4 +539,12 @@ const s = StyleSheet.create((theme) => ({
   badgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   historyRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.colors.border },
   hash: { fontFamily: MONO_FONT, fontSize: 11, color: theme.colors.text.link, marginTop: 2 },
+  inputRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  inputFlex: { flex: 1 },
+  inputText: { fontSize: 13, color: theme.colors.text.primary },
+  inputAction: { paddingHorizontal: 10, paddingVertical: 10 },
+  inputActionText: { fontSize: 13, fontWeight: '700', color: theme.colors.text.link },
+  fieldError: { fontSize: 12, color: '#E5484D', marginTop: 4 },
+  receiveRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 10 },
+  receiveValue: { fontSize: 16, fontWeight: '700', color: theme.colors.text.primary },
 }));

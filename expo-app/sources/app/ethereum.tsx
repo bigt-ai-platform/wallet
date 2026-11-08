@@ -6,88 +6,57 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
-import QRCode from 'react-native-qrcode-svg';
 import { useWallet } from '@/state/wallet';
 import { ethereumKey } from '@/lib/walletKeys';
-import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
-import { notifySystemMessage } from '@/services/systemMessages';
 import {
   accountFromPrivateKey, assetsOf, getErc20Meta, getIncomingDeposits, loadBalances,
-  prepareNativeTransfer, prepareTokenTransfer, sendNativeTransfer, sendTokenTransfer,
-  waitForReceipt, type DepositRow, type EthAsset, type EthAssetBalance, type GasPreset,
-  type PreparedTransfer,
+  type DepositRow, type EthAsset, type EthAssetBalance,
 } from '@/services/eth';
 import {
-  addEthToken, ETH_RPC_NOT_CONFIGURED, getEthChain, isEthRpcConfigured, removeEthToken,
+  ETH_RPC_NOT_CONFIGURED, addEthToken, getEthChain, isEthRpcConfigured, removeEthToken,
 } from '@/services/ethRpc';
-import { buildEthPaymentUri } from '@/lib/eth/eip681';
-import { formatUnits, parseUnits, shortAddress } from '@/lib/eth/units';
 import { ethExplorerTx } from '@/lib/eth/chains';
+import { formatUnits, shortAddress } from '@/lib/eth/units';
 import { isAddress, requireAddress } from '@/lib/eth/address';
 import { MONO_FONT } from '@/constants/fonts';
 
 /**
- * Ethereum deposit / withdraw for the wallet's legacy EC key.
+ * Ethereum account overview: address, balances, token list and deposit history.
  *
- * "Deposit" = our own address + EIP-681 QR on the selected network; "withdraw"
- * = a signed EIP-1559 transfer (native coin or ERC-20) to an external address.
- * PQ wallets are gated: their key has no secp256k1 counterpart.
+ * Payments live on the dedicated exchange-style pages: **Deposit** opens
+ * `/deposit` and **Withdraw** opens `/withdraw`, each preselected with the
+ * tapped asset (one canonical flow instead of duplicated inline sheets).
  */
 
-interface ActivityItem {
-  hash: string;
-  symbol: string;
-  amount: string;
-  status: 'pending' | 'success' | 'failed';
-  at: number;
-}
+/** Navigation helper: the generated typed-route union lags behind new screens. */
+type RouteTarget = Parameters<ReturnType<typeof useRouter>['push']>[0];
 
 export default function EthereumScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
-  const confirmTx = useTransactionConfirm();
-  const { isUnlocked, getUnlockedWallet } = useWallet();
+  const { isUnlocked, publicInfo, getUnlockedWallet } = useWallet();
   const locale = i18n.language || 'en';
 
   const wallet = getUnlockedWallet();
-  // Dual-key wallets sign Ethereum with their EC key, whatever the primary
-  // (Bigtangle) key type is.
   const ethKey = wallet ? ethereumKey(wallet) : null;
-  const privateKey = ethKey?.privateKey;
-  const isEc = !!ethKey;
+  const hasEthKey = !!ethKey;
   const account = React.useMemo(
-    () => (privateKey ? accountFromPrivateKey(privateKey) : ''),
-    [privateKey]
+    () => (ethKey ? accountFromPrivateKey(ethKey.privateKey) : ''),
+    [ethKey]
   );
 
   const [chain, setChain] = React.useState(() => getEthChain());
   const [balances, setBalances] = React.useState<EthAssetBalance[]>([]);
+  const [deposits, setDeposits] = React.useState<DepositRow[]>([]);
+  const [depositsLoading, setDepositsLoading] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
-
-  // Deposit sheet + withdraw form state.
-  const [deposit, setDeposit] = React.useState<EthAsset | null>(null);
-  const [withdraw, setWithdraw] = React.useState<EthAsset | null>(null);
-  const [to, setTo] = React.useState('');
-  const [amount, setAmount] = React.useState('');
-  const [prepared, setPrepared] = React.useState<PreparedTransfer | null>(null);
-  const [preparing, setPreparing] = React.useState(false);
-  const [preset, setPreset] = React.useState<GasPreset>('standard');
-  const [deposits, setDeposits] = React.useState<DepositRow[]>([]);
-  const [depositsTick, setDepositsTick] = React.useState(0);
-  const [depositsLoading, setDepositsLoading] = React.useState(false);
-  const [sending, setSending] = React.useState(false);
-  const [activity, setActivity] = React.useState<ActivityItem[]>([]);
-
-  // Add-token form.
   const [addOpen, setAddOpen] = React.useState(false);
   const [tokenAddress, setTokenAddress] = React.useState('');
   const [adding, setAdding] = React.useState(false);
 
-  // Read on every render: adding/removing a token must show up immediately
-  // (the device token list is not part of the chain object).
   const assets = assetsOf(chain);
   const balanceOf = (asset: EthAsset): bigint =>
     balances.find((b) => b.asset.key === asset.key)?.raw ?? 0n;
@@ -103,9 +72,6 @@ export default function EthereumScreen() {
     try {
       const rows = await loadBalances(account, chain);
       setBalances(rows);
-      // Re-read the deposit list on every explicit refresh (a new deposit does
-      // not change the number of assets).
-      setDepositsTick((t) => t + 1);
     } catch (e) {
       const msg = (e as Error).message;
       setError(msg === ETH_RPC_NOT_CONFIGURED || !msg ? t('eth.notConfigured') : msg);
@@ -142,144 +108,21 @@ export default function EthereumScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [account, chain.id, depositsTick]);
-
-  // Recompute the fee preview whenever the withdraw inputs change.
-  React.useEffect(() => {
-    let cancelled = false;
-    setPrepared(null);
-    if (!withdraw || !isEc || !privateKey || !isAddress(to) || !amount) return;
-    let raw: bigint;
-    try {
-      raw = parseUnits(amount, withdraw.decimals);
-    } catch {
-      return;
-    }
-    if (raw <= 0n) return;
-    setPreparing(true);
-    const run = async () => {
-      try {
-        const req = { privateKeyHex: privateKey, to, amount: raw, chain, preset };
-        const next = withdraw.token
-          ? await prepareTokenTransfer({ ...req, token: withdraw.token })
-          : await prepareNativeTransfer(req);
-        if (!cancelled) setPrepared(next);
-      } catch {
-        if (!cancelled) setPrepared(null);
-      } finally {
-        if (!cancelled) setPreparing(false);
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [withdraw?.key, to, amount, chain.id, isEc, privateKey, preset]);
+  }, [account, chain.id]);
 
   const copy = async (value: string) => {
     await Clipboard.setStringAsync(value);
     setNotice(t('eth.copied'));
   };
 
-  const depositUri = React.useMemo(() => {
-    if (!deposit || !account) return '';
-    if (deposit.token) {
-      return buildEthPaymentUri({
-        address: account,
-        chainId: chain.chainId,
-        token: { contract: deposit.token.address, to: account, amount: 0n },
-      }).replace('&uint256=0', '');
-    }
-    return buildEthPaymentUri({ address: account, chainId: chain.chainId });
-  }, [deposit, account, chain.chainId]);
-
-  const startWithdraw = (asset: EthAsset) => {
-    setWithdraw(asset);
-    setDeposit(null);
-    setTo('');
-    setAmount('');
-    setPrepared(null);
-    setError('');
-    setNotice('');
+  const openDeposit = (asset: EthAsset) => {
+    router.push(
+      `/deposit?coin=${encodeURIComponent(asset.symbol)}&network=ethereum` as RouteTarget
+    );
   };
 
-  const submitWithdraw = async () => {
-    if (!withdraw || !privateKey || sending) return;
-    let raw: bigint;
-    try {
-      raw = parseUnits(amount, withdraw.decimals);
-    } catch {
-      setError(t('eth.errAmount'));
-      return;
-    }
-    if (!isValidChecksumSafe(to)) {
-      setError(t('eth.errAddress'));
-      return;
-    }
-    const available = balanceOf(withdraw);
-    if (raw > available) {
-      setError(t('eth.errInsufficient'));
-      return;
-    }
-    const ok = await confirmTx({
-      title: t('eth.confirmTitle'),
-      subtitle: t('eth.confirmSubtitle', {
-        amount: formatUnits(raw, withdraw.decimals, locale),
-        symbol: withdraw.symbol,
-        to: shortAddress(to),
-      }),
-    });
-    if (!ok) return;
-    setSending(true);
-    setError('');
-    try {
-      const req = { privateKeyHex: privateKey, to, amount: raw, chain };
-      const sent = withdraw.token
-        ? await sendTokenTransfer({ ...req, token: withdraw.token })
-        : await sendNativeTransfer(req);
-      const item: ActivityItem = {
-        hash: sent.hash,
-        symbol: withdraw.symbol,
-        amount: formatUnits(raw, withdraw.decimals, locale),
-        status: 'pending',
-        at: Date.now(),
-      };
-      setActivity((prev) => [item, ...prev].slice(0, 20));
-      setNotice(t('eth.sentNotice', { hash: shortHex(sent.hash) }));
-      setWithdraw(null);
-      setAmount('');
-      setTo('');
-      void trackReceipt(item);
-      void refresh();
-    } catch (e) {
-      setError((e as Error).message || t('eth.errSend'));
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const trackReceipt = async (item: ActivityItem) => {
-    try {
-      const receipt = await waitForReceipt(item.hash, chain, { attempts: 45, intervalMs: 4000 });
-      const status = receipt?.status === 'success' ? 'success' : receipt ? 'failed' : 'pending';
-      setActivity((prev) => prev.map((a) => (a.hash === item.hash ? { ...a, status } : a)));
-      if (status === 'success') {
-        notifySystemMessage({
-          tone: 'success',
-          title: t('eth.sentTitle'),
-          body: t('eth.sentBody', { amount: item.amount, symbol: item.symbol, hash: shortHex(item.hash) }),
-        });
-      } else if (status === 'failed') {
-        notifySystemMessage({
-          tone: 'error',
-          title: t('eth.failedTitle'),
-          body: t('eth.failedBody', { hash: shortHex(item.hash) }),
-        });
-      }
-    } catch {
-      /* the activity row keeps its pending state */
-    }
+  const openWithdraw = (asset: EthAsset) => {
+    router.push(`/withdraw?symbol=${encodeURIComponent(asset.symbol)}` as RouteTarget);
   };
 
   const addToken = async () => {
@@ -325,7 +168,7 @@ export default function EthereumScreen() {
       <Header onBack={() => router.back()} title={t('eth.title')} />
 
       <ScrollView contentContainerStyle={s.content}>
-        {!isEc ? (
+        {!hasEthKey ? (
           <View style={s.card} testID="eth-ec-gate">
             <Text style={s.cardTitle}>{t('eth.ecRequiredTitle')}</Text>
             <Text style={s.meta}>{t('eth.ecRequired')}</Text>
@@ -371,7 +214,7 @@ export default function EthereumScreen() {
                     </View>
                     <TouchableOpacity
                       style={s.btnSmall}
-                      onPress={() => { setDeposit(asset); setWithdraw(null); setError(''); }}
+                      onPress={() => openDeposit(asset)}
                       accessibilityRole="button"
                       testID={`eth-deposit-${asset.symbol}`}
                     >
@@ -379,7 +222,7 @@ export default function EthereumScreen() {
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={s.btnSmall}
-                      onPress={() => startWithdraw(asset)}
+                      onPress={() => openWithdraw(asset)}
                       accessibilityRole="button"
                       testID={`eth-withdraw-${asset.symbol}`}
                     >
@@ -434,113 +277,7 @@ export default function EthereumScreen() {
                     </Text>
                     <Text style={s.meta}>{t('eth.depositFrom', { address: shortAddress(d.from || '…') })}</Text>
                     <Text style={s.hash} selectable onPress={() => void copy(ethExplorerTx(chain, d.hash))}>
-                      {t('eth.depositBlock', { block: d.blockNumber })} · {shortHex(d.hash)}
-                    </Text>
-                  </View>
-                ))
-              )}
-            </View>
-
-            {deposit ? (
-              <View style={s.card} testID="eth-deposit-card">
-                <Text style={s.cardTitle}>{t('eth.depositTitle', { symbol: deposit.symbol })}</Text>
-                <View style={s.qrBox}>
-                  <QRCode value={depositUri} size={200} backgroundColor="#fff" color="#000" />
-                </View>
-                <Text style={s.address} selectable testID="eth-deposit-address">{account}</Text>
-                <Text style={s.warn}>{t('eth.depositWarn', { symbol: deposit.symbol, network: chain.name })}</Text>
-                <Text style={s.meta}>{t('eth.noMemo')}</Text>
-                <View style={s.row}>
-                  <TouchableOpacity style={s.btnSmall} onPress={() => void copy(account)} testID="eth-deposit-copy">
-                    <Text style={s.btnSmallText}>{t('eth.copyAddress')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={s.btnSmall} onPress={() => void copy(depositUri)}>
-                    <Text style={s.btnSmallText}>{t('eth.copyUri')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={s.btnSmall} onPress={() => setDeposit(null)}>
-                    <Text style={s.btnSmallText}>{t('eth.close')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : null}
-
-            {withdraw ? (
-              <View style={s.card} testID="eth-withdraw-card">
-                <Text style={s.cardTitle}>{t('eth.withdrawTitle', { symbol: withdraw.symbol })}</Text>
-                <Text style={s.meta}>{t('eth.available', { amount: formatUnits(balanceOf(withdraw), withdraw.decimals, locale), symbol: withdraw.symbol })}</Text>
-                <Text style={s.label}>{t('eth.recipient')}</Text>
-                <TextInput
-                  style={s.input}
-                  value={to}
-                  onChangeText={setTo}
-                  placeholder={t('eth.recipientPh')}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  testID="eth-withdraw-to"
-                />
-                <Text style={s.label}>{t('eth.amount')}</Text>
-                <TextInput
-                  style={s.input}
-                  value={amount}
-                  onChangeText={setAmount}
-                  placeholder="0.0"
-                  keyboardType="decimal-pad"
-                  testID="eth-withdraw-amount"
-                />
-                <Text style={s.meta} testID="eth-fee">
-                  {preparing
-                    ? t('eth.estimating')
-                    : prepared
-                      ? t('eth.feeLine', {
-                        fee: formatUnits(prepared.maxFeeWei, 18, locale),
-                        gas: prepared.gasLimit.toString(),
-                      })
-                      : t('eth.feeUnknown')}
-                </Text>
-                <Text style={s.label}>{t('eth.gasPreset')}</Text>
-                <View style={s.row} testID="eth-gas-presets">
-                  {(['slow', 'standard', 'fast'] as GasPreset[]).map((p) => (
-                    <TouchableOpacity
-                      key={p}
-                      onPress={() => setPreset(p)}
-                      style={[s.btnSmall, preset === p && s.presetOn]}
-                      accessibilityRole="button"
-                      testID={`eth-gas-${p}`}
-                    >
-                      <Text style={[s.btnSmallText, preset === p && s.presetTextOn]}>
-                        {t(`eth.gas_${p}`)}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-                <View style={s.row}>
-                  <TouchableOpacity
-                    style={[s.btn, sending && s.btnDisabled]}
-                    onPress={() => void submitWithdraw()}
-                    disabled={sending}
-                    accessibilityRole="button"
-                    testID="eth-withdraw-submit"
-                  >
-                    <Text style={s.btnText}>{sending ? t('eth.sending') : t('eth.withdraw')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={s.btnSmall} onPress={() => setWithdraw(null)}>
-                    <Text style={s.btnSmallText}>{t('eth.cancel')}</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            ) : null}
-
-            <View style={s.card}>
-              <Text style={s.cardTitle}>{t('eth.activity')}</Text>
-              {activity.length === 0 ? (
-                <Text style={s.meta}>{t('eth.emptyActivity')}</Text>
-              ) : (
-                activity.map((item) => (
-                  <View key={item.hash} style={s.activityRow} testID={`eth-activity-${item.hash.slice(0, 10)}`}>
-                    <Text style={s.assetBalance}>{item.amount} {item.symbol}</Text>
-                    <Text style={s.meta}>{t(`eth.state_${item.status}`)}</Text>
-                    <Text style={s.hash} selectable onPress={() => void copy(ethExplorerTx(chain, item.hash))}>
-                      {shortHex(item.hash)}
+                      {t('eth.depositBlock', { block: d.blockNumber })} · {shortHash(d.hash)}
                     </Text>
                   </View>
                 ))
@@ -564,17 +301,8 @@ function Header({ onBack, title }: { onBack: () => void; title: string }) {
   );
 }
 
-function shortHex(hash: string): string {
+function shortHash(hash: string): string {
   return hash.length > 14 ? `${hash.slice(0, 10)}…${hash.slice(-4)}` : hash;
-}
-
-function isValidChecksumSafe(value: string): boolean {
-  try {
-    requireAddress(value);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 const s = StyleSheet.create((theme) => ({
@@ -589,14 +317,11 @@ const s = StyleSheet.create((theme) => ({
   row: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8, flexWrap: 'wrap' },
   rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   address: { fontFamily: MONO_FONT, fontSize: 12, color: theme.colors.text.primary, marginTop: 4 },
-  label: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary, marginTop: 10, marginBottom: 4 },
   meta: { fontSize: 12, color: theme.colors.text.secondary, marginTop: 4 },
-  warn: { fontSize: 12, color: '#B45309', marginTop: 8 },
   error: { fontSize: 13, color: '#E5484D', marginBottom: 8 },
   notice: { fontSize: 13, color: '#1F9D55', marginBottom: 8 },
   link: { fontSize: 12, fontWeight: '600', color: theme.colors.text.link },
   btn: { marginTop: 10, backgroundColor: theme.colors.primary, borderRadius: 8, paddingVertical: 10, paddingHorizontal: 14, alignItems: 'center' },
-  btnDisabled: { opacity: 0.6 },
   btnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
   btnSmall: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
   btnSmallText: { fontSize: 12, fontWeight: '600', color: theme.colors.text.primary },
@@ -605,10 +330,7 @@ const s = StyleSheet.create((theme) => ({
   assetBalance: { fontSize: 13, color: theme.colors.text.primary },
   activityRow: { paddingVertical: 6, borderTopWidth: 1, borderTopColor: theme.colors.border, gap: 2 },
   hash: { fontFamily: MONO_FONT, fontSize: 11, color: theme.colors.text.link },
-  remove: { fontSize: 16, fontWeight: '700', color: theme.colors.text.secondary, paddingHorizontal: 4 },
-  presetOn: { backgroundColor: theme.colors.primary, borderColor: theme.colors.primary },
-  presetTextOn: { color: '#FFFFFF' },
   input: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, backgroundColor: theme.colors.groupped.background, color: theme.colors.text.primary, padding: 10, fontSize: 13 },
   addBox: { marginTop: 8 },
-  qrBox: { alignItems: 'center', backgroundColor: '#FFFFFF', borderRadius: 10, padding: 12, marginVertical: 8 },
+  remove: { fontSize: 16, fontWeight: '700', color: theme.colors.text.secondary, paddingHorizontal: 4 },
 }));

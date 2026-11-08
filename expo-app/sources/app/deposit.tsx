@@ -1,8 +1,8 @@
 import * as React from 'react';
 import {
-  ActivityIndicator, ScrollView, Text, TextInput, TouchableOpacity, View,
+  ActivityIndicator, Linking, ScrollView, Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
@@ -14,17 +14,16 @@ import WalletUnlock from '@/components/WalletUnlock';
 import { httpService } from '@/services/http';
 import { notifySystemMessage } from '@/services/systemMessages';
 import {
-  accountFromPrivateKey, getErc20Balance, sendTokenTransfer,
+  accountFromPrivateKey, getErc20Balance, getIncomingNativeTransfers, sendTokenTransfer,
 } from '@/services/eth';
 import {
   getBridgeDeposits, getBridgeSettings, getDepositAddress, isBridgeConfigured,
   type BridgeDeposit, type DepositAddress,
 } from '@/services/ethBridge';
 import { getEthChain } from '@/services/ethRpc';
-import { buildEthPaymentUri } from '@/lib/eth/eip681';
 import { formatUnits, parseUnits, shortAddress } from '@/lib/eth/units';
 import { isAddress, toChecksumAddress } from '@/lib/eth/address';
-import { DEPOSIT_ASSETS, findDepositAsset, findDepositNetwork, type DepositNetwork } from '@/lib/depositAssets';
+import { DEPOSIT_ASSETS, findDepositAsset, type DepositNetwork } from '@/lib/depositAssets';
 import { MONO_FONT } from '@/constants/fonts';
 
 /**
@@ -44,6 +43,7 @@ type RouteTarget = Parameters<ReturnType<typeof useRouter>['push']>[0];
 export default function DepositScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
+  const params = useLocalSearchParams<{ coin?: string; network?: string }>();
   const confirmTx = useTransactionConfirm();
   const { isUnlocked, publicInfo, getUnlockedWallet } = useWallet();
   const locale = i18n.language || 'en';
@@ -64,9 +64,18 @@ export default function DepositScreen() {
     []
   );
 
-  const [step, setStep] = React.useState<Step>('coin');
-  const [coin, setCoin] = React.useState('USDT');
-  const [network, setNetwork] = React.useState<DepositNetwork | null>(null);
+  // A route param (e.g. from the Ethereum screen's Deposit button) opens the
+  // flow at the network/address step for that asset.
+  const initialCoin = DEPOSIT_ASSETS.find((a) => a.coin === params.coin);
+  const initialNetwork =
+    initialCoin && params.network
+      ? initialCoin.networks.find((n) => n.id === params.network)
+      : undefined;
+  const [step, setStep] = React.useState<Step>(
+    initialCoin ? (initialNetwork ? 'address' : 'network') : 'coin'
+  );
+  const [coin, setCoin] = React.useState(initialCoin?.coin ?? 'USDT');
+  const [network, setNetwork] = React.useState<DepositNetwork | null>(initialNetwork ?? null);
   const [search, setSearch] = React.useState('');
   const [target, setTarget] = React.useState<DepositAddress | null>(null);
   const [targetError, setTargetError] = React.useState('');
@@ -85,9 +94,18 @@ export default function DepositScreen() {
   const min = Number(bridge.minUsdt || '0');
   const asset = findDepositAsset(coin);
   const networks = asset?.networks ?? [];
+  // The wallet signs/reads on one configured EVM chain; a network on another
+  // chain would show a contract that does not exist there.
+  const ethChainId = getEthChain().id;
 
   const loadAddress = React.useCallback(async () => {
     if (!account) return;
+    // Direct assets (native ETH) are paid to our own address; no issuer.
+    if (network?.direct) {
+      setTarget({ address: account, source: 'static' });
+      setTargetError('');
+      return;
+    }
     setLoading(true);
     setTargetError('');
     try {
@@ -100,10 +118,23 @@ export default function DepositScreen() {
     } finally {
       setLoading(false);
     }
-  }, [account, t]);
+  }, [account, network?.direct, network?.id, t]);
 
   const loadBalancesAndHistory = React.useCallback(async () => {
     if (!account || !network) return;
+    if (network.direct) {
+      try {
+        const rows = await getIncomingNativeTransfers(account, getEthChain());
+        setHistory(rows.map((r) => ({
+          hash: r.hash,
+          amount: formatUnits(r.amount, r.decimals, locale),
+          status: 'credited' as const,
+        })));
+      } catch {
+        setHistory([]);
+      }
+      return;
+    }
     try {
       setSourceBalance(await getErc20Balance(network.tokenAddress, account, getEthChain()));
     } catch {
@@ -134,7 +165,7 @@ export default function DepositScreen() {
     } catch {
       /* keep the local history when the API is unreachable */
     }
-  }, [account, network, wallet, l1Chain, publicInfo?.address, t]);
+  }, [account, network, wallet, l1Chain, publicInfo?.address, locale, t]);
 
   React.useEffect(() => {
     if (step === 'address') void loadAddress();
@@ -149,17 +180,17 @@ export default function DepositScreen() {
     setNotice(t('eth.copied'));
   };
 
-  const qrValue = React.useMemo(() => {
-    if (!target || !network) return '';
+  // Exchange style: the QR is the bare address, readable by any wallet/exchange.
+  const displayAddress = React.useMemo(() => {
+    if (!target) return '';
     try {
-      return buildEthPaymentUri({
-        address: toChecksumAddress(target.address),
-        chainId: getEthChain().chainId,
-      });
+      return toChecksumAddress(target.address);
     } catch {
       return target.address;
     }
-  }, [target, network]);
+  }, [target]);
+
+  const minDeposit = network && !network.direct && min > 0 ? bridge.minUsdt : '';
 
   const submitFromWallet = async () => {
     if (!target || !network || !privateKey || sending) return;
@@ -218,7 +249,6 @@ export default function DepositScreen() {
         body: t('deposit.sentNotice', { hash: sent.hash.slice(0, 10) }),
       });
       setAmount('');
-      setStep('address');
       void loadBalancesAndHistory();
     } catch (e) {
       setError((e as Error).message || t('eth.errSend'));
@@ -320,21 +350,33 @@ export default function DepositScreen() {
         {step === 'network' ? (
           <View style={s.card}>
             <Text style={s.cardTitle}>{t('deposit.selectNetwork')}</Text>
-            {networks.map((n) => (
-              <TouchableOpacity
-                key={n.id}
-                style={s.row}
-                onPress={() => { setNetwork(n); setStep('address'); }}
-                accessibilityRole="button"
-                testID={`deposit-network-${n.id}`}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={s.rowTitle}>{n.name}</Text>
-                  <Text style={s.meta}>{t('deposit.creditedTo')}: {t('deposit.l1Network', { chain: l1Chain?.name || 'L1' })}</Text>
-                </View>
-                <Text style={s.chevron}>›</Text>
-              </TouchableOpacity>
-            ))}
+            <Text style={s.warn}>{t('deposit.networkWarn')}</Text>
+            {networks.map((n) => {
+              const offChain = n.chain !== ethChainId;
+              return (
+                <TouchableOpacity
+                  key={n.id}
+                  style={[s.row, offChain && s.btnDisabled]}
+                  onPress={() => { setNetwork(n); setHistory([]); setStep('address'); }}
+                  disabled={offChain}
+                  accessibilityRole="button"
+                  testID={`deposit-network-${n.id}`}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={s.rowTitle}>{n.name}</Text>
+                    <Text style={s.meta}>
+                      {t('deposit.arrival', { count: n.confirmations })}
+                      {!n.direct && min > 0 ? ` · ${t('deposit.min', { amount: bridge.minUsdt })}` : ''}
+                    </Text>
+                    <Text style={s.meta}>
+                      {t('deposit.creditedTo')}: {n.direct ? t('deposit.thisWallet') : t('deposit.l1Network', { chain: l1Chain?.name || 'L1' })}
+                    </Text>
+                    {offChain ? <Text style={s.warn}>{t('deposit.wrongChain', { chain: getEthChain().name })}</Text> : null}
+                  </View>
+                  <Text style={s.chevron}>›</Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
         ) : null}
 
@@ -354,17 +396,13 @@ export default function DepositScreen() {
               <View style={s.card} testID="deposit-address-card">
                 <Text style={s.cardTitle}>{t('deposit.addressTitle', { coin })}</Text>
                 <View style={s.qrBox}>
-                  <QRCode value={qrValue} size={190} backgroundColor="#fff" color="#000" />
+                  <QRCode value={displayAddress} size={190} backgroundColor="#fff" color="#000" />
                 </View>
-                <Text style={s.address} selectable testID="deposit-address">{toChecksumAddress(target.address)}</Text>
-                <View style={s.row}>
-                  <TouchableOpacity style={s.btnSmall} onPress={() => void copy(target.address)} testID="deposit-copy-address">
-                    <Text style={s.btnSmallText}>{t('eth.copyAddress')}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={s.btnSmall} onPress={() => void copy(qrValue)}>
-                    <Text style={s.btnSmallText}>{t('eth.copyUri')}</Text>
-                  </TouchableOpacity>
-                </View>
+                <Text style={s.label}>{t('deposit.addressLabel')}</Text>
+                <Text style={s.address} selectable testID="deposit-address">{displayAddress}</Text>
+                <TouchableOpacity style={s.btnSmall} onPress={() => void copy(displayAddress)} testID="deposit-copy-address">
+                  <Text style={s.btnSmallText}>{t('eth.copyAddress')}</Text>
+                </TouchableOpacity>
                 {target.memo ? (
                   <View style={s.memoBox} testID="deposit-memo">
                     <Text style={s.label}>{t('deposit.memoLabel')}</Text>
@@ -372,17 +410,28 @@ export default function DepositScreen() {
                     <Text style={s.warn}>{t('deposit.memoWarning')}</Text>
                   </View>
                 ) : null}
+                <View style={s.infoList}>
+                  <InfoRow label={t('deposit.infoNetwork')} value={network.name} />
+                  {minDeposit ? <InfoRow label={t('deposit.infoMin')} value={`${minDeposit} ${coin}`} /> : null}
+                  <InfoRow label={t('deposit.infoArrival')} value={t('deposit.arrival', { count: network.confirmations })} />
+                  <InfoRow
+                    label={t('deposit.creditedTo')}
+                    value={network.direct ? t('deposit.thisWallet') : (publicInfo?.address ? shortAddress(publicInfo.address) : '-')}
+                  />
+                  {l1Balance && !network.direct ? <InfoRow label={t('deposit.infoBalance')} value={l1Balance} testID="deposit-l1-balance" /> : null}
+                </View>
                 <Text style={s.warn} testID="deposit-warning">
                   {t('eth.depositWarn', { symbol: coin, network: network.name })}
                 </Text>
-                <Text style={s.meta}>{target.source === 'api' ? t('deposit.issuerPerUser') : t('deposit.issuerStatic')}</Text>
-                {min > 0 ? <Text style={s.meta}>{t('deposit.min', { amount: bridge.minUsdt })}</Text> : null}
-                <Text style={s.meta}>{t('deposit.creditedTo')}: {publicInfo?.address}</Text>
-                {l1Balance ? <Text style={s.meta} testID="deposit-l1-balance">{l1Balance}</Text> : null}
+                {network.direct ? null : (
+                  <Text style={s.meta}>{target.source === 'api' ? t('deposit.issuerPerUser') : t('deposit.issuerStatic')}</Text>
+                )}
+                {minDeposit ? <Text style={s.meta}>{t('deposit.min', { amount: minDeposit })}</Text> : null}
+                {network.direct ? <Text style={s.meta}>{t('deposit.directNote')}</Text> : null}
               </View>
             ) : null}
 
-            {target ? (
+            {target && !network.direct ? (
               <View style={s.card} testID="deposit-pay-card">
                 <Text style={s.cardTitle}>{t('deposit.payFromWallet')}</Text>
                 <Text style={s.meta}>{t('eth.available', { amount: formatUnits(sourceBalance, network.decimals, locale), symbol: coin })}</Text>
@@ -412,19 +461,37 @@ export default function DepositScreen() {
                 <Text style={s.meta}>{t('eth.emptyDeposits')}</Text>
               ) : (
                 history.map((d) => (
-                  <View key={d.hash} style={s.historyRow} testID="deposit-history-row">
-                    <Text style={s.rowTitle}>+{d.amount} {coin}</Text>
-                    <Text style={s.meta}>{t(`deposit.state_${d.status}`)}</Text>
-                    <Text style={s.hash} onPress={() => void copy(`${network.explorer}/tx/${d.hash}`)}>
-                      {d.hash.slice(0, 12)}…
-                    </Text>
-                  </View>
+                  <TouchableOpacity
+                    key={d.hash}
+                    style={s.historyRow}
+                    onPress={() => void Linking.openURL(`${network.explorer}/tx/${d.hash}`)}
+                    accessibilityRole="link"
+                    testID="deposit-history-row"
+                  >
+                    <View style={s.historyTop}>
+                      <Text style={s.rowTitle}>+{d.amount} {coin}</Text>
+                      <Text style={[s.status, d.status === 'credited' ? s.statusOk : d.status === 'failed' ? s.statusBad : null]}>
+                        {t(`deposit.state_${d.status}`)}
+                      </Text>
+                    </View>
+                    <Text style={s.meta}>{network.name}</Text>
+                    <Text style={s.hash}>{t('deposit.txid')}: {shortAddress(d.hash)}</Text>
+                  </TouchableOpacity>
                 ))
               )}
             </View>
           </>
         ) : null}
       </ScrollView>
+    </View>
+  );
+}
+
+function InfoRow({ label, value, testID }: { label: string; value: string; testID?: string }) {
+  return (
+    <View style={s.infoRow} testID={testID}>
+      <Text style={s.infoLabel}>{label}</Text>
+      <Text style={s.infoValue} selectable>{value}</Text>
     </View>
   );
 }
@@ -479,7 +546,15 @@ const s = StyleSheet.create((theme) => ({
   memoBox: { borderWidth: 1, borderColor: theme.colors.border, borderRadius: 8, padding: 10, marginTop: 10 },
   label: { fontSize: 12, fontWeight: '600', color: theme.colors.text.secondary },
   historyRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.colors.border },
+  historyTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  status: { fontSize: 12, fontWeight: '700', color: '#B45309' },
+  statusOk: { color: '#1F9D55' },
+  statusBad: { color: '#E5484D' },
   hash: { fontFamily: MONO_FONT, fontSize: 11, color: theme.colors.text.link, marginTop: 2 },
+  infoList: { marginTop: 10, borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 6 },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', gap: 12, paddingVertical: 4 },
+  infoLabel: { fontSize: 12, color: theme.colors.text.secondary },
+  infoValue: { fontSize: 12, fontWeight: '600', color: theme.colors.text.primary, flexShrink: 1, textAlign: 'right' },
   tabs: { flexDirection: 'row', borderWidth: 1, borderColor: theme.colors.border, borderRadius: 10, overflow: 'hidden', marginBottom: 6 },
   tab: { flex: 1, alignItems: 'center', paddingVertical: 10 },
   tabOn: { backgroundColor: theme.colors.primary },

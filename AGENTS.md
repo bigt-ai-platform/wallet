@@ -545,3 +545,13 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   their EC key for both roles, so existing funds stay spendable; the Balance
   screen still queries the primary address only (L1 sends stay on the primary
   key).
+- **`/ethereum` is the overview; Deposit/Withdraw are the dedicated pages.**
+  The screen keeps the account, balances, token list and deposit history; its
+  per-asset buttons push `/deposit?coin=<sym>&network=ethereum` and
+  `/withdraw?symbol=<sym>`, and both pages preselect that asset (the withdraw
+  page opens the form directly — so it now loads balances on mount, not only on
+  the asset step). The inline deposit sheet and withdraw form were removed from
+  `/ethereum` to avoid two divergent implementations. `DEPOSIT_ASSETS` has a
+  **direct** network (`direct: true`) for assets with no bridge: native ETH
+  shows the wallet's own address + QR with no issuer, while USDT uses the
+  issuer/API flow. The prod smoke and the Ethereum specs follow this wiring.

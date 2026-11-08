@@ -13,10 +13,17 @@ export interface DepositNetwork {
   name: string;
   /** EVM chain the source token lives on. */
   chain: 'mainnet' | 'sepolia';
-  /** Source ERC-20 contract. */
+  /** Source ERC-20 contract (empty for the native coin). */
   tokenAddress: string;
   decimals: number;
   explorer: string;
+  /** Block confirmations before the deposit counts as arrived ("Expected arrival"). */
+  confirmations: number;
+  /**
+   * Direct receive: no bridge/issuer, the user's own address is shown (native
+   * ETH today). Bridged assets credit a token on another chain instead.
+   */
+  direct?: boolean;
 }
 
 export interface DepositAsset {
@@ -28,6 +35,22 @@ export interface DepositAsset {
 
 export const DEPOSIT_ASSETS: DepositAsset[] = [
   {
+    coin: 'ETH',
+    name: 'Ether',
+    networks: [
+      {
+        id: 'ethereum',
+        name: 'Ethereum',
+        chain: 'mainnet',
+        tokenAddress: '',
+        decimals: 18,
+        explorer: 'https://etherscan.io',
+        confirmations: 12,
+        direct: true,
+      },
+    ],
+  },
+  {
     coin: 'USDT',
     name: 'Tether USD',
     networks: [
@@ -38,6 +61,7 @@ export const DEPOSIT_ASSETS: DepositAsset[] = [
         tokenAddress: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
         decimals: 6,
         explorer: 'https://etherscan.io',
+        confirmations: 12,
       },
     ],
   },

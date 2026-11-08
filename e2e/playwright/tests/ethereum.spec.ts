@@ -108,7 +108,7 @@ async function gotoKeys(page: Page) {
 }
 
 test.describe('Ethereum deposit / withdraw', () => {
-  test('shows balances, a deposit QR, deposit history and signs an ERC-20 withdrawal', async ({ page }) => {
+  test('shows balances and history, and opens the deposit/withdraw pages with the asset preselected', async ({ page }) => {
     await injectEcWallet(page);
     await page.goto('/');
     await page.waitForTimeout(1500);
@@ -123,31 +123,27 @@ test.describe('Ethereum deposit / withdraw', () => {
     await expect(page.getByTestId('eth-deposits')).toContainText('+0.5 ETH', { timeout: 20000 });
     await expect(page.getByTestId('eth-deposit-row')).toHaveCount(2);
 
-    // Deposit: address card + QR + network warning.
+    // The overview's Deposit button opens /deposit for that asset (native ETH:
+    // direct receive, no issuer).
     await page.getByTestId('eth-deposit-ETH').click();
-    await expect(page.getByTestId('eth-deposit-card')).toBeAttached();
-    await expect(page.getByTestId('eth-deposit-address')).toHaveText(ETH_ADDRESS);
-    await expect(page.getByTestId('eth-deposit-card')).toContainText('Send only ETH on Ethereum');
-    expect(await page.locator('[data-testid="eth-deposit-card"] svg').count()).toBeGreaterThan(0);
+    await expect(page.getByTestId('deposit-screen')).toBeAttached({ timeout: 15000 });
+    await expect(page.getByTestId('deposit-address')).toHaveText(ETH_ADDRESS, { timeout: 15000 });
+    expect(await page.locator('[data-testid="deposit-address-card"] svg').count()).toBeGreaterThan(0);
+    await page.goBack();
 
-    // Withdraw 1.5 USDT with the Fast preset.
+    // Withdraw opens /withdraw with the asset preselected; sign an ERC-20 send.
+    await expect(page.getByTestId('eth-screen')).toBeAttached({ timeout: 15000 });
     await page.getByTestId('eth-withdraw-USDT').click();
-    await page.getByTestId('eth-withdraw-to').fill(RECIPIENT);
-    await page.getByTestId('eth-withdraw-amount').fill('1.5');
-    await expect(page.getByTestId('eth-fee')).toContainText('Network fee up to', { timeout: 15000 });
-    const standardFee = await page.getByTestId('eth-fee').innerText();
-    await expect(page.getByTestId('eth-gas-presets')).toContainText('Slow');
-    await page.getByTestId('eth-gas-fast').click();
-    await expect(page.getByTestId('eth-fee')).not.toHaveText(standardFee, { timeout: 15000 });
-
-    await page.getByTestId('eth-withdraw-submit').click();
-    await expect(page.getByTestId('eth-screen')).toContainText('Transaction sent', { timeout: 20000 });
-    await expect(page.getByTestId('eth-screen')).toContainText('Confirmed', { timeout: 20000 });
+    await expect(page.getByTestId('withdraw-form')).toBeAttached({ timeout: 15000 });
+    await page.getByTestId('withdraw-to').fill(RECIPIENT);
+    await page.getByTestId('withdraw-amount').fill('1.5');
+    await expect(page.getByTestId('withdraw-fee')).toContainText('Network fee up to', { timeout: 15000 });
+    await page.getByTestId('withdraw-submit').click();
+    await expect(page.getByTestId('withdraw-notice')).toContainText('Transaction sent', { timeout: 20000 });
 
     expect(mock.sent).toHaveLength(1);
     const raw = mock.sent[0].raw.toLowerCase();
     expect(raw.startsWith('0x02')).toBe(true);
-    // ERC-20 transfer to the USDT contract.
     expect(raw).toContain(USDT_CONTRACT);
     expect(raw).toContain('a9059cbb');
   });
@@ -160,17 +156,16 @@ test.describe('Ethereum deposit / withdraw', () => {
     await expect(page.getByTestId('eth-address')).toHaveText(ETH_ADDRESS, { timeout: 15000 });
 
     await page.getByTestId('eth-withdraw-ETH').click();
-    await page.getByTestId('eth-withdraw-to').fill(RECIPIENT);
-    await page.getByTestId('eth-withdraw-amount').fill('0.01');
-    await expect(page.getByTestId('eth-fee')).toContainText('Network fee up to', { timeout: 15000 });
-    await page.getByTestId('eth-withdraw-submit').click();
-    await expect(page.getByTestId('eth-screen')).toContainText('Transaction sent', { timeout: 20000 });
+    await expect(page.getByTestId('withdraw-form')).toBeAttached({ timeout: 15000 });
+    await page.getByTestId('withdraw-to').fill(RECIPIENT);
+    await page.getByTestId('withdraw-amount').fill('0.01');
+    await expect(page.getByTestId('withdraw-fee')).toContainText('Total debit', { timeout: 15000 });
+    await page.getByTestId('withdraw-submit').click();
+    await expect(page.getByTestId('withdraw-notice')).toContainText('Transaction sent', { timeout: 20000 });
 
     expect(mock.sent).toHaveLength(1);
     const raw = mock.sent[0].raw.toLowerCase();
     expect(raw.startsWith('0x02')).toBe(true);
-    // Recipient and 0.01 ETH = 10^16 wei = 0x2386f26fc10000 appear verbatim
-    // in the RLP payload, and there is no ERC-20 calldata.
     expect(raw).toContain(RECIPIENT.slice(2).toLowerCase());
     expect(raw).toContain('2386f26fc10000');
     expect(raw).not.toContain('a9059cbb');
@@ -182,25 +177,25 @@ test.describe('Ethereum deposit / withdraw', () => {
     await page.waitForTimeout(1500);
     await gotoEthereum(page);
     await expect(page.getByTestId('eth-address')).toHaveText(ETH_ADDRESS, { timeout: 15000 });
-
     await page.getByTestId('eth-withdraw-ETH').click();
+    await expect(page.getByTestId('withdraw-form')).toBeAttached({ timeout: 15000 });
 
     // Invalid (too short) address.
-    await page.getByTestId('eth-withdraw-to').fill('0x1234');
-    await page.getByTestId('eth-withdraw-amount').fill('0.1');
-    await page.getByTestId('eth-withdraw-submit').click();
-    await expect(page.getByTestId('eth-error')).toContainText('valid Ethereum address');
+    await page.getByTestId('withdraw-to').fill('0x1234');
+    await page.getByTestId('withdraw-amount').fill('0.1');
+    await page.getByTestId('withdraw-submit').click();
+    await expect(page.getByTestId('withdraw-error')).toContainText('valid Ethereum address');
 
     // Empty amount.
-    await page.getByTestId('eth-withdraw-to').fill(RECIPIENT);
-    await page.getByTestId('eth-withdraw-amount').fill('');
-    await page.getByTestId('eth-withdraw-submit').click();
-    await expect(page.getByTestId('eth-error')).toContainText('valid amount');
+    await page.getByTestId('withdraw-to').fill(RECIPIENT);
+    await page.getByTestId('withdraw-amount').fill('');
+    await page.getByTestId('withdraw-submit').click();
+    await expect(page.getByTestId('withdraw-error')).toContainText('valid amount');
 
     // More than the 1 ETH balance.
-    await page.getByTestId('eth-withdraw-amount').fill('5');
-    await page.getByTestId('eth-withdraw-submit').click();
-    await expect(page.getByTestId('eth-error')).toContainText('Insufficient balance');
+    await page.getByTestId('withdraw-amount').fill('5');
+    await page.getByTestId('withdraw-submit').click();
+    await expect(page.getByTestId('withdraw-error')).toContainText('Insufficient balance');
 
     expect(mock.sent).toHaveLength(0);
   });

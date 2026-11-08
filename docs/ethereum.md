@@ -308,7 +308,8 @@ picker, memo/tag, fees/minimums, deposit history, TRON and Bitcoin phases).
 | Chain registry (mainnet, Sepolia, USDT/USDC) | `lib/eth/chains.ts` |
 | JSON-RPC + per-device network/RPC settings + token list | `services/ethRpc.ts` |
 | Balances, fees, nonce, send (native + ERC-20), receipts | `services/eth.ts` |
-| Deposit/withdraw screen (EC gate, QR, fee, confirm, activity) | `expo-app/sources/app/ethereum.tsx` (sidebar → Ethereum) |
+| Ethereum overview (account, balances, tokens, deposit history) | `app/ethereum.tsx` — Deposit/Withdraw buttons open the dedicated pages |
+| Exchange-style Deposit / Withdraw | `app/deposit.tsx`, `app/withdraw.tsx` (asset → network → address/fee) |
 | Settings → Ethereum (network, RPC, wallet address) | `app/(tabs)/settings.tsx` |
 | EC wallet create/import | `screens/wallet/WalletHelper.ts`, `screens/wallet/Keys.tsx` |
 | `/eth` same-origin proxy (provider key server-side) | `deploy/region.sh` (`ETH_RPC_URL` / `deploy/env/.env.eth.<region>`) |

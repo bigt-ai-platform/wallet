@@ -48,17 +48,23 @@ test.describe('Ethereum on a deployed wallet (read-only)', () => {
     await expect(page.getByTestId('eth-asset-ETH')).toBeAttached();
     await expect(page.getByTestId('eth-asset-USDT')).toBeAttached();
 
-    // Deposit card + QR (no funds involved).
+    // The overview's buttons open the dedicated pages preselected: Deposit is
+    // a direct receive for native ETH (address + QR, no issuer).
     await page.getByTestId('eth-deposit-ETH').click();
-    await expect(page.getByTestId('eth-deposit-address')).toHaveText(ETH_ADDRESS);
-    expect(await page.locator('[data-testid="eth-deposit-card"] svg').count()).toBeGreaterThan(0);
+    await expect(page.getByTestId('deposit-screen')).toBeAttached({ timeout: 20000 });
+    await expect(page.getByTestId('deposit-address')).toHaveText(ETH_ADDRESS, { timeout: 20000 });
+    expect(await page.locator('[data-testid="deposit-address-card"] svg').count()).toBeGreaterThan(0);
+    await page.goBack();
 
-    // Withdraw form gets a live fee estimate from the real node.
+    // Withdraw opens the form with ETH preselected and gets a live fee from the
+    // real node (no funds are moved).
+    await expect(page.getByTestId('eth-screen')).toBeAttached({ timeout: 20000 });
     await page.getByTestId('eth-withdraw-ETH').click();
-    await page.getByTestId('eth-withdraw-to').fill('0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf');
-    await page.getByTestId('eth-withdraw-amount').fill('0.001');
-    await expect(page.getByTestId('eth-fee')).toContainText('Network fee up to', { timeout: 30000 });
-    await expect(page.getByTestId('eth-gas-presets')).toContainText('Slow');
+    await expect(page.getByTestId('withdraw-form')).toBeAttached({ timeout: 20000 });
+    await page.getByTestId('withdraw-to').fill('0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf');
+    await page.getByTestId('withdraw-amount').fill('0.001');
+    await expect(page.getByTestId('withdraw-fee')).toContainText('Total debit', { timeout: 30000 });
+    await expect(page.getByTestId('withdraw-gas-presets')).toContainText('Slow');
   });
 
   test('the exchange-style Deposit and Withdraw pages are deployed', async ({ page }) => {
