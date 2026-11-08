@@ -209,10 +209,8 @@ export default function HomeScreen() {
         contentContainerStyle={s.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={theme.colors.primary} />}
       >
-        {/* Hero: brand, top market and quick actions */}
+        {/* Hero: top market and quick actions */}
         <View style={s.hero}>
-          <Text style={s.heroBrand}>{t('sidebar.bigt')}</Text>
-
           {top && (
             <TouchableOpacity style={s.heroMarket} onPress={() => openMarket(top)} testID="home-top-market">
               <Text style={s.heroMarketName} numberOfLines={1}>{top.name}</Text>
@@ -369,7 +367,6 @@ const s = StyleSheet.create((theme) => ({
   content: { padding: 16, paddingBottom: 40 },
 
   hero: { backgroundColor: theme.colors.primary, borderRadius: 16, padding: 18, marginBottom: 18 },
-  heroBrand: { color: '#FFFFFF', fontSize: 26, fontWeight: '800', marginBottom: 14 },
   heroMarket: { backgroundColor: 'rgba(255,255,255,0.14)', borderRadius: 12, padding: 12, marginBottom: 14 },
   heroMarketName: { color: 'rgba(255,255,255,0.9)', fontSize: 12, fontWeight: '600' },
   heroPriceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 10, marginTop: 4 },
