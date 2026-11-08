@@ -555,3 +555,13 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   **direct** network (`direct: true`) for assets with no bridge: native ETH
   shows the wallet's own address + QR with no issuer, while USDT uses the
   issuer/API flow. The prod smoke and the Ethereum specs follow this wiring.
+- **Withdraw address book + persistent history.** Both live in the device KV
+  (`eth.savedAddresses`, `eth.withdrawals`) via `services/withdrawLocal.ts`,
+  with the pure list logic in `lib/withdrawLocal.ts` (unit-tested: dedupe,
+  relabel, caps of 50, status update, defensive JSON parse). Saved addresses
+  are EIP-55 validated by `requireAddress` before storing and show as chips
+  under the recipient field (tap to fill, × to delete); a withdrawal is
+  upserted as `pending` and `track()` rewrites its status. Pending rows are
+  re-checked once on mount (`getTransactionReceipt`), so a send that confirmed
+  while the app was closed resolves itself. History survives reloads now
+  (previously component state only) and has a Clear action.

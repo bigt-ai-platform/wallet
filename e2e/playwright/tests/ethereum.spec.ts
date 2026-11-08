@@ -308,6 +308,45 @@ test.describe('Withdraw (exchange style)', () => {
     expect(raw).toContain('a9059cbb');
   });
 
+  test('keeps the saved address book and withdrawal history across a reload', async ({ page }) => {
+    await injectEcWallet(page);
+    await page.goto('/');
+    await page.waitForTimeout(1500);
+    await gotoWithdraw(page);
+    await page.getByTestId('withdraw-asset-USDT').click();
+    await page.getByTestId('withdraw-network-ethereum').click();
+
+    // Save the recipient with a label, then send.
+    await page.getByTestId('withdraw-to').fill(RECIPIENT);
+    await page.getByTestId('withdraw-save-address').click();
+    await page.getByTestId('withdraw-save-label').fill('Binance');
+    await page.getByTestId('withdraw-save-confirm').click();
+    await expect(page.getByTestId('withdraw-saved-addresses')).toContainText('Binance');
+
+    await page.getByTestId('withdraw-amount').fill('1.5');
+    await expect(page.getByTestId('withdraw-fee')).toContainText('Network fee up to', { timeout: 15000 });
+    await page.getByTestId('withdraw-submit').click();
+    await expect(page.getByTestId('withdraw-notice')).toContainText('Transaction sent', { timeout: 20000 });
+    await expect(page.getByTestId('withdraw-history')).toContainText('Confirmed', { timeout: 20000 });
+
+    // Reload the app and reopen the form: the address book and the history
+    // were persisted on the device (not just in component state).
+    await page.goto('/');
+    await page.waitForTimeout(1500);
+    await gotoWithdraw(page);
+    await page.getByTestId('withdraw-asset-USDT').click();
+    await page.getByTestId('withdraw-network-ethereum').click();
+    await expect(page.getByTestId('withdraw-saved-addresses')).toContainText('Binance', { timeout: 15000 });
+    await expect(page.getByTestId('withdraw-history')).toContainText('Confirmed');
+    await expect(page.getByTestId('withdraw-history-row')).toHaveCount(1);
+
+    // Tapping the chip fills the recipient; Clear removes the history.
+    await page.getByTestId('withdraw-use-saved-7E5F45').click();
+    await expect(page.getByTestId('withdraw-to')).toHaveValue(RECIPIENT);
+    await page.getByTestId('withdraw-clear-history').click();
+    await expect(page.getByTestId('withdraw-history')).toContainText('No withdrawals yet');
+  });
+
   test('refuses to send to the wallet own address', async ({ page }) => {
     await injectEcWallet(page);
     await page.goto('/');

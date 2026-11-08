@@ -12,10 +12,15 @@ import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
 import { notifySystemMessage } from '@/services/systemMessages';
 import {
-  accountFromPrivateKey, assetsOf, getFeeData, loadBalances, prepareNativeTransfer,
-  prepareTokenTransfer, sendNativeTransfer, sendTokenTransfer, waitForReceipt,
-  type EthAsset, type GasPreset, type PreparedTransfer,
+  accountFromPrivateKey, assetsOf, getFeeData, getTransactionReceipt, loadBalances,
+  prepareNativeTransfer, prepareTokenTransfer, sendNativeTransfer, sendTokenTransfer,
+  waitForReceipt, type EthAsset, type GasPreset, type PreparedTransfer,
 } from '@/services/eth';
+import {
+  clearWithdrawals, deleteAddress, listSavedAddresses, listWithdrawals,
+  recordWithdrawal, saveAddress, setWithdrawalStatus,
+} from '@/services/withdrawLocal';
+import type { SavedAddress, WithdrawalRecord } from '@/lib/withdrawLocal';
 import { getEthChain } from '@/services/ethRpc';
 import { ethExplorerTx } from '@/lib/eth/chains';
 import { formatUnits, parseUnits, shortAddress } from '@/lib/eth/units';
@@ -36,13 +41,6 @@ function toPlainUnits(raw: bigint, decimals: number): string {
  */
 
 type Step = 'asset' | 'network' | 'form';
-
-interface Activity {
-  hash: string;
-  symbol: string;
-  amount: string;
-  status: 'pending' | 'success' | 'failed';
-}
 
 /** Navigation helper: the generated typed-route union lags behind new screens. */
 type RouteTarget = Parameters<ReturnType<typeof useRouter>['push']>[0];
@@ -84,7 +82,11 @@ export default function WithdrawScreen() {
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
-  const [activity, setActivity] = React.useState<Activity[]>([]);
+  // Persisted across restarts (device storage).
+  const [history, setHistory] = React.useState<WithdrawalRecord[]>(() => listWithdrawals());
+  const [saved, setSaved] = React.useState<SavedAddress[]>(() => listSavedAddresses());
+  const [saveOpen, setSaveOpen] = React.useState(false);
+  const [saveLabel, setSaveLabel] = React.useState('');
 
   const refreshBalances = React.useCallback(async () => {
     if (!account) return;
@@ -175,10 +177,33 @@ export default function WithdrawScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [asset?.key, toTrimmed, addressError, amount, preset, chain.id, privateKey]);
 
-  const track = async (row: Activity) => {
+  // A withdrawal sent in an earlier session may have confirmed while the app
+  // was closed: resolve pending rows once on mount.
+  React.useEffect(() => {
+    let cancelled = false;
+    const pending = listWithdrawals().filter((row) => row.status === 'pending');
+    (async () => {
+      for (const row of pending) {
+        try {
+          const receipt = await getTransactionReceipt(row.hash, chain);
+          if (cancelled) return;
+          if (receipt) {
+            setHistory(setWithdrawalStatus(row.hash, receipt.status === 'success' ? 'success' : 'failed'));
+          }
+        } catch {
+          /* transient RPC error — keep pending */
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [chain]);
+
+  const track = async (row: WithdrawalRecord) => {
     const receipt = await waitForReceipt(row.hash, chain, { attempts: 45, intervalMs: 4000 });
     const status = receipt?.status === 'success' ? 'success' : receipt ? 'failed' : 'pending';
-    setActivity((prev) => prev.map((a) => (a.hash === row.hash ? { ...a, status } : a)));
+    setHistory(setWithdrawalStatus(row.hash, status));
     if (status === 'success') {
       notifySystemMessage({
         tone: 'success',
@@ -187,6 +212,17 @@ export default function WithdrawScreen() {
       });
     } else if (status === 'failed') {
       notifySystemMessage({ tone: 'error', title: t('eth.failedTitle'), body: t('eth.failedBody', { hash: shortAddress(row.hash) }) });
+    }
+  };
+
+  const confirmSaveAddress = () => {
+    try {
+      setSaved(saveAddress(to.trim(), saveLabel));
+      setSaveOpen(false);
+      setSaveLabel('');
+      setNotice(t('withdraw.addressSaved'));
+    } catch {
+      setError(t('eth.errAddress'));
     }
   };
 
@@ -253,13 +289,16 @@ export default function WithdrawScreen() {
       const sent = asset.token
         ? await sendTokenTransfer({ ...req, token: asset.token })
         : await sendNativeTransfer(req);
-      const row: Activity = {
+      const row: WithdrawalRecord = {
         hash: sent.hash,
         symbol: asset.symbol,
         amount: formatUnits(raw, asset.decimals, locale),
+        to,
+        network: chain.name,
+        at: Date.now(),
         status: 'pending',
       };
-      setActivity((prev) => [row, ...prev].slice(0, 20));
+      setHistory(recordWithdrawal(row));
       setNotice(t('eth.sentNotice', { hash: `${sent.hash.slice(0, 10)}…` }));
       setAmount('');
       setTo('');
@@ -391,6 +430,69 @@ export default function WithdrawScreen() {
               </View>
               {addressError ? <Text style={s.fieldError} testID="withdraw-address-error">{addressError}</Text> : null}
 
+              {saved.length > 0 ? (
+                <View testID="withdraw-saved-addresses">
+                  <Text style={s.label}>{t('withdraw.savedAddresses')}</Text>
+                  <View style={s.row}>
+                    {saved.map((entry) => (
+                      <View key={entry.address} style={s.savedChip}>
+                        <TouchableOpacity
+                          onPress={() => setTo(entry.address)}
+                          accessibilityRole="button"
+                          testID={`withdraw-use-saved-${entry.address.slice(2, 8)}`}
+                        >
+                          <Text style={s.chipText}>{entry.label || shortAddress(entry.address)}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => setSaved(deleteAddress(entry.address))}
+                          accessibilityRole="button"
+                          testID={`withdraw-remove-saved-${entry.address.slice(2, 8)}`}
+                        >
+                          <Text style={s.savedRemove}>×</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              ) : null}
+
+              {isAddress(to) && !saved.some((a) => a.address.toLowerCase() === to.trim().toLowerCase()) ? (
+                <TouchableOpacity
+                  style={s.chip}
+                  onPress={() => setSaveOpen(true)}
+                  accessibilityRole="button"
+                  testID="withdraw-save-address"
+                >
+                  <Text style={s.chipText}>{t('withdraw.saveAddress')}</Text>
+                </TouchableOpacity>
+              ) : null}
+              {saveOpen ? (
+                <View style={s.row}>
+                  <TextInput
+                    style={[s.input, s.inputFlex]}
+                    value={saveLabel}
+                    onChangeText={setSaveLabel}
+                    placeholder={t('withdraw.labelPh')}
+                    testID="withdraw-save-label"
+                  />
+                  <TouchableOpacity
+                    style={s.chip}
+                    onPress={confirmSaveAddress}
+                    accessibilityRole="button"
+                    testID="withdraw-save-confirm"
+                  >
+                    <Text style={s.chipText}>{t('withdraw.save')}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={s.chip}
+                    onPress={() => { setSaveOpen(false); setSaveLabel(''); }}
+                    accessibilityRole="button"
+                  >
+                    <Text style={s.chipText}>{t('eth.cancel')}</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : null}
+
               <Text style={s.label}>{t('withdraw.network')}</Text>
               <TouchableOpacity style={s.input} onPress={() => setStep('network')} accessibilityRole="button">
                 <Text style={s.inputText}>{chain.name}{asset.token ? ' (ERC-20)' : ''}</Text>
@@ -464,13 +566,24 @@ export default function WithdrawScreen() {
             </View>
 
             <View style={s.card} testID="withdraw-history">
-              <Text style={s.cardTitle}>{t('eth.activity')}</Text>
-              {activity.length === 0 ? (
+              <View style={s.rowBetween}>
+                <Text style={s.cardTitle}>{t('eth.activity')}</Text>
+                {history.length > 0 ? (
+                  <TouchableOpacity
+                    onPress={() => { setHistory(clearWithdrawals()); setNotice(t('withdraw.cleared')); }}
+                    accessibilityRole="button"
+                    testID="withdraw-clear-history"
+                  >
+                    <Text style={s.link}>{t('withdraw.clearHistory')}</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              {history.length === 0 ? (
                 <Text style={s.meta}>{t('eth.emptyActivity')}</Text>
               ) : (
-                activity.map((a) => (
+                history.map((a) => (
                   <View key={a.hash} style={s.historyRow} testID="withdraw-history-row">
-                    <Text style={s.rowTitle}>{a.amount} {a.symbol}</Text>
+                    <Text style={s.rowTitle}>{a.amount} {a.symbol} → {shortAddress(a.to)}</Text>
                     <Text style={s.meta}>{t(`eth.state_${a.status}`)}</Text>
                     <Text style={s.hash} onPress={() => void Linking.openURL(ethExplorerTx(chain, a.hash))}>
                       {t('deposit.txid')}: {shortAddress(a.hash)}
@@ -538,6 +651,10 @@ const s = StyleSheet.create((theme) => ({
   badge: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   badgeText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
   historyRow: { paddingVertical: 8, borderTopWidth: 1, borderTopColor: theme.colors.border },
+  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  link: { fontSize: 12, fontWeight: '600', color: theme.colors.text.link },
+  savedChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 999, paddingVertical: 4, paddingLeft: 10, paddingRight: 6 },
+  savedRemove: { fontSize: 14, fontWeight: '700', color: theme.colors.text.secondary, paddingHorizontal: 2 },
   hash: { fontFamily: MONO_FONT, fontSize: 11, color: theme.colors.text.link, marginTop: 2 },
   inputRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   inputFlex: { flex: 1 },
