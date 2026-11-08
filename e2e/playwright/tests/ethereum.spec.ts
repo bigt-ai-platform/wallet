@@ -331,13 +331,13 @@ test.describe('Withdraw (exchange style)', () => {
 });
 
 test.describe('Ethereum wallet gating', () => {
-  test('a wallet created by the app (PQ by default) shows the EC requirement', async ({ page }) => {
+  test('a wallet created by the app is dual-key and usable at once', async ({ page }) => {
     await disableFilePicker(page);
     await page.goto('/');
     await page.waitForTimeout(1500);
     await gotoKeys(page);
 
-    // Default create flow makes a post-quantum wallet.
+    // New wallets get a PQ key for Bigtangle and an EC key for Ethereum.
     await page.getByText('Create New Wallet').first().click();
     await page.getByText('Save with Password').first().click();
     const pw = page.locator('input[type="password"]');
@@ -346,11 +346,50 @@ test.describe('Ethereum wallet gating', () => {
     await page.getByText('Save Wallet').first().click();
     await expect(page.getByText('Wallet Saved Successfully!').first()).toBeAttached({ timeout: 30000 });
     await page.getByText('Done').first().click();
+    await expect(page.getByTestId('keys-key-list')).toContainText('0x', { timeout: 15000 });
+
+    await gotoEthereum(page);
+    await expect(page.getByTestId('eth-ec-gate')).toHaveCount(0);
+    await expect(page.getByTestId('eth-address')).toHaveText(/^0x[0-9a-fA-F]{40}$/, { timeout: 15000 });
+  });
+
+  test('a legacy PQ-only wallet shows the gate and can add an Ethereum key', async ({ page }) => {
+    // A post-quantum-only wallet (the shape of wallets created before the dual
+    // key default). Built with the SDK so the ML-DSA key is valid.
+    const sdk = (await import('bigtangle-ts')) as any;
+    const pq = sdk.PQKey.createNew();
+    const address = sdk.Address.fromP2PKH(
+      sdk.MainNetParams.get(),
+      pq.getPubKeyHash()
+    ).toBase58();
+    await page.addInitScript(
+      ([a, pub, priv]) => {
+        const wallet = {
+          keys: [{ address: a, pubkey: pub, privateKey: priv, keyType: 'PQ', role: 'bigtangle' }],
+        };
+        localStorage.setItem('device.walletEncryptedContent', JSON.stringify(wallet));
+        localStorage.setItem('device.walletAddress', a);
+        localStorage.setItem('eth.settings', JSON.stringify({ network: 'mainnet', rpcUrl: '' }));
+      },
+      [address, pq.getPublicKeyAsHex(), pq.getPrivateKeyHex()] as const
+    );
+    await page.goto('/');
+    await page.waitForTimeout(1500);
 
     await gotoEthereum(page);
     await expect(page.getByTestId('eth-ec-gate')).toBeAttached({ timeout: 15000 });
-    await expect(page.getByTestId('eth-ec-gate')).toContainText('post-quantum');
-    await expect(page.getByTestId('eth-address')).toHaveCount(0);
+    await expect(page.getByTestId('eth-ec-gate')).toContainText('Ethereum needs a secp256k1');
+
+    // Add the key from the gate, then the Ethereum address exists.
+    await page.getByTestId('eth-ec-gate').getByRole('button').click();
+    await expect(page.getByTestId('keys-add-eth-key')).toBeAttached({ timeout: 15000 });
+    await page.getByTestId('keys-add-eth-key').click();
+    await expect(page.getByTestId('keys-key-list')).toContainText('0x', { timeout: 15000 });
+
+    // Back to the Ethereum screen (the Keys screen was pushed from its gate).
+    await page.goBack();
+    await expect(page.getByTestId('eth-screen')).toBeAttached({ timeout: 15000 });
+    await expect(page.getByTestId('eth-address')).toHaveText(/^0x[0-9a-fA-F]{40}$/, { timeout: 15000 });
   });
 
   test('creates a legacy EC wallet and derives an Ethereum address', async ({ page }) => {

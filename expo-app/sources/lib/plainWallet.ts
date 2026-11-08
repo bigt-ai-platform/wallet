@@ -16,6 +16,8 @@ export interface PlainWalletKey {
   keyType?: string;
   /** Network the EC address was derived on (EC keys only). */
   network?: string;
+  /** Wallet role: the Bigtangle key or the Ethereum (EVM) key. */
+  role?: 'bigtangle' | 'ethereum';
 }
 
 export interface PlainWalletJson {
@@ -25,15 +27,15 @@ export interface PlainWalletJson {
 }
 
 /**
- * Serialize one key as a plain wallet JSON file — the unencrypted input that
- * `saveKeyToFile` encrypts, and the form `storeEncryptedWallet` accepts
- * without a password.
+ * Serialize one key (or every key of a multi-key wallet) as a plain wallet
+ * JSON file — the unencrypted input that `saveKeyToFile` encrypts, and the
+ * form `storeEncryptedWallet` accepts without a password.
  */
 export function serializePlainWallet(
-  key: PlainWalletKey,
+  keys: PlainWalletKey | PlainWalletKey[],
   credentials?: unknown,
 ): string {
-  const serialized: PlainWalletJson = { keys: [key] };
+  const serialized: PlainWalletJson = { keys: Array.isArray(keys) ? keys : [keys] };
   // Wallets created without credentials (new format) keep the file
   // credential-free.
   if (credentials) serialized.credentials = credentials;

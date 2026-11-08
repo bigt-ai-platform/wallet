@@ -8,6 +8,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
 import { useWallet } from '@/state/wallet';
+import { ethereumKey } from '@/lib/walletKeys';
 import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
 import { notifySystemMessage } from '@/services/systemMessages';
@@ -50,12 +51,14 @@ export default function EthereumScreen() {
   const locale = i18n.language || 'en';
 
   const wallet = getUnlockedWallet();
-  const keyType = wallet?.wallet.keyType;
-  const privateKey = wallet?.wallet.privateKey;
-  const isEc = keyType === 'EC';
+  // Dual-key wallets sign Ethereum with their EC key, whatever the primary
+  // (Bigtangle) key type is.
+  const ethKey = wallet ? ethereumKey(wallet) : null;
+  const privateKey = ethKey?.privateKey;
+  const isEc = !!ethKey;
   const account = React.useMemo(
-    () => (isEc && privateKey ? accountFromPrivateKey(privateKey) : ''),
-    [isEc, privateKey]
+    () => (privateKey ? accountFromPrivateKey(privateKey) : ''),
+    [privateKey]
   );
 
   const [chain, setChain] = React.useState(() => getEthChain());

@@ -358,17 +358,53 @@ export async function broadcastPegIn(rawTx: string): Promise<ApiResponse<string>
 }
 
 /** Sign every input of a locally built transfer with the wallet key. */
-async function signLocalInputs(tx: any, signKey: ECKey | PQKey): Promise<void> {
+/** One key that can sign Bigtangle inputs (multi-key wallets pass several). */
+export interface SigningKey {
+  privateKeyHex: string;
+  keyType?: 'PQ' | 'EC';
+}
+
+function keyId(key: SigningKey): string {
+  return `${key.keyType ?? 'PQ'}:${key.privateKeyHex.toLowerCase()}`;
+}
+
+/** UTXOs of every key, each tagged with the key that owns it. */
+async function fetchTaggedOutputs(
+  keys: SigningKey[]
+): Promise<Array<{ row: any; key: SigningKey }>> {
+  const out: Array<{ row: any; key: SigningKey }> = [];
+  for (const key of keys) {
+    const res = await httpService.getOutputs(key.privateKeyHex, key.keyType);
+    if (res.success && res.data) {
+      for (const row of res.data as any[]) out.push({ row, key });
+    }
+  }
+  return out;
+}
+
+/** Signs every input with the key that owns it (one owner per input). */
+async function signInputsWithOwners(
+  tx: any,
+  owners: Array<ECKey | PQKey>
+): Promise<void> {
   const inputs = tx.getInputs();
   for (let i = 0; i < inputs.length; i++) {
     const input = inputs[i];
+    const owner = owners[i];
+    if (!owner) throw new Error(i18n.t('errors.createTx'));
     const connected = input.getConnectedOutput();
     const scriptBytes = connected?.getScriptBytes() ?? new Uint8Array(0);
     const sigHashBytes = tx.hashForSignatureScript(i, new Script(scriptBytes), 1 as any, false);
-    const signatureBundle = await signKey.signWithAesKey(sigHashBytes, null);
-    const scriptSig = ScriptBuilder.createInputScript(signatureBundle, signKey);
+    const signatureBundle = await owner.signWithAesKey(sigHashBytes, null);
+    const scriptSig = ScriptBuilder.createInputScript(signatureBundle, owner);
     input.setScriptSig(scriptSig!);
   }
+}
+
+/** Sign every input with the same key (single-key paths). */
+async function signLocalInputs(tx: any, signKey: ECKey | PQKey): Promise<void> {
+  const owners = tx.getInputs().map(() => signKey);
+  await signInputsWithOwners(tx, owners);
 }
 
 /**
@@ -377,29 +413,32 @@ async function signLocalInputs(tx: any, signKey: ECKey | PQKey): Promise<void> {
  * unspent BIG, burns `Coin.FEE_DEFAULT` and returns the change to the wallet.
  * The BIG fee is paid no matter which token is transferred; a BIG transfer
  * instead subtracts it from its own change.
+ *
+ * Multi-key: BIG may sit on the legacy EC key while the sender wallet's primary
+ * key is PQ, so it selects across every key and signs each input with its owner.
+ * Change returns to the key that owned the first selected BIG input.
  */
 async function submitBigFee(params: {
   netParams: NetworkParameters;
-  signKey: ECKey | PQKey;
-  outputs: any[];
+  tagged: Array<{ row: any; key: SigningKey }>;
 }): Promise<string> {
-  const { netParams, signKey, outputs } = params;
+  const { netParams, tagged } = params;
   const bigId = NetworkParameters.BIGTANGLE_TOKENID_STRING;
   const fee = Coin.FEE_DEFAULT.getValue();
-  const utxos = outputs
-    .filter((u) => (u.tokenId || u.tokenHex || u.value?.tokenHex) === bigId && u.confirmed !== false)
-    .map((u) => SdkUTXO.fromJSONObject(u))
+  const candidates = tagged
+    .filter(({ row }) => (row.tokenId || row.tokenHex || row.value?.tokenHex) === bigId && row.confirmed !== false)
+    .map(({ row, key }) => ({ utxo: SdkUTXO.fromJSONObject(row), key }))
     .sort((a, b) => {
-      const av = a.getValue().getValue();
-      const bv = b.getValue().getValue();
+      const av = a.utxo.getValue().getValue();
+      const bv = b.utxo.getValue().getValue();
       return av < bv ? 1 : av > bv ? -1 : 0;
     });
 
   let total = BigInt(0);
-  const selected: any[] = [];
-  for (const u of utxos) {
-    selected.push(u);
-    total += u.getValue().getValue();
+  const selected: Array<{ utxo: any; key: SigningKey }> = [];
+  for (const candidate of candidates) {
+    selected.push(candidate);
+    total += candidate.utxo.getValue().getValue();
     if (total >= fee) break;
   }
   if (total < fee) {
@@ -408,14 +447,18 @@ async function submitBigFee(params: {
 
   const tx = new Transaction(netParams);
   tx.setMemo('fee');
-  for (const u of selected) {
-    tx.addInput2(u.getBlockHash(), new FreeStandingTransactionOutput(netParams, u));
+  for (const { utxo } of selected) {
+    tx.addInput2(utxo.getBlockHash(), new FreeStandingTransactionOutput(netParams, utxo));
   }
   const change = total - fee;
+  const ownerKey = keyFromPrivateKey(selected[0].key.privateKeyHex, selected[0].key.keyType);
   // Java `Wallet.feeTransaction` always writes the change output (even zero):
   // it also makes the BIG output map carry the fee so the block check sees it.
-  tx.addOutputAddress(new Coin(change, hexToBytes(bigId)), Address.fromKey(netParams, signKey));
-  await signLocalInputs(tx, signKey);
+  tx.addOutputAddress(new Coin(change, hexToBytes(bigId)), Address.fromKey(netParams, ownerKey));
+  await signInputsWithOwners(
+    tx,
+    selected.map(({ key }) => keyFromPrivateKey(key.privateKeyHex, key.keyType))
+  );
 
   const result = await broadcastTransaction(bytesToHex(tx.bitcoinSerialize()));
   if (!result.success) {
@@ -434,9 +477,9 @@ async function submitBigFee(params: {
  * to add 1000 raw of the *transferred* token instead, which neither paid the
  * BIG fee nor matched the node's fee rule.
  *
- * The transaction is built with the app's own fetch-based httpService (the SDK
- * wallet path pulls in node-only modules that do not bundle for web), and the
- * raw tx is broadcast via the app's fetch-based `broadcastTransaction`.
+ * Multi-key: `keys` lets a dual-key wallet spend UTXOs of every key (e.g. an
+ * old EC address that still holds BIG, plus the new PQ key). Each input is
+ * signed with its owner and change returns to the first selected input's owner.
  */
 export async function payOnLayer0(params: {
   privateKeyHex: string;
@@ -445,18 +488,21 @@ export async function payOnLayer0(params: {
   amount: bigint;
   tokenId: string;
   memo?: string;
+  /** Every key of the wallet; defaults to the single key above. */
+  keys?: SigningKey[];
 }): Promise<string> {
   const { privateKeyHex, keyType, toAddress, amount, tokenId, memo } = params;
   const netParams = getNetParams();
 
-  const signKey = keyFromPrivateKey(privateKeyHex, keyType);
+  const keys = params.keys?.length ? params.keys : [{ privateKeyHex, keyType }];
+  const signers = new Map(keys.map((k) => [keyId(k), keyFromPrivateKey(k.privateKeyHex, k.keyType)]));
   const tokenBytes = hexToBytes(tokenId);
   const isBig = tokenId.trim().toLowerCase() === NetworkParameters.BIGTANGLE_TOKENID_STRING;
 
-  // 1. Fetch spendable UTXOs (correct pubkey-hash format).
-  const utxosResponse = await httpService.getOutputs(privateKeyHex, keyType);
-  if (!utxosResponse.success || !utxosResponse.data) {
-    throw new Error(i18n.t('errors.fetchUtxos'));
+  // 1. Fetch spendable UTXOs of every key (correct pubkey-hash format).
+  const tagged = await fetchTaggedOutputs(keys);
+  if (tagged.length === 0) {
+    throw new Error(i18n.t('errors.insufficientFunds'));
   }
 
   // 2. Select confirmed UTXOs of the target token to cover amount + fee.
@@ -464,20 +510,20 @@ export async function payOnLayer0(params: {
   // transferred in full and the BIG fee is a separate transaction below.
   const fee = isBig ? Coin.FEE_DEFAULT.getValue() : BigInt(0);
   const needed = amount + fee;
-  const utxos = (utxosResponse.data as any[])
-    .filter((u) => (u.tokenId || u.value?.tokenHex) === tokenId && u.confirmed !== false)
-    .map((u) => SdkUTXO.fromJSONObject(u))
+  const candidates = tagged
+    .filter(({ row }) => (row.tokenId || row.value?.tokenHex) === tokenId && row.confirmed !== false)
+    .map(({ row, key }) => ({ utxo: SdkUTXO.fromJSONObject(row), key }))
     .sort((a, b) => {
-      const av = a.getValue().getValue();
-      const bv = b.getValue().getValue();
+      const av = a.utxo.getValue().getValue();
+      const bv = b.utxo.getValue().getValue();
       return av < bv ? 1 : av > bv ? -1 : 0;
     });
 
   let total = BigInt(0);
-  const selected: any[] = [];
-  for (const u of utxos) {
-    selected.push(u);
-    total += u.getValue().getValue();
+  const selected: Array<{ utxo: any; key: SigningKey }> = [];
+  for (const candidate of candidates) {
+    selected.push(candidate);
+    total += candidate.utxo.getValue().getValue();
     if (total >= needed) break;
   }
   if (total < needed) {
@@ -488,19 +534,20 @@ export async function payOnLayer0(params: {
   const tx = new Transaction(netParams);
   if (memo) tx.setMemo(memo);
 
-  for (const u of selected) {
-    tx.addInput2(u.getBlockHash(), new FreeStandingTransactionOutput(netParams, u));
+  for (const { utxo } of selected) {
+    tx.addInput2(utxo.getBlockHash(), new FreeStandingTransactionOutput(netParams, utxo));
   }
 
   tx.addOutputAddress(new Coin(amount, tokenBytes), Address.fromBase58(netParams, toAddress));
 
   const change = total - needed;
+  const owners = selected.map(({ key }) => signers.get(keyId(key))!);
   if (change > BigInt(0)) {
-    tx.addOutputAddress(new Coin(change, tokenBytes), Address.fromKey(netParams, signKey));
+    tx.addOutputAddress(new Coin(change, tokenBytes), Address.fromKey(netParams, owners[0]));
   }
 
-  // 4. Sign each input.
-  await signLocalInputs(tx, signKey);
+  // 4. Sign each input with its owner.
+  await signInputsWithOwners(tx, owners);
 
   // 5. Broadcast the raw transaction to the L0 server.
   const txHex = bytesToHex(tx.bitcoinSerialize());
@@ -511,11 +558,7 @@ export async function payOnLayer0(params: {
 
   // 6. A non-BIG transfer still owes the BIG fee: submit it as its own tx.
   if (!isBig) {
-    await submitBigFee({
-      netParams,
-      signKey,
-      outputs: utxosResponse.data as any[],
-    });
+    await submitBigFee({ netParams, tagged });
   }
 
   return tx.getHash().toString();

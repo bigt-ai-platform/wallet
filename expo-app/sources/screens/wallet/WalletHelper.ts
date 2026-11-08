@@ -7,6 +7,7 @@ import i18n from '../../lib/i18n';
 import { IS_DEV } from '../../constants/app';
 import { httpService } from '../../services/http';
 import { serializePlainWallet } from '../../lib/plainWallet';
+import { allKeys as allWalletKeys } from '../../lib/walletKeys';
 
 import { PQKey, Utils, ECKey, Address, MainNetParams, TestParams } from 'bigtangle-ts';
 // @ts-ignore - These are not exported in index but exist in dist
@@ -32,10 +33,15 @@ export interface Key {
   readonly keyType?: 'PQ' | 'EC';
   /** Network the address was derived on (EC keys only). */
   readonly network?: string;
+  /** Wallet role: the Bigtangle key or the Ethereum (EVM) key. */
+  readonly role?: 'bigtangle' | 'ethereum';
 }
 
 export interface WalletFile {
+  /** Primary (Bigtangle) key. */
   wallet: Key;
+  /** Every key of the file, primary included (multi-key wallets). */
+  keys?: Key[];
   /** Optional wallet.bigt.ai web-login credentials (no longer generated for new wallets). */
   credentials?: CredentialEntry;
 }
@@ -47,6 +53,7 @@ export interface SerializedWallet {
     privateKey: string;
     keyType?: string;
     network?: string;
+    role?: string;
   }>;
   credentials?: CredentialEntry;
 }
@@ -89,7 +96,7 @@ export function createEcWallet(): WalletFile {
     keyType: 'EC',
     network: params === TestParams.get() ? 'Test' : 'Main',
   };
-  return { wallet };
+  return { wallet, keys: [wallet] };
 }
 
 /**
@@ -109,7 +116,7 @@ export function importEcPrivateKey(privateKeyInput: string): WalletFile {
     keyType: 'EC',
     network: params === TestParams.get() ? 'Test' : 'Main',
   };
-  return { wallet };
+  return { wallet, keys: [wallet] };
 }
 
 // Default context root for bigtangle network
@@ -127,20 +134,36 @@ function pqKeyAddress(pqKey: PQKey): string {
 }
 
 // Use bigtangle-ts PQKey for wallet creation
-export async function createWallet(): Promise<WalletFile> {
+/** A single post-quantum key (Bigtangle role). */
+export function createPqWallet(): WalletFile {
   const pqKey = PQKey.createNew();
+  const pq: Key = {
+    address: pqKeyAddress(pqKey),
+    pubkey: Utils.HEX.encode(pqKey.getPrefixedPublicKeyBytes()),
+    privateKey: pqKey.getPrivateKeyHex(),
+    keyType: 'PQ',
+    role: 'bigtangle',
+  };
+  return { wallet: pq, keys: [pq] };
+}
 
-  const address = pqKeyAddress(pqKey);
-  const pubkey = Utils.HEX.encode(pqKey.getPrefixedPublicKeyBytes());
-  const privateKey = pqKey.getPrivateKeyHex();
+export async function createWallet(): Promise<WalletFile> {
+  const pq: Key = createPqWallet().wallet;
 
-  const wallet: Key = {
-    address,
-    pubkey,
-    privateKey,
+  // New wallets are dual-key: the PQ key for Bigtangle, an EC key for Ethereum
+  // (and later TRON). One encrypted file, one password, one backup.
+  const ecKey = ECKey.createNew();
+  const params = ecParams();
+  const ec: Key = {
+    address: ecKey.toAddressString(params),
+    pubkey: Utils.HEX.encode(ecKey.getPubKey()),
+    privateKey: ecKey.getPrivateKeyAsHex(),
+    keyType: 'EC',
+    network: params === TestParams.get() ? 'Test' : 'Main',
+    role: 'ethereum',
   };
 
-  return { wallet };
+  return { wallet: pq, keys: [pq, ec] };
 }
 
 /**
@@ -149,14 +172,16 @@ export async function createWallet(): Promise<WalletFile> {
  * unlocked, so an import can finish without asking for a password.
  */
 export function serializeWalletFile(walletFile: WalletFile): string {
+  const keys = walletKeys(walletFile);
   return serializePlainWallet(
-    {
-      address: walletFile.wallet.address,
-      pubkey: walletFile.wallet.pubkey,
-      privateKey: walletFile.wallet.privateKey,
-      keyType: walletFile.wallet.keyType ?? 'PQ',
-      network: walletFile.wallet.network,
-    },
+    keys.map((k) => ({
+      address: k.address,
+      pubkey: k.pubkey,
+      privateKey: k.privateKey,
+      keyType: k.keyType ?? 'PQ',
+      network: k.network,
+      role: k.role,
+    })),
     walletFile.credentials,
   );
 }
@@ -187,6 +212,44 @@ export async function saveKeyToFile(
   };
 
   return JSON.stringify(output, null, 2);
+}
+
+/** Every key of the file (multi-key aware). */
+export function walletKeys(walletFile: WalletFile): Key[] {
+  return allWalletKeys(walletFile) as Key[];
+}
+
+/** Rebuild a stored key (EC or PQ) from its serialized form. */
+function keyFromData(keyData: {
+  privateKey: string;
+  keyType?: string;
+  network?: string;
+  role?: string;
+}): Key {
+  if (keyData.keyType === 'EC') {
+    const ecKey = ECKey.fromPrivate(Utils.HEX.decode(keyData.privateKey), true);
+    const params =
+      keyData.network === 'Test' || keyData.network === 'test'
+        ? TestParams.get()
+        : MainNetParams.get();
+    return {
+      address: ecKey.toAddressString(params),
+      pubkey: Utils.HEX.encode(ecKey.getPubKey()),
+      privateKey: keyData.privateKey,
+      keyType: 'EC',
+      network: keyData.network,
+      role: keyData.role === 'bigtangle' || keyData.role === 'ethereum' ? keyData.role : undefined,
+    };
+  }
+  const rawKey = Utils.HEX.decode(keyData.privateKey);
+  const pqKey = PQKey.fromPrivateKey(rawKey);
+  return {
+    address: pqKeyAddress(pqKey),
+    pubkey: pqKey.getPublicKeyAsHex(),
+    privateKey: pqKey.getPrivateKeyHex(),
+    keyType: 'PQ',
+    role: keyData.role === 'bigtangle' || keyData.role === 'ethereum' ? keyData.role : undefined,
+  };
 }
 
 export async function loadWallet(
@@ -236,38 +299,16 @@ export async function loadWallet(
     throw new Error(i18n.t('errors.walletNoKey'));
   }
 
-  const keyData = parsed.keys[0];
-
-  let wallet: Key;
-  if (keyData.keyType === 'EC') {
-    // Legacy secp256k1 key imported from an old-format .wallet file.
-    const ecKey = ECKey.fromPrivate(Utils.HEX.decode(keyData.privateKey), true);
-    const params =
-      keyData.network === 'Test' || keyData.network === 'test'
-        ? TestParams.get()
-        : MainNetParams.get();
-    wallet = {
-      address: ecKey.toAddressString(params),
-      pubkey: Utils.HEX.encode(ecKey.getPubKey()),
-      privateKey: keyData.privateKey,
-      keyType: 'EC',
-      network: keyData.network,
-    };
-  } else {
-    // Recreate PQKey and address from the stored private key
-    const rawKey = Utils.HEX.decode(keyData.privateKey);
-    const pqKey = PQKey.fromPrivateKey(rawKey);
-
-    wallet = {
-      address: pqKeyAddress(pqKey),
-      pubkey: pqKey.getPublicKeyAsHex(),
-      privateKey: pqKey.getPrivateKeyHex(),
-      keyType: 'PQ',
-    };
-  }
+  const keys = parsed.keys.map(keyFromData);
+  // Primary = the Bigtangle key: explicit role, else PQ, else the first key.
+  const wallet =
+    keys.find((k) => k.role === 'bigtangle') ??
+    keys.find((k) => (k.keyType ?? 'PQ') === 'PQ') ??
+    keys[0];
 
   return {
     wallet,
+    keys,
     credentials: parsed.credentials,
   };
 }
@@ -285,35 +326,15 @@ export function loadPlainWalletSync(fileData: string): WalletFile {
     throw new Error(i18n.t('errors.walletNoKey'));
   }
 
-  const keyData = parsed.keys[0];
-
-  let wallet: Key;
-  if (keyData.keyType === 'EC') {
-    const ecKey = ECKey.fromPrivate(Utils.HEX.decode(keyData.privateKey), true);
-    const params =
-      keyData.network === 'Test' || keyData.network === 'test'
-        ? TestParams.get()
-        : MainNetParams.get();
-    wallet = {
-      address: ecKey.toAddressString(params),
-      pubkey: Utils.HEX.encode(ecKey.getPubKey()),
-      privateKey: keyData.privateKey,
-      keyType: 'EC',
-      network: keyData.network,
-    };
-  } else {
-    const rawKey = Utils.HEX.decode(keyData.privateKey);
-    const pqKey = PQKey.fromPrivateKey(rawKey);
-    wallet = {
-      address: pqKeyAddress(pqKey),
-      pubkey: pqKey.getPublicKeyAsHex(),
-      privateKey: pqKey.getPrivateKeyHex(),
-      keyType: 'PQ',
-    };
-  }
+  const keys = parsed.keys.map(keyFromData);
+  const wallet =
+    keys.find((k) => k.role === 'bigtangle') ??
+    keys.find((k) => (k.keyType ?? 'PQ') === 'PQ') ??
+    keys[0];
 
   return {
     wallet,
+    keys,
     credentials: parsed.credentials,
   };
 }

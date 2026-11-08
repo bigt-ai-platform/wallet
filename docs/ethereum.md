@@ -1,6 +1,9 @@
 # Ethereum in the wallet — plan (port of `../vmproject`'s ETH support)
 
-**Status: P0–P2 implemented.** EC wallet creation/import, EVM balances, the
+**Status: P0–P2 implemented.** New wallets are **dual-key** (PQ for Bigtangle +
+EC for Ethereum, one encrypted file); legacy EC wallets add an Ethereum key in
+Keys and can add a PQ key while keeping multi-key spend. EC wallet
+creation/import, EVM balances, the
 deposit address/EIP-681 QR, EIP-1559 withdrawals for ETH + ERC-20, the Settings
 card and the `/eth` proxy are in the app (§11 lists what remains). Scope is
 ETH + ERC-20 on EVM chains for **legacy EC wallets only**. Post-quantum (PQ, ML-DSA) wallets cannot use it: the

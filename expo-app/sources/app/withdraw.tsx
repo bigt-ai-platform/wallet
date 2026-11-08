@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
+import { ethereumKey } from '@/lib/walletKeys';
 import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
 import { notifySystemMessage } from '@/services/systemMessages';
@@ -46,12 +47,14 @@ export default function WithdrawScreen() {
   const locale = i18n.language || 'en';
 
   const wallet = getUnlockedWallet();
-  const keyType = wallet?.wallet.keyType;
-  const privateKey = wallet?.wallet.privateKey;
-  const isEc = keyType === 'EC';
+  // Dual-key wallets sign Ethereum with their EC key, whatever the primary
+  // (Bigtangle) key type is.
+  const ethKey = wallet ? ethereumKey(wallet) : null;
+  const privateKey = ethKey?.privateKey;
+  const isEc = !!ethKey;
   const account = React.useMemo(
-    () => (isEc && privateKey ? accountFromPrivateKey(privateKey) : ''),
-    [isEc, privateKey]
+    () => (privateKey ? accountFromPrivateKey(privateKey) : ''),
+    [privateKey]
   );
 
   const [chain] = React.useState(() => getEthChain());

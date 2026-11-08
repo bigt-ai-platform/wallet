@@ -8,6 +8,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useTranslation } from "react-i18next";
 import * as WebBrowser from "expo-web-browser";
 import { useWallet } from "@/state/wallet";
+import { signingKeys } from "@/lib/walletKeys";
 import { httpService } from "@/services/http";
 import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
 import { BC_DECIMALS, decimalsFor, formatTokenAmount, parseTokenAmount } from "@/lib/tokenformat";
@@ -179,9 +180,11 @@ export default function TransactionScreen() {
     try {
       const privateKeyHex = wallet.wallet.privateKey;
       const keyType = wallet.wallet.keyType;
+      const keys = signingKeys(wallet);
       const all: LayerToken[] = [];
-      // Layer 0 tokens.
-      const l0 = await httpService.getBalances(privateKeyHex, keyType);
+      // Layer 0 tokens across every key (a legacy EC key may still hold funds
+      // next to the wallet's primary key).
+      const l0 = await httpService.getBalancesForKeys(keys);
       (l0.success && l0.data ? l0.data : []).forEach((t) => all.push({ ...t, layer: 0 }));
       // Tokens on each configured L1 chain.
       for (let i = 0; i < l1Chains.length; i++) {
@@ -405,6 +408,7 @@ export default function TransactionScreen() {
         const txHash = await payOnLayer0({
           privateKeyHex: wallet.wallet.privateKey,
           keyType: wallet.wallet.keyType,
+          keys: signingKeys(wallet),
           toAddress,
           amount: BigInt(satoshis),
           tokenId: selectedToken.tokenid,

@@ -17,8 +17,11 @@ import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 
 import { useWallet } from "@/state/wallet";
+import { allKeys as allWalletKeys, needsEthereumKey, needsPostQuantumKey, withKey } from "@/lib/walletKeys";
+import { addressFromPrivateKey } from "@/lib/eth/address";
 import {
   createEcWallet,
+  createPqWallet,
   createWallet,
   importEcPrivateKey,
   importPrivateKey,
@@ -57,7 +60,12 @@ export default function KeysScreen() {
     storeEncryptedWallet,
     lockWallet,
     unlockWallet,
+    getUnlockedWallet,
+    getPassword,
   } = useWallet();
+  const [addingKey, setAddingKey] = useState<null | "ethereum" | "bigtangle">(null);
+  const unlockedFile = getUnlockedWallet();
+  const walletKeyList = unlockedFile ? allWalletKeys(unlockedFile) : [];
 
   const hasExistingWallet = !!publicInfo?.hasEncryptedWallet;
 
@@ -135,6 +143,39 @@ export default function KeysScreen() {
       setIsLoading(false);
     }
   }, [t]);
+
+  /**
+   * Add a key to the current (unlocked) wallet: an EC key for Ethereum or a PQ
+   * key for a legacy EC wallet. Re-encrypts the file with the same password (or
+   * rewrites the plain JSON) so one backup keeps covering every key.
+   */
+  const handleAddKey = useCallback(
+    async (role: "ethereum" | "bigtangle") => {
+      const file = getUnlockedWallet();
+      if (!file || addingKey) return;
+      setAddingKey(role);
+      setErrorMessage("");
+      try {
+        const extra =
+          role === "ethereum"
+            ? { ...createEcWallet().wallet, role: "ethereum" as const }
+            : { ...createPqWallet().wallet, role: "bigtangle" as const };
+        const next = withKey(file, extra);
+        const pwd = getPassword();
+        const content = pwd ? await saveKeyToFile(next, pwd) : serializeWalletFile(next);
+        await storeEncryptedWallet(content, next.wallet.address, pwd ?? undefined);
+        Alert.alert(
+          t("keys.keyAddedTitle"),
+          t(role === "ethereum" ? "keys.ethKeyAdded" : "keys.pqKeyAdded"),
+        );
+      } catch (error) {
+        Alert.alert(t("keys.errorHead"), (error as Error).message);
+      } finally {
+        setAddingKey(null);
+      }
+    },
+    [addingKey, getPassword, getUnlockedWallet, storeEncryptedWallet, t],
+  );
 
   // Proceed to password entry
   const handleProceedToPassword = useCallback(() => {
@@ -722,9 +763,51 @@ export default function KeysScreen() {
           )}
 
           {isUnlocked && (
-            <TouchableOpacity style={[styles.button, styles.buttonPrimary]} onPress={lockWallet}>
-              <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.lock")}</Text>
-            </TouchableOpacity>
+            <>
+              {walletKeyList.length > 0 ? (
+                <View style={styles.keyList} testID="keys-key-list">
+                  {walletKeyList.map((k) => {
+                    const isEvm = k.keyType === 'EC';
+                    const shown = isEvm ? addressFromPrivateKey(k.privateKey) : k.address;
+                    return (
+                      <View key={k.privateKey.slice(0, 12)} style={styles.keyRow}>
+                        <Text style={styles.label}>
+                          {isEvm ? t('keys.ethereumKey') : t('keys.bigtangleKey')}
+                        </Text>
+                        <Text style={styles.address} selectable>{shown}</Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : null}
+              {unlockedFile && needsEthereumKey(unlockedFile) ? (
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonPrimary]}
+                  onPress={() => void handleAddKey('ethereum')}
+                  disabled={addingKey !== null}
+                  testID="keys-add-eth-key"
+                >
+                  <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+                    {addingKey === 'ethereum' ? t('keys.adding') : t('keys.addEthKey')}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+              {unlockedFile && needsPostQuantumKey(unlockedFile) ? (
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonPrimary]}
+                  onPress={() => void handleAddKey('bigtangle')}
+                  disabled={addingKey !== null}
+                  testID="keys-add-pq-key"
+                >
+                  <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+                    {addingKey === 'bigtangle' ? t('keys.adding') : t('keys.addPqKey')}
+                  </Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity style={[styles.button, styles.buttonPrimary]} onPress={lockWallet}>
+                <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t('keys.lock')}</Text>
+              </TouchableOpacity>
+            </>
           )}
         </View>
       )}
@@ -1316,6 +1399,8 @@ const styles = StyleSheet.create((theme) => ({
   statusDotUnlocked: {
     backgroundColor: theme.colors.accent?.emerald ?? theme.colors.primary,
   },
+  keyList: { marginTop: 10, gap: 8 },
+  keyRow: { gap: 2 },
   statusText: {
     fontSize: 14,
     color: theme.colors.text.secondary,

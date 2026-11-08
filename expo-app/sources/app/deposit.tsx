@@ -8,6 +8,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
 import { useWallet } from '@/state/wallet';
+import { ethereumKey } from '@/lib/walletKeys';
 import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
 import { httpService } from '@/services/http';
@@ -48,12 +49,14 @@ export default function DepositScreen() {
   const locale = i18n.language || 'en';
 
   const wallet = getUnlockedWallet();
-  const keyType = wallet?.wallet.keyType;
-  const privateKey = wallet?.wallet.privateKey;
-  const isEc = keyType === 'EC';
+  // Dual-key wallets sign Ethereum with their EC key, whatever the primary
+  // (Bigtangle) key type is.
+  const ethKey = wallet ? ethereumKey(wallet) : null;
+  const privateKey = ethKey?.privateKey;
+  const isEc = !!ethKey;
   const account = React.useMemo(
-    () => (isEc && privateKey ? accountFromPrivateKey(privateKey) : ''),
-    [isEc, privateKey]
+    () => (privateKey ? accountFromPrivateKey(privateKey) : ''),
+    [privateKey]
   );
 
   const l1Chain = React.useMemo(
@@ -106,11 +109,13 @@ export default function DepositScreen() {
     } catch {
       setSourceBalance(0n);
     }
-    // L1 credit destination: the same key's address on the order chain. The
-    // USDT token id is chain-specific, so look it up in the wallet's balances.
-    if (privateKey && l1Chain) {
+    // L1 credit destination: the wallet's Bigtangle address on the order chain.
+    // The USDT token id is chain-specific, so look it up in its balances.
+    const bigtanglePrivateKey = wallet?.wallet.privateKey;
+    const bigtangleKeyType = wallet?.wallet.keyType;
+    if (bigtanglePrivateKey && l1Chain) {
       try {
-        const res = await httpService.getBalancesOn(l1Chain.url, privateKey, keyType);
+        const res = await httpService.getBalancesOn(l1Chain.url, bigtanglePrivateKey, bigtangleKeyType);
         const usdt = (res.data ?? []).find(
           (b) => (b.tokenname || '').toUpperCase().includes('USDT') || b.tokenid?.toLowerCase().includes('usdt')
         );
@@ -129,7 +134,7 @@ export default function DepositScreen() {
     } catch {
       /* keep the local history when the API is unreachable */
     }
-  }, [account, network, privateKey, keyType, l1Chain, publicInfo?.address, t]);
+  }, [account, network, wallet, l1Chain, publicInfo?.address, t]);
 
   React.useEffect(() => {
     if (step === 'address') void loadAddress();

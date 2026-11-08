@@ -544,6 +544,33 @@ export class HttpService {
   }
 
   /**
+   * Balances across **every key** of a multi-key wallet, merged by token:
+   * a legacy EC key and a new PQ key can both hold funds, and the send form
+   * must see the total it can spend.
+   */
+  async getBalancesForKeys(
+    keys: Array<{ privateKeyHex: string; keyType?: 'PQ' | 'EC' }>
+  ): Promise<ApiResponse<WalletAccountItem[]>> {
+    const merged = new Map<string, WalletAccountItem>();
+    for (const key of keys) {
+      const items = await this.fetchAccountBalances(key.privateKeyHex, undefined, key.keyType);
+      for (const item of items) {
+        const raw = BigInt(item.raw ?? '0');
+        const current = merged.get(item.tokenid);
+        if (!current) {
+          merged.set(item.tokenid, { ...item });
+          continue;
+        }
+        const total = BigInt(current.raw ?? '0') + raw;
+        current.raw = total.toString();
+        current.balance = formatTokenAmount(total, current.decimals);
+        current.confirmedBalance = current.balance;
+      }
+    }
+    return { success: true, data: Array.from(merged.values()) };
+  }
+
+  /**
    * Get account balances from a specific chain URL (e.g. an L1 order chain),
    * not just the default L0 server.
    */

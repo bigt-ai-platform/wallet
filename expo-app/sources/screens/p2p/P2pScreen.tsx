@@ -7,6 +7,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
+import { signingKeys } from '@/lib/walletKeys';
 import { MONO_FONT } from '@/constants/fonts';
 import { P2P_ENGINE_PUBKEYS } from '@/constants/app';
 import WalletUnlock from '@/components/WalletUnlock';
@@ -795,6 +796,7 @@ export default function P2pScreen() {
         txHash = await payOnLayer0({
           privateKeyHex: unlocked.wallet.privateKey,
           keyType: unlocked.wallet.keyType,
+          keys: signingKeys(unlocked),
           toAddress: swap.escrowAddress,
           amount: depositRaw,
           tokenId: item.tokenid,

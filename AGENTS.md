@@ -525,3 +525,23 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   already rejects sending to your own address, so no fee estimate appears in
   that case — the spec submits directly and asserts `eth.errSelf`. e2e:
   "Withdraw (exchange style)" specs (ERC-20 payload + own-address rejection).
+- **Dual-key wallets (PQ + EC) and multi-key spend.** New wallets are created
+  with a **PQ key (role `bigtangle`)** and an **EC key (role `ethereum`)**;
+  `SerializedWallet.keys[]` carries both and `WalletHelper` keeps
+  `wallet` = the primary (Bigtangle) key plus `keys[]` = all keys. Roles live in
+  `lib/walletKeys.ts` (`allKeys`, `bigtangleKey`, `ethereumKey`, `withKey`,
+  `needsEthereumKey`, `needsPostQuantumKey`, `signingKeys`); the EVM screens sign
+  with `ethereumKey(wallet)` so a PQ-primary wallet works, and Keys lists every
+  key (0x address for the EC key) with **Add Ethereum key** / **Add
+  post-quantum key** actions (`handleAddKey` re-encrypts the file with the same
+  password, or rewrites the plain JSON). `storeEncryptedWallet` now refreshes
+  the in-memory wallet for a password-less (plain) rewrite — without that the
+  key list stayed stale after adding a key.
+  `payOnLayer0` takes `keys: SigningKey[]`, fetches UTXOs per key, signs each
+  input with its owner (change to the first input's owner) and the BIG fee tx
+  selects across keys too; the Payment screen uses
+  `httpService.getBalancesForKeys(keys)` (merged by token) and passes
+  `signingKeys(wallet)`, as does P2P escrow funding. Legacy EC-only wallets keep
+  their EC key for both roles, so existing funds stay spendable; the Balance
+  screen still queries the primary address only (L1 sends stay on the primary
+  key).

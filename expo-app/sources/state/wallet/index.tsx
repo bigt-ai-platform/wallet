@@ -204,6 +204,16 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           } catch {
             // Unlock later through the normal unlock flow.
           }
+        } else if (isPlainWalletJson(encryptedContent)) {
+          // A plain wallet is rewritten without a password (e.g. adding a key
+          // to an unencrypted wallet). Refresh the in-memory copy so the UI
+          // sees the new key list immediately.
+          passwordRef.current = null;
+          try {
+            decryptedWalletRef.current = loadPlainWalletSync(encryptedContent);
+          } catch {
+            // Keep the previous copy; the next boot re-reads from storage.
+          }
         }
 
         // Unencrypted wallets are never locked.
