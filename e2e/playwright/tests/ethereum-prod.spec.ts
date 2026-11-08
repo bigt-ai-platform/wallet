@@ -89,11 +89,9 @@ test.describe('Ethereum on a deployed wallet (read-only)', () => {
       page.getByTestId('deposit-address-card').or(page.getByTestId('deposit-open-settings'))
     ).toBeVisible({ timeout: 30000 });
 
-    // Withdraw: asset -> network -> form, with a live fee from the real node.
-    await page.getByRole('button', { name: 'Open navigation menu' }).click();
-    const withdraw = page.getByTestId('sidebar').getByRole('button', { name: 'Withdraw', exact: true });
-    await expect(withdraw).toBeVisible({ timeout: 15000 });
-    await withdraw.click();
+    // Withdraw: the deploy stack serves SPA routes, so open it directly (the
+    // deposit page is a stack screen without the drawer button).
+    await page.goto(`${BASE}/withdraw`, { waitUntil: 'networkidle', timeout: 60000 });
     await expect(page.getByTestId('withdraw-screen')).toBeAttached({ timeout: 20000 });
     await page.getByTestId('withdraw-asset-ETH').click();
     await page.getByTestId('withdraw-network-ethereum').click();

@@ -269,33 +269,50 @@ config_caddy() {
   if [ -z "${ETH_RPC_URL:-}" ] && [ -f "$eth_env" ]; then
     ETH_RPC_URL="$(grep -E '^ETH_RPC_URL=' "$eth_env" | tail -1 | cut -d= -f2- | tr -d '\r\"' || true)"
   fi
+  # Caddy proxy upstreams only accept scheme+host+port, so a base URL with a
+  # path (Blockscout's /api/v2, an Infura /v3/<key>) is split into an upstream
+  # plus a `rewrite` that prefixes the path back onto the (prefix-stripped) URI.
+  eth_upstream_parts() { # <url> -> sets EU_SCHEME EU_HOST EU_PATH
+    local url="$1"
+    EU_SCHEME="$(printf '%s' "$url" | sed -E 's#^(https?)://.*#\1#')"
+    EU_HOST="$(printf '%s' "$url" | sed -E 's#^https?://##; s#/.*$##')"
+    EU_PATH="$(printf '%s' "$url" | sed -E 's#^https?://[^/]+##; s#/+$##')"
+    [ -n "$EU_SCHEME" ] || EU_SCHEME=https
+  }
+
   local eth_route=""
   local eth_index_route=""
   if [ -n "${ETH_INDEX_URL:-}" ]; then
-    local eth_index_host
-    eth_index_host="$(printf '%s' "$ETH_INDEX_URL" | sed -E 's#^https?://##; s#/.*$##')"
+    local EU_SCHEME EU_HOST EU_PATH
+    eth_upstream_parts "$ETH_INDEX_URL"
+    local idx_rewrite=""
+    [ -n "$EU_PATH" ] && idx_rewrite="        rewrite * ${EU_PATH}{uri}
+"
     eth_index_route="    # Address index for native deposit history (docs/ethereum.md).
     handle_path /ethindex/* {
-        reverse_proxy ${ETH_INDEX_URL} {
-            header_up Host ${eth_index_host}
+${idx_rewrite}        reverse_proxy ${EU_SCHEME}://${EU_HOST} {
+            header_up Host ${EU_HOST}
         }
     }"
   fi
   if [ -n "${ETH_RPC_URL:-}" ]; then
-    local eth_host
-    eth_host="$(printf '%s' "$ETH_RPC_URL" | sed -E 's#^https?://##; s#/.*$##')"
+    local EU_SCHEME EU_HOST EU_PATH
+    eth_upstream_parts "$ETH_RPC_URL"
+    local rpc_rewrite=""
+    [ -n "$EU_PATH" ] && rpc_rewrite="        rewrite * ${EU_PATH}{uri}
+"
     eth_route="    # Ethereum JSON-RPC (same-origin /eth, provider key stays server-side).
     # The app POSTs to the bare /eth base; also cover /eth/<path> so a proxy
     # base with a path prefix works. (Note: /ethereum is the SPA route and must
     # NOT match — hence the exact + wildcard pair rather than /eth*.)
     handle_path /eth {
-        reverse_proxy ${ETH_RPC_URL} {
-            header_up Host ${eth_host}
+${rpc_rewrite}        reverse_proxy ${EU_SCHEME}://${EU_HOST} {
+            header_up Host ${EU_HOST}
         }
     }
     handle_path /eth/* {
-        reverse_proxy ${ETH_RPC_URL} {
-            header_up Host ${eth_host}
+${rpc_rewrite}        reverse_proxy ${EU_SCHEME}://${EU_HOST} {
+            header_up Host ${EU_HOST}
         }
     }"
   fi
@@ -449,6 +466,11 @@ APEXEOF
   # legacy rename bapp-<r>.caddy → wallet-<r>.caddy: drop the old vhost file
   # before the reload — two site blocks for the same domain would fail it
   ssh_run "$r" "${sudo} rm -f /etc/caddy/Caddyfile.d/bapp-${r}.caddy"
+  if ! ssh_run "$r" "${sudo} caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1"; then
+    echo -e "${RED}Caddy config on $r is INVALID — not reloading (old config kept)${NC}" >&2
+    ssh_run "$r" "${sudo} caddy validate --config /etc/caddy/Caddyfile 2>&1 | tail -5" >&2 || true
+    exit 1
+  fi
   ssh_run "$r" "${sudo} systemctl reload caddy 2>/dev/null || ${sudo} caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || true"
   echo -e "${GREEN}    Caddy configured for $dom${NC}"
   if [ "$r" = "${APEX_REGION:-}" ]; then
