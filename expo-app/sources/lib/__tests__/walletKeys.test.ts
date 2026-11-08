@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   allKeys, bigtangleKey, ethereumKey, needsEthereumKey, needsPostQuantumKey,
-  signingKeys, withKey, type WalletKey,
+  signingKeys, walletAddresses, withKey, type WalletKey,
 } from '../walletKeys';
 
 const pq = (id = 'pq'): WalletKey => ({
@@ -59,6 +59,12 @@ describe('wallet key roles', () => {
   it('replaces a same-role key when adding another', () => {
     const dual = withKey({ wallet: pq(), keys: [pq(), ec('one')] }, ec('two'));
     expect(allKeys(dual).filter((k) => k.keyType === 'EC').map((k) => k.address)).toEqual(['ec-two']);
+  });
+
+  it('lists every address for per-address chain queries', () => {
+    const dual = withKey({ wallet: pq(), keys: [pq()] }, ec());
+    expect(walletAddresses(dual)).toEqual(['pq-pq', 'ec-ec']);
+    expect(walletAddresses({ wallet: pq(), keys: [pq(), pq()] })).toEqual(['pq-pq']);
   });
 
   it('returns signing material for every key', () => {

@@ -1005,6 +1005,31 @@ export class HttpService {
   /**
    * Get open orders for an address on the L1 order chain
    */
+  /**
+   * Orders of **every** wallet address, merged and deduplicated by order id.
+   * L1 indexes an order under the address that placed it, so a dual-key wallet
+   * must ask for each key (orders placed before a key upgrade stay visible).
+   */
+  async getOrdersByAddresses(addresses: string[]): Promise<ApiResponse<OrderInfo[]>> {
+    const seen = new Map<string, OrderInfo>();
+    let lastError = '';
+    for (const address of Array.from(new Set(addresses.filter(Boolean)))) {
+      const res = await this.getOrdersByAddress(address);
+      if (res.success && res.data) {
+        for (const order of res.data) {
+          const id = order.blockHashHex || JSON.stringify(order);
+          if (!seen.has(id)) seen.set(id, order);
+        }
+      } else if (res.error) {
+        lastError = res.error;
+      }
+    }
+    if (seen.size > 0) return { success: true, data: Array.from(seen.values()) };
+    return lastError
+      ? { success: false, error: lastError }
+      : { success: true, data: [] };
+  }
+
   async getOrdersByAddress(address: string): Promise<ApiResponse<OrderInfo[]>> {
     const response = await this.requestL1<any>('getOrders', 'POST', { address });
     if (response.success && response.data) {

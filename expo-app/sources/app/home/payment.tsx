@@ -8,7 +8,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useTranslation } from "react-i18next";
 import * as WebBrowser from "expo-web-browser";
 import { useWallet } from "@/state/wallet";
-import { signingKeys } from "@/lib/walletKeys";
+import { signingKeys, walletAddresses } from "@/lib/walletKeys";
 import { httpService } from "@/services/http";
 import { payOnLayer1, payOnLayer0 } from "@/services/transaction";
 import { BC_DECIMALS, decimalsFor, formatTokenAmount, parseTokenAmount } from "@/lib/tokenformat";
@@ -288,7 +288,10 @@ export default function TransactionScreen() {
     if (fromServer && !silent) setRefreshingPayments(true);
     try {
       if (fromServer) {
-        const updated = await refreshAllStatuses(publicInfo?.address);
+        const unlocked = getUnlockedWallet();
+        const updated = await refreshAllStatuses(
+          unlocked ? walletAddresses(unlocked) : publicInfo?.address,
+        );
         setPayments(updated.filter((r) => r.kind === 'payment'));
       } else {
         setPayments(listPayments());

@@ -10,6 +10,7 @@ import WalletUnlock from '@/components/WalletUnlock';
 import { httpService } from '@/services/http';
 import { cancelOrderOnLayer1 } from '@/services/transaction';
 import { listOrders, refreshAllStatuses } from '@/services/tracking';
+import { walletAddresses } from '@/lib/walletKeys';
 import ChainBadge from '@/components/ChainBadge';
 import { statusBadgeColor } from '@/utils/status';
 import type { OrderInfo, TrackedRecord, TrackedStatus } from '@/types/api';
@@ -49,11 +50,16 @@ export default function OrderScreen() {
     if (!publicInfo?.address) return;
     if (isRefresh) setRefreshingOrders(true); else setLoadingOrders(true);
     try {
+      // Orders live under the address that placed them: ask for every key.
+      const unlocked = getUnlockedWallet();
+      const addresses = unlocked
+        ? walletAddresses(unlocked)
+        : [publicInfo.address];
       if (isRefresh) {
-        await refreshAllStatuses(publicInfo.address, l1Url);
+        await refreshAllStatuses(addresses, l1Url);
       }
       setTrackedOrders(listOrders());
-      const res = await httpService.getOrdersByAddress(publicInfo.address);
+      const res = await httpService.getOrdersByAddresses(addresses);
       if (res.success && res.data) setLiveOrders(res.data);
     } catch (e) { console.error('Error loading orders:', e); }
     finally { setLoadingOrders(false); setRefreshingOrders(false); }

@@ -6,7 +6,7 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
-import { signingKeys } from '@/lib/walletKeys';
+import { signingKeys, walletAddresses } from '@/lib/walletKeys';
 import { httpService } from '@/services/http';
 import { listOrders, refreshAllStatuses } from '@/services/tracking';
 import { statusBadgeColor } from '@/utils/status';
@@ -61,7 +61,9 @@ export default function DashboardScreen() {
         httpService.getBalancesForKeysOn(l1Base, keys).catch(() => null),
         httpService.getBalancesForKeys(keys).catch(() => null),
         httpService.getOrdersTicker([], 'bc').catch(() => null),
-        httpService.getOrdersByAddress(publicInfo.address).catch(() => null),
+        httpService
+          .getOrdersByAddresses(walletAddresses(unlocked))
+          .catch(() => null),
       ]);
       setTrading(l1Res?.success && l1Res.data ? l1Res.data : []);
       setLayer0(l0Res?.success && l0Res.data ? l0Res.data : []);
@@ -81,7 +83,7 @@ export default function DashboardScreen() {
       setPrices(map);
       setTokenNames(names);
       setOpenOrders(ordersRes?.success && ordersRes.data ? ordersRes.data : []);
-      await refreshAllStatuses(publicInfo.address, l1Url).catch(() => {});
+      await refreshAllStatuses(walletAddresses(unlocked), l1Url).catch(() => {});
       setActivity(listOrders().slice(0, 5));
       setUpdatedAt(Date.now());
     } finally {

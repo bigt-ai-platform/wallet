@@ -283,8 +283,9 @@ async function refreshPayment(record: TrackedRecord): Promise<TrackedRecord> {
  * confirmed transaction then falls through to the open-book check, while a
  * dropped one is marked failed.
  */
-async function refreshOrders(address: string, l1Url?: string): Promise<TrackedRecord[]> {
-  const res = await httpService.getOrdersByAddress(address);
+async function refreshOrders(address: string | string[], l1Url?: string): Promise<TrackedRecord[]> {
+  const addresses = Array.isArray(address) ? address : [address];
+  const res = await httpService.getOrdersByAddresses(addresses);
   if (!res.success || !res.data) return listOrders();
 
   const openOrders: OrderInfo[] = res.data;
@@ -340,8 +341,8 @@ export async function refreshPendingPayments(): Promise<TrackedRecord[]> {
   return listPayments();
 }
 
-/** Refresh only pending orders for one address. */
-export async function refreshPendingOrders(address: string, l1Url?: string): Promise<TrackedRecord[]> {
+/** Refresh only pending orders for one address or every wallet address. */
+export async function refreshPendingOrders(address: string | string[], l1Url?: string): Promise<TrackedRecord[]> {
   if (listOrders().some((r) => r.status === 'pending')) {
     await refreshOrders(address, l1Url);
   }
@@ -351,10 +352,14 @@ export async function refreshPendingOrders(address: string, l1Url?: string): Pro
 /**
  * Refresh the status of all pending payments and orders.
  */
-export async function refreshAllStatuses(address?: string, l1Url?: string): Promise<TrackedRecord[]> {
+export async function refreshAllStatuses(
+  address?: string | string[],
+  l1Url?: string
+): Promise<TrackedRecord[]> {
   await refreshPendingPayments();
-  if (address) {
-    await refreshOrders(address, l1Url);
+  const addresses = address ? (Array.isArray(address) ? address : [address]) : [];
+  if (addresses.length > 0) {
+    await refreshOrders(addresses, l1Url);
   }
   return getAllRecords();
 }

@@ -87,6 +87,11 @@ export function needsPostQuantumKey(file: WalletKeySet): boolean {
   return !allKeys(file).some((k) => (k.keyType ?? 'PQ') === 'PQ');
 }
 
+/** Every address of the wallet (deduplicated), for per-address chain queries. */
+export function walletAddresses(file: WalletKeySet): string[] {
+  return Array.from(new Set(allKeys(file).map((k) => k.address).filter(Boolean)));
+}
+
 /** Signing material for one key, as the transaction service expects it. */
 export function signingKeys(file: WalletKeySet): Array<{ privateKeyHex: string; keyType?: KeyType }> {
   return allKeys(file).map((k) => ({ privateKeyHex: k.privateKey, keyType: k.keyType }));
