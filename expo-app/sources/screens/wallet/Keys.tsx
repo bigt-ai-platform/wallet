@@ -52,6 +52,52 @@ type OldWalletStep =
 
 const isWeb = Platform.OS === "web";
 
+/**
+ * Write a wallet file to the device: browser download (file picker, then the
+ * anchor fallback) or the app documents directory + share sheet on native.
+ * Returns the file name that was written.
+ */
+async function saveWalletFileToDevice(content: string, fileName: string): Promise<void> {
+  if (isWeb) {
+    const blob = new Blob([content], { type: 'application/json' });
+    if (typeof (globalThis as any).showSaveFilePicker === 'function') {
+      try {
+        const handle = await (globalThis as any).showSaveFilePicker({
+          suggestedName: fileName,
+          types: [{ description: 'JSON Wallet File', accept: { 'application/json': ['.json'] } }],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+        return;
+      } catch (pickerError: any) {
+        if (pickerError?.name === 'AbortError') throw pickerError;
+        throw pickerError;
+      }
+    }
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    return;
+  }
+  const documentsDir = (FileSystem as any).documentDirectory;
+  if (!documentsDir) throw new Error('Documents directory not available');
+  const filePath = `${documentsDir}${fileName}`;
+  await (FileSystem as any).writeAsStringAsync(filePath, content);
+  if (await Sharing.isAvailableAsync()) {
+    await Sharing.shareAsync(filePath, {
+      mimeType: 'application/json',
+      dialogTitle: fileName,
+      UTI: 'public.json',
+    });
+  }
+}
+
 export default function KeysScreen() {
   const { t } = useTranslation();
   const {
@@ -176,6 +222,32 @@ export default function KeysScreen() {
     },
     [addingKey, getPassword, getUnlockedWallet, storeEncryptedWallet, t],
   );
+
+  /**
+   * Export the CURRENT wallet (every key: PQ + EC, plus any added later) as a
+   * file. Required after "Add key": the address changes and the only backup on
+   * the phone is the app storage — a new phone needs this file.
+   */
+  const handleExportWallet = useCallback(async () => {
+    const file = getUnlockedWallet();
+    if (!file) {
+      Alert.alert(t('keys.exportTitle'), t('keys.exportLocked'));
+      return;
+    }
+    setIsLoading(true);
+    try {
+      const pwd = getPassword();
+      const content = pwd ? await saveKeyToFile(file, pwd) : serializeWalletFile(file);
+      const fileName = `wallet_${file.wallet.address.slice(0, 8)}_${Date.now()}.json`;
+      await saveWalletFileToDevice(content, fileName);
+      Alert.alert(t('keys.exportTitle'), t('keys.exportedAs', { file: fileName }));
+    } catch (error) {
+      if ((error as { name?: string })?.name === 'AbortError') return;
+      Alert.alert(t('keys.errorHead'), t('keys.exportFailed', { message: (error as Error).message }));
+    } finally {
+      setIsLoading(false);
+    }
+  }, [getPassword, getUnlockedWallet, t]);
 
   // Proceed to password entry
   const handleProceedToPassword = useCallback(() => {
@@ -779,6 +851,18 @@ export default function KeysScreen() {
                     );
                   })}
                 </View>
+              ) : null}
+              {unlockedFile ? (
+                <TouchableOpacity
+                  style={[styles.button, styles.buttonPrimary]}
+                  onPress={() => void handleExportWallet()}
+                  disabled={isLoading}
+                  testID="keys-export-wallet"
+                >
+                  <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
+                    {t('keys.exportWallet')}
+                  </Text>
+                </TouchableOpacity>
               ) : null}
               {unlockedFile && needsEthereumKey(unlockedFile) ? (
                 <TouchableOpacity

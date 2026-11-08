@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import fs from 'node:fs';
 import { startEthRpcMock } from '../../eth-rpc-mock.mjs';
 
 /**
@@ -388,6 +389,7 @@ test.describe('Ethereum wallet gating', () => {
   });
 
   test('a legacy PQ-only wallet shows the gate and can add an Ethereum key', async ({ page }) => {
+    await disableFilePicker(page);
     // A post-quantum-only wallet (the shape of wallets created before the dual
     // key default). Built with the SDK so the ML-DSA key is valid.
     const sdk = (await import('bigtangle-ts')) as any;
@@ -419,6 +421,21 @@ test.describe('Ethereum wallet gating', () => {
     await expect(page.getByTestId('keys-add-eth-key')).toBeAttached({ timeout: 15000 });
     await page.getByTestId('keys-add-eth-key').click();
     await expect(page.getByTestId('keys-key-list')).toContainText('0x', { timeout: 15000 });
+
+    // The address changed, so the user must be able to take the updated file
+    // to a new phone: the export contains BOTH keys (PQ + EC).
+    const downloadPromise = page.waitForEvent('download', { timeout: 20000 });
+    await page.getByTestId('keys-export-wallet').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/^wallet_.*\.json$/);
+    const exportedPath = await download.path();
+    const exported = JSON.parse(fs.readFileSync(exportedPath!, 'utf8')) as {
+      keys?: Array<{ keyType?: string; address?: string }>;
+    };
+    expect(exported.keys).toHaveLength(2);
+    expect(exported.keys?.some((k) => k.keyType === 'PQ')).toBe(true);
+    expect(exported.keys?.some((k) => k.keyType === 'EC')).toBe(true);
+    expect(exported.keys?.find((k) => k.keyType === 'PQ')?.address).toBe(address);
 
     // Back to the Ethereum screen (the Keys screen was pushed from its gate).
     await page.goBack();

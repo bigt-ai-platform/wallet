@@ -565,3 +565,13 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   re-checked once on mount (`getTransactionReceipt`), so a send that confirmed
   while the app was closed resolves itself. History survives reloads now
   (previously component state only) and has a Clear action.
+- **Wallet backup export.** Keys has a "Back up wallet file" action
+  (`handleExportWallet`) for the CURRENT wallet: it re-encrypts the decrypted
+  file with the wallet password (or writes the plain JSON for a plain wallet)
+  and saves it through the same browser-picker/anchor or native FileSystem +
+  share path as wallet creation (`saveWalletFileToDevice`). This is essential
+  after **Add key**: the address changes and the only copy of the new key would
+  otherwise live in device storage — a new phone importing the OLD file would
+  not have it. The exported file carries every key (`keys[]`), so Load from File
+  on the new device restores all addresses. The e2e test adds an EC key to a
+  PQ-only wallet, downloads the file, and asserts it contains both keys.
