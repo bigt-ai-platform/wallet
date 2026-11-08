@@ -60,4 +60,45 @@ test.describe('Ethereum on a deployed wallet (read-only)', () => {
     await expect(page.getByTestId('eth-fee')).toContainText('Network fee up to', { timeout: 30000 });
     await expect(page.getByTestId('eth-gas-presets')).toContainText('Slow');
   });
+
+  test('the exchange-style Deposit and Withdraw pages are deployed', async ({ page }) => {
+    await page.addInitScript(
+      ([key, pub, address]) => {
+        const wallet = {
+          keys: [{ address, pubkey: pub, privateKey: key, keyType: 'EC', network: 'Main' }],
+        };
+        localStorage.setItem('device.walletEncryptedContent', JSON.stringify(wallet));
+        localStorage.setItem('device.walletAddress', address);
+      },
+      [EC_KEY, EC_PUB, BTC_ADDRESS] as const
+    );
+    await page.goto(BASE, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.waitForTimeout(2500);
+
+    // Deposit: coin -> network -> address (or the not-configured hint when the
+    // deployment has no issuer configured).
+    await page.getByRole('button', { name: 'Open navigation menu' }).click();
+    const deposit = page.getByTestId('sidebar').getByRole('button', { name: 'Deposit', exact: true });
+    await expect(deposit).toBeVisible({ timeout: 15000 });
+    await deposit.click();
+    await expect(page.getByTestId('deposit-screen')).toBeAttached({ timeout: 20000 });
+    await expect(page.getByTestId('deposit-tabs')).toBeAttached();
+    await page.getByTestId('deposit-coin-USDT').click();
+    await page.getByTestId('deposit-network-ethereum').click();
+    await expect(
+      page.getByTestId('deposit-address-card').or(page.getByTestId('deposit-open-settings'))
+    ).toBeVisible({ timeout: 30000 });
+
+    // Withdraw: asset -> network -> form, with a live fee from the real node.
+    await page.getByRole('button', { name: 'Open navigation menu' }).click();
+    const withdraw = page.getByTestId('sidebar').getByRole('button', { name: 'Withdraw', exact: true });
+    await expect(withdraw).toBeVisible({ timeout: 15000 });
+    await withdraw.click();
+    await expect(page.getByTestId('withdraw-screen')).toBeAttached({ timeout: 20000 });
+    await page.getByTestId('withdraw-asset-ETH').click();
+    await page.getByTestId('withdraw-network-ethereum').click();
+    await page.getByTestId('withdraw-to').fill('0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf');
+    await page.getByTestId('withdraw-amount').fill('0.001');
+    await expect(page.getByTestId('withdraw-fee')).toContainText('Total debit', { timeout: 30000 });
+  });
 });
