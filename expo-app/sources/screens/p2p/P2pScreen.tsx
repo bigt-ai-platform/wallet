@@ -211,13 +211,12 @@ export default function P2pScreen() {
   const loadBalances = React.useCallback(async () => {
     const unlocked = getUnlockedWallet();
     if (!isUnlocked || !unlocked) { setL0Balances([]); setL1Balances([]); return; }
-    const pk = unlocked.wallet.privateKey;
-    const kt = unlocked.wallet.keyType;
+    const keys = signingKeys(unlocked);
     const l1Url = httpService.getL1Url();
     const l1Base = httpService.l1Bases(l1Url)[0] ?? l1Url;
     const [l0, l1] = await Promise.all([
-      httpService.getBalances(pk, kt).catch(() => null),
-      httpService.getBalancesOn(l1Base, pk, kt).catch(() => null),
+      httpService.getBalancesForKeys(keys).catch(() => null),
+      httpService.getBalancesForKeysOn(l1Base, keys).catch(() => null),
     ]);
     setL0Balances(l0?.success && l0.data ? l0.data : []);
     setL1Balances(l1?.success && l1.data ? l1.data : []);
@@ -720,7 +719,7 @@ export default function P2pScreen() {
       return;
     }
     const balances = await httpService
-      .getBalances(unlocked.wallet.privateKey, unlocked.wallet.keyType)
+      .getBalancesForKeys(signingKeys(unlocked))
       .catch(() => null);
     const l0 = balances?.success && balances.data ? balances.data : l0Balances;
     const item = findBalance(l0, { tokenId: swap.giveToken, tokenName: swap.giveToken });

@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
+import { allKeys as allWalletKeys, signingKeys } from '@/lib/walletKeys';
 import { httpService } from '@/services/http';
 import { decimalsFor } from '@/lib/tokenformat';
 import { toBigInt, formatValue } from '@/lib/amountformat';
@@ -89,9 +90,17 @@ export default function BalanceScreen() {
   const [detailData, setDetailData] = React.useState<Record<string, { detail?: any; finalized?: boolean }>>({});
   const [expandedKey, setExpandedKey] = React.useState<string | null>(null);
 
+  // Every address this wallet can hold funds on: the primary key plus any
+  // other key (dual-key wallets keep BIG on both).
+  const walletAddresses = React.useMemo(() => {
+    const unlocked = isUnlocked ? getUnlockedWallet() : null;
+    const list = unlocked ? allWalletKeys(unlocked).map((k) => k.address).filter(Boolean) : [];
+    return Array.from(new Set([...(publicInfo?.address ? [publicInfo.address] : []), ...list]));
+  }, [isUnlocked, getUnlockedWallet, publicInfo?.address]);
+
   React.useEffect(() => {
-    if (publicInfo?.address && isUnlocked) loadAll();
-  }, [publicInfo, isUnlocked, sent, history]);
+    if (walletAddresses.length > 0 && isUnlocked) loadAll();
+  }, [publicInfo, isUnlocked, sent, history, walletAddresses.length]);
 
   const parseDate = (v: string): number | null => {
     if (!v) return null;
@@ -110,20 +119,24 @@ export default function BalanceScreen() {
     // The wallet goes in the `toaddress` slot for the received balance and in
     // the `fromaddress` slot for the sent balance (Java
     // WalletBalanceAction.historyUTXOList).
-    const res = await httpService.getOutputsHistory({
-      address: sent ? publicInfo?.address : undefined,
-      toAddress: sent ? undefined : publicInfo?.address,
-      fromTime: fromTime ?? undefined,
-      toTime: toTime ?? undefined,
-      baseUrl,
-    });
-    if (!res.success || !res.data) return [];
+    const rows: any[] = [];
+    for (const address of walletAddresses) {
+      const res = await httpService.getOutputsHistory({
+        address: sent ? address : undefined,
+        toAddress: sent ? undefined : address,
+        fromTime: fromTime ?? undefined,
+        toTime: toTime ?? undefined,
+        baseUrl,
+      });
+      if (res.success && res.data) rows.push(...res.data);
+    }
+    if (rows.length === 0) return [];
     // getOutputsHistory returns `value` as a Coin object {value, tokenid,
     // tokenHex, big}, the token id as `tokenId` (camelCase), and no
     // `spendable` flag — normalize to the UTXO shape the screen renders
     // (spendable = confirmed + unspent + not spend-pending). Per-UTXO block
     // detail (chainlength/finalized/height) is fetched on demand via "…".
-    return res.data.map((u: any): LayerUtxo => ({
+    return rows.map((u: any): LayerUtxo => ({
       ...u,
       value:
         u.value && typeof u.value === 'object'
@@ -178,8 +191,7 @@ export default function BalanceScreen() {
       // use the right divisor (BIG = 8 decimals).
       const wallet = getUnlockedWallet();
       if (wallet) {
-        const privateKeyHex = wallet.wallet.privateKey;
-        const keyType = wallet.wallet.keyType;
+        const keys = signingKeys(wallet);
         const map: Record<string, number> = {};
         const collect = (arr: any[] | undefined) => {
           (arr ?? []).forEach((t: any) => {
@@ -188,11 +200,11 @@ export default function BalanceScreen() {
             }
           });
         };
-        const l0 = await httpService.getBalances(privateKeyHex, keyType);
+        const l0 = await httpService.getBalancesForKeys(keys);
         collect(l0.success ? l0.data : []);
         for (let i = 0; i < l1Chains.length; i++) {
           try {
-            const l1 = await httpService.getBalancesOn(l1Chains[i].url, privateKeyHex, keyType);
+            const l1 = await httpService.getBalancesForKeysOn(l1Chains[i].url, keys);
             collect(l1.success ? l1.data : []);
           } catch { /* L1 unreachable — skip */ }
         }
@@ -205,7 +217,13 @@ export default function BalanceScreen() {
       // Without the history toggle only unspent outputs count as balance; with
       // it the spent rows are kept (their meta line says "spent"). Newest
       // first, like the Java page's sort().
-      const rows = results.flat().filter((u) => history || !u.spent);
+      const seenUtxo = new Set<string>();
+      const rows = results.flat().filter((u) => {
+        const id = `${u.hashHex ?? u.txhash}:${u.index}`;
+        if (seenUtxo.has(id)) return false;
+        seenUtxo.add(id);
+        return history || !u.spent;
+      });
       rows.sort((a, b) => Number(b.time ?? 0) - Number(a.time ?? 0));
       setUtxos(rows);
     } catch (e) {

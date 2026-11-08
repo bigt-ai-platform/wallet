@@ -189,7 +189,7 @@ export default function TransactionScreen() {
       // Tokens on each configured L1 chain.
       for (let i = 0; i < l1Chains.length; i++) {
         try {
-          const l1 = await httpService.getBalancesOn(l1Chains[i].url, privateKeyHex, keyType);
+          const l1 = await httpService.getBalancesForKeysOn(l1Chains[i].url, keys);
           (l1.success && l1.data ? l1.data : []).forEach((t) => all.push({ ...t, layer: i + 1 }));
         } catch (e) { /* L1 unreachable — skip */ }
       }
@@ -398,6 +398,8 @@ export default function TransactionScreen() {
     // wallet password (web) before the key in memory signs anything.
     const approved = await confirmImportant({ subtitle: t('transaction.send'), reason: confirmBody });
     if (!approved) { showAlert(t('transaction.error'), t('confirm.cancelled')); return; }
+    // Every key of the wallet can hold funds (legacy EC + PQ).
+    const keys = signingKeys(wallet);
 
     setLoading(true);
     try {
@@ -422,6 +424,7 @@ export default function TransactionScreen() {
         const txHash = await payOnLayer1({
           privateKeyHex: wallet.wallet.privateKey,
           keyType: wallet.wallet.keyType,
+          keys,
           l1Url: httpService.l1Bases(chain.url)[0] ?? chain.url,
           toAddress,
           amount: BigInt(satoshis),

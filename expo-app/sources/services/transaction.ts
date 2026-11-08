@@ -723,13 +723,17 @@ export async function payOnLayer1(params: {
   amount: bigint;
   tokenId: string;
   memo?: string;
+  /** Every key of a multi-key wallet (L1 funds may sit on any of them). */
+  keys?: SigningKey[];
 }): Promise<string> {
   const { privateKeyHex, keyType, l1Url, toAddress, amount, tokenId, memo } = params;
   const netParams = getNetParams();
 
-  const signKey = keyFromPrivateKey(privateKeyHex, keyType);
+  const signingKeys = (params.keys?.length ? params.keys : [{ privateKeyHex, keyType }]).map((k) =>
+    keyFromPrivateKey(k.privateKeyHex, k.keyType)
+  );
 
-  const wallet = await Wallet.fromKeysURL(netParams, [signKey], l1Url);
+  const wallet = await Wallet.fromKeysURL(netParams, signingKeys, l1Url);
   wallet.setFee(false);
 
   const giveMoneyResult = new Map<string, bigint>();

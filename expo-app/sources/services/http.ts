@@ -551,9 +551,20 @@ export class HttpService {
   async getBalancesForKeys(
     keys: Array<{ privateKeyHex: string; keyType?: 'PQ' | 'EC' }>
   ): Promise<ApiResponse<WalletAccountItem[]>> {
+    return this.getBalancesForKeysOn(undefined, keys);
+  }
+
+  /**
+   * Same as {@link getBalancesForKeys} but against one chain URL (e.g. an L1
+   * order chain), so multi-key wallets see L1 funds held on any key.
+   */
+  async getBalancesForKeysOn(
+    baseUrl: string | undefined,
+    keys: Array<{ privateKeyHex: string; keyType?: 'PQ' | 'EC' }>
+  ): Promise<ApiResponse<WalletAccountItem[]>> {
     const merged = new Map<string, WalletAccountItem>();
     for (const key of keys) {
-      const items = await this.fetchAccountBalances(key.privateKeyHex, undefined, key.keyType);
+      const items = await this.fetchAccountBalances(key.privateKeyHex, baseUrl, key.keyType);
       for (const item of items) {
         const raw = BigInt(item.raw ?? '0');
         const current = merged.get(item.tokenid);

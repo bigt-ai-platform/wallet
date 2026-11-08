@@ -8,6 +8,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import { useWallet } from '@/state/wallet';
+import { signingKeys } from '@/lib/walletKeys';
 import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
 import { recordOrder } from '@/services/tracking';
@@ -327,7 +328,7 @@ export default function TradeScreen() {
     try {
       const l1Url = httpService.getL1Url();
       const l1Base = httpService.l1Bases(l1Url)[0] ?? l1Url;
-      const res = await httpService.getBalancesOn(l1Base, unlocked.wallet.privateKey, unlocked.wallet.keyType);
+      const res = await httpService.getBalancesForKeysOn(l1Base, signingKeys(unlocked));
       if (res.success && res.data) setBalances(res.data);
     } catch (e) { console.error('Error loading L1 balances:', e); }
   }, [isUnlocked, publicInfo?.address, getUnlockedWallet]);

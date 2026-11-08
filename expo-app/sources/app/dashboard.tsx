@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
+import { signingKeys } from '@/lib/walletKeys';
 import { httpService } from '@/services/http';
 import { listOrders, refreshAllStatuses } from '@/services/tracking';
 import { statusBadgeColor } from '@/utils/status';
@@ -54,12 +55,11 @@ export default function DashboardScreen() {
     if (!unlocked) return;
     setLoading(true);
     try {
-      const pk = unlocked.wallet.privateKey;
-      const kt = unlocked.wallet.keyType;
+      const keys = signingKeys(unlocked);
       const l1Base = httpService.l1Bases(l1Url)[0] ?? l1Url;
       const [l1Res, l0Res, tickerRes, ordersRes] = await Promise.all([
-        httpService.getBalancesOn(l1Base, pk, kt).catch(() => null),
-        httpService.getBalances(pk, kt).catch(() => null),
+        httpService.getBalancesForKeysOn(l1Base, keys).catch(() => null),
+        httpService.getBalancesForKeys(keys).catch(() => null),
         httpService.getOrdersTicker([], 'bc').catch(() => null),
         httpService.getOrdersByAddress(publicInfo.address).catch(() => null),
       ]);
