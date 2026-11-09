@@ -42,6 +42,7 @@ Cloudflare (DNS-only A → region VM)
 | `Dockerfile.app` | Runtime image: packages the host-built `web-build/` export under nginx; **no compile in-image** |
 | `nginx.conf` | SPA fallback (`index.html`) + hard caching of hashed Metro assets |
 | `tag.sh` | HOST build: `expo export` → docker image → registry push **or** docker-save tar (no registry needed) |
+| `docker-keep-latest.sh` | Drop local image tags except `:latest` for `wallet-web` / `wallet-p2p-engine` (run automatically at the end of `tag.sh`; `--prune` also removes dangling images) |
 | `deploy.sh` | Release train (analog `../dai/deploy/deploy.sh`): bump patch tag → `tag.sh` build+push `:vX.Y.Z` + `:latest` → `region.sh deploy` every region pinned to `:vX.Y.Z` → `region.sh prune` (drop superseded wallet image tags) |
 | `region.sh` | Provision one region VM: load image → sync repo → `compose up` → Caddy; status/health/logs/env/**prune**/destroy |
 | `region.conf` | Region map: domain, VM IP, SSH user/key, `WEB_PORT`, `APP_IMAGE`, apex (edit before deploying) |
@@ -70,6 +71,14 @@ APP_IMAGE=ghcr.io/your-org/wallet-web ./deploy/tag.sh
 
 `tag.sh` needs the node toolchain (node, yarn, workspace deps) — run it on a
 dev/CI host, never on the VM. The region VMs only run docker + caddy.
+
+Local builds keep only `:latest`: after the build/push/save, `tag.sh` calls
+`deploy/docker-keep-latest.sh`, which deletes the older `wallet-web:vX.Y.Z` /
+`wallet-p2p-engine:vX.Y.Z` tags (and their `ghcr.io/…` aliases) so the docker
+data root does not grow by ~54 MB + ~206 MB per release. Published versions
+stay in the registry. `KEEP_LOCAL_VERSIONS=1 ./deploy/tag.sh` keeps them;
+`PRUNE_DANGLING_IMAGES=1` also drops untagged layers; run it standalone with
+`./deploy/docker-keep-latest.sh --dry-run` to preview.
 
 Release train (versioned, all regions pinned to one image):
 

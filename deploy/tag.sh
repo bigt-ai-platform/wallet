@@ -126,4 +126,17 @@ else
   du -h "$TAR"
 fi
 
+# 4. Keep the local docker data root small. Every release adds a ~54 MB
+#    wallet-web tag and a ~206 MB wallet-p2p-engine tag per registry prefix;
+#    published versions live in the registry, so the local copies are
+#    disposable. Drop every tag except :latest (the one deploy/region.sh
+#    saves/loads). KEEP_LOCAL_VERSIONS=1 preserves them, PRUNE_DANGLING_IMAGES=1
+#    also removes untagged leftovers.
+if [ "${KEEP_LOCAL_VERSIONS:-0}" != "1" ]; then
+  echo -e "${GREEN}--- prune local image tags (keep :latest) ---${NC}"
+  KEEP_ARGS=()
+  [ "${PRUNE_DANGLING_IMAGES:-0}" = "1" ] && KEEP_ARGS+=(--prune)
+  "$SCRIPT_DIR/docker-keep-latest.sh" ${KEEP_ARGS[@]+"${KEEP_ARGS[@]}"} "${IMAGE_BASE##*/}" wallet-p2p-engine
+fi
+
 echo -e "${GREEN}=== done. Deploy with: ./deploy/region.sh deploy prod ===${NC}"
