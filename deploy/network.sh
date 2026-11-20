@@ -39,12 +39,11 @@ assert_mainnet_default() {
   # s1002.bigt.ai) and the same-origin web bases. The legacy JSF host
   # https://m.bigtangle.org serves HTML, not the JSON-RPC order API, and must
   # not come back anywhere in the app defaults.
-  local l0_line l1_line l0_web l1_web l1p_web
+  local l0_line l1_line l0_web l1_web
   l0_line="$(grep -m1 'export const PROD_L0_URL' "$app_ts" || true)"
   l1_line="$(grep -m1 'export const PROD_L1_URL' "$app_ts" || true)"
   l0_web="$(grep -m1 'export const PROD_WEB_L0_BASE' "$app_ts" || true)"
   l1_web="$(grep -m1 'export const PROD_WEB_L1_BASE' "$app_ts" || true)"
-  l1p_web="$(grep -m1 'export const PROD_WEB_PREDICTION_BASE' "$app_ts" || true)"
   if ! echo "$l0_line" | grep -q 'PRIVATE_L0_URL'; then
     echo -e "${red}network guard: PROD_L0_URL no longer resolves PRIVATE_L0_URL (https://92.5.34.128/l0/) ($app_ts)${nc}"
     bad=1
@@ -65,11 +64,11 @@ assert_mainnet_default() {
     echo -e "${red}network guard: PROD_WEB_L1_BASE must be the same-origin '/l1/' path ($app_ts)${nc}"
     bad=1
   fi
-  # The prediction chain is its own node; the web build must reach it through
-  # its own same-origin proxy, never the order base (that made the Predict page
-  # ask the order node for contracts and report "markets are unavailable").
-  if ! echo "$l1p_web" | grep -q "'/l1p/'"; then
-    echo -e "${red}network guard: PROD_WEB_PREDICTION_BASE must be the same-origin '/l1p/' path ($app_ts)${nc}"
+  # Prediction markets run on the L1-ORDER chain (blockchain 20d1ef204), so the
+  # separate prediction proxy must not come back: a /l1p base would route the
+  # Predict page to a node that no longer exists.
+  if grep -q 'PROD_WEB_PREDICTION_BASE\|PROD_PREDICTION_URL' "$app_ts"; then
+    echo -e "${red}network guard: the retired prediction proxy/URL is back in $app_ts (prediction runs on the L1-order chain)${nc}"
     bad=1
   fi
   if grep -q 'https://m\.bigtangle\.org' "$http_ts" "$app_ts"; then
