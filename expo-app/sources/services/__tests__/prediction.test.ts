@@ -30,7 +30,8 @@ vi.mock('bigtangle-ts', async () => {
 vi.mock('../http', () => ({ httpService: {
   requestL1ByChainId: mocks.request,
   getBalancesOn: mocks.balances,
-  getL1Chains: () => [{ chainId: 'prediction', url: 'http://prediction.test/' }],
+  getL1Chains: () => [{ chainId: 'ordermatch', url: 'http://l1.test/' }],
+    getL1Url: () => 'http://l1.test/',
 } }));
 vi.mock('../transaction', () => ({ orderOnLayer1: mocks.order }));
 vi.mock('@/constants/app', () => ({ IS_DEV: true }));
@@ -148,7 +149,7 @@ describe('prediction redemption', () => {
     await redeemShares({ ...auth, shares });
     expect(mocks.payContractMulti.mock.calls[1][1]).toEqual(new Map([['yes-token', 100n]]));
     expect(mocks.request).toHaveBeenCalledTimes(2);
-    expect(mocks.request).toHaveBeenCalledWith('prediction', 'getPredictionState', 'POST', { contractTokenid: 'market' });
+    expect(mocks.request).toHaveBeenCalledWith('ordermatch', 'getPredictionState', 'POST', { contractTokenid: 'market' });
   });
 
   it('preserves unmatched shares when an invalid market redeems complete sets', async () => {

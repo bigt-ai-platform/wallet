@@ -36,7 +36,13 @@ import { z } from 'zod';
 /** Token-creation fee in raw BIG units (the chain's default fee). */
 const CREATE_FEE = 1000n;
 
-export const PREDICTION_CHAIN_ID = 'prediction';
+/**
+ * Prediction markets run on the L1-ORDER chain: the prediction engine, its
+ * contract-event handlers and `getPredictionState` all live in l1-order-server
+ * (blockchain commit 20d1ef204). There is no separate prediction node, so every
+ * prediction call targets the order chain.
+ */
+export const PREDICTION_CHAIN_ID = 'ordermatch';
 
 /** The contract classname that marks a token as a prediction market. */
 export const PREDICTION_CLASSNAME = 'net.bigtangle.server.service.PredictionContract';

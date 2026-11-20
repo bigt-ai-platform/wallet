@@ -9,14 +9,14 @@ import { waitForApp, clickTab, importAndUnlock, setL1ChainUrl, configureServerUr
  * the local L1-prediction chain and saves screenshots for the demo docs.
  *
  * Opt-in: E2E_PREDICT_DEMO=1 plus the predict lifecycle env (E2E_SERVER_URL,
- * E2E_L1P_URL, E2E_PREDICTION_KEY = the funded, domain-authorized operator).
+ * E2E_L1_URL, E2E_PREDICTION_KEY = the funded, domain-authorized operator).
  * Run via `./e2e/e2etest.sh predict-demo`.
  */
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
+// Prediction runs on the L1-order chain (no separate prediction node).
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
-const E2E_L1P_URL = process.env.E2E_L1P_URL || '';
 const E2E_PREDICTION_KEY = process.env.E2E_PREDICTION_KEY || '';
-const ENABLED = process.env.E2E_PREDICT_DEMO === '1' && !!E2E_SERVER_URL && !!E2E_L1P_URL && !!E2E_PREDICTION_KEY;
+const ENABLED = process.env.E2E_PREDICT_DEMO === '1' && !!E2E_SERVER_URL && !!E2E_L1_URL && !!E2E_PREDICTION_KEY;
 const OUT = resolve(__dirname, '../../../docs/prediction-demo/assets/screenshots');
 
 type Market = {
@@ -88,7 +88,7 @@ async function createMarket(page: Page, market: Market, committee: string[]) {
 
 test.describe('Predict demo capture', () => {
   test('creates the US, DE and CN example markets and captures screenshots', async ({ page }) => {
-    test.skip(!ENABLED, 'requires E2E_PREDICT_DEMO=1 + E2E_SERVER_URL + E2E_L1P_URL + E2E_PREDICTION_KEY');
+    test.skip(!ENABLED, 'requires E2E_PREDICT_DEMO=1 + E2E_SERVER_URL + E2E_L1_URL + E2E_PREDICTION_KEY');
     test.setTimeout(90 * 60 * 1000);
     mkdirSync(OUT, { recursive: true });
     await page.setViewportSize({ width: 1280, height: 1000 });
@@ -97,7 +97,7 @@ test.describe('Predict demo capture', () => {
     const privateKey = await resolvePredictionKey(E2E_PREDICTION_KEY);
     const operator = sdk.PQKey.fromPrivateKey(new Uint8Array(sdk.Utils.HEX.decode(privateKey)));
     const params = sdk.TestParams.get();
-    const wallet = sdk.Wallet.fromKeysURL(params, [operator], E2E_L1P_URL);
+    const wallet = sdk.Wallet.fromKeysURL(params, [operator], E2E_L1_URL);
     // Back-to-back creates spend the same coins: wait for confirmed change before the next one.
     const confirmedBc = async () => (await wallet.calculateAllSpendCandidates(null, false))
       .reduce((sum: bigint, c: any) => c.getUTXO()?.getTokenId() === 'bc' ? sum + c.getUTXO()!.getValue().getValue() : sum, 0n);
@@ -107,7 +107,7 @@ test.describe('Predict demo capture', () => {
 
     await waitForApp(page);
     await configureServerUrl(page, E2E_SERVER_URL, E2E_L1_URL);
-    expect(await setL1ChainUrl(page, 'prediction', E2E_L1P_URL), 'no `prediction` L1 chain row').toBe(true);
+    expect(await setL1ChainUrl(page, 'ordermatch', E2E_L1_URL), 'no L1-order chain row').toBe(true);
     await importAndUnlock(page, privateKey, 'PredictDemoPass123!');
     await clickTab(page, 'Predict');
     await expect(page.getByTestId('predict-create')).toBeVisible({ timeout: 60000 });

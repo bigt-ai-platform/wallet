@@ -13,7 +13,7 @@
 #   # fund the SHARED test wallet (ML-DSA seed 0x01) on another chain instead of
 #   # a throwaway key — the prerequisite for a Remote*IT run there:
 #   BRIDGE_CHAIN_ID=prediction BRIDGE_AMOUNT_BIG=1 \
-#     BRIDGE_BENEFICIARY_SEED=0101…01 PROD_L1_URL=https://predicteu1.bigtangle.org/ \
+#     BRIDGE_BENEFICIARY_SEED=0101…01 PROD_L1_URL=https://ordereu1.bigtangle.org/ \
 #     ./e2e/prod-bridge-smoke.sh
 #
 # Prerequisites (one-time):

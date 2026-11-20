@@ -22,7 +22,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * by PredictionEngineTest on the Java side).
  */
 class RemotePredictionTests extends RemoteTest {
-  private l1pUrl = process.env.TEST_L1P_URL || "http://localhost:24088/";
+  // Prediction markets live on the L1-order chain (blockchain 20d1ef204).
+  private l1Url = process.env.TEST_L1_URL || "http://localhost:24086/";
 
   private static readonly SUPPLY = BigInt(1000000);
   private static readonly SPLIT_AMOUNT = BigInt(100000);
@@ -34,7 +35,7 @@ class RemotePredictionTests extends RemoteTest {
   constructor() {
     super();
     // All operations run against the L1-prediction server.
-    this.contextRoot = this.l1pUrl;
+    this.contextRoot = this.l1Url;
   }
 
   private static fixedKey(seed: number): PQKey {

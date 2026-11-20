@@ -7,7 +7,6 @@ WEB_BUILD="$ROOT/e2e/web-build"
 WEB_PORT="${WEB_PORT:-18081}"
 SERVER_PORT="${SERVER_PORT:-18088}"
 L1_PORT="${L1_PORT:-18086}"
-L1P_PORT="${L1P_PORT:-24088}"
 P2P_PORT="${P2P_PORT:-18089}"
 P2P_ENGINE_URL="http://localhost:${P2P_PORT}"
 P2P_PID=""
@@ -386,12 +385,8 @@ fi
 if [[ "$CMD" != "p2p-ui" ]]; then
   info "Checking infrastructure..."
   curl -sf "http://localhost:${SERVER_PORT}/" >/dev/null 2>&1 || fail "Infra not ready — run ./e2e/infra.sh first"
-  # L1-prediction (l1-prediction-server) is a separate chain/port; fail fast
-  # with a clear message when it is missing instead of letting the predict
-  # specs time out. Started by remote.sh infra (step 7d/7e).
-  if [[ "$CMD" == "predict" || "$CMD" == "predict-demo" || "$CMD" == "all" || "$CMD" == "tests" || "$CMD" == "remaining" ]]; then
-    curl -sf "http://localhost:${L1P_PORT}/" >/dev/null 2>&1 || fail "L1-prediction not ready on :${L1P_PORT} — run ./e2e/infra.sh first"
-  fi
+  # Prediction markets live on the L1-order chain (blockchain 20d1ef204), so the
+  # L1 gate above already covers them; there is no separate prediction port.
   log "Infrastructure ready."
 fi
 
@@ -495,7 +490,6 @@ cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
-E2E_L1P_URL="http://localhost:${L1P_PORT}/" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list predict.spec.ts 2>&1
 log "Predict e2e tests passed."
 fi
@@ -511,7 +505,6 @@ E2E_PREDICT_DEMO=1 \
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
-E2E_L1P_URL="http://localhost:${L1P_PORT}/" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list predict-demo.spec.ts 2>&1
 log "Predict demo captured to docs/prediction-demo/assets/screenshots."
 fi
@@ -611,7 +604,6 @@ cd "$E2E_DIR"
 APP_URL="http://localhost:${WEB_PORT}/" \
 E2E_SERVER_URL="http://localhost:${SERVER_PORT}/" \
 E2E_L1_URL="http://localhost:${L1_PORT}/" \
-E2E_L1P_URL="http://localhost:${L1P_PORT}/" \
 E2E_P2P_ENGINE_URL="$P2P_ENGINE_URL" \
   "$ROOT/node_modules/.bin/playwright" test --reporter=list --grep-invert "Payment|Tracking" 2>&1
 log "Remaining e2e specs passed."

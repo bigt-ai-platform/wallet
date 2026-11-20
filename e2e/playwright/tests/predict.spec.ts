@@ -11,11 +11,11 @@ import {
  *  1. DOM / behaviour — always runs (no infra): navigation, the create modal,
  *     and its validation. Uses a locally-created wallet so the unlocked-only
  *     paths (question/supply checks) are reachable without any chain.
- *  2. Prediction chain — skipped unless E2E_L1P_URL is set: the web build bakes
- *     prod defaults, so the spec retargets the `prediction` L1 chain at the
- *     local L1P and asserts the list resolves (a market card or the empty
- *     state — never an eternal spinner from a request error).
- *  3. Full lifecycle — skipped unless E2E_L1P_URL + E2E_PREDICTION_KEY are set:
+ *  2. Prediction markets — skipped unless E2E_L1_URL is set. Prediction runs on
+ *     the L1-order chain (no separate node), so the spec retargets the
+ *     `ordermatch` chain at the local L1 and asserts the list resolves (a market
+ *     card or the empty state — never an eternal spinner from a request error).
+ *  3. Full lifecycle — skipped unless E2E_L1_URL + E2E_PREDICTION_KEY are set:
  *     create a market in the UI, split collateral into YES+NO, then merge the
  *     pair back. The key must be the prediction-chain operator key (funded with
  *     BC, authorized to create domain tokens) — the same key RemotePredictionIT
@@ -23,10 +23,9 @@ import {
  */
 const E2E_SERVER_URL = process.env.E2E_SERVER_URL || '';
 const E2E_L1_URL = process.env.E2E_L1_URL || '';
-const E2E_L1P_URL = process.env.E2E_L1P_URL || '';
 const E2E_PREDICTION_KEY = process.env.E2E_PREDICTION_KEY || '';
-const HAS_L1P = !!E2E_L1P_URL;
-const HAS_LIFECYCLE = !!E2E_SERVER_URL && HAS_L1P && !!E2E_PREDICTION_KEY;
+const HAS_L1 = !!E2E_L1_URL && !!E2E_SERVER_URL;
+const HAS_LIFECYCLE = HAS_L1 && !!E2E_PREDICTION_KEY;
 const PASSWORD = 'PredictE2ePass123!';
 
 /**
@@ -54,21 +53,21 @@ async function waitListSettled(page: Page, ms = 30000) {
 }
 
 async function configurePredictionChain(page: Page, url: string) {
-  let ok = await setL1ChainUrl(page, 'prediction', url);
+  let ok = await setL1ChainUrl(page, 'ordermatch', url);
   if (!ok) {
     const fields = page.getByTestId('new-chain-id-input').locator('..');
-    await page.getByTestId('new-chain-id-input').fill('prediction');
-    await fields.locator('input').nth(1).fill('Prediction');
+    await page.getByTestId('new-chain-id-input').fill('ordermatch');
+    await fields.locator('input').nth(1).fill('L1 order');
     await fields.locator('input[placeholder="https://..."]').fill(url);
     await fields.getByText('+', { exact: true }).click();
-    ok = await setL1ChainUrl(page, 'prediction', url);
+    ok = await setL1ChainUrl(page, 'ordermatch', url);
   }
-  expect(ok, 'no `prediction` L1 chain row in Settings').toBe(true);
+  expect(ok, 'no `ordermatch` L1 chain row in Settings').toBe(true);
 }
 
 /** Point the app at the local L1-prediction chain and (re)open the Predict tab. */
 async function pointAtL1P(page: Page) {
-  await configurePredictionChain(page, E2E_L1P_URL);
+  await configurePredictionChain(page, E2E_L1_URL);
   await clickTab(page, 'Predict');
 }
 
@@ -104,7 +103,7 @@ test.describe('Predict Screen', () => {
         } : { contractTokenid, confirmed: false, state: null } });
       });
       await waitForApp(page);
-      await configurePredictionChain(page, 'http://127.0.0.1:24088/');
+      await configurePredictionChain(page, 'http://127.0.0.1:24086/');
       await clickTab(page, 'Predict');
       await expect(page.getByTestId('predict-loading')).toHaveCount(0);
       const count = page.getByTestId('predict-market-count');
@@ -250,7 +249,7 @@ test.describe('Predict Screen', () => {
       ] } }));
       await page.goto('/', { waitUntil: 'load' });
       await createWallet(page, PASSWORD);
-      await configurePredictionChain(page, 'http://127.0.0.1:24088/');
+      await configurePredictionChain(page, 'http://127.0.0.1:24086/');
       await clickTab(page, 'Predict');
       const card = page.getByTestId('predict-event-market');
       await expect(card.getByTestId('predict-status')).toHaveText('Open');
@@ -290,7 +289,7 @@ test.describe('Predict Screen', () => {
 
 test.describe('Predict Chain', () => {
   test('lists markets from the L1-prediction chain (card or empty state)', async ({ page }) => {
-    test.skip(!HAS_L1P, 'requires E2E_L1P_URL (L1-prediction infra)');
+    test.skip(!HAS_L1, 'requires E2E_L1_URL (L1-order chain, which hosts prediction)');
     await waitForApp(page);
     await configureServerUrl(page, E2E_SERVER_URL, E2E_L1_URL);
     await pointAtL1P(page);
@@ -299,7 +298,7 @@ test.describe('Predict Chain', () => {
   });
 
   test('an expanded market exposes its contract actions', async ({ page }) => {
-    test.skip(!HAS_L1P, 'requires E2E_L1P_URL (L1-prediction infra)');
+    test.skip(!HAS_L1, 'requires E2E_L1_URL (L1-order chain, which hosts prediction)');
     await waitForApp(page);
     await createWallet(page, PASSWORD);
     await configureServerUrl(page, E2E_SERVER_URL, E2E_L1_URL);
@@ -322,15 +321,15 @@ test.describe('Predict Chain', () => {
 test.describe('Predict Lifecycle (real L1-prediction)', () => {
   test('create, split, merge, trade, resolve and redeem a market', async ({ page }) => {
     test.setTimeout(25 * 60 * 1000);
-    test.skip(!HAS_LIFECYCLE, 'requires E2E_L1P_URL + E2E_PREDICTION_KEY (funded operator key)');
+    test.skip(!HAS_LIFECYCLE, 'requires E2E_L1_URL + E2E_PREDICTION_KEY (funded operator key)');
 
     const question = `e2e predict ${Date.now()}?`;
     const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
     const privateKey = await resolvePredictionKey(E2E_PREDICTION_KEY);
     const operator = sdk.PQKey.fromPrivateKey(new Uint8Array(sdk.Utils.HEX.decode(privateKey)));
-    const wallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [operator], E2E_L1P_URL);
+    const wallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [operator], E2E_L1_URL);
     const post = async (endpoint: string, body: unknown) => {
-      const response = await fetch(`${E2E_L1P_URL.replace(/\/$/, '')}/${endpoint}`, {
+      const response = await fetch(`${E2E_L1_URL.replace(/\/$/, '')}/${endpoint}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       });
       expect(response.ok).toBe(true);
@@ -346,7 +345,7 @@ test.describe('Predict Lifecycle (real L1-prediction)', () => {
       message: 'prediction operator must have confirmed collateral' }).toBeGreaterThanOrEqual(1000000n);
     await waitForApp(page);
     await configureServerUrl(page, E2E_SERVER_URL, E2E_L1_URL);
-    await configurePredictionChain(page, E2E_L1P_URL);
+    await configurePredictionChain(page, E2E_L1_URL);
     await importAndUnlock(page, privateKey, PASSWORD);
     await clickTab(page, 'Predict');
 
@@ -399,7 +398,7 @@ test.describe('Predict Lifecycle (real L1-prediction)', () => {
     await page.getByTestId('predict-split').click();
     await expect(card.getByTestId('predict-position')).toContainText('UP 100000', { timeout: 240000 });
     const counterparty = sdk.PQKey.createNew();
-    const buyer = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [counterparty], E2E_L1P_URL);
+    const buyer = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [counterparty], E2E_L1_URL);
     const funding = await wallet.payMoneyToECKeyList(null,
       new Map([[sdk.Address.fromKey(sdk.TestParams.get(), counterparty).toString(), 1000000n]]),
       new Uint8Array(sdk.Utils.HEX.decode('bc')), 'prediction-e2e-counterparty',
@@ -429,7 +428,10 @@ test.describe('Predict Lifecycle (real L1-prediction)', () => {
       .toBeGreaterThan(pending.disputeDeadlineSec);
     const collateralBeforeHeartbeat = await balance(wallet, 'bc');
     if ((await state()).status !== 'FINAL') {
-      await wallet.payContract(null, 'bc', 0n, null, null, market.tokenid, sdk.PredictionAction.heartbeat());
+      // heartbeat(resolutionTimeSec) moves the deadline forward; the call used
+      // to omit the argument and serialised `undefined`.
+      await wallet.payContract(null, 'bc', 0n, null, null, market.tokenid,
+        sdk.PredictionAction.heartbeat(Math.floor(Date.now() / 1000) + 3600));
     }
     await expect.poll(async () => (await state())?.status, { timeout: 240000, intervals: [2000] }).toBe('FINAL');
     await expect.poll(() => balance(wallet, 'bc'), { timeout: 240000, intervals: [2000] })

@@ -350,9 +350,6 @@ ${dom}, www.${dom} {
     handle_path /l1/orderhk1/* {
         reverse_proxy https://orderhk1.bigtangle.org
     }
-    handle_path /l1p/* {
-        reverse_proxy https://predicteu1.bigtangle.org
-    }
     handle_path /l1/* {
         reverse_proxy ${L1_API}
     }
@@ -421,9 +418,6 @@ ${apex}, www.${apex} {
     }
     handle_path /l1/orderhk1/* {
         reverse_proxy https://orderhk1.bigtangle.org
-    }
-    handle_path /l1p/* {
-        reverse_proxy https://predicteu1.bigtangle.org
     }
     handle_path /l1/* {
         reverse_proxy ${L1_API}

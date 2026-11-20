@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # prod-prediction-soak.sh — long-run simulation against the DEPLOYED prediction
-# chain (L1-prediction: predicteu1/2, predicthk1). This is the WRITE/load
+# L1-order chain (prediction markets were merged into it; the old predicteu1/2
+# hosts are retired). This is the WRITE/load
 # companion to e2e/prod-soak.mjs, for the prediction chain the read soak does
 # not touch.
 #
@@ -37,7 +38,7 @@
 # peg-in — see e2e/prod-bridge-smoke.sh).
 #
 # Env:
-#   PREDICTION_URL            prediction API   (default https://predicteu1.bigtangle.org/)
+#   PREDICTION_URL            L1-order API     (default https://ordereu1.bigtangle.org/)
 #   PROD_URL                  L0 API           (default https://eu1.bigtangle.org/)
 #   PROD_L1_URL               L1-order API     (default https://ordereu1.bigtangle.org/)
 #   NET_PARAMS                default main
@@ -65,7 +66,7 @@ BRIDGE="$ROOT/e2e/prod-bridge-smoke.sh"
 [[ -x "$BRIDGE" ]] || { echo "ERROR: $BRIDGE not found" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 required" >&2; exit 1; }
 
-PREDICTION_URL="${PREDICTION_URL:-https://predicteu1.bigtangle.org/}"
+PREDICTION_URL="${PREDICTION_URL:-https://ordereu1.bigtangle.org/}"
 PROD_URL="${PROD_URL:-https://eu1.bigtangle.org/}"
 PROD_L1_URL="${PROD_L1_URL:-https://ordereu1.bigtangle.org/}"
 NET_PARAMS="${NET_PARAMS:-main}"
@@ -163,7 +164,7 @@ preflight() {
 fund_prediction() {
     echo "--- funding the test wallet on prediction (peg-in ${PREDICTION_FUND_BIG} BIG) ---"
     BRIDGE_AMOUNT_BIG="$PREDICTION_FUND_BIG" \
-    BRIDGE_CHAIN_ID=prediction \
+    BRIDGE_CHAIN_ID=ordermatch \
     BRIDGE_BENEFICIARY_SEED="$PREDICTION_FUND_SEED" \
     PROD_URL="$PROD_URL" \
     PROD_L1_URL="$PREDICTION_URL" \
@@ -201,13 +202,14 @@ sys.exit(1)
     done
     echo "FAIL: no spendable BIG at $h160 after ${PREDICTION_FUND_WAIT_SEC}s — the peg-in is not finalized/minted yet." >&2
     echo "      A prediction node that never mints is missing the bridge config (BRIDGE_VAULT_PUBKEY," >&2
-    echo "      BRIDGE_ISSUANCE_PUBKEY/PRIIKEY, ANCHOR_L0_URL) — see ../blockchain/helper/prod/prod-prediction.sh." >&2
+    echo "      BRIDGE_ISSUANCE_PUBKEY/PRIIKEY, ANCHOR_L0_URL) — see ../blockchain/helper/prod/prod-order.sh." >&2
     return 1
 }
 
 run_iteration() { # $1=log path
-    PROD_URL="$PROD_URL" PROD_L1_URL="$PROD_L1_URL" NET_PARAMS="$NET_PARAMS" \
-        EXTRA_ARGS="-Dl1p.url=$PREDICTION_URL" \
+    # RemotePredictionIT reads TEST_L1_URL: prediction now runs on the order
+    # chain, so there is no separate l1p url to pass.
+    TEST_L1_URL="$PREDICTION_URL" PROD_URL="$PROD_URL" PROD_L1_URL="$PROD_L1_URL" NET_PARAMS="$NET_PARAMS" \
         "$PRODTEST" "$PREDICTION_TESTS" >"$1" 2>&1
 }
 
@@ -220,8 +222,8 @@ main() {
     if [ "$DRY_RUN" = "1" ]; then
         echo "(dry run) per iteration:"
         echo "  PROD_URL=$PROD_URL PROD_L1_URL=$PROD_L1_URL NET_PARAMS=$NET_PARAMS \\"
-        echo "    EXTRA_ARGS='-Dl1p.url=$PREDICTION_URL' $PRODTEST $PREDICTION_TESTS"
-        [ "$PREDICTION_FUND" = "1" ] && echo "  (funding on demand: BRIDGE_CHAIN_ID=prediction BRIDGE_AMOUNT_BIG=$PREDICTION_FUND_BIG $BRIDGE)"
+        echo "    TEST_L1_URL='$PREDICTION_URL' $PRODTEST $PREDICTION_TESTS"
+        [ "$PREDICTION_FUND" = "1" ] && echo "  (funding on demand: BRIDGE_CHAIN_ID=ordermatch BRIDGE_AMOUNT_BIG=$PREDICTION_FUND_BIG $BRIDGE)"
         echo "nothing executed"
         return 0
     fi
@@ -273,7 +275,7 @@ main() {
             if unfunded "$log"; then
                 echo "    the suite could not pay a prediction-chain fee (no BIG on $PREDICTION_BASE)." >&2
                 echo "    fund the shared test wallet once:" >&2
-                echo "      BRIDGE_CHAIN_ID=prediction BRIDGE_AMOUNT_BIG=$PREDICTION_FUND_BIG \\" >&2
+                echo "      BRIDGE_CHAIN_ID=ordermatch BRIDGE_AMOUNT_BIG=$PREDICTION_FUND_BIG \\" >&2
                 echo "      BRIDGE_BENEFICIARY_SEED=$PREDICTION_FUND_SEED \\" >&2
                 echo "      PROD_L1_URL=$PREDICTION_URL ./e2e/prod-bridge-smoke.sh" >&2
                 echo "    (or re-run with PREDICTION_FUND=1 to do that automatically)" >&2

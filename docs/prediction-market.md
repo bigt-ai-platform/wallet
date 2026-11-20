@@ -55,16 +55,15 @@ to create, split, merge, match an order, resolve, and redeem, verifying confirme
 state and balances. Run `e2e/e2etest.sh predict` with isolated Java infrastructure
 and `E2E_PREDICTION_KEY`; UI fixtures alone do not establish live-chain success.
 
-**Endpoints.** The prediction chain is its own node (`predicteu1/2`,
-`predicthk1.bigtangle.org`), never the L1-order node: `DEFAULT_PREDICTION_URL`
-is the same-origin `/l1p/` proxy on the web build (deploy/region.sh +
-deploy/nginx.conf) and `https://predicteu1.bigtangle.org/` on native. A stored
-chain config that still points `prediction` at an order base (`/l1/`,
-`ordereuN`, the relay `/l1/`, the legacy JSF host) is migrated on read
-(`lib/predictionChain.ts`), and the prediction chain is kept out of the order
-chain's failover pool (`requestL1OnChain`). A fresh install gets both chains
-from `DEFAULT_L1_CHAINS_MAINNET`; before that the fallback returned only
-`ordermatch`, which made the Predict page report "markets are unavailable".
+**Endpoints.** Prediction markets run on the **L1-order chain**: the engine,
+the contract-event handlers and `getPredictionState` are part of
+`l1-order-server` (`layer1/prediction`, `OrderMatchL1Params`), merged in
+blockchain `20d1ef204`; the standalone prediction deployment was retired in
+`dfc30bec0`. `PREDICTION_CHAIN_ID` is therefore `ordermatch`, every prediction
+RPC goes through `requestL1ByChainId('ordermatch', …)`, and the app has no
+separate prediction chain row, `/l1p/` proxy or URL resolver. A stored chain
+config that still lists `prediction` is dropped on read, so an upgraded install
+converges on the order chain.
 
 **Long-run write soak.** `e2e/prod-prediction-soak.sh` drives
 `RemotePredictionIT` (create → split → merge, staked and multi-outcome markets)
@@ -75,7 +74,8 @@ visible through `searchContractTokens` — see
 *Original MVP scope (2026-10-10):* binary event markets ("Will X happen by date D?") with YES/NO outcome shares
 priced 0–1 (displayed 0–100¢), full collateral backing (1 winning share
 redeems for exactly 1 collateral unit), traded on the order books of a
-**new dedicated L1 chain, `l1-prediction`** (derived from `l1-order-server`).
+**dedicated L1 chain, `l1-prediction`** — since **merged into `l1-order`**, so
+markets and the order book share one chain, one validator set and one DB.
 Resolved by a 2-of-3 committee with a permissionless dispute window (v1
 oracle). Since then multi-outcome markets (2–16 outcomes) and the staked
 oracle have shipped (§7 phases 4–5); the app shows prices in raw on-chain
@@ -137,8 +137,12 @@ compliance liability if real money is ever at stake (§8).
 
 ## 2. Key decisions
 
-1. **Dedicated `l1-prediction` chain, derived from `l1-order-server`**
-   (decision: 2026-10-10, revised from "patch ordermatch").
+> **Superseded (2026-11): prediction was merged into `l1-order`** (blockchain
+> `20d1ef204`) and the dedicated server was retired (`dfc30bec0`). The decision
+> below is kept as history; the current state is "one chain, `ordermatch`".
+
+1. ~~**Dedicated `l1-prediction` chain, derived from `l1-order-server`**~~
+   (decision: 2026-10-10, revised from "patch ordermatch"; **superseded**).
    New module `l1-prediction-server` (chainId `prediction`): copy
    `l1-order-server` (20 main-source files), params = order-match params
    **plus** `BLOCKTYPE_CONTRACT_EVENT` + `BLOCKTYPE_CONTRACTEVENT_CANCEL`
@@ -428,7 +432,8 @@ remote test first (origin of truth), then port to
 
 ## 7. Phases
 
-1. **Chain + protocol** (Java, `../blockchain`):
+1. **Chain + protocol** (Java, `../blockchain`) — *superseded: merged into
+   `l1-order-server` instead of a separate module*:
    a. derive `l1-prediction-server` from `l1-order-server` (module copy,
       `PredictionL1Params` = order params + contract-event types, network
       config with chainId `prediction`);

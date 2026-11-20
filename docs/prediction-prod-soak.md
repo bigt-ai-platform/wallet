@@ -1,9 +1,13 @@
 # Prediction chain: remote production soak
 
-Long-running **write** simulation against the deployed L1-prediction chain
-(`predicteu1`/`predicteu2`/`predicthk1`). It is the prediction counterpart of
-`e2e/prod-order-soak.sh` (order chain) and `e2e/prod-soak.sh` (read-only probe);
-no local infra is started and the normal e2e suite never runs it.
+Long-running **write** simulation against the deployed **L1-order** chain.
+
+> Prediction markets were merged into `l1-order` (blockchain `20d1ef204`) and the
+> standalone prediction deployment was retired (`dfc30bec0`). The soak therefore
+> targets the same chain as the order book (`ordereuN`); `predicteu1/2` and
+> `predicthk1` are the old, retired hosts. It is the prediction counterpart of
+> `e2e/prod-order-soak.sh` and `e2e/prod-soak.sh` (read-only probe); no local
+> infra is started and the normal e2e suite never runs it.
 
 ```bash
 ./e2e/prod-prediction-soak.sh                    # 10 iterations
@@ -60,10 +64,10 @@ token/contract fees plus the split collateral
 key (`-Dbridge.beneficiarySeed`, added for this purpose):
 
 ```bash
-BRIDGE_CHAIN_ID=prediction \
+BRIDGE_CHAIN_ID=ordermatch \
 BRIDGE_AMOUNT_BIG=1 \
 BRIDGE_BENEFICIARY_SEED=$(printf '01%.0s' {1..32}) \
-PROD_L1_URL=https://predicteu1.bigtangle.org/ \
+PROD_L1_URL=https://ordereu1.bigtangle.org/ \
   ./e2e/prod-bridge-smoke.sh
 ```
 
@@ -79,15 +83,15 @@ an iteration cannot pay a fee.
 Reaching the funding gate means the **prediction node must run with the bridge
 enabled**: `BRIDGE_VAULT_PUBKEY` (the L0 vault), `BRIDGE_ISSUANCE_PUBKEY` /
 `BRIDGE_ISSUANCE_PRIKEY` and `ANCHOR_L0_URL` — see
-`../blockchain/helper/prod/prod-prediction.sh` (`up`). Without them the peg-in
-finalises on L0 and is skipped on prediction, so the soak keeps failing at
+`../blockchain/helper/prod/prod-order.sh` (`up`). Without them the peg-in
+finalises on L0 and is skipped on the order chain, so the soak keeps failing at
 `InsufficientMoney [1000:bc]`.
 
 ## Knobs
 
 | env | default | meaning |
 |---|---|---|
-| `PREDICTION_URL` | `https://predicteu1.bigtangle.org/` | prediction API under test |
+| `PREDICTION_URL` | `https://ordereu1.bigtangle.org/` | L1-order API under test (hosts prediction) |
 | `PROD_URL` | `https://eu1.bigtangle.org/` | L0 API (fees/peg-in source) |
 | `PROD_L1_URL` | `https://ordereu1.bigtangle.org/` | L1-order API (prodtest preflight) |
 | `NET_PARAMS` | `main` | network params for the test client |

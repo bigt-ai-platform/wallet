@@ -34,7 +34,6 @@ import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
 import { decimalsFor, formatTokenAmount } from '@/lib/tokenformat';
 import { collapseTokenEmissions } from '@/lib/tokenlist';
 import { findExchangeToken as findExchangeTokenIn } from '@/lib/exchangeToken';
-import { resolvePredictionUrl } from '@/lib/predictionChain';
 import { withSlash } from 'chain-discovery';
 import { autoDiscoverEnabled, orderedBases, markDown, rememberPeer } from '@/services/discovery';
 import {
@@ -42,7 +41,6 @@ import {
   DEFAULT_L1_CHAINS_TESTNET,
   DEFAULT_L1_MAINNET_URL,
   DEFAULT_L1_TESTNET_URL,
-  DEFAULT_PREDICTION_URL,
   E2E_ALLOW_TESTNET,
   IS_DEV,
   IS_WEB_BROWSER,
@@ -337,7 +335,12 @@ export class HttpService {
       try {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((c, i) => {
+          // `prediction` was a separate L1 node until prediction markets were
+          // merged into l1-order (blockchain 20d1ef204). Drop the retired row
+          // from stored configs; prediction now talks to `ordermatch`.
+          const filtered = parsed.filter((c: any) => c?.chainId !== 'prediction');
+          if (filtered.length === 0) throw new Error('only retired chains configured');
+          return filtered.map((c: any, i: number) => {
             const chainId = typeof c?.chainId === 'string' && c.chainId
               ? c.chainId
               : (i === 0 ? 'ordermatch' : `chain-${i}`);
@@ -345,7 +348,7 @@ export class HttpService {
             return {
               chainId,
               name: c?.name || '',
-              url: chainId === 'prediction' ? resolvePredictionUrl(url, DEFAULT_PREDICTION_URL) : url,
+              url,
             };
           });
         }
