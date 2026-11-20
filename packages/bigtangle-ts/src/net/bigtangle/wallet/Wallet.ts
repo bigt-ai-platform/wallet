@@ -52,6 +52,42 @@ import { MonetaryFormat } from "../utils/MonetaryFormat";
 import { KeyParameter } from "../crypto/KeyCrypter";
 import { UserSettingDataInfo } from "../core/UserSettingDataInfo";
 
+
+/**
+ * Normalise a hash coming back from JSON.
+ *
+ * Jackson serialises `Sha256Hash` as `{ bytes, reversedBytes }` (base64), while
+ * some endpoints return a hex string. `createToken` needs the previous token
+ * block hash, and a plain object there used to serialise as a null/zero hash
+ * while `tokenindex` advanced — the server then rejected the reissuance with
+ * MissingDependencyException. Handle every shape explicitly.
+ */
+function parseJsonHash(raw: any): Sha256Hash {
+  if (raw instanceof Sha256Hash) return raw;
+  if (typeof raw === "string" && /^[0-9a-fA-F]{64}$/.test(raw)) return Sha256Hash.wrapString(raw);
+  if (raw instanceof Uint8Array) return Sha256Hash.wrap(raw);
+  if (raw && typeof raw === "object") {
+    const bytes = (raw as any).bytes;
+    if (typeof bytes === "string" && bytes.length > 0) return Sha256Hash.wrap(base64ToBytes(bytes));
+    const reversed = (raw as any).reversedBytes;
+    if (typeof reversed === "string" && reversed.length > 0) {
+      return Sha256Hash.wrapReversed(base64ToBytes(reversed));
+    }
+  }
+  return Sha256Hash.ZERO_HASH;
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  const globalBuffer = (globalThis as any).Buffer;
+  if (globalBuffer && typeof globalBuffer.from === "function") {
+    return new Uint8Array(globalBuffer.from(value, "base64"));
+  }
+  const binary = atob(value);
+  const out = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) out[i] = binary.charCodeAt(i);
+  return out;
+}
+
 export class Wallet extends WalletBase {
   keyChainGroup: KeyChainGroup;
   url: string | null = null;
@@ -1535,9 +1571,7 @@ export class Wallet extends WalletBase {
     }) as TokenIndexResponse;
 
     token.setTokenindex(tokenIndexResponse.getTokenindex() || 0);
-    token.setPrevblockhash(
-      tokenIndexResponse.getBlockhash() || Sha256Hash.ZERO_HASH
-    );
+    token.setPrevblockhash(parseJsonHash(tokenIndexResponse.getBlockhash()));
     token.setTokenstop(!increment);
 
     const tokenInfo = new TokenInfo();
