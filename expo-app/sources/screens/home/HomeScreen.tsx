@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
+import ExternalAssetsCard from '@/components/ExternalAssetsCard';
 import { httpService } from '@/services/http';
 import { decimalsFor, orderPriceShift, shortTokenId } from '@/lib/tokenformat';
 import {
@@ -243,6 +244,8 @@ export default function HomeScreen() {
             })}
           </View>
         </View>
+
+        <ExternalAssetsCard />
 
         {notices.length > 0 && (
           <View style={s.noticeCard} testID="home-notifications">

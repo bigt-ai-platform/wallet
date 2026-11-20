@@ -1,0 +1,42 @@
+# Asset issuer runtime image (services/asset-issuer).
+#
+# Build from the repo root:
+#   docker build -f deploy/Dockerfile.asset-issuer -t wallet-asset-issuer:latest .
+#
+# The service imports the workspace package `bigtangle-ts` (the L1 binding), so
+# — exactly like `deploy/Dockerfile.p2p-engine` — the image is built from the
+# repo root with the workspace install. A standalone `npm ci` cannot resolve a
+# workspace dependency.
+#
+# `--ignore-scripts` is safe here: `secp256k1` ships prebuilds and is loaded via
+# node-gyp-build at runtime.
+
+FROM node:20-slim AS build
+WORKDIR /app
+ENV NODE_ENV=development
+
+COPY package.json yarn.lock ./
+COPY packages ./packages
+COPY services/asset-issuer ./services/asset-issuer
+
+RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines \
+    --production=false 2>/dev/null || yarn install --ignore-scripts --ignore-engines
+
+RUN yarn workspace bigtangle-ts build \
+ && yarn workspace asset-issuer build
+
+FROM node:20-slim AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
+
+# The compiled service plus the workspace package it imports at runtime.
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/packages/bigtangle-ts ./packages/bigtangle-ts
+COPY --from=build /app/services/asset-issuer/package.json ./services/asset-issuer/package.json
+COPY --from=build /app/services/asset-issuer/dist ./services/asset-issuer/dist
+
+WORKDIR /app/services/asset-issuer
+EXPOSE 8090
+# `serve` is the HTTP entry point. For the scanner use:
+#   docker run … wallet-asset-issuer:latest node dist/cli.js loop
+CMD ["node", "dist/main.js"]

@@ -13,6 +13,7 @@ import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
 import { recordOrder } from '@/services/tracking';
 import { BC_DECIMALS, decimalsFor, orderPriceShift } from '@/lib/tokenformat';
+import { quoteSymbols } from '@/lib/markets';
 import { includeNativeBig } from '@/lib/tokenSearch';
 import { utcOffsetLabel } from '@/lib/timeformat';
 import { CopyIcon, ExpandIcon, CloseIcon } from '@/components/Icons';
@@ -34,7 +35,7 @@ const PERCENTS = [25, 50, 75, 100] as const;
  * runtime (see the quote discovery effect). Binance-style pair labels keep
  * the traded token on the left and the quote on the right, e.g. BTC/CNY.
  */
-const QUOTE_SYMBOLS = ['USDT', 'CNY'] as const;
+const QUOTE_SYMBOLS = quoteSymbols();
 
 /** Indicator toggles shown in the chart's indicators dialog. */
 const INDICATOR_OPTS: { key: keyof ChartIndicators; label: string }[] = [

@@ -24,6 +24,9 @@ vi.mock('../http', () => ({
     getTransactionStatus: mocks.getTransactionStatus,
     getTransactionStatusOnChain: mocks.getTransactionStatusOnChain,
     getOrdersByAddress: mocks.getOrdersByAddress,
+    // `refreshOrders` batches by address list; delegate to the single-address
+    // mock so every existing expectation keeps describing the same call.
+    getOrdersByAddresses: (addresses: string[]) => mocks.getOrdersByAddress(addresses[0]),
   },
 }));
 

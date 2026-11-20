@@ -1,0 +1,78 @@
+# Asset issuer stack — the service half of HKD/USD/GOLD/ETH issuance
+# (docs/external-assets-order-trade.md, docs/external-assets-operations.md).
+#
+# This stack owns its OWN Postgres. It must never point at a chain node's
+# database: `ordermatch` / `info` are node-local and owned by the chain, while
+# this database holds the reserve ledger, holder balances and the idempotency
+# keys that prevent a double mint. Mixing them would put issuer state behind a
+# chain node's lifecycle and backups.
+#
+#   REGION=europa ASSET_ISSUER_DB_PASSWORD=… \
+#     docker compose -f deploy/compose.asset-issuer.yml up -d
+#
+# The schema is mounted into the Postgres init directory, so a fresh volume is
+# created correctly on first start. It is idempotent (IF NOT EXISTS / DROP
+# TRIGGER + CREATE TRIGGER), so re-applying by hand is safe:
+#   docker exec -i wallet-asset-issuer-europa-db \
+#     psql -U asset_issuer -d asset_issuer < services/asset-issuer/schema.sql
+#
+# Secrets (never commit): ASSET_ISSUER_DB_PASSWORD. The issuer signing key is
+# NOT here — mint/release run through an HSM/MPC-backed executor, not in the
+# request path.
+
+name: wallet-asset-issuer-${REGION:-wallet}
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: wallet-asset-issuer-${REGION:-wallet}-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: asset_issuer
+      POSTGRES_USER: asset_issuer
+      POSTGRES_PASSWORD: ${ASSET_ISSUER_DB_PASSWORD:?set ASSET_ISSUER_DB_PASSWORD}
+    volumes:
+      - asset-issuer-db:/var/lib/postgresql/data
+      - ../services/asset-issuer/schema.sql:/docker-entrypoint-initdb.d/10-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asset_issuer -d asset_issuer"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  issuer:
+    image: ${ASSET_ISSUER_IMAGE:-wallet-asset-issuer:latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.asset-issuer
+    container_name: wallet-asset-issuer-${REGION:-wallet}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # POSTGRES_URL is the same name the p2p-engine stack uses; the service
+      # accepts POSTGRES_URL or DATABASE_URL.
+      POSTGRES_URL: postgres://asset_issuer:${ASSET_ISSUER_DB_PASSWORD}@db:5432/asset_issuer
+      PORT: "8090"
+      # Test until the reserve accounts and attestations are live; outside Test
+      # the service refuses to start without a database (it must never fall back
+      # to the in-memory store, which would lose idempotency keys).
+      NETWORK: ${NETWORK:-Test}
+      # Per-asset caps / decimals override (JSON). Empty = DEFAULT_ASSETS in
+      # services/asset-issuer/src/config.ts, which must match
+      # expo-app/sources/lib/externalAssets.ts.
+      ASSETS_JSON: ${ASSETS_JSON:-}
+      # Adapters. ETH_RPC_URL enables ERC-20 deposit scanning; L1_URL +
+      # L1_ISSUER_KEY enable minting/redemption; ALLOW_LIVE_L1 must be 1 to
+      # actually sign. Unset = the pass runs and reports, signing nothing.
+      ETH_RPC_URL: ${ETH_RPC_URL:-}
+      L1_URL: ${L1_URL:-}
+      L1_ISSUER_KEY: ${L1_ISSUER_KEY:-}
+      ALLOW_LIVE_L1: ${ALLOW_LIVE_L1:-0}
+      FROM_BLOCK: ${FROM_BLOCK:-0}
+    ports:
+      - "127.0.0.1:${ASSET_ISSUER_PORT:-8090}:8090"
+
+volumes:
+  asset-issuer-db:

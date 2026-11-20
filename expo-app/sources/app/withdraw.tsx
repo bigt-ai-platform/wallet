@@ -48,7 +48,9 @@ type RouteTarget = Parameters<ReturnType<typeof useRouter>['push']>[0];
 export default function WithdrawScreen() {
   const { t, i18n } = useTranslation();
   const router = useRouter();
-  const params = useLocalSearchParams<{ symbol?: string }>();
+  // `to` lets the external-asset deposit card open this form prefilled with
+  // the issuer's custody address (the ETH funding leg).
+  const params = useLocalSearchParams<{ symbol?: string; to?: string }>();
   const confirmTx = useTransactionConfirm();
   const { isUnlocked, getUnlockedWallet } = useWallet();
   const locale = i18n.language || 'en';
@@ -74,7 +76,7 @@ export default function WithdrawScreen() {
   const [balances, setBalances] = React.useState<Record<string, bigint>>({});
   const [loading, setLoading] = React.useState(false);
 
-  const [to, setTo] = React.useState('');
+  const [to, setTo] = React.useState(params.to ?? '');
   const [amount, setAmount] = React.useState('');
   const [preset, setPreset] = React.useState<GasPreset>('standard');
   const [prepared, setPrepared] = React.useState<PreparedTransfer | null>(null);

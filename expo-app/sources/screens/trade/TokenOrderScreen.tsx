@@ -17,13 +17,19 @@ import { MONO_FONT } from '@/constants/fonts';
 
 interface Props {
   side: 'buy' | 'sell';
+  /**
+   * Order-book quote (the chain's `orderBaseToken`). Defaults to the native
+   * `bc`; a caller opening a configured market passes its quote instead so the
+   * pair is priced correctly — see `lib/markets`.
+   */
+  baseToken?: string;
 }
 
 /**
  * Dedicated "Buy Token" / "Sell Token" page. Lets the user search a token and
  * place a buy or sell order on the active L1 order-match chain.
  */
-export default function TokenOrderScreen({ side }: Props) {
+export default function TokenOrderScreen({ side, baseToken = 'bc' }: Props) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const { publicInfo, isUnlocked, getUnlockedWallet } = useWallet();
@@ -124,14 +130,14 @@ export default function TokenOrderScreen({ side }: Props) {
         tokenId: selectedToken.tokenid,
         price: BigInt(Math.floor(price * Math.pow(10, decimals))),
         amount: BigInt(Math.floor(amount * Math.pow(10, decimals))),
-        baseToken: 'bc',
+        baseToken,
         decimals,
       });
       recordOrder({
         side,
         tokenId: selectedToken.tokenid,
         tokenName: selectedToken.tokenname,
-        baseToken: 'bc',
+        baseToken,
         price: orderPrice,
         amount: orderAmount,
         decimals,

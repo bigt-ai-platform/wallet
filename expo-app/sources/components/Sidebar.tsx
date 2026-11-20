@@ -106,6 +106,7 @@ export default function Sidebar({ visible, onClose, persistent }: SidebarProps) 
       items: [
         // Ethereum sits with the other chain tools, right under NETWORK.
         { label: t('sidebar.ethereum'), key: 'ethereum', icon: NetworkIcon, route: '/ethereum' },
+        { label: t('extAsset.title'), key: 'externalAsset', icon: NetworkIcon, route: '/external-asset' },
         { label: t('sidebar.chains'), key: 'chains', icon: NetworkIcon, route: '/network' },
         { label: t('sidebar.addressBalance'), key: 'addressBalance', icon: SearchIcon, route: '/public-balance' },
         { label: t('sidebar.blocks'), key: 'blocks', icon: BlocksIcon, route: '/blocks' },

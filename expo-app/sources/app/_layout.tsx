@@ -21,6 +21,7 @@ import ChainEventWatcher from '@/components/ChainEventWatcher';
 import IncomingPaymentWatcher from '@/components/IncomingPaymentWatcher';
 import P2pEventWatcher from '@/components/P2pEventWatcher';
 import PredictionEventWatcher from '@/components/PredictionEventWatcher';
+import ExternalAssetWatcher from '@/components/ExternalAssetWatcher';
 import { TransactionConfirmProvider } from '@/components/TransactionConfirm';
 import { SidebarProvider, useSidebar } from '@/components/SidebarProvider';
 import { MenuIcon } from '@/components/Icons';
@@ -84,6 +85,7 @@ function AppShell() {
                         <Stack.Screen name="dashboard" options={{ headerShown: false }} />
                         <Stack.Screen name="trade" options={{ headerShown: false }} />
                         <Stack.Screen name="ethereum" options={{ headerShown: false }} />
+                        <Stack.Screen name="external-asset" options={{ headerShown: false }} />
                         <Stack.Screen name="deposit" options={{ headerShown: false }} />
                         <Stack.Screen name="withdraw" options={{ headerShown: false }} />
                         <Stack.Screen name="notifications" options={{ title: t('notifications.title') }} />
@@ -207,6 +209,7 @@ export default function RootLayout() {
                                 <IncomingPaymentWatcher />
                                 <P2pEventWatcher />
                                 <PredictionEventWatcher />
+                                <ExternalAssetWatcher />
                             </SidebarProvider>
                         </TransactionConfirmProvider>
                     </WalletProvider>
