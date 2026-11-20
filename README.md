@@ -60,7 +60,7 @@ wallet/
 │   │   ├── screens/          # Larger screens / helpers
 │   │   │   ├── wallet/       # WalletHelper.ts, Keys.tsx
 │   │   │   └── trade/        # TokenOrderScreen.tsx (buy/sell)
-│   │   ├── services/         # http.ts, transaction.ts, tracking.ts
+│   │   ├── services/         # client modules: http.ts, transaction.ts, tracking.ts
 │   │   ├── state/wallet/     # WalletProvider: unlock/lock/clear state
 │   │   ├── storage/          # MMKV / localStorage abstraction
 │   │   ├── lib/i18n.ts       # i18next setup + all translations
@@ -73,6 +73,10 @@ wallet/
 │   ├── eas.json              # EAS build profiles
 │   ├── metro.config.js       # web stubs for jackson-js / node builtins
 │   └── package.json
+├── services/                 # standalone processes, never bundled into the app
+│   ├── p2p-engine/           #   P2P settlement engine (fastify + Postgres)
+│   ├── p2p-verify/           #   payment-verification worker (engine + device agent)
+│   └── asset-issuer/         #   HKD/USD/GOLD/ETH issuer: reserve ledger + distributor API
 ├── packages/bigtangle-ts/    # TypeScript blockchain client (Java port)
 │   ├── src/                  # protocol, crypto (PQ/EC), wallet, scripts
 │   └── test/                 # core + remote integration tests
@@ -81,10 +85,19 @@ wallet/
 ├── docker/                   # dockerized blockchain + app build/test scripts
 ├── dev.sh                    # one-shot: Java infra (L0/L1/L1P) + Expo web dev server
 ├── e2eremote.sh              # run TS remote integration tests vs Java infra
-├── scripts/                  # helper scripts (test wallet generation, …)
+├── scripts/                  # helper scripts (test wallet generation, git hooks, …)
 ├── AGENTS.md                 # agent/dev conventions (read me first)
-└── package.json              # yarn workspaces root (expo-app, packages/*)
+└── package.json              # yarn workspaces root (expo-app, packages/*, services/*)
 ```
+
+There are two different things called *services*:
+
+- **`expo-app/sources/services/`** — modules inside the wallet app (HTTP client,
+  transactions, tracking, the distributor client). They ship in the app.
+- **`services/`** — standalone Node packages with their own `package.json`,
+  database and lifecycle (`p2p-engine`, `p2p-verify`, `asset-issuer`). The app
+  never imports them; it talks to the ones that expose HTTP over their API
+  contract (the issuer via `expo-app/sources/services/distributor.ts`).
 
 ### Routes (`expo-app/sources/app/`)
 
