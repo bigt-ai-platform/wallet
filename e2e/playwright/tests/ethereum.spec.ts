@@ -443,13 +443,15 @@ test.describe('Ethereum wallet gating', () => {
     await expect(page.getByTestId('eth-address')).toHaveText(/^0x[0-9a-fA-F]{40}$/, { timeout: 15000 });
   });
 
-  test('creates a legacy EC wallet and derives an Ethereum address', async ({ page }) => {
+  test('creates a new wallet that already has an Ethereum address', async ({ page }) => {
     await disableFilePicker(page);
     await page.goto('/');
     await page.waitForTimeout(1500);
     await gotoKeys(page);
 
-    await page.getByTestId('keys-create-ec').click();
+    // New wallets are dual-key (PQ + EC), so there is no separate
+    // "create legacy EC wallet" path.
+    await page.getByText('Create New Wallet').first().click();
     await page.getByText('Save with Password').first().click();
     const pw = page.locator('input[type="password"]');
     await pw.nth(0).fill('TestPassword123!');

@@ -173,28 +173,6 @@ export default function KeysScreen() {
   }, [t]);
 
   // Create a legacy EC wallet (Ethereum / TRON compatible).
-  const handleCreateEcWallet = useCallback(async () => {
-    setIsLoading(true);
-    setErrorMessage("");
-    try {
-      const wallet = createEcWallet();
-      setNewWallet(wallet);
-      setWalletAddress(wallet.wallet.address);
-      setStep("created");
-    } catch (error) {
-      const msg = (error as Error).message;
-      setErrorMessage(t("keys.errCreate", { message: msg }));
-      Alert.alert(t("keys.errorHead"), t("keys.errCreate", { message: msg }));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [t]);
-
-  /**
-   * Add a key to the current (unlocked) wallet: an EC key for Ethereum or a PQ
-   * key for a legacy EC wallet. Re-encrypts the file with the same password (or
-   * rewrites the plain JSON) so one backup keeps covering every key.
-   */
   const handleAddKey = useCallback(
     async (role: "ethereum" | "bigtangle") => {
       const file = getUnlockedWallet();
@@ -916,15 +894,6 @@ export default function KeysScreen() {
         disabled={isLoading}
       >
         <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.importKey")}</Text>
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.button, styles.buttonPrimary]}
-        onPress={handleCreateEcWallet}
-        disabled={isLoading}
-        testID="keys-create-ec"
-      >
-        <Text style={[styles.buttonText, styles.buttonTextPrimary]}>{t("keys.createEc")}</Text>
       </TouchableOpacity>
 
       <TouchableOpacity

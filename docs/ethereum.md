@@ -1,14 +1,15 @@
 # Ethereum in the wallet — plan (port of `../vmproject`'s ETH support)
 
 **Status: P0–P2 implemented.** New wallets are **dual-key** (PQ for Bigtangle +
-EC for Ethereum, one encrypted file); legacy EC wallets add an Ethereum key in
-Keys and can add a PQ key while keeping multi-key spend. EC wallet
-creation/import, EVM balances, the
-deposit address/EIP-681 QR, EIP-1559 withdrawals for ETH + ERC-20, the Settings
-card and the `/eth` proxy are in the app (§11 lists what remains). Scope is
-ETH + ERC-20 on EVM chains for **legacy EC wallets only**. Post-quantum (PQ, ML-DSA) wallets cannot use it: the
-Bigtangle PQ key has no secp256k1 counterpart, so it cannot derive an Ethereum
-address or sign an Ethereum transaction.
+EC for Ethereum, one encrypted file). An EC-only wallet can add a PQ key and a
+PQ-only wallet can add an Ethereum key in Keys, both with multi-key spend. EVM
+balances, the deposit address/EIP-681 QR, EIP-1559 withdrawals for ETH + ERC-20,
+the Settings card and the `/eth` proxy are in the app (§11 lists what remains).
+Scope is ETH + ERC-20 on EVM chains for **wallets that hold an EC key**. The
+separate "create legacy EC wallet" entry point was removed once dual-key creation
+landed — creating a non-post-quantum wallet is no longer a first-class option.
+A PQ-only wallet still cannot derive an Ethereum address: the ML-DSA key has no
+secp256k1 counterpart, so it must add an EC key first.
 
 ## 1. What the Java webapp does (reference implementation)
 
@@ -205,11 +206,12 @@ ERC-20 sends use `transfer(address,uint256)` as `data` to the token contract,
 
 ## 7. Phases
 
-**P0 — EC wallet entry point (blocking, 2–3 d)**
-Create "Legacy EC wallet (Ethereum-compatible)" and "Import EC private key"
-(raw 32-byte hex; keystore v3 optional) in Keys; make the ETH key derivation
-visible (`wallet keys` shows the 0x address). Without this, existing PQ users
-cannot use Ethereum at all.
+**P0 — EC wallet entry point (superseded)**
+Originally: create "Legacy EC wallet (Ethereum-compatible)" and "Import EC
+private key" in Keys. New wallets are now **dual-key**, a PQ-only wallet gains an
+Ethereum key with *Add Ethereum key*, and *Import EC key* remains for existing
+secp256k1 keys. The create-legacy-EC button was therefore removed (it produced a
+wallet with no post-quantum key).
 
 **P1 — Read-only Ethereum (3–4 d)**
 `lib/eth/*` + `services/ethRpc.ts` + `services/eth.ts` balances; `app/ethereum.tsx`
@@ -281,9 +283,9 @@ Total ≈ 12–16 working days for P0–P3 + release.
 
 ## 10. Open decisions
 
-1. **EC wallet creation UX** — add a "legacy EC" option to the create flow
-   (one key, two chains) or an explicit "Ethereum wallet" section that creates
-   an EC key alongside the PQ key?
+1. ~~**EC wallet creation UX**~~ **Decided:** new wallets are dual-key and
+   existing wallets add the missing key; the separate legacy-EC creation entry
+   was removed.
 2. **ERC-20 scope** — USDT-only in v1 (vmproject parity) or add-by-contract from
    day one (recommended: USDT + add-by-contract, both are cheap once ABI is in).
 3. **Networks** — mainnet + Sepolia as planned, or mainnet only until the
