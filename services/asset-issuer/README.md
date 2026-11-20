@@ -112,6 +112,21 @@ Image: `docker build -f deploy/Dockerfile.asset-issuer -t wallet-asset-issuer .`
 (built from the repo root — the service imports the `bigtangle-ts` workspace
 package).
 
+### Installing dependencies (read this)
+
+This package is part of the root yarn workspace. Running `npm install` here
+without the workspace off makes npm resolve the **root** project and rewrite
+`/package-lock.json` and `/yarn.lock` — registry URLs change and versions move.
+Always scope it:
+
+```bash
+cd services/asset-issuer
+npm install --workspaces=false           # or --package-lock-only for the lockfile
+```
+
+`scripts/git-hooks/pre-commit` refuses to commit a root lockfile change
+(`./scripts/install-git-hooks.sh` enables it), and CI fails on the same drift.
+
 ## Next
 
 1. ~~`PgStore` against `schema.sql`~~ **verified on Postgres 16**.

@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Block accidental root-lockfile rewrites.
+#
+# A scoped `npm install` inside services/* resolves against the ROOT yarn
+# workspace and rewrites the root package-lock.json / yarn.lock (registry URLs
+# change, versions move, entries disappear). That happened once while adding
+# services/asset-issuer and had to be reverted by hand.
+#
+# Deliberate dependency changes are still allowed:
+#   ALLOW_LOCKFILE=1 git commit ...
+set -euo pipefail
+
+if [ "${ALLOW_LOCKFILE:-0}" = "1" ]; then
+  exit 0
+fi
+
+staged=$(git diff --cached --name-only)
+if printf '%s\n' "$staged" | grep -qxE 'package-lock\.json|yarn\.lock'; then
+  cat >&2 <<'MSG'
+Refusing to commit a ROOT lockfile change.
+
+  A scoped install in services/* rewrites the root lockfiles. Revert them and
+  install with the workspace off instead:
+
+      git checkout -- package-lock.json yarn.lock
+      cd services/<name> && npm install --package-lock-only --workspaces=false
+
+  This is a deliberate dependency change? Re-run with:
+
+      ALLOW_LOCKFILE=1 git commit ...
+MSG
+  exit 1
+fi

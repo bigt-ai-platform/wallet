@@ -38,6 +38,16 @@ jobs:
         working-directory: ./expo-app
         run: yarn typecheck
 
+      # A scoped `npm install` in services/* rewrites the ROOT lockfiles via the
+      # yarn workspace; scripts/git-hooks/pre-commit blocks it locally and this
+      # blocks it from merging.
+      - name: Root lockfiles unchanged
+        run: |
+          git diff --exit-code -- package-lock.json yarn.lock || {
+            echo "::error::root lockfiles were rewritten. Revert them and install with --workspaces=false"
+            exit 1
+          }
+
       - name: Check for linting issues
         
         run: |
