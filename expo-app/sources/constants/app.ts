@@ -168,6 +168,17 @@ export const DEFAULT_L1_CHAINS_TESTNET = [
 ];
 
 /**
+ * USDT deposit bridge (issuer-credited USDT on L1-order).
+ *
+ * Operator/deployment values, not user settings: baked in at build time like the
+ * RPC proxy so a fresh install can deposit without configuring anything. The
+ * Settings card remains only as an override (see services/ethBridge.ts).
+ */
+export const ISSUER_API_URL = process.env.EXPO_PUBLIC_ISSUER_API_URL ?? '';
+export const ISSUER_DEPOSIT_ADDRESS = process.env.EXPO_PUBLIC_ISSUER_DEPOSIT_ADDRESS ?? '';
+export const ISSUER_MIN_USDT = process.env.EXPO_PUBLIC_ISSUER_MIN_USDT ?? '';
+
+/**
  * P2P settlement engine base URL (services/p2p-engine).
  *
  * - dev: the local engine (webapp.sh --with-p2p reverses its port);

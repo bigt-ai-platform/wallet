@@ -276,7 +276,12 @@ With no API, a single static issuer address is used (vmproject's
 `BinanceETHPayADDRESS` model: track deposits by balance delta). The issuer
 credits the **same token** (USDT created on the L1 order chain) to the user's L1
 address; the app cannot do that leg (it would need the issuer's L1 key).
-Configured in Settings → Ethereum (`issuerAddress`, `apiUrl`, `minUsdt`).
+Supplied at **build time** (`EXPO_PUBLIC_ISSUER_DEPOSIT_ADDRESS`,
+`EXPO_PUBLIC_ISSUER_API_URL`, `EXPO_PUBLIC_ISSUER_MIN_USDT` — see
+`constants/app.ts`), so a fresh install can deposit without configuring
+anything. Settings → Ethereum keeps the same three fields as a collapsed
+override for operators; a device value wins field by field, otherwise the
+build-time default applies.
 
 ## 15. Implemented: exchange-style withdraw (`/withdraw`)
 

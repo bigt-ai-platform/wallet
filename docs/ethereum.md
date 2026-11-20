@@ -312,7 +312,7 @@ picker, memo/tag, fees/minimums, deposit history, TRON and Bitcoin phases).
 | Balances, fees, nonce, send (native + ERC-20), receipts | `services/eth.ts` |
 | Ethereum overview (account, balances, tokens, deposit history) | `app/ethereum.tsx` — Deposit/Withdraw buttons open the dedicated pages |
 | Exchange-style Deposit / Withdraw | `app/deposit.tsx`, `app/withdraw.tsx` (asset → network → address/fee) |
-| Settings → Ethereum (network, RPC, wallet address) | `app/(tabs)/settings.tsx` |
+| Settings → Ethereum (network, RPC, wallet address; collapsed USDT-bridge override) | `app/(tabs)/settings.tsx` |
 | EC wallet create/import | `screens/wallet/WalletHelper.ts`, `screens/wallet/Keys.tsx` |
 | `/eth` same-origin proxy (provider key server-side) | `deploy/region.sh` (`ETH_RPC_URL` / `deploy/env/.env.eth.<region>`) |
 | e2e without a chain | `e2e/eth-rpc-mock.mjs`, `e2e/playwright/tests/ethereum.spec.ts` |

@@ -90,6 +90,9 @@ export default function SettingsScreen() {
   const [bridgeIssuer, setBridgeIssuer] = React.useState(bridgeSettings.issuerAddress);
   const [bridgeApi, setBridgeApi] = React.useState(bridgeSettings.apiUrl);
   const [bridgeMin, setBridgeMin] = React.useState(bridgeSettings.minUsdt);
+  // Operator config, not a user setting: collapsed by default and normally
+  // supplied at build time (constants/app.ts EXPO_PUBLIC_ISSUER_*).
+  const [bridgeOpen, setBridgeOpen] = React.useState(false);
   const { publicInfo } = useWallet();
   const [newChainId, setNewChainId] = React.useState('');
   const [newChainName, setNewChainName] = React.useState('');
@@ -298,17 +301,25 @@ export default function SettingsScreen() {
           <Text style={s.settingDesc} testID="settings-eth-address">{t('settings.ethAccount', { address: shortAddress(publicInfo.address) })}</Text>
         ) : null}
 
-        <Text style={[s.cardLabel, s.settingRowSpaced]}>{t('settings.bridgeTitle')}</Text>
-        <Text style={s.settingDesc}>{t('settings.bridgeDesc')}</Text>
-        <TextInput style={s.input} value={bridgeApi} onChangeText={setBridgeApi}
-          placeholder={t('settings.bridgeApiPh')} placeholderTextColor={s.placeholder.color}
-          autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="bridge-api-input" />
-        <TextInput style={s.input} value={bridgeIssuer} onChangeText={setBridgeIssuer}
-          placeholder={t('settings.bridgeIssuerPh')} placeholderTextColor={s.placeholder.color}
-          autoCapitalize="none" autoCorrect={false} testID="bridge-issuer-input" />
-        <TextInput style={s.input} value={bridgeMin} onChangeText={setBridgeMin}
-          placeholder={t('settings.bridgeMinPh')} placeholderTextColor={s.placeholder.color}
-          keyboardType="decimal-pad" testID="bridge-min-input" />
+        <TouchableOpacity style={s.chainHeader} onPress={() => setBridgeOpen((v) => !v)}
+          accessibilityRole="button" accessibilityState={{ expanded: bridgeOpen }} testID="bridge-toggle">
+          <View style={s.settingLeft}>
+            <Text style={s.cardLabel}>{t('settings.bridgeTitle')}</Text>
+            <Text style={s.settingDesc}>{t('settings.bridgeDesc')}</Text>
+          </View>
+          <Text style={s.chainToggle}>{bridgeOpen ? '−' : '+'}</Text>
+        </TouchableOpacity>
+        {bridgeOpen && (<>
+          <TextInput style={s.input} value={bridgeApi} onChangeText={setBridgeApi}
+            placeholder={t('settings.bridgeApiPh')} placeholderTextColor={s.placeholder.color}
+            autoCapitalize="none" autoCorrect={false} keyboardType="url" testID="bridge-api-input" />
+          <TextInput style={s.input} value={bridgeIssuer} onChangeText={setBridgeIssuer}
+            placeholder={t('settings.bridgeIssuerPh')} placeholderTextColor={s.placeholder.color}
+            autoCapitalize="none" autoCorrect={false} testID="bridge-issuer-input" />
+          <TextInput style={s.input} value={bridgeMin} onChangeText={setBridgeMin}
+            placeholder={t('settings.bridgeMinPh')} placeholderTextColor={s.placeholder.color}
+            keyboardType="decimal-pad" testID="bridge-min-input" />
+        </>)}
       </View>
 
       <View style={s.card}>

@@ -20,6 +20,11 @@
  */
 
 import { device } from '@/storage';
+import {
+  ISSUER_API_URL,
+  ISSUER_DEPOSIT_ADDRESS,
+  ISSUER_MIN_USDT,
+} from '@/constants/app';
 
 const KEY = ['eth', 'bridge'];
 
@@ -54,15 +59,19 @@ export function getBridgeSettings(): BridgeSettings {
     try {
       const parsed = JSON.parse(raw) as Partial<BridgeSettings>;
       return {
-        apiUrl: typeof parsed.apiUrl === 'string' ? parsed.apiUrl.trim() : '',
-        issuerAddress: typeof parsed.issuerAddress === 'string' ? parsed.issuerAddress.trim() : '',
-        minUsdt: typeof parsed.minUsdt === 'string' ? parsed.minUsdt.trim() : '',
+        // A device override wins; otherwise the build-time default applies, so
+        // the rail works on a fresh install without any user configuration.
+        apiUrl: (typeof parsed.apiUrl === 'string' ? parsed.apiUrl.trim() : '') || ISSUER_API_URL,
+        issuerAddress:
+          (typeof parsed.issuerAddress === 'string' ? parsed.issuerAddress.trim() : '')
+          || ISSUER_DEPOSIT_ADDRESS,
+        minUsdt: (typeof parsed.minUsdt === 'string' ? parsed.minUsdt.trim() : '') || ISSUER_MIN_USDT,
       };
     } catch {
       /* fall through */
     }
   }
-  return { apiUrl: '', issuerAddress: '', minUsdt: '' };
+  return { apiUrl: ISSUER_API_URL, issuerAddress: ISSUER_DEPOSIT_ADDRESS, minUsdt: ISSUER_MIN_USDT };
 }
 
 export function setBridgeSettings(patch: Partial<BridgeSettings>): void {
