@@ -133,8 +133,11 @@ fi
 #    saves/loads). KEEP_LOCAL_VERSIONS=1 preserves them, PRUNE_DANGLING_IMAGES=1
 #    also removes untagged leftovers.
 if [ "${KEEP_LOCAL_VERSIONS:-0}" != "1" ]; then
-  echo -e "${GREEN}--- prune local image tags (keep :latest) ---${NC}"
-  KEEP_ARGS=()
+  echo -e "${GREEN}--- prune local image tags (keep :latest + this version) ---${NC}"
+  # deploy.sh retags :latest from the versioned image right after this script
+  # returns, so pruning :v<version> here made it fail with "No such image"
+  # (release v1.0.156 aborted exactly there). Keep both.
+  KEEP_ARGS=(--keep "latest${VERSION:+,v${VERSION}}")
   [ "${PRUNE_DANGLING_IMAGES:-0}" = "1" ] && KEEP_ARGS+=(--prune)
   "$SCRIPT_DIR/docker-keep-latest.sh" ${KEEP_ARGS[@]+"${KEEP_ARGS[@]}"} "${IMAGE_BASE##*/}" wallet-p2p-engine
 fi
