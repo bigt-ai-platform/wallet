@@ -43,15 +43,19 @@ Actions:
            repo sync -> compose up -> Caddy vhost. Idempotent.
   p2p      P2P settlement engine: image -> secrets -> compose up ->
            /healthz -> Caddy /p2p/* route. Idempotent.
+  issuer   Asset issuer (USDT/HKD/GOLD): image -> secrets + schema ->
+           compose up -> /health -> Caddy /issuer/* route. Idempotent.
   caddy    (Re)write the Caddy vhost for the region only.
   status   Container (compose ps) + listening ports.
   health   Container health + public https.
   logs     Recent container logs.
   env      Show the resolved config for the region.
-  prune    Remove superseded wallet-web / wallet-p2p-engine image tags on the
-           region (keeps the tag a running container uses; never touches other
-           tenants' images). Called by deploy.sh after each successful deploy.
-  destroy  Stop the containers, remove the Caddy vhost (nothing to wipe — no data).
+  prune    Remove superseded wallet-web / wallet-p2p-engine /
+           wallet-asset-issuer image tags on the region (keeps the tag a
+           running container uses; never touches other tenants' images).
+           Called by deploy.sh after each successful deploy.
+  destroy  Stop the containers, remove the Caddy vhost. Named volumes (the
+           issuer's ledger) are NEVER deleted.
 EOF
   exit 1
 }
@@ -69,6 +73,8 @@ domain()  { echo "${REGION_DOMAIN[$1]}"; }
 # The single shared P2P engine runs on P2P_REGION (region.conf); every other
 # region's /p2p/* proxies to its domain. Resolved once here.
 P2P_DOMAIN="${P2P_DOMAIN:-$(domain "$P2P_REGION")}"
+# The asset issuer is a singleton too (region.conf ASSET_ISSUER_REGION).
+ISSUER_DOMAIN="${ISSUER_DOMAIN:-$(domain "$ASSET_ISSUER_REGION")}"
 
 # Resolve the VM working dir per SSH user when REMOTE_REPO was left empty:
 # root regions keep the stack at /srv/wallet, ubuntu regions at /home/<user>/wallet.
@@ -245,6 +251,90 @@ EOF
   echo -e "${GREEN}=== p2p engine ready: https://$(domain "$r")/p2p/healthz ===${NC}"
 }
 
+# ─── Asset issuer (services/asset-issuer) ───
+# Singleton like the P2P engine: one xpub (per-user deposit addresses) + one
+# reserve ledger serve every region, so exactly one VM runs it. It owns its own
+# Postgres (compose.asset-issuer.yml) because that state is NOT rebuildable,
+# unlike the engine's chain projection — never point it at the engine's DB or a
+# chain node's database. Secrets live on the RELEASE HOST in the gitignored
+# deploy/env/.env.issuer.<region> and are passed to compose as an --env-file.
+issuer_up() {
+  local r="$1"; require_region "$r"
+  if [ "$r" != "$ASSET_ISSUER_REGION" ]; then
+    echo -e "${RED}The asset issuer is one shared instance (region.conf ASSET_ISSUER_REGION=$ASSET_ISSUER_REGION); refusing to run a second one on '$r'.${NC}" >&2
+    echo -e "${YELLOW}Run: ./deploy/region.sh issuer $ASSET_ISSUER_REGION   (or set ASSET_ISSUER_REGION=$r to move it)${NC}" >&2
+    exit 1
+  fi
+  local env_file="${SCRIPT_DIR}/env/.env.issuer.${r}"
+  local tar="${SCRIPT_DIR}/.image/wallet-asset-issuer.latest.tar"
+  [ -f "$env_file" ] || { echo -e "${RED}issuer secrets missing: $env_file — create it first (cp deploy/env.issuer.example $env_file, fill ASSET_ISSUER_DB_PASSWORD + AUTH_MODE/keys; docs/usdt-issuer-deposit-withdraw.md)${NC}"; exit 1; }
+  preflight "$r" || { echo -e "${RED}preflight failed${NC}"; exit 1; }
+  sync_repo "$r" || { echo -e "${RED}sync failed — issuer aborted${NC}"; exit 1; }
+
+  echo -e "${GREEN}--- Issuer secrets → $(vm_ip "$r"):$REMOTE_REPO/deploy/env ---${NC}"
+  ssh_run "$r" "mkdir -p $REMOTE_REPO/deploy/env"
+  scp ${SSH_OPTS}$(ssh_jump_opts "$r") -i "$(vm_key "$r")" "$env_file" \
+    "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/deploy/env/.env.issuer.${r}"
+  # image tar (no-registry path): transfer when tag.sh saved one
+  if [ -f "$tar" ]; then
+    ssh_run "$r" "mkdir -p $REMOTE_REPO/.image"
+    scp ${SSH_OPTS}$(ssh_jump_opts "$r") -i "$(vm_key "$r")" "$tar" \
+      "$(vm_user "$r")@$(vm_ip "$r"):$REMOTE_REPO/.image/wallet-asset-issuer.latest.tar"
+  fi
+
+  echo -e "${GREEN}--- Asset issuer up on $(vm_ip "$r") (:$ASSET_ISSUER_PORT) ---${NC}"
+  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r ASSET_ISSUER_PORT=$ASSET_ISSUER_PORT ASSET_ISSUER_IMAGE=$ASSET_ISSUER_IMAGE ASSET_ISSUER_COMPOSE=${ASSET_ISSUER_COMPOSE:-deploy/compose.asset-issuer.yml} bash -s" <<'EOF'
+set -e
+cd "$REMOTE_REPO"
+COMPOSE="docker compose --env-file deploy/env/.env.issuer.$REGION -f ${ASSET_ISSUER_COMPOSE:-deploy/compose.asset-issuer.yml}"
+# image: registry pull, else the docker-save tar tag.sh built — never build on the VM
+if [ -n "$ASSET_ISSUER_IMAGE" ] && docker pull "$ASSET_ISSUER_IMAGE" >/dev/null 2>&1; then
+  echo "image: $ASSET_ISSUER_IMAGE (registry pull)"
+elif [ -f .image/wallet-asset-issuer.latest.tar ]; then
+  docker load -i .image/wallet-asset-issuer.latest.tar >/dev/null
+  [ -n "$ASSET_ISSUER_IMAGE" ] && docker tag wallet-asset-issuer:latest "$ASSET_ISSUER_IMAGE"
+  echo "image: wallet-asset-issuer:latest (tar)"
+else
+  echo "asset issuer image unavailable: pull of '$ASSET_ISSUER_IMAGE' failed and no .image/wallet-asset-issuer.latest.tar" >&2
+  exit 1
+fi
+# The Postgres init dir only runs on a FRESH volume, so an existing ledger would
+# miss new tables/columns (deposit_addresses, redeem_*). schema.sql is
+# idempotent (IF NOT EXISTS + CREATE OR REPLACE) — apply it BEFORE the new image
+# starts, so it can never serve a query against an old schema.
+$COMPOSE up -d db
+ready=0
+for i in $(seq 1 60); do
+  if $COMPOSE exec -T db pg_isready -U asset_issuer -d asset_issuer >/dev/null 2>&1; then ready=1; break; fi
+  sleep 1
+done
+if [ "$ready" != 1 ]; then
+  echo "issuer db NOT ready" >&2
+  $COMPOSE logs --tail=40 --no-color db 2>/dev/null | tail -40
+  exit 1
+fi
+if ! $COMPOSE exec -T db psql -v ON_ERROR_STOP=1 -U asset_issuer -d asset_issuer < services/asset-issuer/schema.sql >/dev/null; then
+  echo "issuer schema apply failed" >&2
+  exit 1
+fi
+echo "schema: applied"
+$COMPOSE up -d --no-build
+for i in $(seq 1 30); do
+  if curl -sf -o /dev/null "http://127.0.0.1:$ASSET_ISSUER_PORT/health" 2>/dev/null; then
+    echo "asset issuer ok"
+    exit 0
+  fi
+  sleep 2
+done
+echo "asset issuer NOT responding on :$ASSET_ISSUER_PORT" >&2
+$COMPOSE logs --tail=40 --no-color 2>/dev/null | tail -40
+exit 1
+EOF
+  # route /issuer/* to the issuer (idempotent vhost rewrite + reload)
+  config_caddy "$r" || { echo -e "${RED}config_caddy failed${NC}"; exit 1; }
+  echo -e "${GREEN}=== asset issuer ready: https://$(domain "$r")/issuer/health ===${NC}"
+}
+
 config_caddy() {
   local r="$1" dom; dom="$(domain "$r")"
   local sudo; sudo="$(sudo_cmd "$r")"
@@ -259,6 +349,18 @@ config_caddy() {
     p2p_verb="handle_path"; p2p_upstream="127.0.0.1:${P2P_PORT}"
   else
     p2p_verb="handle"; p2p_upstream="https://${P2P_DOMAIN}"
+  fi
+  # Same singleton model for the asset issuer (region.conf
+  # ASSET_ISSUER_REGION): the host region strips /issuer before the container
+  # (it serves /deposit-address, /deposits, /assets…), every other region
+  # forwards the full path to the issuer region's vhost, which strips it. The
+  # app's base URL is /issuer (EXPO_PUBLIC_ISSUER_API_URL or Settings →
+  # Ethereum → issuer API). Issuer auth stays in the service, not here.
+  local issuer_verb issuer_upstream
+  if [ "$r" = "$ASSET_ISSUER_REGION" ]; then
+    issuer_verb="handle_path"; issuer_upstream="127.0.0.1:${ASSET_ISSUER_PORT}"
+  else
+    issuer_verb="handle"; issuer_upstream="https://${ISSUER_DOMAIN}"
   fi
   # Ethereum JSON-RPC proxy (docs/ethereum.md): the web bundle calls the
   # same-origin /eth path and provider credentials stay in this vhost. Read the
@@ -369,6 +471,16 @@ ${eth_index_route}
     ${p2p_verb} /p2p/* {
         reverse_proxy ${p2p_upstream}
     }
+    # Asset issuer (services/asset-issuer) — ONE shared instance for every
+    # region (region.conf ASSET_ISSUER_REGION). The app's base URL is /issuer;
+    # the host region strips the prefix (the service serves /deposit-address,
+    # /deposits, /assets…), other regions forward it to the issuer vhost.
+    ${issuer_verb} /issuer {
+        reverse_proxy ${issuer_upstream}
+    }
+    ${issuer_verb} /issuer/* {
+        reverse_proxy ${issuer_upstream}
+    }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}
     }
@@ -438,6 +550,16 @@ ${eth_index_route}
     ${p2p_verb} /p2p/* {
         reverse_proxy ${p2p_upstream}
     }
+    # Asset issuer (services/asset-issuer) — ONE shared instance for every
+    # region (region.conf ASSET_ISSUER_REGION). The app's base URL is /issuer;
+    # the host region strips the prefix (the service serves /deposit-address,
+    # /deposits, /assets…), other regions forward it to the issuer vhost.
+    ${issuer_verb} /issuer {
+        reverse_proxy ${issuer_upstream}
+    }
+    ${issuer_verb} /issuer/* {
+        reverse_proxy ${issuer_upstream}
+    }
     handle {
         reverse_proxy 127.0.0.1:${WEB_PORT}
     }
@@ -490,16 +612,19 @@ deploy_region() {
 status_region() {
   local r="$1"; require_region "$r"
   echo -e "\n${GREEN}=== Status: $r ($(vm_ip "$r")) ===${NC}"
-  ssh_run "$r" "REGION=$r bash -s" <<'EOF'
+  ssh_run "$r" "REGION=$r ASSET_ISSUER_PORT=$ASSET_ISSUER_PORT bash -s" <<'EOF'
 echo "--- wallet container ---"
 docker ps --filter "name=wallet-$REGION-web" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
 echo "--- web image ---"
 docker images --format "{{.Repository}}:{{.Tag}}" | grep -E 'wallet-web|^REPOSITORY' | head -5 || true
 echo "--- p2p engine ---"
 docker ps --filter "name=wallet-p2p-$REGION" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
+echo "--- asset issuer ---"
+docker ps --filter "name=wallet-asset-issuer-$REGION" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" || true
 EOF
   echo "  container port :$WEB_PORT → $(ssh_run "$r" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:$WEB_PORT/ 2>/dev/null || echo 000")"
   echo "  p2p engine     :$P2P_PORT → $(ssh_run "$r" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:$P2P_PORT/healthz 2>/dev/null || echo 000")"
+  echo "  asset issuer   :$ASSET_ISSUER_PORT → $(ssh_run "$r" "curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:$ASSET_ISSUER_PORT/health 2>/dev/null || echo 000")"
 }
 
 health_region() {
@@ -512,17 +637,22 @@ echo "  http://127.0.0.1:$PORT/ → ${code:-000}"
 EOF
   echo "  https://$dom/ → $(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "https://$dom/" 2>/dev/null || echo 000)"
   echo "  https://$dom/p2p/healthz → $(curl -s --max-time 10 "https://$dom/p2p/healthz" 2>/dev/null || echo 000)"
+  echo "  https://$dom/issuer/health → $(curl -s --max-time 10 "https://$dom/issuer/health" 2>/dev/null || echo 000)"
 }
 
 logs_region() {
   local r="$1"; require_region "$r"
   echo -e "\n${GREEN}=== Logs: $r ===${NC}"
-  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_COMPOSE=$P2P_COMPOSE bash -s" <<'EOF'
+  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_COMPOSE=$P2P_COMPOSE ASSET_ISSUER_COMPOSE=$ASSET_ISSUER_COMPOSE bash -s" <<'EOF'
 cd "$REMOTE_REPO"
 docker compose -f deploy/compose.prod.yml logs --tail=80 --no-color 2>/dev/null | tail -120 || true
 if [ -f "deploy/env/.env.p2p.$REGION" ]; then
   echo "--- p2p engine ---"
   docker compose --env-file "deploy/env/.env.p2p.$REGION" -f ${P2P_COMPOSE:-deploy/compose.p2p-engine.blob.yml} logs --tail=40 --no-color 2>/dev/null | tail -60 || true
+fi
+if [ -f "deploy/env/.env.issuer.$REGION" ]; then
+  echo "--- asset issuer ---"
+  docker compose --env-file "deploy/env/.env.issuer.$REGION" -f ${ASSET_ISSUER_COMPOSE:-deploy/compose.asset-issuer.yml} logs --tail=40 --no-color 2>/dev/null | tail -60 || true
 fi
 EOF
 }
@@ -538,6 +668,9 @@ env_region() {
   echo "  p2p stack   : ${P2P_COMPOSE:-deploy/compose.p2p-engine.blob.yml}"
   [ -f "${SCRIPT_DIR}/env/.env.p2p.${r}" ] && echo "  p2p secrets : deploy/env/.env.p2p.${r} (present)" \
       || echo "  p2p secrets : deploy/env/.env.p2p.${r} (MISSING — run ./deploy/region.sh p2p $r after creating it)"
+  echo "  issuer      : $ASSET_ISSUER_REGION (port $ASSET_ISSUER_PORT, image: ${ASSET_ISSUER_IMAGE:-docker-save tar})"
+  [ -f "${SCRIPT_DIR}/env/.env.issuer.${r}" ] && echo "  issuer secrets: deploy/env/.env.issuer.${r} (present)" \
+      || echo "  issuer secrets: deploy/env/.env.issuer.${r} (MISSING — run ./deploy/region.sh issuer $ASSET_ISSUER_REGION after creating it)"
   if [ "$r" = "${APEX_REGION:-}" ]; then
     echo "  apex        : ${APEX_DOMAIN:-wallet.bigt.ai} (served from $r)"
   fi
@@ -549,14 +682,20 @@ destroy_region() {
   local r="$1"; require_region "$r"
   local sudo; sudo="$(sudo_cmd "$r")"
   echo -e "${RED}=== Destroy wallet on $r ($(vm_ip "$r")) ===${NC}"
-  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_COMPOSE=$P2P_COMPOSE bash -s" <<'EOF'
+  ssh_run "$r" "REMOTE_REPO=$REMOTE_REPO REGION=$r P2P_COMPOSE=$P2P_COMPOSE ASSET_ISSUER_COMPOSE=$ASSET_ISSUER_COMPOSE bash -s" <<'EOF'
 cd "$REMOTE_REPO" 2>/dev/null || exit 0
 docker compose -f deploy/compose.prod.yml down 2>/dev/null || true
 if [ -f "deploy/env/.env.p2p.$REGION" ]; then
   docker compose --env-file "deploy/env/.env.p2p.$REGION" -f ${P2P_COMPOSE:-deploy/compose.p2p-engine.blob.yml} down 2>/dev/null || true
 fi
+# `down` (never `down -v`): the issuer's Postgres volume is its reserve ledger.
+if [ -f "deploy/env/.env.issuer.$REGION" ]; then
+  docker compose --env-file "deploy/env/.env.issuer.$REGION" -f ${ASSET_ISSUER_COMPOSE:-deploy/compose.asset-issuer.yml} down 2>/dev/null || true
+fi
 docker rm -f "wallet-p2p-$REGION-engine" "wallet-p2p-$REGION-db" >/dev/null 2>&1 || true
+docker rm -f "wallet-asset-issuer-$REGION" "wallet-asset-issuer-$REGION-db" >/dev/null 2>&1 || true
 docker rm -f "bapp-$REGION-web" >/dev/null 2>&1 || true
+echo "issuer DB volume kept (ledger is not rebuildable)"
 EOF
   ssh_run "$r" "${sudo} rm -f /etc/caddy/Caddyfile.d/wallet-${r}.caddy /etc/caddy/Caddyfile.d/bapp-${r}.caddy"
   ssh_run "$r" "${sudo} systemctl reload caddy 2>/dev/null || ${sudo} caddy reload --config /etc/caddy/Caddyfile 2>/dev/null || true"
@@ -576,7 +715,7 @@ EOF
 prune_region() {
   local r="$1"; require_region "$r"
   echo -e "${GREEN}--- Prune old wallet images on $(vm_ip "$r") ---${NC}"
-  ssh_run "$r" "APP_IMAGE=${APP_IMAGE:-} P2P_IMAGE=${P2P_IMAGE:-} bash -s" <<'EOF'
+  ssh_run "$r" "APP_IMAGE=${APP_IMAGE:-} P2P_IMAGE=${P2P_IMAGE:-} ASSET_ISSUER_IMAGE=${ASSET_ISSUER_IMAGE:-} bash -s" <<'EOF'
 set -e
 # Repo of an image ref with any :tag stripped — a registry :port is kept
 # (ghcr.io:5000/x:v1 → ghcr.io:5000/x, ghcr.io/x/y:v1 → ghcr.io/x/y).
@@ -589,8 +728,10 @@ add_repo() {
 }
 [ -n "${APP_IMAGE:-}" ] && add_repo "$(repo_of "$APP_IMAGE")"
 [ -n "${P2P_IMAGE:-}" ] && add_repo "$(repo_of "$P2P_IMAGE")"
+[ -n "${ASSET_ISSUER_IMAGE:-}" ] && add_repo "$(repo_of "$ASSET_ISSUER_IMAGE")"
 add_repo ghcr.io/bigt-ai-platform/wallet-web
 add_repo ghcr.io/bigt-ai-platform/wallet-p2p-engine
+add_repo ghcr.io/bigt-ai-platform/wallet-asset-issuer
 add_repo ghcr.io/bigt-ai-platform/bapp-web
 removed=0
 for repo in $repos; do
@@ -618,6 +759,7 @@ main() {
   case "${ACTION}" in
     deploy)  [ -n "$REGION" ] && deploy_region "$REGION" || usage ;;
     p2p)     [ -n "$REGION" ] && p2p_up "$REGION" || usage ;;
+    issuer)  [ -n "$REGION" ] && issuer_up "$REGION" || usage ;;
     caddy)   [ -n "$REGION" ] && { require_region "$REGION"; config_caddy "$REGION"; } || usage ;;
     status)  [ -n "$REGION" ] && status_region "$REGION" || usage ;;
     health)  [ -n "$REGION" ] && health_region "$REGION" || usage ;;

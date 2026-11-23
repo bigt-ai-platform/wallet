@@ -1,5 +1,5 @@
 #!/bin/bash
-# deploy/tag.sh — build the wallet web image on the HOST and publish it.
+# deploy/tag.sh — build the wallet web + service images on the HOST and publish.
 #
 # The prod bundle is a static expo export. Building it needs the node toolchain
 # (node + yarn + the workspace deps), which only lives on a dev/CI host — never
@@ -7,8 +7,11 @@
 #
 #   1. runs `expo export` for web into <repo-root>/web-build (host compile),
 #   2. bakes it into an nginx image via deploy/Dockerfile.app,
-#   3. either pushes to a registry image ($APP_IMAGE) or saves a docker tar that
-#      deploy/region.sh loads onto the VM (no registry needed).
+#   3. builds the two service images (deploy/Dockerfile.p2p-engine,
+#      deploy/Dockerfile.asset-issuer),
+#   4. either pushes to registry images ($APP_IMAGE / $P2P_IMAGE /
+#      $ASSET_ISSUER_IMAGE) or saves docker tars that deploy/region.sh loads
+#      onto the VM (no registry needed).
 #
 #   ./deploy/tag.sh                  # build wallet-web:latest, save to deploy/.image/
 #   ./deploy/tag.sh 1.2.0            # also tag wallet-web:v1.2.0
@@ -113,6 +116,21 @@ else
   docker save wallet-p2p-engine:latest -o "$TAR_DIR/wallet-p2p-engine.latest.tar"
 fi
 
+# 2c. Asset issuer image (services/asset-issuer) — the /issuer/* upstream.
+#     Published like the engine: registry push when ASSET_ISSUER_IMAGE is set,
+#     docker-save tar otherwise (deploy/region.sh issuer loads it onto the VM).
+echo -e "${GREEN}--- docker build wallet-asset-issuer:latest ---${NC}"
+docker build -f deploy/Dockerfile.asset-issuer -t wallet-asset-issuer:latest .
+if [ -n "${ASSET_ISSUER_IMAGE:-}" ]; then
+  docker tag wallet-asset-issuer:latest "$ASSET_ISSUER_IMAGE"
+  docker push "$ASSET_ISSUER_IMAGE"
+  [ -n "$VERSION" ] && { docker tag wallet-asset-issuer:latest "${ASSET_ISSUER_IMAGE%:*}:v${VERSION}"; docker push "${ASSET_ISSUER_IMAGE%:*}:v${VERSION}"; } || true
+else
+  mkdir -p "$TAR_DIR"
+  echo -e "${GREEN}--- docker save wallet-asset-issuer → $TAR_DIR (no registry) ---${NC}"
+  docker save wallet-asset-issuer:latest -o "$TAR_DIR/wallet-asset-issuer.latest.tar"
+fi
+
 # 3. Publish: registry push or docker-save tar
 if [ -n "$APP_IMAGE" ]; then
   echo -e "${GREEN}--- docker push $APP_IMAGE ---${NC}"
@@ -127,11 +145,11 @@ else
 fi
 
 # 4. Keep the local docker data root small. Every release adds a ~54 MB
-#    wallet-web tag and a ~206 MB wallet-p2p-engine tag per registry prefix;
-#    published versions live in the registry, so the local copies are
-#    disposable. Drop every tag except :latest (the one deploy/region.sh
-#    saves/loads). KEEP_LOCAL_VERSIONS=1 preserves them, PRUNE_DANGLING_IMAGES=1
-#    also removes untagged leftovers.
+#    wallet-web tag, a ~206 MB wallet-p2p-engine tag and a ~200 MB
+#    wallet-asset-issuer tag per registry prefix; published versions live in the
+#    registry, so the local copies are disposable. Drop every tag except
+#    :latest (the one deploy/region.sh saves/loads). KEEP_LOCAL_VERSIONS=1
+#    preserves them, PRUNE_DANGLING_IMAGES=1 also removes untagged leftovers.
 if [ "${KEEP_LOCAL_VERSIONS:-0}" != "1" ]; then
   echo -e "${GREEN}--- prune local image tags (keep :latest + this version) ---${NC}"
   # deploy.sh retags :latest from the versioned image right after this script
@@ -139,7 +157,7 @@ if [ "${KEEP_LOCAL_VERSIONS:-0}" != "1" ]; then
   # (release v1.0.156 aborted exactly there). Keep both.
   KEEP_ARGS=(--keep "latest${VERSION:+,v${VERSION}}")
   [ "${PRUNE_DANGLING_IMAGES:-0}" = "1" ] && KEEP_ARGS+=(--prune)
-  "$SCRIPT_DIR/docker-keep-latest.sh" ${KEEP_ARGS[@]+"${KEEP_ARGS[@]}"} "${IMAGE_BASE##*/}" wallet-p2p-engine
+  "$SCRIPT_DIR/docker-keep-latest.sh" ${KEEP_ARGS[@]+"${KEEP_ARGS[@]}"} "${IMAGE_BASE##*/}" wallet-p2p-engine wallet-asset-issuer
 fi
 
 echo -e "${GREEN}=== done. Deploy with: ./deploy/region.sh deploy prod ===${NC}"

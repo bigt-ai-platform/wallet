@@ -258,6 +258,28 @@ curl -s localhost:8090/assets | jq
 `main.ts` refuses to start outside `NETWORK=Test` without `DATABASE_URL`: losing
 idempotency keys on restart is the double-mint this service exists to prevent.
 
+### Deploying with the release train
+
+The stack is part of `deploy/deploy.sh` (image `wallet-asset-issuer`, deployed by
+`deploy/region.sh issuer` on `region.conf ASSET_ISSUER_REGION`, default
+`APEX_REGION`). Keep the configuration in the gitignored per-region secrets file
+instead of the shell:
+
+```bash
+cp deploy/env.issuer.example deploy/env/.env.issuer.europa
+chmod 600 deploy/env/.env.issuer.europa
+$EDITOR deploy/env/.env.issuer.europa     # ASSET_ISSUER_DB_PASSWORD, NETWORK, AUTH_MODE, DEPOSIT_XPUB…
+./deploy/region.sh issuer europa          # or ./deploy/deploy.sh for a full release
+```
+
+`region.sh issuer` pulls the pinned image, brings up `db`, re-applies the
+**idempotent** `services/asset-issuer/schema.sql` (the Postgres init dir only
+runs on a fresh volume, so an existing ledger would otherwise miss
+`deposit_addresses`/redeem tables before the new image starts), then waits on
+`/health`. Every region's Caddy exposes it same-origin at `/issuer/*` (base URL
+`/issuer` for the app), so no CORS or public port is needed. Without
+`deploy/env/.env.issuer.<region>` the issuer leg is skipped with a warning.
+
 ## A4. Run the watcher / executor
 
 ```bash

@@ -617,3 +617,33 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   Runbook: `docs/usdt-issuer-deposit-withdraw.md`; key risks:
   `docs/issuer-key-risk-review.md`; signer protocol:
   `docs/issuer-hsm-adapter.md`; intent format: `docs/redeem-intent.md`.
+
+## Notes as of 2026-11-23
+
+- **The asset issuer is in the release train.** `deploy/deploy.sh` now pins a
+  third image, `wallet-asset-issuer:vX.Y.Z` (`deploy/tag.sh` builds/pushes it or
+  saves `deploy/.image/wallet-asset-issuer.latest.tar`), and updates the shared
+  stack via `deploy/region.sh issuer <region>` on
+  `region.conf ASSET_ISSUER_REGION` (default `APEX_REGION`) — the same singleton
+  model as the P2P engine. Config/secrets live in the gitignored
+  `deploy/env/.env.issuer.<region>` (template: `deploy/env.issuer.example`); the
+  release is skipped with a warning when it is absent, so a web/P2P-only fleet
+  still ships. The region Caddy vhosts route `/issuer/*` to the issuer
+  (`handle_path` on the host region, `handle` elsewhere, like `/p2p/*`), so the
+  app's base URL can be `/issuer`.
+- **An existing issuer DB self-migrates before the new image starts.**
+  `docker-entrypoint-initdb.d` only runs on a fresh volume, so `region.sh issuer`
+  brings up `db`, waits for `pg_isready`, re-applies the idempotent
+  `services/asset-issuer/schema.sql` and only then starts the image — a new
+  `deposit_addresses`/redeem table can never be missing behind a running service.
+  `region.sh destroy` uses `docker compose down` (never `-v`): the
+  `asset-issuer-db` volume is the ledger.
+- **Still separate on purpose.** The issuer is not merged into the P2P engine:
+  the engine holds a rebuildable chain projection and is the exposed
+  write-path, while the issuer holds a non-rebuildable reserve ledger and
+  custody-adjacent keys. Share a Postgres *cluster* (separate databases/roles)
+  if ops needs one host, not the process.
+- **The current deploy did not ship `bad129c`'s issuer code until this change.**
+  Policy v1.0.158 (tagged before this commit) contains only web + p2p-engine
+  images; run the next release (or `./deploy/region.sh issuer <region>` with the
+  secrets file) to get the issuer onto the VM.

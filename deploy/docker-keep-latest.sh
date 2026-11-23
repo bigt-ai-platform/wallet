@@ -1,14 +1,14 @@
 #!/bin/bash
 # deploy/docker-keep-latest.sh — keep only the :latest tag for local builds.
 #
-# Local `deploy/tag.sh` runs build the wallet-web and wallet-p2p-engine images
-# on every release, and each build leaves the previous version tags behind
-# (wallet-web:v1.0.155, ghcr.io/…/wallet-web:v1.0.155, …). A dev host that
-# releases several times a day accumulates dozens of ~54 MB / ~206 MB images,
-# which fills the docker data root. Published versions live in the registry, so
-# the local copies are disposable.
+# Local `deploy/tag.sh` runs build the wallet-web, wallet-p2p-engine and
+# wallet-asset-issuer images on every release, and each build leaves the
+# previous version tags behind (wallet-web:v1.0.155, ghcr.io/…/wallet-web:v1.0.155, …).
+# A dev host that releases several times a day accumulates dozens of ~54 MB /
+# ~200 MB images, which fills the docker data root. Published versions live in
+# the registry, so the local copies are disposable.
 #
-#   ./deploy/docker-keep-latest.sh                     # wallet-web + wallet-p2p-engine
+#   ./deploy/docker-keep-latest.sh                     # wallet-web + both services
 #   ./deploy/docker-keep-latest.sh wallet-web          # only that image family
 #   ./deploy/docker-keep-latest.sh --keep latest,v1.0.155 wallet-web
 #   ./deploy/docker-keep-latest.sh --prune             # also drop dangling images
@@ -43,7 +43,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-[ ${#REPOS[@]} -eq 0 ] && REPOS=(wallet-web wallet-p2p-engine)
+[ ${#REPOS[@]} -eq 0 ] && REPOS=(wallet-web wallet-p2p-engine wallet-asset-issuer)
 
 command -v docker >/dev/null 2>&1 || { echo -e "${RED}docker not found${NC}" >&2; exit 1; }
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # deploy/deploy.sh — release train: bump the patch tag → build+push the shared
-# wallet-web image (deploy/tag.sh) → deploy every region (deploy/region.sh
-# deploy <r>) pinned to the exact vX.Y.Z image so each VM pulls what was just
-# built. Analog ../dai/deploy/deploy.sh.
+# wallet-web, wallet-p2p-engine and wallet-asset-issuer images (deploy/tag.sh) →
+# deploy every region (deploy/region.sh deploy <r>) pinned to the exact vX.Y.Z
+# image, the shared p2p engine and the shared asset issuer, so each VM pulls
+# what was just built. Analog ../dai/deploy/deploy.sh.
 #
 #   ./deploy/deploy.sh                # bump patch of the latest vX.Y.Z tag
 #   ./deploy/deploy.sh 0.3.1          # explicit version
@@ -15,10 +16,11 @@
 # DOCKER_PAT. To restrict the fleet:
 #   DEPLOY_REGIONS="europa asia" ./deploy/deploy.sh
 #
-# After a region deploys green, its superseded wallet-web / wallet-p2p-engine
-# image tags are pruned (region.sh prune) — only the tag the running container
-# uses is kept, and only the wallet repos are touched (these VMs are shared with
-# dai/minio/router). Unused-image accumulation otherwise fills a VM's root.
+# After a region deploys green, its superseded wallet-web / wallet-p2p-engine /
+# wallet-asset-issuer image tags are pruned (region.sh prune) — only the tag the
+# running container uses is kept, and only the wallet repos are touched (these
+# VMs are shared with dai/minio/router). Unused-image accumulation otherwise
+# fills a VM's root.
 #
 # The release train is MAINNET only: deploy.sh (and tag.sh) run
 # deploy/network.sh's assert_mainnet_default before tagging/building and abort
@@ -86,6 +88,12 @@ P2P_IMAGE_BASE="${P2P_IMAGE:-ghcr.io/bigt-ai-platform/wallet-p2p-engine}"
 if [[ "${P2P_IMAGE_BASE##*/}" == *:* ]]; then P2P_IMAGE_BASE="${P2P_IMAGE_BASE%:*}"; fi
 [ "$DEPLOY_ONLY" = 1 ] && P2P_TAGGED="$P2P_IMAGE_BASE:latest" || P2P_TAGGED="$P2P_IMAGE_BASE:v$VERSION"
 
+# And for the asset issuer image (region.conf ASSET_ISSUER_IMAGE — the one
+# shared services/asset-issuer stack, deploy/compose.asset-issuer.yml).
+ASSET_ISSUER_IMAGE_BASE="${ASSET_ISSUER_IMAGE:-ghcr.io/bigt-ai-platform/wallet-asset-issuer}"
+if [[ "${ASSET_ISSUER_IMAGE_BASE##*/}" == *:* ]]; then ASSET_ISSUER_IMAGE_BASE="${ASSET_ISSUER_IMAGE_BASE%:*}"; fi
+[ "$DEPLOY_ONLY" = 1 ] && ISSUER_TAGGED="$ASSET_ISSUER_IMAGE_BASE:latest" || ISSUER_TAGGED="$ASSET_ISSUER_IMAGE_BASE:v$VERSION"
+
 if [ -z "${DEPLOY_REGIONS:-}" ]; then
   DEPLOY_REGIONS_ARR=("${ALL_REGIONS[@]}")
 else
@@ -99,6 +107,8 @@ fi
 echo -e "${GREEN}=== wallet-web release ${VERSION:+v$VERSION} → $TAGGED${NC}"
 echo "    regions: ${DEPLOY_REGIONS_ARR[*]}"
 echo "    apex: ${APEX_DOMAIN:-wallet.bigt.ai} (via ${APEX_REGION:-europa})"
+echo "    p2p engine: $P2P_TAGGED (on $P2P_REGION)"
+echo "    asset issuer: $ISSUER_TAGGED (on $ASSET_ISSUER_REGION)"
 echo "    build+push: $([ "$DEPLOY_ONLY" = 1 ] && echo 'no (deploy-only)' || echo 'yes (deploy/tag.sh)')"
 
 if [ "$DRY" = 1 ]; then
@@ -125,8 +135,8 @@ if [ "$DEPLOY_ONLY" != 1 ]; then
   echo -e "\n${GREEN}--- git tag v$VERSION ---${NC}"
   git tag -a "v$VERSION" -m "wallet-web $VERSION"
 
-  echo -e "\n${GREEN}--- deploy/tag.sh $VERSION ($TAGGED / $P2P_TAGGED) ---${NC}"
-  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ./deploy/tag.sh "$VERSION"
+  echo -e "\n${GREEN}--- deploy/tag.sh $VERSION ($TAGGED / $P2P_TAGGED / $ISSUER_TAGGED) ---${NC}"
+  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ASSET_ISSUER_IMAGE="$ISSUER_TAGGED" ./deploy/tag.sh "$VERSION"
 
   # tag.sh pushes $TAGGED (:v); also refresh :latest so fresh checkouts and the
   # region.conf default stay on the newest release (analog dai tag.sh).
@@ -136,6 +146,9 @@ if [ "$DEPLOY_ONLY" != 1 ]; then
   echo -e "\n${GREEN}--- push $P2P_IMAGE_BASE:latest ---${NC}"
   docker tag "$P2P_TAGGED" "$P2P_IMAGE_BASE:latest"
   docker push "$P2P_IMAGE_BASE:latest"
+  echo -e "\n${GREEN}--- push $ASSET_ISSUER_IMAGE_BASE:latest ---${NC}"
+  docker tag "$ISSUER_TAGGED" "$ASSET_ISSUER_IMAGE_BASE:latest"
+  docker push "$ASSET_ISSUER_IMAGE_BASE:latest"
 
   echo -e "\n${GREEN}--- git push tag v$VERSION ---${NC}"
   git push origin "v$VERSION"
@@ -160,9 +173,25 @@ if [ -f "$SCRIPT_DIR/env/.env.p2p.$P2P_REGION" ]; then
   P2P_IMAGE="$P2P_TAGGED" ./deploy/region.sh p2p "$P2P_REGION"
   # Reclaim disk once the engine is healthy: superseded wallet-p2p-engine tags
   # otherwise accumulate on this one shared node release after release.
-  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ./deploy/region.sh prune "$P2P_REGION" || true
+  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ASSET_ISSUER_IMAGE="$ISSUER_TAGGED" ./deploy/region.sh prune "$P2P_REGION" || true
 else
   echo -e "${YELLOW}skip shared p2p engine ($P2P_REGION): $SCRIPT_DIR/env/.env.p2p.$P2P_REGION missing (create it, then ./deploy/region.sh p2p $P2P_REGION)${NC}"
+fi
+
+# 2b. The ONE shared asset issuer (region.conf ASSET_ISSUER_REGION): one
+#     DEPOSIT_XPUB + one reserve ledger for every user, and every region's
+#     /issuer/* proxies to it (region.sh config_caddy) — so it is updated in the
+#     same release, before the web regions, exactly like the engine. It owns its
+#     own Postgres; region.sh re-applies the idempotent schema before starting
+#     the new image. Skipped (with a warning) when the secrets file is absent,
+#     so a P2P-only or web-only fleet still releases.
+if [ -f "$SCRIPT_DIR/env/.env.issuer.$ASSET_ISSUER_REGION" ]; then
+  echo -e "\n${GREEN}=== asset issuer → $ASSET_ISSUER_REGION (shared by all regions) ===${NC}"
+  ASSET_ISSUER_IMAGE="$ISSUER_TAGGED" ./deploy/region.sh issuer "$ASSET_ISSUER_REGION"
+  # Superseded issuer tags: this stack's image is ~200 MB, same disk argument.
+  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ASSET_ISSUER_IMAGE="$ISSUER_TAGGED" ./deploy/region.sh prune "$ASSET_ISSUER_REGION" || true
+else
+  echo -e "${YELLOW}skip asset issuer ($ASSET_ISSUER_REGION): $SCRIPT_DIR/env/.env.issuer.$ASSET_ISSUER_REGION missing (cp deploy/env.issuer.example, fill it, then ./deploy/region.sh issuer $ASSET_ISSUER_REGION)${NC}"
 fi
 
 for r in "${ordered[@]}"; do
@@ -174,7 +203,7 @@ for r in "${ordered[@]}"; do
   # failed health check), then drop the superseded wallet-web tags it left
   # behind — keeping the tag the new container runs. Scoped to the wallet repos:
   # these VMs are shared with dai/minio/router, so no fleet-wide image prune.
-  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ./deploy/region.sh prune "$r" || true
+  APP_IMAGE="$TAGGED" P2P_IMAGE="$P2P_TAGGED" ASSET_ISSUER_IMAGE="$ISSUER_TAGGED" ./deploy/region.sh prune "$r" || true
 done
 
 echo -e "\n${GREEN}=== release v${VERSION} deployed to ${ordered[*]} ===${NC}"

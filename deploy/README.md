@@ -38,14 +38,17 @@ Cloudflare (DNS-only A → region VM)
 | `compose.prod.yml` | Single `web` container (nginx static), published on `127.0.0.1:8084` |
 | `compose.p2p-engine.blob.yml` | P2P engine with **no database** (`SETTLEMENT_STORE=blob`), published on `127.0.0.1:8108` — the **default** engine stack: chain-derived projection in memory + store-only data in an encrypted blob store |
 | `compose.p2p-engine.yml` | P2P engine with Postgres (`engine` + `db`, `SETTLEMENT_STORE=pg`) — opt-in for a busy chain / heavy reads |
+| `compose.asset-issuer.yml` | Asset issuer + its **own** Postgres (`issuer` + `db`), published on `127.0.0.1:8090` — per-user EVM deposit addresses, mint/redeem executor, reserve ledger |
 | `Dockerfile.p2p-engine` | P2P engine runtime image (node 20, esbuild bundle; no compile host needed) |
+| `Dockerfile.asset-issuer` | Asset issuer runtime image (node 20; service + the `bigtangle-ts` L1 binding) |
 | `Dockerfile.app` | Runtime image: packages the host-built `web-build/` export under nginx; **no compile in-image** |
 | `nginx.conf` | SPA fallback (`index.html`) + hard caching of hashed Metro assets |
-| `tag.sh` | HOST build: `expo export` → docker image → registry push **or** docker-save tar (no registry needed) |
-| `docker-keep-latest.sh` | Drop local image tags except `:latest` for `wallet-web` / `wallet-p2p-engine` (run automatically at the end of `tag.sh`; `--prune` also removes dangling images) |
-| `deploy.sh` | Release train (analog `../dai/deploy/deploy.sh`): bump patch tag → `tag.sh` build+push `:vX.Y.Z` + `:latest` → `region.sh deploy` every region pinned to `:vX.Y.Z` → `region.sh prune` (drop superseded wallet image tags) |
-| `region.sh` | Provision one region VM: load image → sync repo → `compose up` → Caddy; status/health/logs/env/**prune**/destroy |
-| `region.conf` | Region map: domain, VM IP, SSH user/key, `WEB_PORT`, `APP_IMAGE`, apex (edit before deploying) |
+| `tag.sh` | HOST build: `expo export` + the two service images → registry push **or** docker-save tars (no registry needed) |
+| `docker-keep-latest.sh` | Drop local image tags except `:latest` for `wallet-web` / `wallet-p2p-engine` / `wallet-asset-issuer` (run automatically at the end of `tag.sh`; `--prune` also removes dangling images) |
+| `deploy.sh` | Release train (analog `../dai/deploy/deploy.sh`): bump patch tag → `tag.sh` build+push `:vX.Y.Z` + `:latest` → shared engine + shared issuer → `region.sh deploy` every region pinned to `:vX.Y.Z` → `region.sh prune` (drop superseded wallet image tags) |
+| `env.issuer.example` | Template for the issuer's `deploy/env/.env.issuer.<region>` (DB password, auth, xpub/keys) — copy it, never commit the filled file |
+| `region.sh` | Provision one region VM: load image → sync repo → `compose up` → Caddy; `p2p`/`issuer` singletons; status/health/logs/env/**prune**/destroy |
+| `region.conf` | Region map: domain, VM IP, SSH user/key, `WEB_PORT`, `APP_IMAGE`, `P2P_REGION`/`ASSET_ISSUER_REGION`, apex (edit before deploying) |
 | `network.sh` | Mainnet guard (`assert_mainnet_default`): fails the release if the source no longer pins mainnet defaults (sourced by `tag.sh`/`deploy.sh`) |
 
 ## Regions (analog `../dai`)
@@ -74,13 +77,15 @@ dev/CI host, never on the VM. The region VMs only run docker + caddy.
 
 Local builds keep only `:latest`: after the build/push/save, `tag.sh` calls
 `deploy/docker-keep-latest.sh`, which deletes the older `wallet-web:vX.Y.Z` /
-`wallet-p2p-engine:vX.Y.Z` tags (and their `ghcr.io/…` aliases) so the docker
-data root does not grow by ~54 MB + ~206 MB per release. Published versions
-stay in the registry. `KEEP_LOCAL_VERSIONS=1 ./deploy/tag.sh` keeps them;
+`wallet-p2p-engine:vX.Y.Z` / `wallet-asset-issuer:vX.Y.Z` tags (and their
+`ghcr.io/…` aliases) so the docker data root does not grow by ~500 MB per
+release. Published versions stay in the registry.
+`KEEP_LOCAL_VERSIONS=1 ./deploy/tag.sh` keeps them;
 `PRUNE_DANGLING_IMAGES=1` also drops untagged layers; run it standalone with
 `./deploy/docker-keep-latest.sh --dry-run` to preview.
 
-Release train (versioned, all regions pinned to one image):
+Release train (versioned, all regions pinned to one image, and the shared
+engine + issuer updated in the same run):
 
 ```bash
 ./deploy/deploy.sh                    # bump patch of latest vX.Y.Z → build+push → deploy all regions
@@ -90,6 +95,11 @@ DEPLOY_REGIONS="europa asia" ./deploy/deploy.sh   # restrict the fleet
 ./deploy/deploy.sh --deploy-only      # no tag/build — redeploy existing :latest
 ./deploy/deploy.sh --dry-run          # print the plan, do nothing
 ```
+
+The issuer leg is skipped with a warning when
+`deploy/env/.env.issuer.<ASSET_ISSUER_REGION>` is absent, so a web/P2P-only
+fleet still releases. Create it once from `deploy/env.issuer.example` (see
+"Asset issuer" below).
 
 ## Ethereum RPC proxy (`/eth`)
 
@@ -122,20 +132,22 @@ fleet, `oraclevpc.key`).
 
 ```bash
 ./deploy/region.sh deploy europa   # full provision (idempotent)
+./deploy/region.sh p2p europa      # shared P2P engine (P2P_REGION only)
+./deploy/region.sh issuer europa   # shared asset issuer (ASSET_ISSUER_REGION only)
 ./deploy/region.sh caddy europa    # rewrite Caddy vhosts only (region + apex if APEX_REGION)
 ./deploy/region.sh status europa   # container + image + local http code
 ./deploy/region.sh health europa   # container http + public https
 ./deploy/region.sh logs europa     # recent container logs
 ./deploy/region.sh env europa      # resolved config (domain/vm/image)
 ./deploy/region.sh prune europa    # drop superseded wallet image tags (keeps the running one)
-./deploy/region.sh destroy europa  # stop container + remove Caddy vhost
+./deploy/region.sh destroy europa  # stop containers + remove Caddy vhost (volumes kept)
 ```
 
 `deploy.sh` runs `prune` after each region goes green, so superseded
-`wallet-web` / `wallet-p2p-engine` tags never pile up (a dozen releases filled
-`us1001`'s root). Pruning is scoped to the wallet repos and always keeps the tag
-a running container uses — other tenants' images on these shared VMs are never
-touched.
+`wallet-web` / `wallet-p2p-engine` / `wallet-asset-issuer` tags never pile up (a
+dozen releases filled `us1001`'s root). Pruning is scoped to the wallet repos
+and always keeps the tag a running container uses — other tenants' images on
+these shared VMs are never touched.
 
 `deploy` is idempotent: it loads the image (registry pull, or `docker load` of
 `deploy/.image/wallet-web.latest.tar`), syncs the compose file, starts the
@@ -242,3 +254,41 @@ forced on) and assumes L1-SOCIAL is reachable at start — fine for a small/medi
 chain; use `P2P_COMPOSE=deploy/compose.p2p-engine.yml` (Postgres) for a busy
 chain or heavy reads. Either way the engine still needs *some* durable
 confidential store — never the chain (it is public and append-only).
+
+## Asset issuer
+
+The issuance stack (`services/asset-issuer`, `docs/usdt-issuer-deposit-withdraw.md`)
+is a **second, independent service**: USDT (and HKD/USD/GOLD) deposit addresses,
+the mint/redeem executor and the reserve ledger. It is **not** part of the web
+image and it is **not** merged with the P2P engine, because it holds
+non-rebuildable state and custody-adjacent keys while the engine holds a
+disposable chain projection and is far more exposed (signed public write path).
+One stack, two processes, separate databases.
+
+It is a singleton like the engine (`region.conf ASSET_ISSUER_REGION`, default
+`APEX_REGION`): one `DEPOSIT_XPUB` and one ledger serve every region, and every
+region's Caddy routes `https://<domain>/issuer/*` to it (the host region strips
+the prefix; the service serves `/deposit-address`, `/deposits`, `/assets`…).
+Point the wallet at it with `EXPO_PUBLIC_ISSUER_API_URL=/issuer` at build time
+(and `EXPO_PUBLIC_ISSUER_API_TOKEN` if `AUTH_MODE=bearer`), or per device in
+Settings → Ethereum.
+
+```sh
+cp deploy/env.issuer.example deploy/env/.env.issuer.europa
+chmod 600 deploy/env/.env.issuer.europa
+$EDITOR deploy/env/.env.issuer.europa   # ASSET_ISSUER_DB_PASSWORD, NETWORK, AUTH_MODE, DEPOSIT_XPUB…
+./deploy/region.sh issuer europa        # or let ./deploy/deploy.sh do it
+```
+
+`issuer` is idempotent and self-migrating: it pulls the image (or loads
+`deploy/.image/wallet-asset-issuer.latest.tar`), brings the `db` service up,
+re-applies the **idempotent** `services/asset-issuer/schema.sql` (the Postgres
+init dir only runs on a fresh volume, so new tables such as `deposit_addresses`
+would otherwise be missing), then starts the new image and waits on
+`/health`. `destroy` never deletes the `asset-issuer-db` volume — that ledger is
+the thing you cannot rebuild.
+
+`deploy.sh` builds and pins `wallet-asset-issuer:vX.Y.Z` on the same tag as the
+web/engine images and updates the stack before the web regions, so a bundle that
+calls `/issuer` is never ahead of the service. Without
+`deploy/env/.env.issuer.<region>` the issuer leg is skipped with a warning.

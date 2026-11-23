@@ -10,6 +10,10 @@
 #   REGION=europa ASSET_ISSUER_DB_PASSWORD=… \
 #     docker compose -f deploy/compose.asset-issuer.yml up -d
 #
+# The release train owns this stack too: deploy/tag.sh builds+publishes
+# wallet-asset-issuer, and `./deploy/region.sh issuer <region>` deploys it from
+# the gitignored deploy/env/.env.issuer.<region> (deploy.sh calls both).
+#
 # The schema is mounted into the Postgres init directory, so a fresh volume is
 # created correctly on first start. It is idempotent (IF NOT EXISTS / DROP
 # TRIGGER + CREATE TRIGGER), so re-applying by hand is safe:
@@ -70,6 +74,17 @@ services:
       # services/asset-issuer/src/config.ts, which must match
       # expo-app/sources/lib/externalAssets.ts.
       ASSETS_JSON: ${ASSETS_JSON:-}
+      # Per-user (Binance-style) EVM deposit addresses: BIP32 xpub derives one
+      # address per L1 account (depositAddressMode="per-user"). The xprv is only
+      # needed by `cli sweep` (ALLOW_LIVE_SWEEP=1), never by `serve`.
+      DEPOSIT_XPUB: ${DEPOSIT_XPUB:-}
+      DEPOSIT_XPUB_PATH: ${DEPOSIT_XPUB_PATH:-}
+      DEPOSIT_XPRV: ${DEPOSIT_XPRV:-}
+      DEPOSIT_XPRV_PATH: ${DEPOSIT_XPRV_PATH:-}
+      ALLOW_LIVE_SWEEP: ${ALLOW_LIVE_SWEEP:-0}
+      # Same-origin via Caddy's /issuer/* makes CORS unnecessary; set only if
+      # the SPA calls the issuer from a different origin.
+      CORS_ORIGIN: ${CORS_ORIGIN:-}
       # Adapters. ETH_RPC_URL enables ERC-20 deposit scanning; L1_URL +
       # L1_ISSUER_KEY enable minting/redemption; ALLOW_LIVE_L1 must be 1 to
       # actually sign. Unset = the pass runs and reports, signing nothing.
@@ -88,6 +103,13 @@ services:
       FROM_BLOCK: ${FROM_BLOCK:-0}
     ports:
       - "127.0.0.1:${ASSET_ISSUER_PORT:-8090}:8090"
+    healthcheck:
+      # node:20-slim has no curl/wget; the service answers GET /health.
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
 volumes:
   asset-issuer-db:
