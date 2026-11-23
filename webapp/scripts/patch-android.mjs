@@ -252,7 +252,7 @@ if (mx !== fs.readFileSync(manifest, "utf8")) {
 // template also carries MainActivity with the plugin-registering override.
 const javaDest = path.join(app, "java", pkgDir);
 fs.mkdirSync(javaDest, { recursive: true });
-for (const name of ["updater", "deviceauth", "notifier"]) {
+for (const name of ["updater", "deviceauth", "notifier", "walletfile"]) {
   const javaSrc = path.join(root, "native", name, pkgDir);
   if (!fs.existsSync(javaSrc)) {
     console.warn(`patch-android: native/${name} template missing — skipped`);

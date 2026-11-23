@@ -10,8 +10,7 @@ import {
   Platform,
   ActivityIndicator,
 } from "react-native";
-import * as FileSystem from "expo-file-system";
-import * as Sharing from "expo-sharing";
+import * as FileSystem from "expo-file-system/legacy";
 import * as DocumentPicker from "expo-document-picker";
 import { StyleSheet } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
@@ -19,6 +18,7 @@ import { useTranslation } from "react-i18next";
 import { useWallet } from "@/state/wallet";
 import { allKeys as allWalletKeys, needsEthereumKey, needsPostQuantumKey, withKey } from "@/lib/walletKeys";
 import { addressFromPrivateKey } from "@/lib/eth/address";
+import { saveWalletFileToDevice } from "@/services/walletFile";
 import {
   createEcWallet,
   createPqWallet,
@@ -51,52 +51,6 @@ type OldWalletStep =
   | "done";
 
 const isWeb = Platform.OS === "web";
-
-/**
- * Write a wallet file to the device: browser download (file picker, then the
- * anchor fallback) or the app documents directory + share sheet on native.
- * Returns the file name that was written.
- */
-async function saveWalletFileToDevice(content: string, fileName: string): Promise<void> {
-  if (isWeb) {
-    const blob = new Blob([content], { type: 'application/json' });
-    if (typeof (globalThis as any).showSaveFilePicker === 'function') {
-      try {
-        const handle = await (globalThis as any).showSaveFilePicker({
-          suggestedName: fileName,
-          types: [{ description: 'JSON Wallet File', accept: { 'application/json': ['.json'] } }],
-        });
-        const writable = await handle.createWritable();
-        await writable.write(blob);
-        await writable.close();
-        return;
-      } catch (pickerError: any) {
-        if (pickerError?.name === 'AbortError') throw pickerError;
-        throw pickerError;
-      }
-    }
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    return;
-  }
-  const documentsDir = (FileSystem as any).documentDirectory;
-  if (!documentsDir) throw new Error('Documents directory not available');
-  const filePath = `${documentsDir}${fileName}`;
-  await (FileSystem as any).writeAsStringAsync(filePath, content);
-  if (await Sharing.isAvailableAsync()) {
-    await Sharing.shareAsync(filePath, {
-      mimeType: 'application/json',
-      dialogTitle: fileName,
-      UTI: 'public.json',
-    });
-  }
-}
 
 export default function KeysScreen() {
   const { t } = useTranslation();
@@ -217,8 +171,8 @@ export default function KeysScreen() {
       const pwd = getPassword();
       const content = pwd ? await saveKeyToFile(file, pwd) : serializeWalletFile(file);
       const fileName = `wallet_${file.wallet.address.slice(0, 8)}_${Date.now()}.json`;
-      await saveWalletFileToDevice(content, fileName);
-      Alert.alert(t('keys.exportTitle'), t('keys.exportedAs', { file: fileName }));
+      const saved = await saveWalletFileToDevice(content, fileName);
+      Alert.alert(t('keys.exportTitle'), t('keys.exportedAs', { file: saved.location ?? saved.fileName }));
     } catch (error) {
       if ((error as { name?: string })?.name === 'AbortError') return;
       Alert.alert(t('keys.errorHead'), t('keys.exportFailed', { message: (error as Error).message }));
@@ -269,85 +223,25 @@ export default function KeysScreen() {
 
       const fileName = `wallet_${newWallet.wallet.address.slice(0, 8)}_${Date.now()}.json`;
 
-      if (isWeb) {
-        const blob = new Blob([encryptedContent], { type: "application/json" });
-
-        if (typeof (globalThis as any).showSaveFilePicker === "function") {
-          try {
-            const handle = await (globalThis as any).showSaveFilePicker({
-              suggestedName: fileName,
-              types: [
-                {
-                  description: "JSON Wallet File",
-                  accept: { "application/json": [".json"] },
-                },
-              ],
-            });
-            const writable = await handle.createWritable();
-            await writable.write(blob);
-            await writable.close();
-
-            setStep("done");
-            Alert.alert(t("keys.successHead"), t("keys.walletSavedMsg"));
-          } catch (pickerError: any) {
-            if (pickerError.name === "AbortError") {
-              setStep("enterPassword");
-              setErrorMessage(t("keys.errSaveCancelled"));
-              setIsLoading(false);
-              return;
-            }
-            throw pickerError;
-          }
-        } else {
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement("a");
-          link.href = url;
-          link.download = fileName;
-          document.body.appendChild(link);
-          link.click();
-          link.remove();
-          URL.revokeObjectURL(url);
-
-          setStep("done");
-          Alert.alert(t("keys.successHead"), t("keys.createdDownloaded"));
-        }
-      } else {
-        const documentsDir = (FileSystem as any).documentDirectory;
-        if (!documentsDir) {
-          throw new Error("Documents directory not available");
-        }
-
-        const filePath = `${documentsDir}${fileName}`;
-        await (FileSystem as any).writeAsStringAsync(
-          filePath,
-          encryptedContent,
+      try {
+        const saved = await saveWalletFileToDevice(encryptedContent, fileName);
+        setStep("done");
+        Alert.alert(
+          t("keys.successHead"),
+          saved.location
+            ? t("keys.savedAs", { fileName: saved.location })
+            : isWeb
+              ? t("keys.createdDownloaded")
+              : t("keys.savedAs", { fileName: saved.fileName }),
         );
-
-        const sharingAvailable = await Sharing.isAvailableAsync();
-
-        if (sharingAvailable) {
-          Alert.alert(
-            t("keys.created"),
-            t("keys.walletCreatedFile"),
-            [
-              {
-                text: t("keys.saveWalletFile"),
-                onPress: () => {
-                  Sharing.shareAsync(filePath, {
-                    mimeType: "application/json",
-                    dialogTitle: t("keys.shareSheetTitle"),
-                    UTI: "public.json",
-                  })
-                    .then(() => setStep("done"))
-                    .catch(() => setStep("done"));
-                },
-              },
-            ],
-          );
-        } else {
-          setStep("done");
-          Alert.alert(t("keys.saved"), t("keys.savedAs", { fileName }));
+      } catch (pickerError) {
+        if ((pickerError as { name?: string })?.name === "AbortError") {
+          setStep("enterPassword");
+          setErrorMessage(t("keys.errSaveCancelled"));
+          setIsLoading(false);
+          return;
         }
+        throw pickerError;
       }
     } catch (error) {
       console.error("Error saving wallet:", error);
@@ -581,8 +475,8 @@ export default function KeysScreen() {
 
     const readBytes = async (fileUriOrBuffer: any): Promise<Uint8Array> => {
       if (isWeb) return new Uint8Array(fileUriOrBuffer);
-      const b64 = await (FileSystem as any).readAsStringAsync(fileUriOrBuffer, {
-        encoding: (FileSystem as any).EncodingType.Base64,
+      const b64 = await FileSystem.readAsStringAsync(fileUriOrBuffer, {
+        encoding: FileSystem.EncodingType.Base64,
       });
       return base64ToBytes(b64);
     };

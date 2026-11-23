@@ -647,3 +647,24 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   Policy v1.0.158 (tagged before this commit) contains only web + p2p-engine
   images; run the next release (or `./deploy/region.sh issuer <region>` with the
   secrets file) to get the issuer onto the VM.
+
+## Notes as of 2026-11-24
+
+- **Wallet-file save works in the Android app (it saved nothing before).** The
+  shipped app is a Capacitor WebView, where `showSaveFilePicker` does not exist
+  and an `<a download>` click is a silent no-op — the shell installs no
+  `DownloadListener` — so "Back up wallet file" produced no file on the phone
+  (the browser e2e passed because Playwright handles the download). Saves now
+  go through a native `WalletFile` plugin (`webapp/native/walletfile`, copied by
+  `patch-android.mjs`, registered in `MainActivity`): MediaStore Downloads
+  (`Download/Wallet/<name>.json`, visible to file managers) on API 29+, the
+  app's external documents dir below it, then the share sheet for the
+  `content://` uri. The React-Native branch also had to move to
+  `expo-file-system/legacy`: since SDK 54 the default `expo-file-system` export
+  is the new `File`/`Directory` API and has no `documentDirectory` /
+  `writeAsStringAsync`, so the old code threw "Documents directory not
+  available". One dispatcher for all three runtimes lives in
+  `services/walletFile.ts` (Capacitor → native plugin, browser → picker/anchor,
+  RN → legacy documents dir + share). Tests: `services/__tests__/walletFile.test.ts`
+  (all three branches) and
+  `e2e/playwright/tests/wallet-file-save.spec.ts` (picker path writes the JSON).
