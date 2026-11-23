@@ -15,7 +15,9 @@
 import { Pool } from 'pg';
 import type { AssetConfig } from './config.js';
 import type { AttestationRecord, Operation, OperationStatus, ReserveEntry } from './domain.js';
-import type { HolderBalance, Store } from './store.js';
+import type {
+  DepositAddressRecord, HolderBalance, RedeemIntentRecord, Store,
+} from './store.js';
 
 interface OperationRow {
   id: string;
@@ -30,6 +32,7 @@ interface OperationRow {
   log_index: number | null;
   idempotency_key: string | null;
   external_ref: string | null;
+  destination: string | null;
   attempts: number;
   error: string | null;
   created_at: Date;
@@ -37,7 +40,27 @@ interface OperationRow {
 }
 
 const OPERATION_COLUMNS = `id, kind, asset_id, account, amount_raw, l1_amount_raw, status,
-  chain, tx_hash, log_index, idempotency_key, external_ref, attempts, error, created_at, updated_at`;
+  chain, tx_hash, log_index, idempotency_key, external_ref, destination, attempts, error, created_at, updated_at`;
+
+interface DepositAddressRow {
+  asset_id: string;
+  account: string;
+  address: string;
+  address_index: string;
+  chain: string;
+  created_at: Date;
+}
+
+function toDepositAddress(row: DepositAddressRow): DepositAddressRecord {
+  return {
+    assetId: row.asset_id,
+    account: row.account,
+    address: row.address,
+    addressIndex: Number(row.address_index),
+    chain: row.chain,
+    createdAt: row.created_at.toISOString(),
+  };
+}
 
 function toOperation(row: OperationRow): Operation {
   return {
@@ -53,6 +76,7 @@ function toOperation(row: OperationRow): Operation {
       : {}),
     ...(row.idempotency_key ? { idempotencyKey: row.idempotency_key } : {}),
     ...(row.external_ref ? { externalRef: row.external_ref } : {}),
+    ...(row.destination ? { destination: row.destination } : {}),
     attempts: row.attempts,
     ...(row.error ? { error: row.error } : {}),
     createdAt: row.created_at.toISOString(),
@@ -99,18 +123,19 @@ export class PgStore implements Store {
   async saveOperation(op: Operation): Promise<void> {
     await this.pool.query(
       `INSERT INTO operations (${OPERATION_COLUMNS})
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
        ON CONFLICT (id) DO UPDATE SET
          status = EXCLUDED.status,
          attempts = EXCLUDED.attempts,
          error = EXCLUDED.error,
          external_ref = EXCLUDED.external_ref,
+         destination = EXCLUDED.destination,
          updated_at = EXCLUDED.updated_at`,
       [
         op.id, op.kind, op.assetId, op.account, op.amountRaw, op.l1AmountRaw, op.status,
         op.ref?.chain ?? null, op.ref?.txHash ?? null, op.ref?.logIndex ?? null,
-        op.idempotencyKey ?? null, op.externalRef ?? null, op.attempts, op.error ?? null,
-        op.createdAt, op.updatedAt,
+        op.idempotencyKey ?? null, op.externalRef ?? null, op.destination ?? null,
+        op.attempts, op.error ?? null, op.createdAt, op.updatedAt,
       ],
     );
   }
@@ -146,6 +171,35 @@ export class PgStore implements Store {
       `SELECT ${OPERATION_COLUMNS} FROM operations
         WHERE account = $1 ORDER BY created_at DESC LIMIT $2`,
       [account, clamp(limit)],
+    );
+    return res.rows.map(toOperation);
+  }
+
+  async listDeposits(account: string, assetId: string | undefined, limit: number): Promise<Operation[]> {
+    const res = await this.pool.query<OperationRow>(
+      `SELECT ${OPERATION_COLUMNS} FROM operations
+        WHERE account = $1 AND kind = 'deposit'
+          AND ($2::text IS NULL OR lower(asset_id) = lower($2))
+        ORDER BY created_at DESC LIMIT $3`,
+      [account, assetId ?? null, clamp(limit)],
+    );
+    return res.rows.map(toOperation);
+  }
+
+  async claimPending(limit: number): Promise<Operation[]> {
+    // One statement: the subquery locks pending rows and skips rows another
+    // worker already claimed, so two executors cannot process the same op.
+    const res = await this.pool.query<OperationRow>(
+      `UPDATE operations SET status = 'processing', attempts = attempts + 1
+        WHERE id IN (
+          SELECT id FROM operations
+           WHERE status = 'pending'
+           ORDER BY created_at ASC
+           LIMIT $1
+           FOR UPDATE SKIP LOCKED
+        )
+        RETURNING ${OPERATION_COLUMNS}`,
+      [clamp(limit)],
     );
     return res.rows.map(toOperation);
   }
@@ -264,6 +318,72 @@ export class PgStore implements Store {
         record.supplyRaw.toString(), record.documentHash, record.publishedAt,
       ],
     );
+  }
+
+  async putDepositAddress(record: DepositAddressRecord): Promise<boolean> {
+    // Any of the three unique constraints can reject the row; `DO NOTHING`
+    // turns the allocation race into a retry signal instead of an exception.
+    const res = await this.pool.query(
+      `INSERT INTO deposit_addresses (asset_id, account, address, address_index, chain, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT DO NOTHING
+       RETURNING asset_id`,
+      [
+        record.assetId, record.account, record.address.toLowerCase(),
+        record.addressIndex, record.chain, record.createdAt,
+      ],
+    );
+    return res.rowCount === 1;
+  }
+
+  async putRedeemIntent(record: RedeemIntentRecord): Promise<boolean> {
+    const res = await this.pool.query(
+      `INSERT INTO redeem_intents
+         (asset_id, account, nonce, intent_hash, destination, amount_raw, expiry, operation_id, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+       ON CONFLICT DO NOTHING
+       RETURNING asset_id`,
+      [
+        record.assetId, record.account, record.nonce, record.intentHash,
+        record.destination, record.amountRaw, record.expiry, record.operationId, record.createdAt,
+      ],
+    );
+    return res.rowCount === 1;
+  }
+
+  async getDepositAddress(assetId: string, account: string): Promise<DepositAddressRecord | undefined> {
+    const res = await this.pool.query<DepositAddressRow>(
+      `SELECT asset_id, account, address, address_index, chain, created_at
+         FROM deposit_addresses WHERE asset_id = $1 AND account = $2`,
+      [assetId, account],
+    );
+    return res.rows[0] ? toDepositAddress(res.rows[0]) : undefined;
+  }
+
+  async findAccountByDepositAddress(assetId: string, address: string): Promise<string | undefined> {
+    const res = await this.pool.query<{ account: string }>(
+      `SELECT account FROM deposit_addresses
+        WHERE asset_id = $1 AND lower(address) = lower($2)
+        LIMIT 1`,
+      [assetId, address],
+    );
+    return res.rows[0]?.account;
+  }
+
+  async listDepositAddresses(assetId: string): Promise<DepositAddressRecord[]> {
+    const res = await this.pool.query<DepositAddressRow>(
+      `SELECT asset_id, account, address, address_index, chain, created_at
+         FROM deposit_addresses WHERE asset_id = $1 ORDER BY address_index ASC`,
+      [assetId],
+    );
+    return res.rows.map(toDepositAddress);
+  }
+
+  async nextDepositIndex(): Promise<number> {
+    const res = await this.pool.query<{ next: string }>(
+      `SELECT COALESCE(MAX(address_index), -1) + 1 AS next FROM deposit_addresses`,
+    );
+    return Number(res.rows[0]?.next ?? 0);
   }
 }
 

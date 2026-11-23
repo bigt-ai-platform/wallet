@@ -177,6 +177,8 @@ export const DEFAULT_L1_CHAINS_TESTNET = [
 export const ISSUER_API_URL = process.env.EXPO_PUBLIC_ISSUER_API_URL ?? '';
 export const ISSUER_DEPOSIT_ADDRESS = process.env.EXPO_PUBLIC_ISSUER_DEPOSIT_ADDRESS ?? '';
 export const ISSUER_MIN_USDT = process.env.EXPO_PUBLIC_ISSUER_MIN_USDT ?? '';
+/** Bearer token for the issuer API (`AUTH_MODE=bearer`); baked at build time. */
+export const ISSUER_API_TOKEN = process.env.EXPO_PUBLIC_ISSUER_API_TOKEN ?? '';
 
 /**
  * P2P settlement engine base URL (services/p2p-engine).

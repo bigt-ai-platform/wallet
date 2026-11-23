@@ -575,3 +575,45 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   not have it. The exported file carries every key (`keys[]`), so Load from File
   on the new device restores all addresses. The e2e test adds an EC key to a
   PQ-only wallet, downloads the file, and asserts it contains both keys.
+
+## Notes as of 2026-11-21
+
+- **Per-user (Binance-style) EVM deposit addresses in the issuer.** The USDT
+  rail's `ASSETS_JSON` now takes `depositAddressMode: "static" | "per-user"`.
+  `per-user` derives a BIP32 address per L1 account from `DEPOSIT_XPUB`
+  (`DEPOSIT_XPUB_PATH`, default `0`), stores it in `deposit_addresses`
+  (unique account; globally unique address/index) and makes the **destination
+  address** the attribution key — an ERC-20 transfer has no memo, so a shared
+  address cannot tell users apart when the sender is an exchange hot wallet.
+  `static` keeps the
+  shared `custodyAddress` + `mapAccount(from)` model. `/deposit-address` and
+  `/deposits` (the `/deposit` page contract) are implemented on the service;
+  per-user without an xpub fails closed (503) rather than silently returning a
+  shared address. Sweeping is a separate `cli sweep` command: it plans by
+  default, skips `omnibus`/`zero`/`below-min`/`no-gas`, and goes live only with
+  `ALLOW_LIVE_SWEEP=1` + `DEPOSIT_XPRV` (verifies the key controls the address
+  before signing; it does not fund gas). `serve` is now default-deny outside
+  Test (`AUTH_MODE=bearer` + `API_TOKEN`, or account-bound `AUTH_MODE=hmac` +
+  `API_HMAC_SECRET`; `off` refuses to start on Mainnet). The deposit page sends
+  `EXPO_PUBLIC_ISSUER_API_TOKEN` as a bearer for `/deposit-address` and
+  `/deposits`. The executor claims
+  with `FOR UPDATE SKIP LOCKED` and re-verifies a chain `deposit` against
+  `eth_getTransactionReceipt` + `finalized` before minting — a DB row alone is
+  not proof. Keys can stay outside the service: `L1_SIGNER=command` +
+  `L1_MINT_COMMAND`, `SWEEP_SIGN_COMMAND` (HSM/MPC stdin/stdout protocol) and
+  `TREASURY_RELEASE_COMMAND` behind `ALLOW_LIVE_TREASURY=1`; local key/xprv
+  remain the Testnet/small-float path. Redemptions need a signed intent:
+  `/redeem-intents` verifies an L1-key (PQ/EC) signature over
+  `{domain, network, assetId, account, amountRaw, destination, nonce, expiry}`,
+  stores the nonce/hash, debits the balance and sets `operations.destination`;
+  `executeRelease` refuses a release without it, and the unsigned
+  `/redeem-requests` plus observed L1 transfers fail closed. The `/deposit`
+  USDT page has a **Redeem to Ethereum** card (`services/redeemIntent.ts`,
+  signed with the wallet's Bigtangle key) that posts the intent. `deposit.tsx`
+  now sends the **L1** account to `/deposit-address`
+  (it used the EVM account, while `/deposits` already used the L1 one);
+  `ethereum.spec.ts` asserts the query and the posted redeem proof. Tests:
+  `services/asset-issuer` 140 passing; `expo-app` 406 passing / 2 skipped.
+  Runbook: `docs/usdt-issuer-deposit-withdraw.md`; key risks:
+  `docs/issuer-key-risk-review.md`; signer protocol:
+  `docs/issuer-hsm-adapter.md`; intent format: `docs/redeem-intent.md`.

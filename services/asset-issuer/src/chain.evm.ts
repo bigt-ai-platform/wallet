@@ -18,22 +18,36 @@
  */
 
 import type { AssetConfig } from './config.js';
+import { isFinalized, type Operation } from './domain.js';
 import type { ChainClient, DepositObservation, RedemptionObservation } from './watcher.js';
 
 /** keccak256("Transfer(address,address,uint256)") */
 export const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+
+/** One allocated per-user deposit address and the L1 account it credits. */
+export interface DepositAddressEntry {
+  address: string;
+  account: string;
+}
 
 export interface EvmChainClientOptions {
   rpcUrl: string;
   /** Chain label recorded on operations, e.g. `ethereum`. */
   chain?: string;
   assets: AssetConfig[];
-  /** Map an external address to the L1 account to credit. */
+  /**
+   * Per-user addresses allocated for an asset. When omitted only
+   * `asset.custodyAddress` (shared custody) is watched.
+   */
+  depositAddresses?: (asset: AssetConfig) => Promise<DepositAddressEntry[]>;
+  /** Map an external address to the L1 account to credit (shared-address rail). */
   mapAccount?: (externalAddress: string, asset: AssetConfig) => string | undefined;
   /** Injectable for tests. */
   fetchImpl?: typeof fetch;
   /** Inclusive block range per `eth_getLogs` call (providers cap this). */
   logChunk?: number;
+  /** Addresses per `topics[2]` filter; providers cap the array size. */
+  addressBatch?: number;
 }
 
 export class EvmChainClient implements ChainClient {
@@ -41,8 +55,10 @@ export class EvmChainClient implements ChainClient {
   private readonly chain: string;
   private readonly assets: AssetConfig[];
   private readonly mapAccount: (external: string, asset: AssetConfig) => string | undefined;
+  private readonly depositAddresses: (asset: AssetConfig) => Promise<DepositAddressEntry[]>;
   private readonly fetchImpl: typeof fetch;
   private readonly logChunk: number;
+  private readonly addressBatch: number;
   private rpcId = 0;
 
   constructor(options: EvmChainClientOptions) {
@@ -50,8 +66,10 @@ export class EvmChainClient implements ChainClient {
     this.chain = options.chain ?? 'ethereum';
     this.assets = options.assets;
     this.mapAccount = options.mapAccount ?? ((external) => external);
+    this.depositAddresses = options.depositAddresses ?? (async () => []);
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.logChunk = Math.max(1, options.logChunk ?? 2000);
+    this.addressBatch = Math.max(1, options.addressBatch ?? 100);
   }
 
   async finalizedBlock(_chain: string): Promise<number> {
@@ -66,26 +84,38 @@ export class EvmChainClient implements ChainClient {
 
   async deposits(fromBlock: number): Promise<DepositObservation[]> {
     const out: DepositObservation[] = [];
+    const end = fromBlock + this.logChunk - 1;
+
     for (const asset of this.assets) {
-      if (!asset.enabled || !asset.contract || !asset.custodyAddress) continue;
-      const to = padAddress(asset.custodyAddress);
-      for (let start = fromBlock; start <= fromBlock + this.logChunk; ) {
-        const end = start + this.logChunk - 1;
+      if (!asset.enabled || !asset.contract) continue;
+
+      // Attribution: a per-user address maps to its L1 account; the shared
+      // custody address (if configured) falls back to `mapAccount(from)`.
+      const allocated = await this.depositAddresses(asset);
+      const byAddress = new Map<string, string>();
+      for (const entry of allocated) byAddress.set(entry.address.toLowerCase(), entry.account);
+
+      const watch = new Set<string>(byAddress.keys());
+      if (asset.custodyAddress) watch.add(asset.custodyAddress.toLowerCase());
+      if (watch.size === 0) continue;
+
+      const addresses = [...watch];
+      for (let offset = 0; offset < addresses.length; offset += this.addressBatch) {
+        const batch = addresses.slice(offset, offset + this.addressBatch);
+        const topic = batch.length === 1 ? padAddress(batch[0]!) : batch.map((address) => padAddress(address));
         const logs = await this.rpc<RawLog[]>('eth_getLogs', [{
           address: asset.contract,
-          fromBlock: toHex(start),
+          fromBlock: toHex(fromBlock),
           toBlock: toHex(end),
-          topics: [TRANSFER_TOPIC, null, to],
+          topics: [TRANSFER_TOPIC, null, topic],
         }]);
         for (const log of logs ?? []) {
-          const observation = this.toObservation(asset, log);
+          const observation = this.toObservation(asset, log, byAddress);
           if (observation) out.push(observation);
         }
-        start = end + 1;
-        // One range only per call site: the caller advances its own cursor
-        // using the finalized head, so a long backfill is a caller loop.
-        break;
       }
+      // One range per call: the caller advances its own cursor using the
+      // finalized head, so a long backfill is a caller loop.
     }
     return out;
   }
@@ -95,15 +125,57 @@ export class EvmChainClient implements ChainClient {
     return [];
   }
 
-  private toObservation(asset: AssetConfig, log: RawLog): DepositObservation | undefined {
+  /**
+   * Re-verify an observed deposit at execution time. The DB row is not proof:
+   * the receipt must still be successful, the matching log must still be at
+   * the recorded index, the recipient must map to the same account, and the
+   * block must be finalized.
+   */
+  async verifyDeposit(operation: Operation, asset: AssetConfig): Promise<boolean> {
+    if (!operation.ref || !asset.contract) return false;
+    if (operation.ref.chain !== this.chain) return false;
+
+    const receipt = await this.rpc<RawReceipt | null>('eth_getTransactionReceipt', [operation.ref.txHash]);
+    if (!receipt || receipt.status !== '0x1' || !receipt.blockNumber) return false;
+
+    const blockNumber = Number.parseInt(receipt.blockNumber, 16);
+    if (!isFinalized(await this.finalizedBlock(this.chain), blockNumber)) return false;
+
+    const log = (receipt.logs ?? []).find((candidate) => (
+      candidate.address?.toLowerCase() === asset.contract!.toLowerCase()
+      && candidate.topics?.[0]?.toLowerCase() === TRANSFER_TOPIC
+      && Number.parseInt(candidate.logIndex, 16) === operation.ref!.logIndex
+    ));
+    if (!log || !log.topics || log.topics.length < 3) return false;
+
+    const from = unpadAddress(log.topics[1]!);
+    const to = unpadAddress(log.topics[2]!);
+    if (!from || !to) return false;
+    if (BigInt(log.data).toString() !== operation.amountRaw) return false;
+
+    const byAddress = new Map<string, string>();
+    for (const entry of await this.depositAddresses(asset)) {
+      byAddress.set(entry.address.toLowerCase(), entry.account);
+    }
+    const account = byAddress.get(to.toLowerCase()) ?? this.mapAccount(from, asset);
+    return account === operation.account;
+  }
+
+  private toObservation(
+    asset: AssetConfig,
+    log: RawLog,
+    byAddress: Map<string, string>,
+  ): DepositObservation | undefined {
     if (!log.topics || log.topics.length < 3) return undefined;
-    if (log.topics[0].toLowerCase() !== TRANSFER_TOPIC) return undefined;
-    const from = unpadAddress(log.topics[1]);
-    const to = unpadAddress(log.topics[2]);
+    if (log.topics[0]!.toLowerCase() !== TRANSFER_TOPIC) return undefined;
+    const from = unpadAddress(log.topics[1]!);
+    const to = unpadAddress(log.topics[2]!);
     if (!from || !to) return undefined;
     const value = BigInt(log.data);
     if (value <= 0n) return undefined;
-    const account = this.mapAccount(from, asset);
+    // The destination address is the attribution key when it was allocated to
+    // a user; only the shared custody address falls back to the sender.
+    const account = byAddress.get(to.toLowerCase()) ?? this.mapAccount(from, asset);
     if (!account) return undefined;
     return {
       assetId: asset.assetId,
@@ -137,6 +209,12 @@ interface RawLog {
   blockNumber: string;
   transactionHash: string;
   logIndex: string;
+}
+
+interface RawReceipt {
+  status?: string;
+  blockNumber?: string;
+  logs?: RawLog[];
 }
 
 /** 20-byte address → 32-byte topic word. */

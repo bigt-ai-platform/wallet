@@ -139,7 +139,12 @@ export class BigtangleRedemptionSource {
  * this process. Failing loudly beats a half-signed release.
  */
 export class RefusingTreasury implements Treasury {
-  async release(assetId: string, _account: string, _externalRaw: string): Promise<{ txHash: string }> {
+  async release(
+    assetId: string,
+    _account: string,
+    _destination: string,
+    _externalRaw: string,
+  ): Promise<{ txHash: string }> {
     throw new Error(
       `treasury release for ${assetId} is not configured: wire the HSM/MPC custody adapter before enabling redeem`,
     );

@@ -16,6 +16,7 @@ const options = (): ExecutorOptions => ({
   l1: { mint },
   treasury: { release },
   transfers: { transfer },
+  verifyDeposit: async () => true,
   now: () => `2026-01-01T00:00:0${tick++}.000Z`,
 });
 
@@ -27,6 +28,8 @@ const op = (over: Partial<Operation> = {}): Operation => ({
   amountRaw: '1000',
   l1AmountRaw: '1000',
   status: 'pending',
+  ref: { chain: 'ethereum', txHash: '0xabc', logIndex: 0 },
+  destination: '0x2222222222222222222222222222222222222222',
   attempts: 0,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
@@ -81,6 +84,36 @@ describe('mint execution', () => {
     expect((await store.getOperation('op1'))?.error).toBe('hsm unavailable');
   });
 
+  it('refuses a deposit the chain does not confirm at finality', async () => {
+    await store.putReserve({ assetId: 'hkd', reserveRaw: 5000n, supplyRaw: 0n, dustRaw: 0n });
+    await store.saveOperation(op());
+
+    const result = await runOnce({ ...options(), verifyDeposit: async () => false });
+    expect(result.failed).toBe(1);
+    expect(mint).not.toHaveBeenCalled();
+    expect((await store.getOperation('op1'))?.error).toContain('finality');
+  });
+
+  it('fails closed when deposit verification is not configured', async () => {
+    const { verifyDeposit: _omit, ...withoutVerifier } = options();
+    await store.putReserve({ assetId: 'hkd', reserveRaw: 5000n, supplyRaw: 0n, dustRaw: 0n });
+    await store.saveOperation(op());
+
+    const result = await runOnce(withoutVerifier);
+    expect(result.failed).toBe(1);
+    expect(mint).not.toHaveBeenCalled();
+    expect((await store.getOperation('op1'))?.error).toContain('not configured');
+  });
+
+  it('fails closed when a deposit has no chain reference', async () => {
+    await store.putReserve({ assetId: 'hkd', reserveRaw: 5000n, supplyRaw: 0n, dustRaw: 0n });
+    await store.saveOperation(op({ ref: undefined }));
+
+    const result = await runOnce(options());
+    expect(result.failed).toBe(1);
+    expect((await store.getOperation('op1'))?.error).toContain('no chain reference');
+  });
+
   it('never re-processes a completed operation', async () => {
     await store.putReserve({ assetId: 'hkd', reserveRaw: 5000n, supplyRaw: 0n, dustRaw: 0n });
     await store.saveOperation(op({ status: 'completed' }));
@@ -98,11 +131,27 @@ describe('release execution', () => {
     const result = await runOnce(options());
     expect(result.completed).toBe(1);
     // gold is 6dp on both sides, so the external amount equals the L1 amount
-    expect(release).toHaveBeenCalledWith('gold', 'w1', '2000');
+    expect(release).toHaveBeenCalledWith(
+      'gold', 'w1', '0x2222222222222222222222222222222222222222', '2000',
+    );
     const reserve = await store.getReserve('gold');
     expect(reserve?.supplyRaw).toBe(2000n);
     expect(reserve?.reserveRaw).toBe(3000n);
     expect((await store.getHolderBalance('gold', 'w1'))?.pendingRaw).toBe(0n);
+  });
+
+  it('refuses a release without a verified destination', async () => {
+    await store.putReserve({ assetId: 'gold', reserveRaw: 5000n, supplyRaw: 4000n, dustRaw: 0n });
+    await store.putHolderBalance({ assetId: 'gold', account: 'w1', availableRaw: 0n, pendingRaw: 2000n });
+    await store.saveOperation(op({
+      kind: 'withdrawal', assetId: 'gold', destination: undefined,
+      amountRaw: '2000', l1AmountRaw: '2000',
+    }));
+
+    const result = await runOnce(options());
+    expect(result.failed).toBe(1);
+    expect(release).not.toHaveBeenCalled();
+    expect((await store.getOperation('op1'))?.error).toContain('verified destination');
   });
 
   it('refuses an L1 amount that is not representable at the external scale', async () => {

@@ -23,12 +23,25 @@ export interface AssetConfig {
   depositInstructions?: string;
   /** For `depositKind: 'evm'`: the custody address to send to. */
   depositAddress?: string;
+  /** Memo/tag for chains that need one (not EVM; kept for shared rails). */
+  depositMemo?: string;
   /** Prefix of the payment reference the user must include. */
   referencePrefix?: string;
   /** For ERC-20 deposits: the token contract to watch. */
   contract?: string;
   /** For ERC-20 deposits: the custody address that receives them. */
   custodyAddress?: string;
+  /**
+   * `static` (default): everyone sends to `depositAddress`/`custodyAddress`.
+   * `per-user`: `/deposit-address` derives a BIP32 address per L1 account, so
+   * an exchange-origin deposit can be attributed without a memo (ERC-20 has
+   * none). Requires an xpub in `depositXpub` or the service's `DEPOSIT_XPUB`.
+   */
+  depositAddressMode?: 'static' | 'per-user';
+  /** Account-level xpub used for per-user derivation (public material only). */
+  depositXpub?: string;
+  /** Non-hardened path below the xpub; default `0` (external chain). */
+  depositXpubPath?: string;
   /** `tokenid` on L1-order (the issuer public key hex), once issued. */
   l1TokenId?: string;
   /** Multi-sign signer public keys authorized for reissuance. */
@@ -105,15 +118,23 @@ export function assetsFromEnv(raw: string | undefined): AssetConfig[] {
   if (!Array.isArray(parsed)) throw new Error('ASSETS_JSON must be an array');
   return parsed.map((entry) => {
     if (!entry.assetId) throw new Error('ASSETS_JSON entry without assetId');
+    if (entry.depositAddressMode && entry.depositAddressMode !== 'static' && entry.depositAddressMode !== 'per-user') {
+      // A typo must not silently fall back to a shared address (misattribution).
+      throw new Error(`ASSETS_JSON ${entry.assetId}: depositAddressMode must be static or per-user`);
+    }
     return {
       assetId: entry.assetId,
       symbol: entry.symbol ?? entry.assetId.toUpperCase(),
       depositKind: entry.depositKind ?? 'bank',
       ...(entry.depositInstructions ? { depositInstructions: entry.depositInstructions } : {}),
       ...(entry.depositAddress ? { depositAddress: entry.depositAddress } : {}),
+      ...(entry.depositMemo ? { depositMemo: entry.depositMemo } : {}),
       ...(entry.referencePrefix ? { referencePrefix: entry.referencePrefix } : {}),
       ...(entry.contract ? { contract: entry.contract } : {}),
       ...(entry.custodyAddress ? { custodyAddress: entry.custodyAddress } : {}),
+      ...(entry.depositAddressMode ? { depositAddressMode: entry.depositAddressMode } : {}),
+      ...(entry.depositXpub ? { depositXpub: entry.depositXpub } : {}),
+      ...(entry.depositXpubPath ? { depositXpubPath: entry.depositXpubPath } : {}),
       ...(entry.l1TokenId ? { l1TokenId: entry.l1TokenId } : {}),
       ...(entry.signers ? { signers: entry.signers } : {}),
       ...(entry.signnumber ? { signnumber: entry.signnumber } : {}),

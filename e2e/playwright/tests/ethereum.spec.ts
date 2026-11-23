@@ -15,6 +15,8 @@ import { startEthRpcMock } from '../../eth-rpc-mock.mjs';
 type Mock = {
   url: string;
   sent: Array<{ raw: string }>;
+  depositQueries: { account: string; assetId: string };
+  redeemRequests: Array<Record<string, unknown>>;
   close: () => Promise<void>;
 };
 
@@ -259,7 +261,26 @@ test.describe('USDT deposit (exchange style)', () => {
     await expect(page.getByTestId('deposit-warning')).toContainText('Ethereum (ERC-20)');
     await expect(page.getByTestId('deposit-address-card')).toContainText('personal deposit address');
     await expect(page.getByTestId('deposit-address-card')).toContainText('Minimum deposit: 1');
+    // The issuer keys per-user addresses by the L1 account, not the 0x address.
+    expect(mock.depositQueries.account).toBe(BTC_ADDRESS);
     expect(await page.locator('[data-testid="deposit-address-card"] svg').count()).toBeGreaterThan(0);
+
+    // Redeem: the L1 key signs the destination; the issuer receives the proof.
+    await expect(page.getByTestId('redeem-card')).toBeVisible();
+    await page.getByTestId('redeem-amount').fill('5');
+    await page.getByTestId('redeem-destination').fill(RECIPIENT);
+    await page.getByTestId('redeem-submit').click();
+    await expect(page.getByTestId('redeem-notice')).toContainText('op-redeem', { timeout: 20000 });
+    expect(mock.redeemRequests).toHaveLength(1);
+    expect(mock.redeemRequests[0]).toMatchObject({
+      account: BTC_ADDRESS,
+      assetId: 'usdt',
+      amount: '5000000',
+      destination: RECIPIENT,
+      keyType: 'EC',
+    });
+    expect(String(mock.redeemRequests[0]!.signature)).toMatch(/^[0-9a-f]+$/);
+    expect(String(mock.redeemRequests[0]!.publicKey)).toMatch(/^[0-9a-f]+$/);
 
     // Below the minimum is rejected without broadcasting.
     await page.getByTestId('deposit-amount').fill('0.5');

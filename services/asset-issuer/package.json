@@ -11,8 +11,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@noble/hashes": "^1.7.1",
+    "bs58": "^6.0.0",
     "fastify": "^5.12.3",
-    "pg": "^8.13.0"
+    "pg": "^8.13.0",
+    "secp256k1": "^5.0.1"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

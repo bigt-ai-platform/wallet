@@ -25,6 +25,7 @@ import { DEFAULT_ASSETS, findAssetConfig, type AssetConfig } from './config.js';
 import {
   canMint,
   chainKey,
+  formatAmount,
   reconcile,
   transition,
   withinCaps,
@@ -34,6 +35,19 @@ import {
 } from './domain.js';
 import type { Store } from './store.js';
 import { emptyStatusCounts, renderMetrics } from './metrics.js';
+import { toChecksumAddress } from './depositAddress.js';
+import { ensureDepositAddress } from './depositService.js';
+import { AuthError, checkBearer, checkHmac, type AuthConfig } from './auth.js';
+import {
+  REDEEM_INTENT_DOMAIN,
+  intentHash,
+  validateIntentFields,
+  verifyRedeemIntent,
+  type IntentKeyType,
+  type RedeemIntent,
+  type RedeemNetwork,
+} from './intent.js';
+import { bytesToHex } from './ethTx.js';
 
 export interface ServerOptions {
   store: Store;
@@ -48,6 +62,22 @@ export interface ServerOptions {
   now?: () => string;
   /** Injectable id generator for deterministic tests. */
   newId?: () => string;
+  /**
+   * Fallback xpub for per-user deposit addresses. An asset's `depositXpub`
+   * wins; this is the service-wide `DEPOSIT_XPUB`.
+   */
+  depositXpub?: string;
+  /** Fallback non-hardened path below the xpub (default `0`). */
+  depositXpubPath?: string;
+  /** Asset served by `/deposit-address` when the query omits `assetId`. */
+  defaultDepositAssetId?: string;
+  /** Network bound into signed intents (default Test). */
+  network?: RedeemNetwork;
+  /**
+   * Request authentication. Default `off` for tests; `main`/`serve` refuse
+   * `off` outside Test (see `assertAuthAllowsNetwork`).
+   */
+  auth?: AuthConfig;
 }
 
 interface OperationBody {
@@ -58,6 +88,13 @@ interface OperationBody {
   memo?: string;
   reference?: string;
   idempotencyKey?: string;
+  /** Signed redemption intent. */
+  destination?: string;
+  nonce?: string;
+  expiry?: number;
+  keyType?: IntentKeyType;
+  publicKey?: string;
+  signature?: string;
 }
 
 const DIRECTIONS: Record<OperationKind, 'in' | 'out'> = {
@@ -74,6 +111,38 @@ export function buildServer(options: ServerOptions): FastifyInstance {
   const now = options.now ?? (() => new Date().toISOString());
   const newId = options.newId ?? (() => `op_${Math.random().toString(36).slice(2, 12)}`);
   const app = Fastify({ logger: false });
+  const auth = options.auth ?? { mode: 'off' as const };
+
+  function header(value: string | string[] | undefined): string | undefined {
+    return Array.isArray(value) ? value[0] : value;
+  }
+
+  // Default-deny: only `/health` is public. `/metrics` is included so the
+  // balance/operation counters are not an unauthenticated leak.
+  app.addHook('preValidation', async (request) => {
+    const path = request.url.split('?')[0] ?? request.url;
+    if (request.method === 'OPTIONS' || path === '/health') return;
+    if (auth.mode === 'off') return;
+
+    if (auth.mode === 'bearer') {
+      checkBearer(auth, header(request.headers.authorization));
+      return;
+    }
+
+    const query = (request.query ?? {}) as { account?: string };
+    const body = (request.body ?? {}) as { account?: string };
+    const account = (query.account ?? body.account ?? '').trim();
+    const timestamp = header(request.headers['x-timestamp']) ?? '';
+    checkHmac(
+      auth,
+      { method: request.method, path, account, timestamp, body: request.body },
+      {
+        account: header(request.headers['x-account']),
+        timestamp,
+        signature: header(request.headers['x-signature']),
+      },
+    );
+  });
 
   if (options.corsOrigin) {
     app.addHook('onSend', async (_request, reply) => {
@@ -85,6 +154,29 @@ export function buildServer(options: ServerOptions): FastifyInstance {
   }
 
   const enabled = () => assets.filter((a) => a.enabled);
+
+  /** Asset for the deposit page: explicit id, else the configured default, else the first EVM asset. */
+  function requireDepositAsset(assetId: string | undefined): AssetConfig {
+    const pool = enabled();
+    const id = (assetId ?? options.defaultDepositAssetId ?? '').trim();
+    if (id) {
+      const asset = findAssetConfig(pool, id);
+      if (!asset) throw new HttpError(404, `unknown or disabled asset: ${id}`);
+      return asset;
+    }
+    const asset = pool.find((a) => a.depositKind === 'evm') ?? pool[0];
+    if (!asset) throw new HttpError(404, 'no asset is configured for deposits');
+    return asset;
+  }
+
+  /** EIP-55 when the value is an EVM address; otherwise pass it through. */
+  function displayAddress(value: string): string {
+    try {
+      return toChecksumAddress(value);
+    } catch {
+      return value;
+    }
+  }
 
   function requireAsset(assetId: string | undefined): AssetConfig {
     if (!assetId) throw new HttpError(400, 'assetId is required');
@@ -113,7 +205,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   async function createOperation(
     kind: OperationKind,
-    fields: Pick<Operation, 'assetId' | 'account' | 'amountRaw' | 'l1AmountRaw'>,
+    fields: Pick<Operation, 'assetId' | 'account' | 'amountRaw' | 'l1AmountRaw'> & { destination?: string },
     idempotencyKey?: string,
   ): Promise<Operation> {
     const timestamp = now();
@@ -132,6 +224,9 @@ export function buildServer(options: ServerOptions): FastifyInstance {
   }
 
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof AuthError) {
+      return reply.status(error.status).send({ error: error.message });
+    }
     if (error instanceof HttpError) {
       return reply.status(error.status).send({ error: error.message });
     }
@@ -161,9 +256,82 @@ export function buildServer(options: ServerOptions): FastifyInstance {
       depositKind: a.depositKind,
       ...(a.depositInstructions ? { depositInstructions: a.depositInstructions } : {}),
       ...(a.depositAddress ? { depositAddress: a.depositAddress } : {}),
+      ...(a.depositAddressMode ? { depositAddressMode: a.depositAddressMode } : {}),
       ...(a.referencePrefix ? { referencePrefix: a.referencePrefix } : {}),
     })),
   }));
+
+  /**
+   * Deposit address for the `/deposit` page (`services/ethBridge.ts`).
+   *
+   * `per-user` derives a BIP32 address for the L1 account, so the address — not
+   * the sender — attributes an exchange-origin ERC-20 deposit. `static` returns
+   * the shared custody address.
+   */
+  app.get('/deposit-address', async (request) => {
+    const query = request.query as { account?: string; assetId?: string };
+    const account = requireAccount(query.account);
+    const asset = requireDepositAsset(query.assetId);
+    const memo = asset.depositMemo ? { memo: asset.depositMemo } : {};
+
+    if ((asset.depositAddressMode ?? 'static') === 'per-user') {
+      const xpub = asset.depositXpub ?? options.depositXpub;
+      if (!xpub) {
+        throw new HttpError(503, 'per-user deposit addresses are not configured: set DEPOSIT_XPUB');
+      }
+      try {
+        const record = await ensureDepositAddress({
+          store,
+          asset,
+          xpub,
+          path: asset.depositXpubPath ?? options.depositXpubPath ?? '0',
+          chain: asset.depositKind === 'evm' ? 'ethereum' : asset.assetId,
+          now,
+        }, account);
+        return { address: displayAddress(record.address), ...memo };
+      } catch (error) {
+        throw new HttpError(
+          503,
+          `deposit address derivation failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+
+    const address = asset.depositAddress ?? asset.custodyAddress;
+    if (!address) throw new HttpError(404, `no deposit address configured for ${asset.assetId}`);
+    return { address: displayAddress(address), ...memo };
+  });
+
+  /**
+   * Deposit history for the `/deposit` page: display units, and the page's
+   * `pending | credited | failed` vocabulary. Amounts use the L1 scale, which
+   * is the amount the user will see credited.
+   */
+  app.get('/deposits', async (request) => {
+    const query = request.query as { account?: string; assetId?: string; limit?: string };
+    const account = requireAccount(query.account);
+    const assetFilter = (query.assetId ?? '').trim().toLowerCase();
+    const limit = Math.min(200, Math.max(1, Number(query.limit ?? 50) || 50));
+    const operations = await store.listDeposits(account, assetFilter || undefined, limit);
+
+    const items = operations
+      .map((op) => {
+        const asset = findAssetConfig(assets, op.assetId);
+        const status = op.status === 'completed'
+          ? 'credited'
+          : op.status === 'failed'
+            ? 'failed'
+            : 'pending';
+        return {
+          hash: op.ref?.txHash ?? op.externalRef ?? op.id,
+          amount: formatAmount(op.l1AmountRaw, asset?.l1Decimals ?? 6),
+          status,
+          ...(op.status === 'completed' ? { creditedAt: op.updatedAt } : {}),
+        };
+      });
+
+    return { items };
+  });
 
   app.get('/balances', async (request) => {
     const account = requireAccount((request.query as { account?: string }).account);
@@ -252,7 +420,12 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return { id: op.id, status: op.status };
   });
 
-  app.post('/redeem-requests', async (request) => {
+  /**
+   * Signed redemption: the destination is bound to the L1 account by an L1-key
+   * signature, and the nonce/hash is stored so it cannot be replayed. This is
+   * the only path that authorizes a treasury release.
+   */
+  app.post('/redeem-intents', async (request) => {
     const body = (request.body ?? {}) as OperationBody;
     const account = requireAccount(body.account);
     const asset = requireAsset(body.assetId);
@@ -261,22 +434,79 @@ export function buildServer(options: ServerOptions): FastifyInstance {
       const existing = await idempotent(body.idempotencyKey);
       if (existing) return { id: existing.id, status: existing.status };
     }
+    if (!body.keyType || !body.publicKey || !body.signature) {
+      throw new HttpError(400, 'keyType, publicKey and signature are required');
+    }
+
+    const intent: RedeemIntent = {
+      domain: REDEEM_INTENT_DOMAIN,
+      network: options.network ?? 'Test',
+      assetId: asset.assetId,
+      account,
+      amountRaw: amount.toString(),
+      destination: (body.destination ?? '').trim(),
+      nonce: (body.nonce ?? '').trim(),
+      expiry: Number(body.expiry),
+    };
+
+    const fields = validateIntentFields(intent, Date.now());
+    if (!fields.ok) throw new HttpError(400, fields.error);
+
+    const proof = {
+      keyType: body.keyType,
+      publicKey: body.publicKey,
+      signature: body.signature,
+    };
+    const verified = verifyRedeemIntent(intent, proof);
+    if (!verified.ok) throw new HttpError(401, verified.error);
+
     const balance = await store.getHolderBalance(asset.assetId, account);
     if (!balance || balance.availableRaw < amount) {
       throw new HttpError(409, 'insufficient balance');
     }
-    await store.putHolderBalance({
-      ...balance,
-      availableRaw: balance.availableRaw - amount,
-      pendingRaw: balance.pendingRaw + amount,
-    });
+
     const op = await createOperation('redeem', {
       assetId: asset.assetId,
       account,
       amountRaw: amount.toString(),
       l1AmountRaw: amount.toString(),
+      destination: intent.destination,
     }, body.idempotencyKey);
+
+    const stored = await store.putRedeemIntent({
+      assetId: asset.assetId,
+      account,
+      nonce: intent.nonce,
+      intentHash: bytesToHex(intentHash(intent).getBytes()),
+      destination: intent.destination,
+      amountRaw: amount.toString(),
+      expiry: intent.expiry,
+      operationId: op.id,
+      createdAt: now(),
+    });
+    if (!stored) {
+      await store.saveOperation({
+        ...op,
+        status: 'failed',
+        error: 'redeem intent nonce/hash already used',
+        updatedAt: now(),
+      });
+      throw new HttpError(409, 'redeem intent nonce or hash was already used');
+    }
+
+    await store.putHolderBalance({
+      ...balance,
+      availableRaw: balance.availableRaw - amount,
+      pendingRaw: balance.pendingRaw + amount,
+    });
     return { id: op.id, status: op.status };
+  });
+
+  // Kept for compatibility, but a destination cannot be authorized without a
+  // signature. Redirect callers to the signed-intent path instead of debiting
+  // a balance that could never be released.
+  app.post('/redeem-requests', async () => {
+    throw new HttpError(400, 'redeem requires a signed intent: POST /redeem-intents');
   });
 
   app.get('/transfers/:id', async (request) => {

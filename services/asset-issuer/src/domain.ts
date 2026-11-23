@@ -46,6 +46,11 @@ export interface Operation {
    */
   idempotencyKey?: string;
   externalRef?: string;
+  /**
+   * Verified external destination for a redemption (EVM address). Set only by
+   * a signed intent; `executeRelease` refuses a release without it.
+   */
+  destination?: string;
   attempts: number;
   error?: string;
   createdAt: string;
@@ -143,6 +148,22 @@ export function fromL1Amount(l1Raw: Amount, l1Decimals: number, externalDecimals
   const divisor = 10n ** BigInt(l1Decimals - externalDecimals);
   if (value % divisor !== 0n) throw new Error('amount is not representable at the external scale');
   return value / divisor;
+}
+
+/**
+ * Render smallest units as a plain decimal string (no grouping), for the
+ * wallet's display-unit fields (`/deposits`, `/statement`). Trailing zeros in
+ * the fraction are dropped; `100000000` at 6 dp is `100`.
+ */
+export function formatAmount(raw: Amount, decimals: number): string {
+  if (!Number.isInteger(decimals) || decimals < 0) throw new Error('decimals must be >= 0');
+  const value = BigInt(raw);
+  if (value < 0n) throw new Error('amount must be >= 0');
+  if (decimals === 0) return value.toString();
+  const base = 10n ** BigInt(decimals);
+  const whole = value / base;
+  const fraction = (value % base).toString().padStart(decimals, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
 /** A signed reserve attestation, published on a fixed cadence. */

@@ -59,6 +59,13 @@ services:
       # the service refuses to start without a database (it must never fall back
       # to the in-memory store, which would lose idempotency keys).
       NETWORK: ${NETWORK:-Test}
+      # Default-deny outside Test: main.ts refuses AUTH_MODE=off on Mainnet.
+      # bearer = shared API_TOKEN (transport auth); hmac = account-bound
+      # signatures (x-account/x-timestamp/x-signature).
+      AUTH_MODE: ${AUTH_MODE:-off}
+      API_TOKEN: ${API_TOKEN:-}
+      API_HMAC_SECRET: ${API_HMAC_SECRET:-}
+      AUTH_MAX_SKEW_MS: ${AUTH_MAX_SKEW_MS:-300000}
       # Per-asset caps / decimals override (JSON). Empty = DEFAULT_ASSETS in
       # services/asset-issuer/src/config.ts, which must match
       # expo-app/sources/lib/externalAssets.ts.
@@ -70,6 +77,14 @@ services:
       L1_URL: ${L1_URL:-}
       L1_ISSUER_KEY: ${L1_ISSUER_KEY:-}
       ALLOW_LIVE_L1: ${ALLOW_LIVE_L1:-0}
+      # HSM/MPC commands (see docs/issuer-hsm-adapter.md). Empty strings fall
+      # back to the local key/xprv path; production should set these.
+      L1_SIGNER: ${L1_SIGNER:-}
+      L1_MINT_COMMAND: ${L1_MINT_COMMAND:-}
+      SWEEP_SIGN_COMMAND: ${SWEEP_SIGN_COMMAND:-}
+      TREASURY_RELEASE_COMMAND: ${TREASURY_RELEASE_COMMAND:-}
+      ALLOW_LIVE_TREASURY: ${ALLOW_LIVE_TREASURY:-0}
+      SIGNER_TIMEOUT_MS: ${SIGNER_TIMEOUT_MS:-30000}
       FROM_BLOCK: ${FROM_BLOCK:-0}
     ports:
       - "127.0.0.1:${ASSET_ISSUER_PORT:-8090}:8090"

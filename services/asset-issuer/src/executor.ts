@@ -28,13 +28,29 @@ export interface L1Minter {
 }
 
 export interface Treasury {
-  /** Release `externalRaw` of the external asset to `account`. */
-  release(assetId: string, account: string, externalRaw: string): Promise<{ txHash: string }>;
+  /**
+   * Release `externalRaw` of the external asset to the verified `destination`.
+   * `account` is the L1 account that authorized it (audit/attribution); the
+   * signer must not treat it as an external address.
+   */
+  release(
+    assetId: string,
+    account: string,
+    destination: string,
+    externalRaw: string,
+  ): Promise<{ txHash: string }>;
 }
 
 export interface TransferExecutor {
   transfer(assetId: string, from: string, to: string, l1Raw: string): Promise<{ txHash: string }>;
 }
+
+/**
+ * Re-checks an observed deposit against the source chain at execution time.
+ * A DB row alone must not authorize a mint: the `(chain, txHash, logIndex)`
+ * must still exist, still match amount/account, and still be finalized.
+ */
+export type DepositVerifier = (operation: Operation, asset: AssetConfig) => Promise<boolean>;
 
 export interface ExecutorOptions {
   store: Store;
@@ -43,6 +59,8 @@ export interface ExecutorOptions {
   treasury: Treasury;
   transfers?: TransferExecutor;
   now: () => string;
+  /** Required for chain-observed `deposit` operations (fail closed if absent). */
+  verifyDeposit?: DepositVerifier;
 }
 
 export interface RunResult {
@@ -55,19 +73,36 @@ const MINT_KINDS = new Set<Operation['kind']>(['deposit', 'mint']);
 const RELEASE_KINDS = new Set<Operation['kind']>(['withdrawal', 'redeem']);
 
 export async function runOnce(options: ExecutorOptions, limit = 50): Promise<RunResult> {
-  const { store, assets, l1, treasury, transfers, now } = options;
+  const { store, assets, l1, treasury, transfers, now, verifyDeposit } = options;
   const result: RunResult = { completed: 0, failed: 0, skipped: 0 };
-  const pending = await store.listOperationsByStatus('pending', limit);
+  // Atomic claim: the row is `processing` and owned by this worker before any
+  // chain call, so two workers cannot mint the same operation.
+  const pending = await store.claimPending(limit);
 
   for (const operation of pending) {
     const asset = findAssetConfig(assets, operation.assetId);
     if (!asset || !asset.enabled) {
-      result.skipped += 1;
+      // Do not leave a claimed row stuck in `processing`.
+      await store.saveOperation({
+        ...operation,
+        status: 'failed',
+        error: `unknown or disabled asset: ${operation.assetId}`,
+        updatedAt: now(),
+      });
+      result.failed += 1;
       continue;
     }
-    await store.saveOperation({ ...operation, status: 'processing', attempts: operation.attempts + 1, updatedAt: now() });
     try {
       if (MINT_KINDS.has(operation.kind)) {
+        if (operation.kind === 'deposit') {
+          if (!operation.ref) throw new Error('deposit has no chain reference');
+          if (!verifyDeposit) {
+            throw new Error('deposit verification is not configured (set ETH_RPC_URL)');
+          }
+          if (!(await verifyDeposit(operation, asset))) {
+            throw new Error('deposit is not present on chain at finality');
+          }
+        }
         await executeMint(store, asset, operation, l1);
       } else if (RELEASE_KINDS.has(operation.kind)) {
         await executeRelease(store, asset, operation, treasury);
@@ -78,13 +113,12 @@ export async function runOnce(options: ExecutorOptions, limit = 50): Promise<Run
       } else {
         throw new Error(`unsupported operation kind: ${operation.kind}`);
       }
-      await store.saveOperation({ ...operation, status: 'completed', attempts: operation.attempts + 1, updatedAt: now() });
+      await store.saveOperation({ ...operation, status: 'completed', updatedAt: now() });
       result.completed += 1;
     } catch (error) {
       await store.saveOperation({
         ...operation,
         status: 'failed',
-        attempts: operation.attempts + 1,
         error: error instanceof Error ? error.message : String(error),
         updatedAt: now(),
       });
@@ -119,6 +153,14 @@ async function executeMint(
   await store.putHolderBalance({ ...balance, availableRaw: balance.availableRaw + amount });
 }
 
+function requireEvmAddress(value: string, name: string): string {
+  const clean = value.trim();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(clean)) {
+    throw new Error(`${name} must be a 20-byte 0x address`);
+  }
+  return clean;
+}
+
 async function executeRelease(
   store: Store,
   asset: AssetConfig,
@@ -127,8 +169,14 @@ async function executeRelease(
 ): Promise<void> {
   const reserve = await reserveFor(store, asset.assetId);
   const amount = BigInt(operation.l1AmountRaw);
+  // A release without a signed-intent destination is exactly the redirect bug:
+  // fail closed rather than send to the L1 account or a DB-supplied address.
+  if (!operation.destination) {
+    throw new Error('release requires a verified destination from a signed intent');
+  }
+  const destination = requireEvmAddress(operation.destination, 'destination');
   const externalRaw = fromL1Amount(operation.l1AmountRaw, asset.l1Decimals, asset.externalDecimals);
-  await treasury.release(asset.assetId, operation.account, externalRaw.toString());
+  await treasury.release(asset.assetId, operation.account, destination, externalRaw.toString());
   // The token is now in issuer custody and is retired: supply and reserve both
   // drop by the same L1 amount, preserving the invariant.
   await store.putReserve({

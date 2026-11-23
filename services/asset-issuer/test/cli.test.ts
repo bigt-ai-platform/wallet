@@ -44,6 +44,58 @@ describe('cli parsing', () => {
   it('refuses Mainnet without a database', () => {
     expect(() => parseCli(['once'], { NETWORK: 'Mainnet' })).toThrow(/DATABASE_URL/);
   });
+
+  it('refuses an unknown network instead of treating it as Test', () => {
+    expect(() => parseCli(['once'], { NETWORK: 'Production' })).toThrow(/NETWORK must be/);
+  });
+
+  it('parses sweep settings and defaults to a dry plan', () => {
+    const options = parseCli(['sweep'], {
+      SWEEP_MIN_RAW: '20000000',
+      SWEEP_GAS_LIMIT: '70000',
+      SWEEP_NATIVE_RESERVE_WEI: '1000',
+      DEPOSIT_XPRV: 'xprv-test',
+      DEPOSIT_XPRV_PATH: '0',
+      SWEEP_ASSET_ID: 'usdt',
+    });
+    expect(options.sweep).toMatchObject({
+      live: false,
+      minTokenRaw: 20_000_000n,
+      gasLimit: 70_000n,
+      nativeReserveWei: 1_000n,
+      xprv: 'xprv-test',
+      xprvPath: '0',
+      assetId: 'usdt',
+    });
+  });
+
+  it('requires smallest units for sweep thresholds', () => {
+    expect(() => parseCli(['sweep'], { SWEEP_MIN_RAW: '1.5' })).toThrow(/SWEEP_MIN_RAW/);
+  });
+
+  it('selects external HSM/MPC commands without a local key', () => {
+    const options = parseCli(['loop'], {
+      L1_SIGNER: 'command',
+      L1_MINT_COMMAND: '/usr/local/bin/l1-mint',
+      TREASURY_RELEASE_COMMAND: '/usr/local/bin/treasury-release',
+      ALLOW_LIVE_TREASURY: '1',
+      SWEEP_SIGN_COMMAND: '/usr/local/bin/sweep-sign',
+      SIGNER_TIMEOUT_MS: '15000',
+    });
+    expect(options).toMatchObject({
+      l1Signer: 'command',
+      l1MintCommand: '/usr/local/bin/l1-mint',
+      treasuryCommand: '/usr/local/bin/treasury-release',
+      treasuryLive: true,
+      signerTimeoutMs: 15_000,
+    });
+    expect(options.sweep.signCommand).toBe('/usr/local/bin/sweep-sign');
+  });
+
+  it('refuses command mode without a command', () => {
+    expect(() => parseCli(['loop'], { L1_SIGNER: 'command' })).toThrow(/L1_MINT_COMMAND/);
+    expect(() => parseCli(['loop'], { L1_SIGNER: 'nope' })).toThrow(/L1_SIGNER/);
+  });
 });
 
 describe('one pass', () => {
@@ -54,6 +106,7 @@ describe('one pass', () => {
       fromBlock: 0,
       live: false,
       minter: { mint: async () => { throw new Error('not configured'); } },
+      treasury: { release: async () => { throw new Error('not configured'); } },
       close: async () => {},
     };
   }

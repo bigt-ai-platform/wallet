@@ -8,7 +8,10 @@ import { StyleSheet } from 'react-native-unistyles';
 import * as Clipboard from 'expo-clipboard';
 import QRCode from 'react-native-qrcode-svg';
 import { useWallet } from '@/state/wallet';
-import { ethereumKey } from '@/lib/walletKeys';
+import { bigtangleKey, ethereumKey } from '@/lib/walletKeys';
+import {
+  buildRedeemIntent, newNonce, signRedeemIntent, submitRedeemIntent,
+} from '@/services/redeemIntent';
 import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
 import { httpService } from '@/services/http';
@@ -22,7 +25,7 @@ import {
 } from '@/services/ethBridge';
 import { getEthChain } from '@/services/ethRpc';
 import { formatUnits, parseUnits, shortAddress } from '@/lib/eth/units';
-import { isAddress, toChecksumAddress } from '@/lib/eth/address';
+import { isAddress, requireAddress, toChecksumAddress } from '@/lib/eth/address';
 import { DEPOSIT_ASSETS, findDepositAsset, type DepositNetwork } from '@/lib/depositAssets';
 import { MONO_FONT } from '@/constants/fonts';
 
@@ -90,6 +93,12 @@ export default function DepositScreen() {
   const [notice, setNotice] = React.useState('');
   const [error, setError] = React.useState('');
 
+  const [redeemAmount, setRedeemAmount] = React.useState('');
+  const [redeemDestination, setRedeemDestination] = React.useState('');
+  const [redeeming, setRedeeming] = React.useState(false);
+  const [redeemError, setRedeemError] = React.useState('');
+  const [redeemNotice, setRedeemNotice] = React.useState('');
+
   const bridge = getBridgeSettings();
   const min = Number(bridge.minUsdt || '0');
   const asset = findDepositAsset(coin);
@@ -109,7 +118,10 @@ export default function DepositScreen() {
     setLoading(true);
     setTargetError('');
     try {
-      const next = await getDepositAddress(account);
+      // The issuer keys a per-user address by the L1 account (the same id
+      // `/deposits` uses), so a Binance-style allocation is stable per wallet.
+      // Falling back to the EVM account keeps static issuers working.
+      const next = await getDepositAddress(publicInfo?.address ?? account);
       setTarget(next);
       if (!next) setTargetError(t('deposit.notConfigured'));
     } catch (e) {
@@ -118,7 +130,7 @@ export default function DepositScreen() {
     } finally {
       setLoading(false);
     }
-  }, [account, network?.direct, network?.id, t]);
+  }, [account, publicInfo?.address, network?.direct, network?.id, t]);
 
   const loadBalancesAndHistory = React.useCallback(async () => {
     if (!account || !network) return;
@@ -254,6 +266,76 @@ export default function DepositScreen() {
       setError((e as Error).message || t('eth.errSend'));
     } finally {
       setSending(false);
+    }
+  };
+
+  const submitRedeem = async () => {
+    if (redeeming) return;
+    setRedeemError('');
+    setRedeemNotice('');
+    if (!wallet || !publicInfo?.address) {
+      setRedeemError(t('deposit.redeemUnavailable'));
+      return;
+    }
+    if (!bridge.apiUrl) {
+      setRedeemError(t('deposit.redeemNotConfigured'));
+      return;
+    }
+
+    let raw: bigint;
+    try {
+      raw = parseUnits(redeemAmount, 6);
+    } catch {
+      setRedeemError(t('deposit.redeemErrAmount'));
+      return;
+    }
+    if (raw <= 0n) {
+      setRedeemError(t('deposit.redeemErrAmount'));
+      return;
+    }
+
+    let destination: string;
+    try {
+      destination = requireAddress(redeemDestination.trim());
+    } catch {
+      setRedeemError(t('deposit.redeemErrDestination'));
+      return;
+    }
+
+    const key = bigtangleKey(wallet);
+    if (!key?.privateKey) {
+      setRedeemError(t('deposit.redeemUnavailable'));
+      return;
+    }
+
+    setRedeeming(true);
+    try {
+      const intent = buildRedeemIntent({
+        assetId: 'usdt',
+        account: publicInfo.address,
+        amountRaw: raw.toString(),
+        destination,
+        network: httpService.getUseTestnet() ? 'Test' : 'Mainnet',
+        nonce: newNonce(),
+        expiry: Date.now() + 10 * 60_000,
+      });
+      const proof = signRedeemIntent(key, intent);
+      const result = await submitRedeemIntent(intent, proof, {
+        apiUrl: bridge.apiUrl,
+        apiToken: bridge.apiToken,
+      });
+      setRedeemNotice(t('deposit.redeemSent', { id: result.id }));
+      notifySystemMessage({
+        tone: 'success',
+        title: t('deposit.redeemTitle'),
+        body: t('deposit.redeemSent', { id: result.id }),
+      });
+      setRedeemAmount('');
+      void loadBalancesAndHistory();
+    } catch (e) {
+      setRedeemError((e as Error).message || t('deposit.redeemUnavailable'));
+    } finally {
+      setRedeeming(false);
     }
   };
 
@@ -451,6 +533,45 @@ export default function DepositScreen() {
                   testID="deposit-submit"
                 >
                   <Text style={s.btnText}>{sending ? t('eth.sending') : t('deposit.submit')}</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+
+            {network && !network.direct && coin === 'USDT' ? (
+              <View style={s.card} testID="redeem-card">
+                <Text style={s.cardTitle}>{t('deposit.redeemTitle')}</Text>
+                <Text style={s.meta}>{t('deposit.redeemDesc')}</Text>
+                {!bridge.apiUrl ? <Text style={s.warn}>{t('deposit.redeemNotConfigured')}</Text> : null}
+                {l1Balance ? <Text style={s.meta}>{l1Balance}</Text> : null}
+                <TextInput
+                  style={s.input}
+                  value={redeemAmount}
+                  onChangeText={setRedeemAmount}
+                  placeholder={t('deposit.redeemAmountPh')}
+                  keyboardType="decimal-pad"
+                  testID="redeem-amount"
+                />
+                <TextInput
+                  style={s.input}
+                  value={redeemDestination}
+                  onChangeText={setRedeemDestination}
+                  placeholder={t('deposit.redeemDestinationPh')}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  testID="redeem-destination"
+                />
+                {redeemError ? <Text style={s.error} testID="redeem-error">{redeemError}</Text> : null}
+                {redeemNotice ? <Text style={s.notice} testID="redeem-notice">{redeemNotice}</Text> : null}
+                <TouchableOpacity
+                  style={[s.btn, (redeeming || !bridge.apiUrl) && s.btnDisabled]}
+                  onPress={() => void submitRedeem()}
+                  disabled={redeeming || !bridge.apiUrl}
+                  accessibilityRole="button"
+                  testID="redeem-submit"
+                >
+                  <Text style={s.btnText}>
+                    {redeeming ? t('deposit.redeemSigning') : t('deposit.redeemSubmit')}
+                  </Text>
                 </TouchableOpacity>
               </View>
             ) : null}

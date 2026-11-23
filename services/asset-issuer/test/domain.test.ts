@@ -4,6 +4,7 @@ import {
   canMint,
   canTransition,
   chainKey,
+  formatAmount,
   isFinalized,
   reconcile,
   supplyWithinReserve,
@@ -34,6 +35,16 @@ const entry = (over: Partial<ReserveEntry> = {}): ReserveEntry => ({
   supplyRaw: 0n,
   dustRaw: 0n,
   ...over,
+});
+
+describe('amount formatting', () => {
+  it('renders smallest units as display units without trailing zeros', () => {
+    expect(formatAmount('100000000', 6)).toBe('100');
+    expect(formatAmount('2500000', 6)).toBe('2.5');
+    expect(formatAmount('1', 6)).toBe('0.000001');
+    expect(formatAmount('42', 0)).toBe('42');
+    expect(formatAmount('0', 6)).toBe('0');
+  });
 });
 
 describe('operation state machine', () => {

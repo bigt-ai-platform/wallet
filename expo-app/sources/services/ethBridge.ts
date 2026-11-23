@@ -21,6 +21,7 @@
 
 import { device } from '@/storage';
 import {
+  ISSUER_API_TOKEN,
   ISSUER_API_URL,
   ISSUER_DEPOSIT_ADDRESS,
   ISSUER_MIN_USDT,
@@ -35,6 +36,8 @@ export interface BridgeSettings {
   issuerAddress: string;
   /** Minimum deposit in whole USDT (display units). */
   minUsdt: string;
+  /** Bearer token when the issuer runs `AUTH_MODE=bearer`. */
+  apiToken: string;
 }
 
 export interface DepositAddress {
@@ -66,12 +69,18 @@ export function getBridgeSettings(): BridgeSettings {
           (typeof parsed.issuerAddress === 'string' ? parsed.issuerAddress.trim() : '')
           || ISSUER_DEPOSIT_ADDRESS,
         minUsdt: (typeof parsed.minUsdt === 'string' ? parsed.minUsdt.trim() : '') || ISSUER_MIN_USDT,
+        apiToken: (typeof parsed.apiToken === 'string' ? parsed.apiToken.trim() : '') || ISSUER_API_TOKEN,
       };
     } catch {
       /* fall through */
     }
   }
-  return { apiUrl: ISSUER_API_URL, issuerAddress: ISSUER_DEPOSIT_ADDRESS, minUsdt: ISSUER_MIN_USDT };
+  return {
+    apiUrl: ISSUER_API_URL,
+    issuerAddress: ISSUER_DEPOSIT_ADDRESS,
+    minUsdt: ISSUER_MIN_USDT,
+    apiToken: ISSUER_API_TOKEN,
+  };
 }
 
 export function setBridgeSettings(patch: Partial<BridgeSettings>): void {
@@ -87,6 +96,10 @@ function trimBase(url: string): string {
   return url.replace(/\/+$/, '');
 }
 
+function authHeaders(token: string): Record<string, string> {
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
 /**
  * Deposit address for this account: the issuer API's per-user address when it
  * is configured, else the static issuer address.
@@ -95,7 +108,8 @@ export async function getDepositAddress(account: string): Promise<DepositAddress
   const s = getBridgeSettings();
   if (s.apiUrl) {
     const res = await fetch(
-      `${trimBase(s.apiUrl)}/deposit-address?account=${encodeURIComponent(account)}`
+      `${trimBase(s.apiUrl)}/deposit-address?account=${encodeURIComponent(account)}`,
+      { headers: authHeaders(s.apiToken) }
     );
     if (!res.ok) throw new Error(`Deposit address API HTTP ${res.status}`);
     const body = (await res.json()) as { address?: string; memo?: string };
@@ -110,7 +124,10 @@ export async function getDepositAddress(account: string): Promise<DepositAddress
 export async function getBridgeDeposits(account: string): Promise<BridgeDeposit[]> {
   const s = getBridgeSettings();
   if (!s.apiUrl) return [];
-  const res = await fetch(`${trimBase(s.apiUrl)}/deposits?account=${encodeURIComponent(account)}`);
+  const res = await fetch(
+    `${trimBase(s.apiUrl)}/deposits?account=${encodeURIComponent(account)}`,
+    { headers: authHeaders(s.apiToken) }
+  );
   if (!res.ok) throw new Error(`Deposit status API HTTP ${res.status}`);
   const body = (await res.json()) as { items?: BridgeDeposit[] };
   return (body.items ?? []).filter(

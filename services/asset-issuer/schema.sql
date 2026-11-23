@@ -40,6 +40,8 @@ CREATE TABLE IF NOT EXISTS operations (
     log_index     INTEGER,
     idempotency_key TEXT,
     external_ref  TEXT,
+    -- verified EVM destination from a signed redemption intent
+    destination   TEXT,
     attempts      INTEGER NOT NULL DEFAULT 0,
     error         TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -49,6 +51,9 @@ CREATE TABLE IF NOT EXISTS operations (
         OR (chain IS NOT NULL AND tx_hash IS NOT NULL AND log_index IS NOT NULL)
     )
 );
+
+-- Existing databases: add the signed-intent destination column.
+ALTER TABLE operations ADD COLUMN IF NOT EXISTS destination TEXT;
 
 -- idempotency: one operation per observed chain event
 CREATE UNIQUE INDEX IF NOT EXISTS operations_chain_ref
@@ -63,6 +68,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS operations_client_key
     ON operations (idempotency_key)
     WHERE idempotency_key IS NOT NULL;
 
+-- Signed redemption intents: the nonce/hash guard a replay, and the operation
+-- carries the verified destination that the treasury may release to.
+CREATE TABLE IF NOT EXISTS redeem_intents (
+    asset_id     TEXT NOT NULL REFERENCES assets (asset_id),
+    account      TEXT NOT NULL,
+    nonce        TEXT NOT NULL,
+    intent_hash  TEXT NOT NULL,
+    destination  TEXT NOT NULL,
+    amount_raw   NUMERIC(38, 0) NOT NULL CHECK (amount_raw > 0),
+    expiry       BIGINT NOT NULL,
+    operation_id TEXT NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (asset_id, account, nonce),
+    CONSTRAINT redeem_intent_hash_unique UNIQUE (intent_hash)
+);
+
 CREATE TABLE IF NOT EXISTS holder_balances (
     asset_id      TEXT NOT NULL REFERENCES assets (asset_id),
     account       TEXT NOT NULL,
@@ -71,6 +92,27 @@ CREATE TABLE IF NOT EXISTS holder_balances (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (asset_id, account)
 );
+
+-- Per-user EVM deposit addresses (Binance-style). One row per L1 account:
+-- the address is the attribution key, because an ERC-20 transfer carries no
+-- memo. `address` is stored lower-case; the API returns EIP-55.
+-- Re-run this file on an existing database to add the table.
+CREATE TABLE IF NOT EXISTS deposit_addresses (
+    asset_id      TEXT NOT NULL REFERENCES assets (asset_id),
+    account       TEXT NOT NULL,
+    address       TEXT NOT NULL,
+    address_index BIGINT NOT NULL CHECK (address_index >= 0),
+    chain         TEXT NOT NULL DEFAULT 'ethereum',
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (asset_id, account),
+    -- Global, not per asset: one address must never belong to two holders
+    -- (the sweeper would reuse a nonce) or to two assets.
+    CONSTRAINT deposit_address_address_unique UNIQUE (address),
+    CONSTRAINT deposit_address_index_unique UNIQUE (address_index)
+);
+
+CREATE INDEX IF NOT EXISTS deposit_addresses_address
+    ON deposit_addresses (lower(address));
 
 CREATE TABLE IF NOT EXISTS attestations (
     asset_id      TEXT NOT NULL REFERENCES assets (asset_id),

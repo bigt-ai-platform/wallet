@@ -18,10 +18,15 @@ Scaffold, with the parts that must be provable already tested:
 | Finality gate (`observed <= finalized`) | done + tested |
 | External → L1 conversion with dust accounting | done + tested |
 | `supply <= reserve` invariant, per asset, plus caps | done + tested |
-| HTTP contract (`/assets`, `/balances`, `/statement`, `/transfers`, `/mint-requests`, `/redeem-requests`, `/transfers/:id`, `/health`) | done + tested with `fastify.inject` |
+| HTTP contract (`/assets`, `/balances`, `/statement`, `/transfers`, `/mint-requests`, `/redeem-intents`, `/transfers/:id`, `/health`) | done + tested with `fastify.inject`; `/redeem-requests` now rejects unsigned redeems |
+| Deposit-page contract (`/deposit-address`, `/deposits`) | done + tested — static or per-user, display units, `pending/credited/failed` |
 | Postgres schema (`schema.sql`) incl. a DB-level solvency CHECK and a "completed is terminal" trigger | applied to a real Postgres 16 and verified |
 | Postgres `Store` (`src/store.pg.ts`) | **verified** against real Postgres: idempotency indexes, completed-terminal trigger, `supply <= reserve` CHECK, BigInt round-trip, attestations |
-| Deposit watcher (`src/watcher.ts`) + `src/chain.evm.ts` | done — ERC-20 `eth_getLogs` into custody, `finalized` gate, idempotency, reserve credit, dust |
+| Deposit watcher (`src/watcher.ts`) + `src/chain.evm.ts` | done — ERC-20 `eth_getLogs` into custody **or per-user addresses**, `finalized` gate, idempotency, reserve credit, dust |
+| Per-user deposit addresses (`src/depositAddress.ts`, `src/depositService.ts`, `src/store.ts` `deposit_addresses`) | done — BIP32 xpub derivation, one stable address per L1 account, `/deposit-address` + `/deposits` for the wallet page |
+| Sweeper (`src/sweep.ts`, `src/sweep.evm.ts`, `src/ethTx.ts`) | done — threshold/gas planning; live only with `ALLOW_LIVE_SWEEP=1` + `DEPOSIT_XPRV`; verifies the key controls the address before signing |
+| API auth (`src/auth.ts`) + executor claim/revalidation (`src/executor.ts`) | done — default-deny outside Test, bearer or account-bound HMAC, `FOR UPDATE SKIP LOCKED` claim, receipt/finality re-check before minting |
+| HSM/MPC adapter (`src/signers.ts`) | done — command protocol for `sweep-sign`, `l1-mint`, `treasury-release`; no key material in the service; local key paths remain Testnet/small-float |
 | Mint executor (`src/executor.ts`) + `src/l1.ts` / `src/l1.bigtangle.ts` | done — reissue → **drain pending signatures** → pay the holder; verified end to end on the Java L1-order infra, gated by `ALLOW_LIVE_L1` |
 | Redeem watcher (`BigtangleRedemptionSource`) | done — only confirmed transfers to the asset's `redemptionAddress`, never the issuer's float |
 | Release (`Treasury`) | **not implemented** — `RefusingTreasury` fails loudly until the HSM/MPC custody adapter exists |
@@ -32,6 +37,29 @@ Scaffold, with the parts that must be provable already tested:
 `src/main.ts` runs the in-memory store and **refuses to start outside
 `NETWORK=Test` without `DATABASE_URL`**, because losing idempotency keys on
 restart is exactly the double-mint this service exists to prevent.
+
+## Authentication
+
+Outside `Test`, `serve` refuses to start with `AUTH_MODE=off`:
+
+| Mode | Env | What it proves |
+|---|---|---|
+| `off` | — | nothing; **Test only** |
+| `bearer` | `API_TOKEN` | shared secret (`Authorization: Bearer …`); transport auth, not account-bound |
+| `hmac` | `API_HMAC_SECRET` | account-bound: `x-account`, `x-timestamp` (ms), `x-signature` = HMAC-SHA256 over method, path, account, timestamp and canonical JSON body |
+
+`/health` is the only public route. `hmac` needs a client that signs; the
+current wallet sends only a bearer token. `AUTH_MAX_SKEW_MS` defaults to 300000.
+A token baked into a web bundle (`EXPO_PUBLIC_ISSUER_API_TOKEN`) is **public**:
+treat `bearer` as a coarse gate, not a secret, and prefer injecting it at the
+edge or using `hmac` for account binding.
+The helper `signRequest`/`hmacPayload` in `src/auth.ts` is the reference for a
+client or a signing proxy.
+
+The executor's claim is atomic (`claimPending`: `FOR UPDATE SKIP LOCKED`) and a
+chain-observed `deposit` is **re-verified at execution time** against
+`eth_getTransactionReceipt` + `finalized`; a DB row alone cannot authorize a
+mint.
 
 ## The two invariants
 
@@ -46,12 +74,18 @@ restart is exactly the double-mint this service exists to prevent.
 
 ```
 src/domain.ts   pure: state machine, idempotency keys, conversion, invariant
+src/depositAddress.ts  BIP32 xpub → EIP-55 address (no private key)
+src/depositService.ts  idempotent per-user address allocation
+src/sweep.ts           pure sweep planning (threshold + gas)
+src/sweep.evm.ts       RPC reads, signer call, broadcast
+src/signers.ts         HSM/MPC command adapters (sweep/l1-mint/treasury)
+src/ethTx.ts           RLP + EIP-1559 + ERC-20 transfer calldata
 src/store.ts    Store interface + MemoryStore (test double / schema reference)
 src/config.ts   asset table (must match expo-app/sources/lib/externalAssets.ts)
 src/server.ts   fastify routes + `advance()` for the executor
 src/main.ts     entry point
 schema.sql      Postgres schema
-test/           29 tests
+test/           140 tests
 ```
 
 ## Database
@@ -91,7 +125,7 @@ service reads `POSTGRES_URL` (or `DATABASE_URL`) and refuses to start outside
 
 ```bash
 cd services/asset-issuer
-npx vitest run                                  # 69 tests, no database needed
+npx vitest run                                  # 140 tests, no database needed
 
 # HTTP (wallet-facing contract)
 NETWORK=Test PORT=8090 npx tsx src/main.ts
@@ -102,6 +136,74 @@ NETWORK=Test npx tsx src/cli.ts loop
 NETWORK=Test npx tsx src/cli.ts attest
 NETWORK=Test npx tsx src/cli.ts health          # exit 1 on a reserve breach
 ```
+
+### Per-user deposit addresses (USDT / ERC-20)
+
+Two address models, chosen per asset in `ASSETS_JSON`:
+
+| `depositAddressMode` | Receive address | Attribution |
+|---|---|---|
+| `static` (default) | `depositAddress`/`custodyAddress` for everyone | the sender (`from`), via `mapAccount` |
+| `per-user` | one BIP32 address per L1 account | **the address itself** |
+
+`per-user` is the Binance shape and is required for exchange-origin deposits: an
+ERC-20 transfer carries no memo, so a shared address cannot tell two users apart
+when the sender is an exchange hot wallet. Allocation is idempotent and stored in
+`deposit_addresses` (unique account, **globally** unique address and index); the
+watcher scans every allocated address plus the shared custody address.
+
+```text
+DEPOSIT_XPUB=xpub…           account-level xpub (m/44'/60'/0' or m/44'/60'/0'/0)
+DEPOSIT_XPUB_PATH=0          non-hardened path below it; '' when the xpub is …/0
+DEPOSIT_ASSET_ID=usdt        default asset for /deposit-address
+```
+
+The xpub is public material and stays in the environment, not in `ASSETS_JSON`.
+`/deposit-address` fails **closed** (503) when `per-user` is requested without
+one — silently falling back to a shared address would misattribute funds.
+
+### Signed redemption intents
+
+`POST /redeem-intents` requires an L1-key signature over
+`{domain, network, assetId, account, amountRaw, destination, nonce, expiry}`.
+The nonce/hash is stored in `redeem_intents` (unique), the holder balance is
+debited, and `operations.destination` carries the verified Ethereum address.
+`executeRelease` refuses a release without it — an observed L1 transfer alone
+cannot choose a destination. Format and client examples:
+[`../../docs/redeem-intent.md`](../../docs/redeem-intent.md).
+
+### HSM/MPC signers
+
+`L1_SIGNER=command` with `L1_MINT_COMMAND`, `SWEEP_SIGN_COMMAND`, and (gated by
+`ALLOW_LIVE_TREASURY=1`) `TREASURY_RELEASE_COMMAND` moves every value-bearing
+signature into an external process over stdin/stdout. The service holds no L1
+key, xprv, or custody key in that mode; the protocol and validation are in
+[`../../docs/issuer-hsm-adapter.md`](../../docs/issuer-hsm-adapter.md). The local
+`L1_ISSUER_KEY` / `DEPOSIT_XPRV` paths stay for Testnet/small float.
+
+### Sweeping
+
+`npx tsx src/cli.ts sweep` plans (never signs) by default. It reads every
+allocated address's token and native balance, estimates gas, and skips
+`omnibus`, `zero`, `below-min` and `no-gas` addresses with a reason. Live mode
+requires all three:
+
+```text
+ALLOW_LIVE_SWEEP=1
+DEPOSIT_XPRV=xprv…              # signing material: HSM/MPC in production
+SWEEP_MIN_RAW=20000000          # 20 USDT at 6 dp
+```
+
+Optional: `DEPOSIT_XPRV_PATH` (same convention as the xpub), `SWEEP_GAS_LIMIT`
+(fallback 65000), `SWEEP_NATIVE_RESERVE_WEI` (ETH left behind),
+`SWEEP_ASSET_ID`. Before signing, the runner derives the key and refuses the job
+if it does not control the allocated address. The sweep is balance-based, so a
+crash after broadcast is safe: the next run plans only the remainder.
+
+A per-deposit sweep is usually uneconomical (≈65k gas); set the threshold to
+several times the gas cost, or batch through a forwarder. Gas must already be at
+the deposit address — the runner skips an address without it rather than
+funding it from the omnibus.
 
 The pass is inert without adapters: set `ETH_RPC_URL` to scan deposits,
 `L1_URL` + `L1_ISSUER_KEY` to mint/scan redemptions, and `ALLOW_LIVE_L1=1` to

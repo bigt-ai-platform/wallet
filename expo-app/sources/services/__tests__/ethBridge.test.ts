@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const store = new Map<string, string>();
-  const defaults = { apiUrl: '', issuerAddress: '', minUsdt: '' };
+  const defaults = { apiUrl: '', issuerAddress: '', minUsdt: '', apiToken: '' };
   return { store, defaults };
 });
 
@@ -19,21 +19,25 @@ vi.mock('@/constants/app', () => ({
   get ISSUER_API_URL() { return mocks.defaults.apiUrl; },
   get ISSUER_DEPOSIT_ADDRESS() { return mocks.defaults.issuerAddress; },
   get ISSUER_MIN_USDT() { return mocks.defaults.minUsdt; },
+  get ISSUER_API_TOKEN() { return mocks.defaults.apiToken; },
 }));
 
-import { getBridgeSettings, isBridgeConfigured, setBridgeSettings } from '../ethBridge';
+import {
+  getBridgeSettings, getDepositAddress, isBridgeConfigured, setBridgeSettings,
+} from '../ethBridge';
 
 beforeEach(() => {
   mocks.store.clear();
   mocks.defaults.apiUrl = '';
   mocks.defaults.issuerAddress = '';
   mocks.defaults.minUsdt = '';
+  mocks.defaults.apiToken = '';
 });
 
 describe('USDT bridge settings', () => {
   it('is unconfigured when neither a default nor an override exists', () => {
     expect(isBridgeConfigured()).toBe(false);
-    expect(getBridgeSettings()).toEqual({ apiUrl: '', issuerAddress: '', minUsdt: '' });
+    expect(getBridgeSettings()).toEqual({ apiUrl: '', issuerAddress: '', minUsdt: '', apiToken: '' });
   });
 
   it('uses the build-time defaults without any user input', () => {
@@ -46,6 +50,7 @@ describe('USDT bridge settings', () => {
       apiUrl: 'https://issuer.example/api',
       issuerAddress: '0x1111111111111111111111111111111111111111',
       minUsdt: '10',
+      apiToken: '',
     });
   });
 
@@ -59,11 +64,30 @@ describe('USDT bridge settings', () => {
       apiUrl: 'https://issuer.example/api',
       issuerAddress: '0x2222222222222222222222222222222222222222',
       minUsdt: '',
+      apiToken: '',
     });
   });
 
   it('keeps working when only the status API is configured', () => {
     mocks.defaults.apiUrl = 'https://issuer.example/api';
     expect(isBridgeConfigured()).toBe(true);
+  });
+
+  it('sends the bearer token to the issuer API', async () => {
+    mocks.defaults.apiUrl = 'https://issuer.example';
+    mocks.defaults.apiToken = 'secret';
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ address: '0x1111111111111111111111111111111111111111' }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await getDepositAddress('l1-account');
+    expect(result?.address).toBe('0x1111111111111111111111111111111111111111');
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://issuer.example/deposit-address?account=l1-account',
+      { headers: { authorization: 'Bearer secret' } },
+    );
+    vi.unstubAllGlobals();
   });
 });

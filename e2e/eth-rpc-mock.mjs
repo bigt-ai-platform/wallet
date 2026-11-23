@@ -34,6 +34,10 @@ function abiString(text) {
 export function startEthRpcMock(port = 0) {
   /** @type {Array<{raw: string}>} */
   const sent = [];
+  /** Last `/deposit-address` query, so the spec can assert which id was sent. */
+  const depositQueries = { account: '', assetId: '' };
+  /** Signed redemption intents posted by the wallet. */
+  const redeemRequests = [];
   const receipts = new Map();
 
   const server = http.createServer((req, res) => {
@@ -54,6 +58,9 @@ export function startEthRpcMock(port = 0) {
     }
     // USDT deposit bridge API (services/ethBridge.ts contract).
     if (req.method === 'GET' && req.url.startsWith('/deposit-address')) {
+      const query = new URL(req.url, 'http://127.0.0.1').searchParams;
+      depositQueries.account = query.get('account') ?? '';
+      depositQueries.assetId = query.get('assetId') ?? '';
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ address: DEPOSIT_TARGET }));
       return;
@@ -61,6 +68,20 @@ export function startEthRpcMock(port = 0) {
     if (req.method === 'GET' && req.url.startsWith('/deposits')) {
       res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ items: [] }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/redeem-intents') {
+      let payload = '';
+      req.on('data', (chunk) => { payload += chunk; });
+      req.on('end', () => {
+        try {
+          redeemRequests.push(JSON.parse(payload));
+        } catch {
+          /* recorded below as a malformed body */
+        }
+        res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ id: 'op-redeem', status: 'pending' }));
+      });
       return;
     }
     // Address index (Blockscout v2 shape): one incoming 0.5 ETH transfer.
@@ -203,6 +224,8 @@ export function startEthRpcMock(port = 0) {
       resolve({
         url: `http://127.0.0.1:${actual}`,
         sent,
+        depositQueries,
+        redeemRequests,
         // The page's keep-alive sockets would otherwise hold server.close()
         // open for ~90 s at the end of the test.
         close: () =>
