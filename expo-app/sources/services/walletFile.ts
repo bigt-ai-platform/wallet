@@ -111,6 +111,20 @@ export async function saveViaNativePlugin(
   };
 }
 
+/**
+ * Android/iOS Chrome exposes `showSaveFilePicker`, but its Downloads provider
+ * writes a 0-byte file and then rejects the picker with AbortError (verified
+ * on Chrome 157 / Android 14: the sheet saves an empty `wallet_….json`), which
+ * the caller reports as "save cancelled" and leaves the user without a backup.
+ * The anchor download writes the same bytes correctly there, so keep the
+ * picker for desktop browsers only.
+ */
+function isMobileBrowser(): boolean {
+  const ua = (globalThis as { navigator?: { userAgent?: string } }).navigator
+    ?.userAgent;
+  return typeof ua === "string" && /Android|iPhone|iPad|iPod/i.test(ua);
+}
+
 /** Browser download: File System Access picker, else an `<a download>` click. */
 export async function saveViaBrowser(
   content: string,
@@ -119,7 +133,7 @@ export async function saveViaBrowser(
   const blob = new Blob([content], { type: MIME_JSON });
   const picker = (globalThis as { showSaveFilePicker?: unknown })
     .showSaveFilePicker;
-  if (typeof picker === "function") {
+  if (typeof picker === "function" && !isMobileBrowser()) {
     const handle = await (
       picker as (opts: unknown) => Promise<{
         createWritable: () => Promise<{
@@ -148,7 +162,9 @@ export async function saveViaBrowser(
   document.body.appendChild(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  // Mobile browsers fetch the blob after the click returns; revoking in the
+  // same tick truncates the download to 0 bytes.
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
   return { fileName };
 }
 

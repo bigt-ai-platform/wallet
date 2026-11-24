@@ -130,6 +130,7 @@ describe('saveWalletFileToDevice — browser', () => {
   });
 
   it('falls back to an anchor download', async () => {
+    vi.useFakeTimers();
     const click = vi.fn();
     const link = { href: '', download: '', click, remove: vi.fn() };
     (document.createElement as ReturnType<typeof vi.fn>).mockReturnValue(link);
@@ -144,7 +145,26 @@ describe('saveWalletFileToDevice — browser', () => {
     expect(link.href).toBe('blob:wallet');
     expect(link.download).toBe(NAME);
     expect(click).toHaveBeenCalledTimes(1);
+    // The blob outlives the click: mobile Chrome reads it asynchronously.
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+    vi.runAllTimers();
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:wallet');
+    vi.useRealTimers();
+  });
+
+  it('skips the picker on a mobile browser even when it exists', async () => {
+    vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 (Linux; Android 14) Chrome/157.0 Mobile Safari/537.36' });
+    const picker = vi.fn();
+    vi.stubGlobal('showSaveFilePicker', picker);
+    const click = vi.fn();
+    const link = { href: '', download: '', click, remove: vi.fn() };
+    (document.createElement as ReturnType<typeof vi.fn>).mockReturnValue(link);
+    vi.stubGlobal('URL', { createObjectURL: vi.fn(() => 'blob:wallet'), revokeObjectURL: vi.fn() });
+
+    const { saveWalletFileToDevice } = await load();
+    await expect(saveWalletFileToDevice(CONTENT, NAME)).resolves.toEqual({ fileName: NAME });
+    expect(picker).not.toHaveBeenCalled();
+    expect(click).toHaveBeenCalledTimes(1);
   });
 });
 
