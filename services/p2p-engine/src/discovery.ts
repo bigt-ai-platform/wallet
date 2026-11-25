@@ -42,9 +42,9 @@ export interface DiscoverySources {
   staticUrls: string[];
   /** DoH resolver (`https://dns.google/resolve`); "" = no DNS discovery. */
   dohUrl: string;
-  /** DNS seeds domain (`bigtangle.org`). */
+  /** DNS seeds domain (`bigt-ai.org`). */
   seedsDomain: string;
-  /** `bigtangle-seeds` registry bases (`POST /serverinfolist`). */
+  /** `bigt-ai-seeds` registry bases (`POST /serverinfolist`). */
   registryUrls: string[];
   probeTimeoutMs?: number;
 }
@@ -342,7 +342,7 @@ export function poolFromEnv(
     role,
     staticUrls: [...new Set(staticUrls)],
     dohUrl,
-    seedsDomain: env.SETTLEMENT_DNS_SEEDS_DOMAIN?.trim() || "bigtangle.org",
+    seedsDomain: env.SETTLEMENT_DNS_SEEDS_DOMAIN?.trim() || "bigt-ai.org",
     registryUrls,
     probeTimeoutMs:
       Number(env.SETTLEMENT_DISCOVERY_TIMEOUT_MS ?? "5000") || 5_000,

@@ -3,7 +3,7 @@
 # Build from the repo root so the workspace packages are in scope:
 #   docker build -f deploy/Dockerfile.p2p-engine -t wallet-p2p-engine:latest .
 #
-# The engine depends on the workspace packages `bigtangle-ts`, `chain-discovery`,
+# The engine depends on the workspace packages `bigt-ai-ts`, `chain-discovery`,
 # `did`, `record-sig`, `p2p-protocol`, `mobile-control` and `p2p-verify` (built in
 # dependency order below — `chain-discovery` has no workspace deps and must
 # precede the engine). `services/p2p-verify` (a workspace service) and its
@@ -24,7 +24,7 @@ RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines \
     --production=false 2>/dev/null || yarn install --ignore-scripts --ignore-engines
 
 RUN yarn workspace chain-discovery build \
- && yarn workspace bigtangle-ts build \
+ && yarn workspace bigt-ai-ts build \
  && yarn workspace p2p-protocol build \
  && yarn workspace mobile-control build \
  && yarn workspace did build \
@@ -53,6 +53,6 @@ RUN npm install --no-save --omit=dev --no-audit --no-fund --ignore-scripts \
  && npm cache clean --force \
  && rm -f /tmp/runtime-deps.json
 EXPOSE 8108
-# Runs the esbuild bundle: bigtangle-ts ships extensionless ESM + CJS-interop
+# Runs the esbuild bundle: bigt-ai-ts ships extensionless ESM + CJS-interop
 # deps that plain `node dist/server.js` cannot load under Node's ESM resolver.
 CMD ["node", "dist/server.bundle.mjs"]

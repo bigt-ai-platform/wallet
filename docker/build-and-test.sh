@@ -46,7 +46,7 @@ done
 # ── Run TS integration tests ─────────────────────────────────────────
 if [[ "$RUN_TESTS" == "1" ]]; then
   info "Running TypeScript integration tests..."
-  cd "$ROOT/packages/bigtangle-ts"
+  cd "$ROOT/packages/bigt-ai-ts"
 
   export TEST_CONTEXT_ROOT="http://localhost:8088/"
   export TEST_WALLET_SERVER_URL="http://localhost:8088/"

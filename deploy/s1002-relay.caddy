@@ -2,7 +2,7 @@
 #
 # s1002 is the wallet's private L0/L1 entry point: native builds pin
 # https://92.5.34.128 (no DNS dependency). It also still serves the
-# bigtangle-seeds registry on /getPeers (see ../seeds/deploy.sh).
+# bigt-ai-seeds registry on /getPeers (see ../seeds/deploy.sh).
 #
 # The global `default_sni` lives in /etc/caddy/Caddyfile:
 #
@@ -24,10 +24,10 @@
 	route {
 		# Wallet chain APIs (same contract as https://wallet.bigt.ai/l0|l1).
 		handle_path /l0/* {
-			reverse_proxy https://eu1.bigtangle.org
+			reverse_proxy https://eu1.bigt-ai.org
 		}
 		handle_path /l1/* {
-			reverse_proxy https://ordereu1.bigtangle.org
+			reverse_proxy https://ordereu1.bigt-ai.org
 		}
 		@seeds path /getPeers
 		handle @seeds {

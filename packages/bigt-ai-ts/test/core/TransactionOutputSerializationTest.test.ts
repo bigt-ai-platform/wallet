@@ -1,0 +1,138 @@
+import { describe, it, beforeEach } from 'vitest';
+import { expect } from 'chai';
+import { Transaction } from '../../src/net/bigt-ai/core/Transaction';
+import { PQKey } from '../../src/net/bigt-ai/crypto/pq/PQKey';
+import { Address } from '../../src/net/bigt-ai/core/Address';
+import { TransactionOutput } from '../../src/net/bigt-ai/core/TransactionOutput';
+import { MainNetParams } from '../../src/net/bigt-ai/params/MainNetParams';
+import { Coin } from '../../src/net/bigt-ai/core/Coin';
+import { NetworkParameters } from '../../src/net/bigt-ai/params/NetworkParameters';
+
+function createTestKey(seedByte: number): PQKey {
+    const seed = new Uint8Array(64);
+    seed[63] = seedByte;
+    return PQKey.fromKeyMaterial(seed);
+}
+
+describe('TransactionOutputSerialization', () => {
+    const PARAMS = MainNetParams.get();
+    let transaction: Transaction;
+    let key: PQKey;
+    let address: Address;
+
+    beforeEach(() => {
+        transaction = new Transaction(PARAMS);
+        key = createTestKey(1);
+        address = Address.fromKey(PARAMS, key);
+    });
+
+    it('testTransactionOutputSerializationWithCoin', () => {
+        const coinValue = Coin.valueOf(1000000n, NetworkParameters.getBIGT_AI_TOKENID());
+        const output = TransactionOutput.fromAddress(PARAMS, transaction, coinValue, address);
+        transaction.addOutput(output);
+        
+        expect(output.getValue()).to.deep.equal(coinValue);
+        
+        const serialized = output.bitcoinSerialize();
+        const deserializedOutput = TransactionOutput.fromTransactionOutput(PARAMS, transaction, serialized, 0, PARAMS.getDefaultSerializer());
+        
+        expect(deserializedOutput.getValue()).to.deep.equal(coinValue);
+    });
+
+    it('testTransactionOutputSerializationWithDifferentCoinValues', () => {
+        const values = [1n, 1000n, 1000000n, BigInt(Number.MAX_SAFE_INTEGER)];
+        
+        for (const value of values) {
+            const coinValue = Coin.valueOf(value, NetworkParameters.getBIGT_AI_TOKENID());
+            const output = TransactionOutput.fromAddress(PARAMS, transaction, coinValue, address);
+            transaction.addOutput(output);
+            
+            const serialized = output.bitcoinSerialize();
+            const deserializedOutput = TransactionOutput.fromTransactionOutput(PARAMS, transaction, serialized, 0, PARAMS.getDefaultSerializer());
+            
+            expect(deserializedOutput.getValue()).to.deep.equal(coinValue);
+        }
+    });
+
+    it('testTransactionOutputSerializationWithScript', () => {
+        const coinValue = Coin.valueOf(500000n, NetworkParameters.getBIGT_AI_TOKENID());
+        const output = TransactionOutput.fromAddress(PARAMS, transaction, coinValue, address);
+        transaction.addOutput(output);
+        
+        const scriptBytes = output.getScriptBytes();
+        
+        const serialized = output.bitcoinSerialize();
+        const deserializedOutput = TransactionOutput.fromTransactionOutput(PARAMS, transaction, serialized, 0, PARAMS.getDefaultSerializer());
+        
+        expect(deserializedOutput.getScriptBytes()).to.deep.equal(scriptBytes);
+        expect(deserializedOutput.getValue()).to.deep.equal(coinValue);
+    });
+
+    it('testTransactionOutputSerializationWithPublicKey', () => {
+        const coinValue = Coin.valueOf(250000n, NetworkParameters.getBIGT_AI_TOKENID());
+        const output = TransactionOutput.fromCoinKey(PARAMS, transaction, coinValue, key);
+        
+        const serialized = output.bitcoinSerialize();
+        const deserializedOutput = TransactionOutput.fromTransactionOutput(PARAMS, transaction, serialized, 0, PARAMS.getDefaultSerializer());
+        
+        expect(deserializedOutput.getValue()).to.deep.equal(coinValue);
+        expect(deserializedOutput.getScriptBytes()).to.not.be.null;
+    });
+
+    it('testTransactionOutputSerializationRoundTrip', () => {
+        const coinValue = Coin.valueOf(999999n, NetworkParameters.getBIGT_AI_TOKENID());
+        const output = TransactionOutput.fromAddress(PARAMS, transaction, coinValue, address);
+        transaction.addOutput(output);
+        
+        const serialized = output.bitcoinSerialize();
+        const deserializedOutput = TransactionOutput.fromTransactionOutput(PARAMS, transaction, serialized, 0, PARAMS.getDefaultSerializer());
+        
+        expect(deserializedOutput.getValue()).to.deep.equal(coinValue);
+        expect(deserializedOutput.getScriptBytes()).to.deep.equal(output.getScriptBytes());
+    });
+
+    it('testTransactionOutputSerializationWithZeroValue', () => {
+        const coinValue = Coin.valueOf(0n, NetworkParameters.getBIGT_AI_TOKENID());
+        const output = TransactionOutput.fromAddress(PARAMS, transaction, coinValue, address);
+        transaction.addOutput(output);
+        
+        const serialized = output.bitcoinSerialize();
+        const deserializedOutput = TransactionOutput.fromTransactionOutput(PARAMS, transaction, serialized, 0, PARAMS.getDefaultSerializer());
+        
+        expect(deserializedOutput.getValue()).to.deep.equal(coinValue);
+        expect(deserializedOutput.getValue().value).to.equal(0n);
+    });
+
+    it('testTransactionOutputSerializationWithDifferentTokenIds', () => {
+        const tokenIds = [
+            NetworkParameters.getBIGT_AI_TOKENID(),
+            Buffer.from("0000000000000000000000000000000000000000000000000000000000000001", "hex"),
+            Buffer.from("ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "hex")
+        ];
+        
+        for (const tokenId of tokenIds) {
+            const coinValue = Coin.valueOf(123456n, tokenId);
+            const output = TransactionOutput.fromAddress(PARAMS, transaction, coinValue, address);
+            transaction.addOutput(output);
+            
+            const serialized = output.bitcoinSerialize();
+            const deserializedOutput = TransactionOutput.fromTransactionOutput(PARAMS, transaction, serialized, 0, PARAMS.getDefaultSerializer());
+            
+            expect(deserializedOutput.getValue()).to.deep.equal(coinValue);
+            expect(deserializedOutput.getValue().tokenid).to.deep.equal(tokenId);
+        }
+    });
+
+    it('testTransactionOutputSerializationWithLargeValue', () => {
+        const largeValue = BigInt(Number.MAX_SAFE_INTEGER) * 1000n;
+        const coinValue = new Coin(largeValue, NetworkParameters.getBIGT_AI_TOKENID());
+        const output = TransactionOutput.fromAddress(PARAMS, transaction, coinValue, address);
+        transaction.addOutput(output);
+        
+        const serialized = output.bitcoinSerialize();
+        const deserializedOutput = TransactionOutput.fromTransactionOutput(PARAMS, transaction, serialized, 0, PARAMS.getDefaultSerializer());
+        
+        expect(deserializedOutput.getValue()).to.deep.equal(coinValue);
+        expect(deserializedOutput.getValue().value).to.equal(largeValue);
+    });
+});

@@ -48,7 +48,13 @@ export interface AssetConfig {
   signers?: string[];
   /** Signature threshold for reissuance (default 1). */
   signnumber?: number;
-  /** L1 address that receives redemption transfers (base58). */
+  /**
+   * L1 address that receives redemption transfers (base58). It must be a
+   * **dedicated** address of the issuer's `L1_ISSUER_KEY` wallet — never a mint
+   * payout destination — because the verifier proves the return by finding a
+   * confirmed output of the exact token/amount there. An address the key does
+   * not own can never be verified and redemption stays closed.
+   */
   redemptionAddress?: string;
   /** Decimals of the external observation (chain units / bank units). */
   externalDecimals: number;

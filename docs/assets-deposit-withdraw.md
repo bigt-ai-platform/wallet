@@ -68,7 +68,7 @@ Binance's UX + safety rules, and implement the chain interaction ourselves
 ## 3. Model
 
 * **Asset** = `{ coin, network }` — `USDT@ERC20`, `USDT@TRC20`, `USDT@BEP20`,
-  `ETH@Ethereum`, `BTC@Bitcoin`, `BIG@Bigtangle-L0`, `<token>@L1-<chain>`.
+  `ETH@Ethereum`, `BTC@Bitcoin`, `BIG@Bigt-Ai-L0`, `<token>@L1-<chain>`.
   The same coin on two networks is **two different assets** with two different
   addresses and balances (exactly what Binance's network picker means).
 * **Account** = the address derived for that network from the wallet's key
@@ -101,7 +101,7 @@ Why this order:
 
 | Network | Derivation | Address display |
 |---|---|---|
-| Bigtangle L0/L1 | unchanged (PQ or EC) | base58 |
+| Bigt-Ai L0/L1 | unchanged (PQ or EC) | base58 |
 | EVM (all) | the **EC 32-byte secret directly** | `0x…`, EIP-55 checksum |
 | TRON | the same EC secret → `0x41+keccak(pub)[12..]` | base58 `T…`, base58check validated |
 | Bitcoin | BIP44 `m/44'/0'/0'/0/0` (or BIP49 for P2SH-P2WPKH) from the EC secret, path shown in the UI | `1…`/`3…`/`bc1…`, base58check/bech32 validated |
@@ -122,7 +122,7 @@ BIP44 for BTC, direct key for EVM/TRON.
 
 * searchable list grouped by coin; each row: coin icon, **network badge**,
   balance, and `Deposit | Withdraw` actions.
-* Bigtangle rows keep the existing Send/Receive (folded in as `BIG`,
+* Bigt-Ai rows keep the existing Send/Receive (folded in as `BIG`,
   `USDT@L1-order`, …).
 * empty state explains that an asset needs a network.
 
@@ -193,7 +193,7 @@ estimate), `confirmations`, `memoRequired`, `explorer`. Deposit fee is always 0
 | EVM | `eth_getLogs` for ERC-20 `Transfer` topics + native transfers via an indexer (Etherscan-compatible or our own); receipt for confirmations |
 | TRON | TronGrid `/v1/accounts/<addr>/transactions/trc20` |
 | Bitcoin | Esplora `/address/<addr>/txs` |
-| Bigtangle | existing `IncomingPaymentWatcher` (already shipped for L0) |
+| Bigt-Ai | existing `IncomingPaymentWatcher` (already shipped for L0) |
 
 The wallet polls our own **`/index/<chain>/address/<addr>`** proxy, never a
 third-party indexer directly (CORS, keys, rate limits), and reuses the

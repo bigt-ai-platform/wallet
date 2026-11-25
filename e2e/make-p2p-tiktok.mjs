@@ -99,7 +99,7 @@ const CONFIGS = {
     caption: ['标题：BIG → CNY，2 分钟看懂 P2P 法币交易', '',
       '8 步看懂：卖家挂单 → 买家下单 → BIG 锁进 2-of-3 托管 → 买家拿到付款信息 → 买家付款并提交流水号 → 卖家核对账单 → 卖家释放 → 完成。',
       '全程链上托管，平台不碰你的钱。演示非投资建议。', '',
-      '#Bigtangle #P2P #加密货币 #法币 #Web3 #金融科技 #BIG #CNY'],
+      '#Bigt-Ai #P2P #加密货币 #法币 #Web3 #金融科技 #BIG #CNY'],
   },
   'zh:paypal': {
     lang: 'zh', prefix: 'p2p-paypal', out: 'p2p-tiktok-paypal.zh',
@@ -136,7 +136,7 @@ const CONFIGS = {
     caption: ['标题：BIG → USD，用 PayPal 2 分钟搞定', '',
       '8 步看懂 PayPal 美元 P2P：卖家挂单 → 买家下单 → BIG 锁进 2-of-3 托管 → 买家拿到 PayPal 邮箱和备注码 → 付款并提交交易号 → 卖家核对 PayPal 到账 → 卖家释放 → 完成。',
       '全程链上托管，平台不碰你的钱。演示非投资建议。', '',
-      '#Bigtangle #P2P #PayPal #USD #加密货币 #法币 #Web3 #金融科技'],
+      '#Bigt-Ai #P2P #PayPal #USD #加密货币 #法币 #Web3 #金融科技'],
   },
   'en:wechat': {
     lang: 'en', prefix: 'p2p-en', out: 'p2p-tiktok.en',
@@ -173,7 +173,7 @@ const CONFIGS = {
     caption: ['Title: BIG → CNY in 2 minutes', '',
       '8 steps: seller posts → buyer orders → BIG locked in 2-of-3 escrow → buyer gets the amount and note code → buyer pays and submits the transfer ID → seller checks the statement → seller releases → done.',
       'On-chain escrow. The platform never touches your money. Demo, not investment advice.', '',
-      '#Bigtangle #P2P #Crypto #Fiat #Web3 #Fintech #BIG #CNY'],
+      '#Bigt-Ai #P2P #Crypto #Fiat #Web3 #Fintech #BIG #CNY'],
   },
 };
 

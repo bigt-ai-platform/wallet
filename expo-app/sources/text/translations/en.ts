@@ -17,7 +17,7 @@ export default {
     // Home screen
     home: {
         title: 'Welcome to bigt.ai',
-        subtitle: 'Your Bigtangle blockchain app',
+        subtitle: 'Your Bigt-Ai blockchain app',
     },
 
     // Settings

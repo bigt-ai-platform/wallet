@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-PKG_DIR="$ROOT/packages/bigtangle-ts"
+PKG_DIR="$ROOT/packages/bigt-ai-ts"
 INFRA_SH="$ROOT/e2e/infra.sh"
 VALIDATOR_ENV="${VALIDATOR_ENV:-$ROOT/../blockchain/validator.env}"
 
@@ -27,12 +27,12 @@ export L1_PORT="${L1_PORT:-18086}"
 export MCMC_PORT="${MCMC_PORT:-18091}"
 export L1P_PORT="${L1P_PORT:-24088}"
 # Postgres port: auto-detect from whichever container is running. The manual
-# test-bigtangle-postgres on this dev machine listens on 21532 (host AND
+# test-bigt-ai-postgres on this dev machine listens on 21532 (host AND
 # container); the host-networked helper/docker-compose-base.yml instance
 # declares its listener in the container's PGPORT env (default 5432).
 if [ -z "${PG_PORT:-}" ] && command -v docker >/dev/null 2>&1 \
-   && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^test-bigtangle-postgres$'; then
-  _pgport=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' test-bigtangle-postgres 2>/dev/null | sed -n 's/^PGPORT=//p' || true)
+   && docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^test-bigt-ai-postgres$'; then
+  _pgport=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' test-bigt-ai-postgres 2>/dev/null | sed -n 's/^PGPORT=//p' || true)
   export PG_PORT="${_pgport:-21532}"
   unset _pgport
 fi
@@ -93,8 +93,8 @@ info "Pre-cleaning stale infra..."
 "$INFRA_SH" down 2>/dev/null || true
 
 # === Step 1: Ensure the postgres container remote.sh requires is up ===
-# remote.sh uses `l0-pg-0` or `test-bigtangle-postgres` (helper compose).
-if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "^(l0-pg-0|test-bigtangle-postgres)$"; then
+# remote.sh uses `l0-pg-0` or `test-bigt-ai-postgres` (helper compose).
+if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -qE "^(l0-pg-0|test-bigt-ai-postgres)$"; then
   info "Starting postgres via ../blockchain/helper/docker-compose-base.yml..."
   docker compose -f "$ROOT/../blockchain/helper/docker-compose-base.yml" up -d 2>&1 | tail -2
 fi
@@ -139,7 +139,7 @@ done
 # Mirrors remote.sh's STABLE_BEACONS wait: a token block built on an early,
 # still-reorganising beacon parent can be orphaned and never confirmed.
 # STABLE_BEACONS is exported above (3 for QUICK, 6 by default).
-PG_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^(l0-pg-0|test-bigtangle-postgres)$" | head -1)
+PG_CONTAINER=$(docker ps --format '{{.Names}}' 2>/dev/null | grep -E "^(l0-pg-0|test-bigt-ai-postgres)$" | head -1)
 info "Waiting for a stable L0 beacon chain (>= $STABLE_BEACONS confirmed beacons)..."
 for i in $(seq 1 60); do
   STABLE_COUNT=$(docker exec "$PG_CONTAINER" psql -U root -d info -t -A -c \

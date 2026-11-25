@@ -26,7 +26,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
-import { PQKey, TestParams, MainNetParams, Wallet, Address, Utils, NetworkParameters } from '../packages/bigtangle-ts/dist/index.js';
+import { PQKey, TestParams, MainNetParams, Wallet, Address, Utils, NetworkParameters } from '../packages/bigt-ai-ts/dist/index.js';
 import { didFromPQKey, signChallengePQ } from '../packages/did/dist/pq.js';
 import { recordDigest } from '../packages/record-sig/dist/index.js';
 import { p2pOrderRecord } from '../packages/p2p-protocol/dist/index.js';
@@ -140,7 +140,7 @@ async function fund() {
   const tx = await wallet.payMoneyToECKeyList(
     null,
     giveMoney,
-    new Uint8Array(Utils.HEX.decode(NetworkParameters.BIGTANGLE_TOKENID_STRING)),
+    new Uint8Array(Utils.HEX.decode(NetworkParameters.BIGT_AI_TOKENID_STRING)),
     'p2p-orders-e2e',
     coinList,
   );

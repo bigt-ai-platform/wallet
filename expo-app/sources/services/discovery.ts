@@ -199,11 +199,11 @@ function seedKey(role: Role): string[] {
 }
 
 function txtName(role: Role): string {
-  return `_bigtangle-${role}.${DNS_SEEDS_DOMAIN}`;
+  return `_bigt-ai-${role}.${DNS_SEEDS_DOMAIN}`;
 }
 
 function srvName(role: Role): string {
-  return `_bigtangle-${role}._tcp.${DNS_SEEDS_DOMAIN}`;
+  return `_bigt-ai-${role}._tcp.${DNS_SEEDS_DOMAIN}`;
 }
 
 function readUrlCache(key: string[]): SeedCache | null {
@@ -272,7 +272,7 @@ export const REGISTRY_TTL_MS = 60 * 60 * 1000;
 
 /**
  * Registry bases for a role. Native/mainnet uses the configured
- * `bigtangle-seeds` registries; the web build asks a node over its same-origin
+ * `bigt-ai-seeds` registries; the web build asks a node over its same-origin
  * proxy (`/l0/serverinfolist`), which returns that node's live peers — the
  * browser cannot call a registry host directly (no CORS / mixed content).
  */
@@ -282,7 +282,7 @@ function registrySources(role: Role): string[] {
 }
 
 /**
- * Live node URLs for a role from the `bigtangle-seeds` registries
+ * Live node URLs for a role from the `bigt-ai-seeds` registries
  * (`POST /serverinfolist`) and, on web, the same-origin peer list. Cached 1h,
  * so the compiled seeds are only a fallback.
  */

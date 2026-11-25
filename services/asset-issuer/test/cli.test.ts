@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseCli, runPass, type Pipeline } from '../src/cli.js';
 import { DEFAULT_ASSETS } from '../src/config.js';
 import { MemoryStore } from '../src/store.js';
+import type { ChainClient } from '../src/watcher.js';
 
 describe('cli parsing', () => {
   it('defaults to one pass on Test with the default assets', () => {
@@ -17,7 +18,7 @@ describe('cli parsing', () => {
   it('reads the adapters and the live switch', () => {
     const options = parseCli(['loop'], {
       ETH_RPC_URL: 'https://rpc.example',
-      L1_URL: 'https://ordereu1.bigtangle.org',
+      L1_URL: 'https://ordereu1.bigt-ai.org',
       L1_ISSUER_KEY: 'abcd',
       ALLOW_LIVE_L1: '1',
       FROM_BLOCK: '42',
@@ -32,7 +33,7 @@ describe('cli parsing', () => {
       live: true,
       network: 'Mainnet',
       ethRpcUrl: 'https://rpc.example',
-      l1Url: 'https://ordereu1.bigtangle.org',
+      l1Url: 'https://ordereu1.bigt-ai.org',
       databaseUrl: 'postgres://x',
     });
   });
@@ -135,5 +136,75 @@ describe('one pass', () => {
     const p = pipeline();
     await p.store.putReserve({ assetId: 'usd', reserveRaw: 1n, supplyRaw: 2n, dustRaw: 0n });
     expect((await runPass(p)).breaches).toBe(1);
+  });
+});
+
+describe('deposit scan cursor', () => {
+  function chainOf(rows: Array<{ blockNumber: number; txHash: string; externalRaw?: string }>, head: () => number): ChainClient {
+    return {
+      finalizedBlock: async () => head(),
+      deposits: async (from, to) => rows
+        .filter((row) => row.blockNumber >= from && row.blockNumber <= (to ?? Number.MAX_SAFE_INTEGER))
+        .map((row) => ({
+          assetId: 'hkd',
+          account: 'w1',
+          externalRaw: row.externalRaw ?? '1000000',
+          chain: 'ethereum',
+          txHash: row.txHash,
+          logIndex: 0,
+          blockNumber: row.blockNumber,
+        })),
+      redemptions: async () => [],
+      depositWindow: 3,
+    };
+  }
+
+  function pipelineFor(store: MemoryStore, chain: ChainClient): Pipeline {
+    return {
+      store,
+      assets: DEFAULT_ASSETS,
+      chain,
+      fromBlock: 0,
+      live: false,
+      minter: { mint: async () => ({ txHash: '0xmint' }) },
+      treasury: { release: async () => ({ txHash: '0xrelease' }) },
+      verifyDeposit: async () => true,
+      close: async () => {},
+    };
+  }
+
+  it('scans forward in windows and resumes from the persisted cursor', async () => {
+    const store = new MemoryStore();
+    let head = 10;
+    const rows = [{ blockNumber: 5, txHash: '0xA1' }];
+    const p = pipelineFor(store, chainOf(rows, () => head));
+
+    const first = await runPass(p);
+    expect(first.deposits).toEqual({ recorded: 1, skipped: 0, deferred: 0 });
+    // Windows 0..2, 3..5, ... 9..10: the cursor is the next unprocessed block.
+    expect(await store.getScanCursor('ethereum')).toBe(11);
+
+    const second = await runPass(p);
+    expect(second.deposits).toEqual({ recorded: 0, skipped: 0, deferred: 0 });
+    expect(await store.getScanCursor('ethereum')).toBe(11);
+
+    head = 20;
+    rows.push({ blockNumber: 12, txHash: '0xA2' });
+    const third = await runPass(p);
+    expect(third.deposits?.recorded).toBe(1);
+    expect(await store.getScanCursor('ethereum')).toBe(21);
+    expect(await store.findOperationByKey('ethereum:0xa2:0')).toBeDefined();
+  });
+
+  it('never advances the cursor past an unprocessed window', async () => {
+    const store = new MemoryStore();
+    const chain: ChainClient = {
+      finalizedBlock: async () => 10,
+      deposits: async () => { throw new Error('rpc down'); },
+      redemptions: async () => [],
+      depositWindow: 3,
+    };
+    await expect(runPass(pipelineFor(store, chain))).rejects.toThrow('rpc down');
+    expect(await store.getScanCursor('ethereum')).toBeUndefined();
   });
 });

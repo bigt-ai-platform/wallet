@@ -31,7 +31,7 @@ async function saveWallet(page: Page, password: string) {
 }
 
 async function setupUnlockedWallet(page: Page) {
-  const { PQKey } = await import('../../../packages/bigtangle-ts/dist/index.js');
+  const { PQKey } = await import('../../../packages/bigt-ai-ts/dist/index.js');
   const key = PQKey.createNew();
   const privHex = key.getPrivateKeyHex();
 
@@ -63,7 +63,7 @@ async function setupUnlockedWallet(page: Page) {
  * endpoint.
  */
 async function getConfirmedTxHash(): Promise<string> {
-  const { PQKey, Wallet, TestParams, Utils, Address, NetworkParameters } = await import('../../../packages/bigtangle-ts/dist/index.js');
+  const { PQKey, Wallet, TestParams, Utils, Address, NetworkParameters } = await import('../../../packages/bigt-ai-ts/dist/index.js');
   const key = PQKey.createNew();
   const wallet = Wallet.fromKeysURL(TestParams.get(), [key], E2E_SERVER_URL);
   // Fund the wallet with real on-chain BC from the genesis wallet (the Java
@@ -89,7 +89,7 @@ async function getConfirmedTxHash(): Promise<string> {
   const recipientAddr = Address.fromKey(TestParams.get(), recipient).toBase58();
   const giveMoney = new Map<string, bigint>();
   giveMoney.set(recipientAddr, 100000000n);
-  await wallet.payToList(null, giveMoney, Buffer.from(Utils.HEX.decode(NetworkParameters.BIGTANGLE_TOKENID_STRING)), 'track-test');
+  await wallet.payToList(null, giveMoney, Buffer.from(Utils.HEX.decode(NetworkParameters.BIGT_AI_TOKENID_STRING)), 'track-test');
 
   // Wait-check the transaction status until the payment is CONFIRMED on L0.
   let confirmedTxHash: string | null = null;

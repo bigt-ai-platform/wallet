@@ -5,9 +5,9 @@ import {
 
 describe('hostOf', () => {
   it('strips scheme, path and trailing slash', () => {
-    expect(hostOf('https://eu1.bigtangle.org/')).toBe('eu1.bigtangle.org');
+    expect(hostOf('https://eu1.bigt-ai.org/')).toBe('eu1.bigt-ai.org');
     expect(hostOf('http://127.0.0.1:24089/')).toBe('127.0.0.1:24089');
-    expect(hostOf('https://ordereu1.bigtangle.org')).toBe('ordereu1.bigtangle.org');
+    expect(hostOf('https://ordereu1.bigt-ai.org')).toBe('ordereu1.bigt-ai.org');
   });
 
   it('keeps relative proxy paths usable and tolerates empty input', () => {
@@ -18,8 +18,8 @@ describe('hostOf', () => {
 
 describe('normalizeUrl', () => {
   it('is case-insensitive and slash-insensitive', () => {
-    expect(normalizeUrl('https://EU1.bigtangle.org/')).toBe('https://eu1.bigtangle.org');
-    expect(normalizeUrl('https://eu1.bigtangle.org')).toBe('https://eu1.bigtangle.org');
+    expect(normalizeUrl('https://EU1.bigt-ai.org/')).toBe('https://eu1.bigt-ai.org');
+    expect(normalizeUrl('https://eu1.bigt-ai.org')).toBe('https://eu1.bigt-ai.org');
   });
 });
 
@@ -35,19 +35,19 @@ describe('shortHash', () => {
 describe('buildChainTargets', () => {
   it('lists all L0 candidates then all configured L1 chains and shared L1 candidates', () => {
     const rows = buildChainTargets(
-      ['https://eu1.bigtangle.org', 'https://eu2.bigtangle.org'],
+      ['https://eu1.bigt-ai.org', 'https://eu2.bigt-ai.org'],
       [
-        { name: 'Main', url: 'https://ordereu1.bigtangle.org' },
-        { name: '', url: 'https://ordereu2.bigtangle.org' },
+        { name: 'Main', url: 'https://ordereu1.bigt-ai.org' },
+        { name: '', url: 'https://ordereu2.bigt-ai.org' },
       ],
-      ['https://ordereu1.bigtangle.org', 'https://ordereu3.bigtangle.org'],
+      ['https://ordereu1.bigt-ai.org', 'https://ordereu3.bigt-ai.org'],
     );
     expect(rows.map((r) => [r.role, r.name, r.url])).toEqual([
-      ['l0', 'L0', 'https://eu1.bigtangle.org'],
-      ['l0', 'L0', 'https://eu2.bigtangle.org'],
-      ['l1', 'Main', 'https://ordereu1.bigtangle.org'],
-      ['l1', 'L1', 'https://ordereu2.bigtangle.org'],
-      ['l1', 'L1', 'https://ordereu3.bigtangle.org'],
+      ['l0', 'L0', 'https://eu1.bigt-ai.org'],
+      ['l0', 'L0', 'https://eu2.bigt-ai.org'],
+      ['l1', 'Main', 'https://ordereu1.bigt-ai.org'],
+      ['l1', 'L1', 'https://ordereu2.bigt-ai.org'],
+      ['l1', 'L1', 'https://ordereu3.bigt-ai.org'],
     ]);
   });
 
@@ -117,15 +117,15 @@ describe('nodeNameForUrl', () => {
     expect(nodeNameForUrl('/l1/ordereu2/', 'l1')).toBe('ordereu2');
     expect(nodeNameForUrl('/l0/', 'l0')).toBe('eu1');
     expect(nodeNameForUrl('/l1/', 'l1')).toBe('ordereu1');
-    expect(nodeNameForUrl('https://hk1.bigtangle.org', 'l0')).toBe('hk1');
-    expect(nodeNameForUrl('https://orderhk1.bigtangle.org', 'l1')).toBe('orderhk1');
+    expect(nodeNameForUrl('https://hk1.bigt-ai.org', 'l0')).toBe('hk1');
+    expect(nodeNameForUrl('https://orderhk1.bigt-ai.org', 'l1')).toBe('orderhk1');
   });
 
   it('maps the raw addresses a node publishes in the live registry', () => {
     expect(nodeNameForUrl('http://85.215.91.140:8082', 'l0')).toBe('eu2');
     expect(nodeNameForUrl('http://43.129.198.77:8082/', 'l0')).toBe('hk1');
     expect(nodeNameForUrl('http://85.214.37.95:8082', 'l0')).toBe('eu1');
-    expect(nodeNameForUrl('https://ordereu2.bigtangle.org', 'l1')).toBe('ordereu2');
+    expect(nodeNameForUrl('https://ordereu2.bigt-ai.org', 'l1')).toBe('ordereu2');
   });
 
   it('returns null for retired nodes, unknown hosts and empty urls', () => {
@@ -138,7 +138,7 @@ describe('nodeNameForUrl', () => {
 describe('proxyBaseForUrl', () => {
   it('turns a live registry peer into a probeable same-origin base', () => {
     expect(proxyBaseForUrl('http://43.129.198.77:8082', 'l0')).toBe('/l0/hk1/');
-    expect(proxyBaseForUrl('https://ordereu2.bigtangle.org', 'l1')).toBe('/l1/ordereu2/');
+    expect(proxyBaseForUrl('https://ordereu2.bigt-ai.org', 'l1')).toBe('/l1/ordereu2/');
   });
 
   it('keeps a node that already is a proxy path on that path', () => {

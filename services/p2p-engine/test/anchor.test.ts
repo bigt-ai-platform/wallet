@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { PQKey } from "bigtangle-ts";
-import { Utils } from "bigtangle-ts";
+import { PQKey } from "bigt-ai-ts";
+import { Utils } from "bigt-ai-ts";
 import { didFromPQKey } from "did/pq";
 import { verifyRecordSig } from "record-sig";
 import { anchorFromEnv, swapEventRecord, signSwapRecord, l1Anchor } from "../src/anchor.js";

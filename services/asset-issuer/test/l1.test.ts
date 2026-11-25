@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DEFAULT_ASSETS } from '../src/config.js';
+import type { Operation } from '../src/domain.js';
 import {
-  BigtangleL1Minter,
-  BigtangleRedemptionSource,
+  BigtAiL1Minter,
+  BigtAiRedemptionSource,
+  BigtAiRedemptionVerifier,
   RefusingTreasury,
   composeChainClient,
   type L1TokenOutput,
@@ -31,13 +33,13 @@ function wallet(over: Partial<WalletLike> = {}): WalletLike {
 describe('L1 minter', () => {
   it('refuses to sign unless explicitly enabled', async () => {
     const w = wallet();
-    const minter = new BigtangleL1Minter({ wallet: w, assets: [ASSET], live: false });
+    const minter = new BigtAiL1Minter({ wallet: w, assets: [ASSET], live: false });
     await expect(minter.mint('hkd', 'holder', '100')).rejects.toThrow(/disabled/);
     expect(w.reissue).not.toHaveBeenCalled();
   });
 
   it('refuses an asset without an issued token', async () => {
-    const minter = new BigtangleL1Minter({
+    const minter = new BigtAiL1Minter({
       wallet: wallet(), assets: [{ ...ASSET, l1TokenId: undefined }], live: true,
     });
     await expect(minter.mint('hkd', 'holder', '100')).rejects.toThrow(/l1TokenId/);
@@ -52,7 +54,7 @@ describe('L1 minter', () => {
       pendingSigns: vi.fn(async () => pending),
       pay: vi.fn(async () => { calls.push('pay'); return { txHash: 't1' }; }),
     });
-    const minter = new BigtangleL1Minter({ wallet: w, assets: [ASSET], live: true, signaturePollMs: 0 });
+    const minter = new BigtAiL1Minter({ wallet: w, assets: [ASSET], live: true, signaturePollMs: 0 });
     expect(await minter.mint('hkd', 'holder', '100')).toEqual({ txHash: 't1' });
     expect(calls).toEqual(['reissue', 'multiSign', 'pay']);
     expect(w.pay).toHaveBeenCalledWith('aa11', 'holder', '100');
@@ -66,20 +68,20 @@ describe('L1 minter', () => {
       multiSign: vi.fn(async () => { calls.push('multiSign'); pending -= 1; }),
       pay: vi.fn(async () => { calls.push('pay'); return { txHash: 't1' }; }),
     });
-    const minter = new BigtangleL1Minter({ wallet: w, assets: [ASSET], live: true, signaturePollMs: 0 });
+    const minter = new BigtAiL1Minter({ wallet: w, assets: [ASSET], live: true, signaturePollMs: 0 });
     expect(await minter.mint('hkd', 'holder', '100')).toEqual({ txHash: 't1' });
     expect(calls).toEqual(['multiSign', 'pay']);
   });
 
   it('fails loudly when a token block never collects its signatures', async () => {
     const w = wallet({ pendingSigns: vi.fn(async () => 2) });
-    const minter = new BigtangleL1Minter({ wallet: w, assets: [ASSET], live: true, signaturePollMs: 0 });
+    const minter = new BigtAiL1Minter({ wallet: w, assets: [ASSET], live: true, signaturePollMs: 0 });
     await expect(minter.mint('hkd', 'holder', '100')).rejects.toThrow(/signature/);
     expect(w.pay).not.toHaveBeenCalled();
   });
 
   it('rejects a zero amount and an empty holder', async () => {
-    const minter = new BigtangleL1Minter({ wallet: wallet(), assets: [ASSET], live: true });
+    const minter = new BigtAiL1Minter({ wallet: wallet(), assets: [ASSET], live: true });
     await expect(minter.mint('hkd', 'holder', '0')).rejects.toThrow(/amount/);
     await expect(minter.mint('hkd', '', '1')).rejects.toThrow(/account/);
   });
@@ -102,7 +104,7 @@ describe('L1 redemption source', () => {
         output({ txHash: 'th5', tokenId: 'other' }),
       ]),
     });
-    const source = new BigtangleRedemptionSource(w, [ASSET]);
+    const source = new BigtAiRedemptionSource(w, [ASSET]);
     const rows = await source.redemptions(0);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ assetId: 'hkd', txHash: 'th', l1Raw: '500', chain: 'l1-order', logIndex: 0 });
@@ -110,9 +112,83 @@ describe('L1 redemption source', () => {
 
   it('does nothing for an asset with no redemption address', async () => {
     const w = wallet({ tokenOutputs: vi.fn(async () => [output()]) });
-    const source = new BigtangleRedemptionSource(w, [{ ...ASSET, redemptionAddress: undefined }]);
+    const source = new BigtAiRedemptionSource(w, [{ ...ASSET, redemptionAddress: undefined }]);
     expect(await source.redemptions(0)).toEqual([]);
     expect(w.tokenOutputs).not.toHaveBeenCalled();
+  });
+});
+
+describe('redemption verifier', () => {
+  const output = (over: Partial<L1TokenOutput> = {}): L1TokenOutput => ({
+    blockHash: 'bh', txHash: 'th', index: 0, valueRaw: 500n,
+    tokenId: 'aa11', address: 'REDEEM-ADDR', confirmed: true,
+    ...over,
+  });
+
+  const op = (over: Partial<Operation> = {}): Operation => ({
+    id: 'op1',
+    kind: 'redeem',
+    assetId: 'hkd',
+    account: 'w1',
+    amountRaw: '500',
+    l1AmountRaw: '500',
+    status: 'pending',
+    ref: { chain: 'l1-order', txHash: 'th', logIndex: 0 },
+    destination: '0x2222222222222222222222222222222222222222',
+    attempts: 0,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...over,
+  });
+
+  it('accepts exactly one confirmed output of the token and amount', async () => {
+    const verifier = new BigtAiRedemptionVerifier(
+      wallet({ tokenOutputs: vi.fn(async () => [output()]) }),
+      [ASSET],
+    );
+    expect(await verifier.check(op(), ASSET)).toBe('ok');
+    expect(await verifier.verify(op(), ASSET)).toBe(true);
+  });
+
+  it('rejects a wrong amount, address, token or transaction', async () => {
+    const cases: L1TokenOutput[] = [
+      output({ valueRaw: 499n }),
+      output({ address: 'SOMEONE-ELSE' }),
+      output({ tokenId: 'other' }),
+      output({ txHash: 'other-tx' }),
+    ];
+    for (const candidate of cases) {
+      const verifier = new BigtAiRedemptionVerifier(
+        wallet({ tokenOutputs: vi.fn(async () => [candidate]) }),
+        [ASSET],
+      );
+      expect(await verifier.verify(op(), ASSET)).toBe(false);
+    }
+  });
+
+  it('is pending while the output is unconfirmed or not indexed yet', async () => {
+    const unconfirmed = new BigtAiRedemptionVerifier(
+      wallet({ tokenOutputs: vi.fn(async () => [output({ confirmed: false })]) }),
+      [ASSET],
+    );
+    expect(await unconfirmed.check(op(), ASSET)).toBe('pending');
+
+    const missing = new BigtAiRedemptionVerifier(
+      wallet({ tokenOutputs: vi.fn(async () => []) }),
+      [ASSET],
+    );
+    expect(await missing.check(op(), ASSET)).toBe('pending');
+  });
+
+  it('rejects a release with no L1 reference or no redemption address', async () => {
+    const verifier = new BigtAiRedemptionVerifier(
+      wallet({ tokenOutputs: vi.fn(async () => [output()]) }),
+      [ASSET],
+    );
+    expect(await verifier.check(op({ ref: undefined }), ASSET)).toBe('invalid');
+    expect(await verifier.check(op({ ref: { chain: 'ethereum', txHash: 'th', logIndex: 0 } }), ASSET))
+      .toBe('invalid');
+    expect(await verifier.check(op(), { ...ASSET, redemptionAddress: undefined })).toBe('invalid');
   });
 });
 

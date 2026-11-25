@@ -27,8 +27,9 @@ Scaffold, with the parts that must be provable already tested:
 | Sweeper (`src/sweep.ts`, `src/sweep.evm.ts`, `src/ethTx.ts`) | done — threshold/gas planning; live only with `ALLOW_LIVE_SWEEP=1` + `DEPOSIT_XPRV`; verifies the key controls the address before signing |
 | API auth (`src/auth.ts`) + executor claim/revalidation (`src/executor.ts`) | done — default-deny outside Test, bearer or account-bound HMAC, `FOR UPDATE SKIP LOCKED` claim, receipt/finality re-check before minting |
 | HSM/MPC adapter (`src/signers.ts`) | done — command protocol for `sweep-sign`, `l1-mint`, `treasury-release`; no key material in the service; local key paths remain Testnet/small-float |
-| Mint executor (`src/executor.ts`) + `src/l1.ts` / `src/l1.bigtangle.ts` | done — reissue → **drain pending signatures** → pay the holder; verified end to end on the Java L1-order infra, gated by `ALLOW_LIVE_L1` |
-| Redeem watcher (`BigtangleRedemptionSource`) | done — only confirmed transfers to the asset's `redemptionAddress`, never the issuer's float |
+| Mint executor (`src/executor.ts`) + `src/l1.ts` / `src/l1.bigt-ai.ts` | done — reissue → **drain pending signatures** → pay the holder; verified end to end on the Java L1-order infra, gated by `ALLOW_LIVE_L1` |
+| Redemption verification (`BigtAiRedemptionVerifier`) | done — an intent's `l1TxHash` must have a confirmed output of the exact token/amount at `redemptionAddress`; the unique L1 reference backs one release. `BigtAiRedemptionSource` (blind scan) remains for diagnostics only |
+| Deposit scan cursor (`scan_cursors`) | done — catches up to the finalized head window by window and advances only after a window commits |
 | Release (`Treasury`) | **not implemented** — `RefusingTreasury` fails loudly until the HSM/MPC custody adapter exists |
 | Reconciliation + attestations (`src/attestation.ts`, `/health`, `/metrics`) | done — publication target still to be chosen |
 | Runner (`src/cli.ts`) | done — `once` / `loop` / `attest` / `health` / `serve` |
@@ -165,12 +166,20 @@ one — silently falling back to a shared address would misattribute funds.
 ### Signed redemption intents
 
 `POST /redeem-intents` requires an L1-key signature over
-`{domain, network, assetId, account, amountRaw, destination, nonce, expiry}`.
-The nonce/hash is stored in `redeem_intents` (unique), the holder balance is
-debited, and `operations.destination` carries the verified Ethereum address.
-`executeRelease` refuses a release without it — an observed L1 transfer alone
-cannot choose a destination. Format and client examples:
-[`../../docs/redeem-intent.md`](../../docs/redeem-intent.md).
+`{domain, network, assetId, account, amountRaw, destination, l1TxHash, nonce, expiry}`.
+The signature proves **who chose the destination**; it does not prove the tokens
+came back. The request is refused unless `l1TxHash` has a confirmed L1 output of
+the exact token and amount to the asset's `redemptionAddress`
+(`409 { retryable: true }` while it is not confirmed yet). The intent (unique
+nonce + hash), the operation (unique L1 reference) and the balance debit commit
+in one transaction, and `operations.destination` carries the verified Ethereum
+address. `executeRelease` re-checks the L1 return and refuses without it — an
+observed L1 transfer alone cannot choose a destination. Format and client
+examples: [`../../docs/redeem-intent.md`](../../docs/redeem-intent.md).
+
+`/mint-requests` is operator-only (`MINT_API_TOKEN` + `x-mint-token`): the
+wallet-facing bearer ships in the web bundle and must not be able to mint
+against the pooled reserve. Without the token the route answers `403`.
 
 ### HSM/MPC signers
 
@@ -211,7 +220,7 @@ actually sign. Without them it still records nothing and reports what it would
 have done, which is the safe default.
 
 Image: `docker build -f deploy/Dockerfile.asset-issuer -t wallet-asset-issuer .`
-(built from the repo root — the service imports the `bigtangle-ts` workspace
+(built from the repo root — the service imports the `bigt-ai-ts` workspace
 package).
 
 ### Installing dependencies (read this)

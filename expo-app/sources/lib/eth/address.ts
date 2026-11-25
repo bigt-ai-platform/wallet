@@ -1,5 +1,5 @@
 /**
- * Bigtangle EC key → Ethereum address.
+ * Bigt-Ai EC key → Ethereum address.
  *
  * The wallet's legacy EC key is a plain 32-byte secp256k1 secret, so it is also
  * a valid Ethereum private key (exactly what `../vmproject` does with web3j's
@@ -11,7 +11,7 @@
  */
 
 import * as secp256k1 from 'secp256k1';
-// `@noble/hashes` ships in the bundle already (bigtangle-ts dependency).
+// `@noble/hashes` ships in the bundle already (bigt-ai-ts dependency).
 import { keccak_256 } from '@noble/hashes/sha3.js';
 
 export function stripHexPrefix(hex: string): string {

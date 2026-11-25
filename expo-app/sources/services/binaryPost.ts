@@ -10,11 +10,11 @@
  * (EF BF BD), and the native side then writes `string.getBytes(UTF_8)`, so the
  * signed transaction reaches the node larger and mangled:
  *
- *   net.bigtangle.exception.ProtocolException:
+ *   net.bigt-ai.exception.ProtocolException:
  *     java.lang.ArrayIndexOutOfBoundsException: arraycopy:
  *     last source index 658 out of bounds for byte[547]
- *       at net.bigtangle.core.Message.readBytes(Message.java:313)
- *       at net.bigtangle.core.TransactionOutput.parse(...)
+ *       at net.bigt-ai.core.Message.readBytes(Message.java:313)
+ *       at net.bigt-ai.core.TransactionOutput.parse(...)
  *
  * The plugin's only byte-exact request path is `dataType: 'file'`, which the
  * Android side base64-decodes (`CapacitorHttpUrlConnection.setRequestBody`)
@@ -25,7 +25,7 @@
 
 import { CapacitorHttp } from '@capacitor/core';
 import { isCapacitorNative } from '@/lib/platform';
-import { OkHttp3Util } from 'bigtangle-ts/dist/net/bigtangle/utils/OkHttp3Util';
+import { OkHttp3Util } from 'bigt-ai-ts/dist/net/bigt-ai/utils/OkHttp3Util';
 
 /** Raw bytes + status, exactly as the node answered. */
 export interface BinaryResponse {
@@ -148,7 +148,7 @@ export function postBinary(
 }
 
 /**
- * Route the bigtangle-ts SDK (`OkHttp3Util`) through `postBinary`, so
+ * Route the bigt-ai-ts SDK (`OkHttp3Util`) through `postBinary`, so
  * `Wallet.submitTransaction` / `saveBlock` / `signToken` send the exact signed
  * bytes on Android too. No-op outside Capacitor; safe to call more than once.
  */

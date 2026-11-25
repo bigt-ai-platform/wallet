@@ -201,12 +201,20 @@ export class CommandL1Minter implements L1Minter {
     private readonly runner: CommandRunner = execCommandRunner(),
   ) {}
 
-  async mint(assetId: string, account: string, l1Raw: string): Promise<{ txHash: string }> {
+  async mint(
+    assetId: string,
+    account: string,
+    l1Raw: string,
+    context?: { operationId: string },
+  ): Promise<{ txHash: string }> {
     const response = parseJsonOutput(await this.runner(this.command, {
       op: 'l1-mint',
       assetId,
       account,
       amountRaw: l1Raw,
+      // The signer must return the same tx for the same operation, so a retry
+      // after a crash cannot reissue a second time.
+      ...(context ? { operationId: context.operationId } : {}),
     }));
     return { txHash: requireString(response.txHash, 'txHash') };
   }
@@ -231,6 +239,7 @@ export class CommandTreasury implements Treasury {
     account: string,
     destination: string,
     externalRaw: string,
+    context?: { operationId: string },
   ): Promise<{ txHash: string }> {
     const response = parseJsonOutput(await this.runner(this.command, {
       op: 'treasury-release',
@@ -238,6 +247,8 @@ export class CommandTreasury implements Treasury {
       account,
       destination,
       externalRaw,
+      // A retried release must return the original tx, never pay twice.
+      ...(context ? { operationId: context.operationId } : {}),
     }));
     return { txHash: requireString(response.txHash, 'txHash') };
   }

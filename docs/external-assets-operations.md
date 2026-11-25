@@ -121,7 +121,7 @@ and only touches the L1 order chain.
 ```bash
 cd ../blockchain
 export WALLET=/path/to/issuer.json
-export L1_URL=https://ordereu1.bigtangle.org
+export L1_URL=https://ordereu1.bigt-ai.org
 export SERVER_NET=Mainnet            # or Test
 export ISSUER_SIGNERS=<pubkey1>,<pubkey2>,<pubkey3>
 export ISSUER_M=2
@@ -268,8 +268,10 @@ Schema: `assets`, `reserves`, `operations` (idempotency + state machine),
 `supply_raw <= reserve_raw` and refuses to rewrite a `completed` operation.
 
 Endpoints must match `services/distributor.ts` exactly: `/assets`, `/balances`,
-`/statement`, `/transfers`, `/mint-requests`, `/redeem-requests`,
-`/transfers/<id>`, plus `/health` and `/metrics`.
+`/statement`, `/transfers`, `/mint-requests`, `/redeem-intents`,
+`/transfers/<id>`, plus `/health` and `/metrics`. `/mint-requests` needs the
+operator `MINT_API_TOKEN` (header `x-mint-token`); `/redeem-requests` is retained
+only to reject the unsigned path.
 
 ### 6.1 Runner
 
@@ -293,9 +295,10 @@ Adapter switches, all optional and fail-closed:
 | Env | Effect when set |
 |---|---|
 | `ETH_RPC_URL` | scans ERC-20 `Transfer` logs into each asset's `custodyAddress` |
-| `L1_URL` + `L1_ISSUER_KEY` | enables minting and redemption scanning |
+| `L1_URL` + `L1_ISSUER_KEY` | enables minting and verifies redemption funding (`serve` also needs it, read-only) |
 | `ALLOW_LIVE_L1=1` | **required** to actually sign a mint |
-| `FROM_BLOCK` | deposit scan cursor (default 0 — set it on first run, then persist) |
+| `FROM_BLOCK` | seeds the persisted deposit scan cursor (`scan_cursors`) for a chain seen for the first time |
+| `MINT_API_TOKEN` | operator credential for `/mint-requests`; empty disables the route |
 | `INTERVAL_MS` | loop interval |
 
 Nothing signs without `ALLOW_LIVE_L1=1`, so a staging pass is safe by default.
@@ -305,8 +308,9 @@ Nothing signs without `ALLOW_LIVE_L1=1`, so a staging pass is safe by default.
 | Adapter | State |
 |---|---|
 | EVM deposits (`src/chain.evm.ts`) | implemented — ERC-20 logs + `finalized`; **native ETH needs the address index**, not yet wired |
-| L1 mint (`src/l1.bigtangle.ts`) | implemented and **verified on the Java L1-order infra** (issuance + reissuance). Reissue → drain `getTokenSignByTokenid` → pay; the **domain key** is required on top of the issuer key |
-| L1 redemptions | implemented; reads only confirmed transfers to `redemptionAddress`, never the issuer's float |
+| L1 mint (`src/l1.bigt-ai.ts`) | implemented and **verified on the Java L1-order infra** (issuance + reissuance). Reissue → drain `getTokenSignByTokenid` → pay; the **domain key** is required on top of the issuer key |
+| L1 redemptions | implemented as **intent + L1 return**: the signed intent names the funding tx and a confirmed output of the exact token/amount to `redemptionAddress` is required; one L1 reference backs one release |
+| Deposit cursor (`src/watcher.ts`, `src/cli.ts`) | implemented — advances window by window to the finalized head, only after each window commits |
 | Release (`Treasury`) | **not implemented** — `RefusingTreasury` fails loudly; redeem stays closed until the HSM/MPC adapter + approval flow exist |
 
 **First live run (Test only), one asset at a time:**
@@ -428,7 +432,7 @@ breach in one is not diluted by the others.
 
 - Mutating chain deploys: pinned `IMAGE_TAG`, one host at a time, verify each
   (`prod-order.sh up-one <idx>`).
-- Any change to `bigtangle-servercore`, `l1-order-server` or the bridge runs
+- Any change to `bigt-ai-servercore`, `l1-order-server` or the bridge runs
   `mvn -B verify` + `helper/check-layer-deps.sh` and needs the L0 scoping,
   reward and store-schema tests green.
 - Issuer service changes ship behind a flag with a rollback that never touches

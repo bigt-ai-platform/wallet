@@ -14,7 +14,7 @@ import {
   saveKeyToFile,
   importPrivateKey,
 } from "../../sources/screens/wallet/WalletHelper";
-import { TestParams } from "bigtangle-ts";
+import { TestParams } from "bigt-ai-ts";
 
 /**
  * Initialize a test wallet in the app storage

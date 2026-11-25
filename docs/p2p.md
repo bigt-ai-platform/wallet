@@ -43,15 +43,15 @@ longer has any P2P surface** — no `p2p_*` tools, no client, no
 `social.p2p-swap` record type, no indexer projection, no projector (see
 *Removed from dai*).
 
-Escrow is on **Bigtangle L0**; swap audit events are anchored on the
+Escrow is on **Bigt-Ai L0**; swap audit events are anchored on the
 **L1-SOCIAL** chain; fiat goes **buyer → seller directly, never through the
 engine**; and a release happens only on the seller's own confirmation or an
 arbitration outcome — never on silence, never on the buyer's claim alone.
 
 **Paths.** Java citations are package-relative to a root under `../blockchain`:
-`core/` = `bigtangle-core/src/main/java/net/bigtangle/`, `srv/` =
-`bigtangle-servercore/src/main/java/net/bigtangle/`, `l0/` =
-`layer0-server/src/main/java/net/bigtangle/`. Everything else is a full path
+`core/` = `bigt-ai-core/src/main/java/net/bigt-ai/`, `srv/` =
+`bigt-ai-servercore/src/main/java/net/bigt-ai/`, `l0/` =
+`layer0-server/src/main/java/net/bigt-ai/`. Everything else is a full path
 from the repo that owns it.
 
 **Demos.** A step-by-step walkthrough of the CNY rails — WeChat
@@ -77,7 +77,7 @@ drives the wallet UI, and the harness re-checks both legs with
 
 | Concern | Home |
 |---|---|
-| On-chain escrow (redeem script, P2SH address, signed release/refund spends) | `packages/bigtangle-ts` → `Escrow.ts` |
+| On-chain escrow (redeem script, P2SH address, signed release/refund spends) | `packages/bigt-ai-ts` → `Escrow.ts` |
 | Settlement engine (orders, swaps, state, arbitration execution) | `services/p2p-engine` |
 | `social.p2p-swap` record contract (build + validate) | `packages/p2p-protocol` |
 | Orders / swaps UI (Binance-P2P style) | `expo-app` |
@@ -94,7 +94,7 @@ service that must not run in a client; dai is not involved.
 
 | Building block | Needed for | Exists? |
 |---|---|---|
-| Hold funds with a threshold script | escrow | ✅ `createP2SHOutputScript` / `createRedeemScript` (`core/script/ScriptBuilder.java:453-472`, ported in `packages/bigtangle-ts/.../ScriptBuilder.ts:208-349`) |
+| Hold funds with a threshold script | escrow | ✅ `createP2SHOutputScript` / `createRedeemScript` (`core/script/ScriptBuilder.java:453-472`, ported in `packages/bigt-ai-ts/.../ScriptBuilder.ts:208-349`) |
 | Observe a hold from a service | lock detection | ✅ multisig UTXOs indexed with `minsignnumber` + one `OutputsMulti` row per participant (`srv/server/service/base/ServiceBaseConnect.java:105-123`) |
 | Record who consented to a spend | release audit | ⚠️ `PayMultiSign` — consent registry only (see below) |
 | Assemble + broadcast the spend | release / refund | ✅ `updateScriptWithSignature` (`core/script/ScriptBuilder.java:380-429`) → `POST /submitTransaction` (`srv/server/BaseDispatcherController.java:245-251`) |
@@ -252,8 +252,8 @@ Two outbound dependencies, no Ethereum, **no fiat API on the happy path**:
 
 | Dependency | Protocol | Endpoint |
 |---|---|---|
-| Bigtangle L0 node | JSON over HTTP | `submitTransaction`, `getTransactionStatus`, `getOutputs`, `getBalances`, `launchPayMultiSign`, `payMultiSign`, `getPayMultiSignAddressList` |
-| Bigtangle L1-SOCIAL | JSON over HTTP | `submitTransaction` with `dataclassname="SocialRecord"` (order/cancel/audit anchor); `getTips`, `getBlockByHash`, `getTransactionStatus` (replay watcher + txid confirmation) |
+| Bigt-Ai L0 node | JSON over HTTP | `submitTransaction`, `getTransactionStatus`, `getOutputs`, `getBalances`, `launchPayMultiSign`, `payMultiSign`, `getPayMultiSignAddressList` |
+| Bigt-Ai L1-SOCIAL | JSON over HTTP | `submitTransaction` with `dataclassname="SocialRecord"` (order/cancel/audit anchor); `getTips`, `getBlockByHash`, `getTransactionStatus` (replay watcher + txid confirmation) |
 
 Node auth is off on a stock node (`server.permissioned=false`,
 `server.ipcheck=false` — `srv/server/config/ServerConfiguration.java:155,271`).
@@ -283,10 +283,10 @@ escrowAddress = outputScript.toAddress()
 Keys are placed in lexicographic order inside the redeem script
 (`createRedeemScript`), so all three parties derive the same script from the
 same key set and the escrow address is **deterministic per swap**. The wallet's
-`Escrow` class (`packages/bigtangle-ts/.../wallet/Escrow.ts`, exported from the
+`Escrow` class (`packages/bigt-ai-ts/.../wallet/Escrow.ts`, exported from the
 package) builds the redeem script, the P2SH output and address, and the signed
 release/refund spends (`createSpend`/`signInput`/`buildRelease`/`buildRefund`),
-Java-parity tested under `packages/bigtangle-ts/test/wallet/EscrowTest.test.ts`.
+Java-parity tested under `packages/bigt-ai-ts/test/wallet/EscrowTest.test.ts`.
 
 Which pair signs what:
 
@@ -307,7 +307,7 @@ reaches release with engine + buyer.
 **any** two of the three keys spend it. The table above lists the pairs the
 *implementation* drives, but `seller + buyer` is an equally valid set — a
 `correctlySpends` case in
-`packages/bigtangle-ts/test/wallet/EscrowTest.test.ts` ("every release/refund
+`packages/bigt-ai-ts/test/wallet/EscrowTest.test.ts` ("every release/refund
 pair shares the engine, but any two keys sign"). Consequences:
 
 - A cooperative release/refund can settle with **no engine signature and no
@@ -396,7 +396,7 @@ POST /submitTransaction  (raw serialized bytes)
 ```
 
 Assembly uses `updateScriptWithSignature`; the precedent is the bridge vault
-(`../blockchain/bigtangle-bridge/.../BridgeService.java:144,191`).
+(`../blockchain/bigt-ai-bridge/.../BridgeService.java:144,191`).
 
 The wallet closes this loop itself. Both sides rebuild the identical spend
 skeleton over the confirmed lock output (same vault `[seller, buyer, engine]`,
@@ -1180,7 +1180,7 @@ there is no machine fiat signal to drop even that for a personal CNY transfer.
 | Repo | Scope |
 |---|---|
 | **`../blockchain`** | Java protocol oracle — P2SH multisig, PQ verify, `PayMultiSign`, `getTransactionStatus`, `submitTransaction`, L1-SOCIAL ingestion. Anything the TS port does must be proven against it. |
-| **`../wallet` → `packages/bigtangle-ts`** | the TS protocol port and the client that holds keys — it owns the on-chain half of escrow. Ships `Escrow`, `ScriptBuilder.createRedeemScript` / `createP2SHOutputScript*` / `updateScriptWithSignature`, `RedeemData`, `Wallet.payToScript`, `core/PayMultiSign*`. |
+| **`../wallet` → `packages/bigt-ai-ts`** | the TS protocol port and the client that holds keys — it owns the on-chain half of escrow. Ships `Escrow`, `ScriptBuilder.createRedeemScript` / `createP2SHOutputScript*` / `updateScriptWithSignature`, `RedeemData`, `Wallet.payToScript`, `core/PayMultiSign*`. |
 | **`../wallet` → `services/p2p-engine`** | the settlement engine: orders, swaps, whole-body signed API, seller-confirm MVP, arbitration execution, append-only events, chain anchor. |
 | **`../wallet` → `services/p2p-verify`** | the device-side verification worker (on-phone app, user-paired): connects to the endpoint the user paired with a DID-signed grant (`connectFromGrant` → `AndroidMcpClient` for the app; `McpHttpGateway`/`McpGateway` for a mobile-mcp host), reads the party's own rail app (the buyer's **sending** ledger or the seller's **receiving** ledger), extracts the entry, checks it against the swap terms and produces the verdict the wallet signs. Ships the `p2p-verify` CLI; the same code path is the mock-rail e2e harness. |
 | **`../android-remote-control-mcp`** | the deployed on-phone agent the worker drives: an Android app that runs an MCP server on the phone itself (AccessibilityService + screenshots, no adb/host), built as **Mobile Agent** (`deploy.apk.sh` → the S3 bucket the dai `#mobile` page links). `AndroidMcpClient` (`packages/mobile-control`) speaks its `android_*` tools. Only ever pointed at a device the **user** paired — never engine-owned (§12). |
@@ -1192,13 +1192,13 @@ there is no machine fiat signal to drop even that for a personal CNY transfer.
 Why not one repo: the engine needs a database, the dispute workflow and an
 operator key — a client app must not hold any of those, so the on-chain code and
 the engine cannot share a home just because they share a feature. The escrow
-script is a wallet capability, so it lives in `bigtangle-ts`.
+script is a wallet capability, so it lives in `bigt-ai-ts`.
 
 ---
 
 ## 20. Phases
 
-1. **On-chain escrow in `bigtangle-ts`** — *delivered:* `Escrow` (2-of-3 redeem
+1. **On-chain escrow in `bigt-ai-ts`** — *delivered:* `Escrow` (2-of-3 redeem
    script, P2SH output + address, signed release/refund spends), Java-parity
    tested. Optional: the wallet app co-sign screen.
 2. **Settlement engine in `services/p2p-engine`** — *moved from dai, CNY/manual

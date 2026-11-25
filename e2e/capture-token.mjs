@@ -26,8 +26,8 @@ const PDFS = resolve(HERE, 'demo-output/pdfs');
 mkdirSync(SHOTS, { recursive: true });
 mkdirSync(PDFS, { recursive: true });
 
-const sdk = await import('../packages/bigtangle-ts/dist/index.js');
-const bcToken = sdk.NetworkParameters.BIGTANGLE_TOKENID_STRING;
+const sdk = await import('../packages/bigt-ai-ts/dist/index.js');
+const bcToken = sdk.NetworkParameters.BIGT_AI_TOKENID_STRING;
 const PWD = 'TokenPass123!';
 
 async function postJson(endpoint, body) {

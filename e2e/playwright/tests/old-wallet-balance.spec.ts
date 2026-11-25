@@ -16,8 +16,8 @@ async function l0Up(request: APIRequestContext, base: string): Promise<boolean> 
 }
 
 // e2e test for the legacy .wallet import -> balance fix:
-//   imports the old Java protobuf wallet (packages/bigtangle-ts/test/oldwallet/
-//   java-encrypted.wallet, password "bigtangle", legacy secp256k1 EC key,
+//   imports the old Java protobuf wallet (packages/bigt-ai-ts/test/oldwallet/
+//   java-encrypted.wallet, password "bigt-ai", legacy secp256k1 EC key,
 //   testnet address mkzY5JpvC9hMb59rh4hHDjx3JvnFqWFBC7) and verifies the
 //   wallet's balance is shown. The balance/UTXO queries must derive the EC
 //   pubKeyHash (not a PQ hash) — regression for the old-wallet import bug.
@@ -25,8 +25,8 @@ async function l0Up(request: APIRequestContext, base: string): Promise<boolean> 
 // (e.g. `cd ../blockchain && helper/fulltest/remote.sh infra`). e2etest.sh runs
 // the infra on other ports and exports E2E_SERVER_URL — prefer it over the
 // legacy 24089 default. A trailing slash is required for the SDK funding calls.
-const WALLET_FILE = path.resolve(__dirname, '../../../packages/bigtangle-ts/test/oldwallet/java-encrypted.wallet');
-const OLD_PASSWORD = 'bigtangle';
+const WALLET_FILE = path.resolve(__dirname, '../../../packages/bigt-ai-ts/test/oldwallet/java-encrypted.wallet');
+const OLD_PASSWORD = 'bigt-ai';
 const NEW_PASSWORD = 'TestPassword123!';
 const L0_URL = (process.env.E2E_L0_URL || process.env.E2E_SERVER_URL || 'http://127.0.0.1:24089').replace(/\/+$/, '') + '/';
 const L1_URL = process.env.E2E_L1_URL || 'http://127.0.0.1:24086';
@@ -46,7 +46,7 @@ test.describe('Old .wallet import shows balance (java-encrypted.wallet)', () => 
 
     // 0) Fund the legacy EC address with real on-chain BIG from the genesis
     //    wallet (ML-DSA seed 0x01), the same way the Java remote tests do.
-    const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+    const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
     const ecKey = sdk.ECKey.fromPrivate(sdk.Utils.HEX.decode(EC_PRIVATE_KEY), true);
     await fundFromGenesisWallet(L0_URL, [ecKey], BigInt(1e8));
     await waitForConfirmedBc(ecKey, L0_URL);

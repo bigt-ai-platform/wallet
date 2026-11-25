@@ -16,8 +16,8 @@ export interface PlainWalletKey {
   keyType?: string;
   /** Network the EC address was derived on (EC keys only). */
   network?: string;
-  /** Wallet role: the Bigtangle key or the Ethereum (EVM) key. */
-  role?: 'bigtangle' | 'ethereum';
+  /** Wallet role: the Bigt-Ai key or the Ethereum (EVM) key. */
+  role?: 'bigt-ai' | 'ethereum';
 }
 
 export interface PlainWalletJson {

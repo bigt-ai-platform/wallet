@@ -15,7 +15,7 @@ import {
   UTXO,
   Utils,
   escrowSpendAmount,
-} from "bigtangle-ts";
+} from "bigt-ai-ts";
 import { didFromPQKey } from "did/pq";
 import type { SettlementOutput } from "p2p-protocol";
 import { buildApp } from "../src/server.js";
@@ -33,7 +33,7 @@ import type { P2pSwapEvent } from "../src/types.js";
 
 const params = MainNetParams.get();
 
-/** Deterministic 32-byte ML-DSA seeds (same pattern as bigtangle-ts EscrowTest). */
+/** Deterministic 32-byte ML-DSA seeds (same pattern as bigt-ai-ts EscrowTest). */
 function pqKey(seedByte: number): PQKey {
   const seed = new Uint8Array(32);
   seed[31] = seedByte;

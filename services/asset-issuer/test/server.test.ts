@@ -4,7 +4,7 @@ import type { AssetConfig } from '../src/config.js';
 import { MemoryStore } from '../src/store.js';
 import { buildServer, advance } from '../src/server.js';
 import { authFromEnv, signRequest } from '../src/auth.js';
-import { PQKey, TestParams, Utils } from 'bigtangle-ts';
+import { PQKey, TestParams, Utils } from 'bigt-ai-ts';
 import {
   REDEEM_INTENT_DOMAIN, intentHash, type RedeemIntent,
 } from '../src/intent.js';
@@ -22,6 +22,8 @@ beforeEach(async () => {
     store,
     now: () => `2026-01-01T00:00:0${tick++}.000Z`,
     newId: () => `op${tick}`,
+    mintToken: 'mint-secret',
+    verifyRedemption: async () => 'ok',
   });
 });
 
@@ -129,36 +131,43 @@ describe('transfers', () => {
 });
 
 describe('mint requests', () => {
+  const mint = (payload: Record<string, unknown>, token = 'mint-secret') => app.inject({
+    method: 'POST',
+    url: '/mint-requests',
+    payload,
+    headers: { 'x-mint-token': token },
+  });
+
   it('refuses a mint with no reserve credited', async () => {
-    const res = await app.inject({
-      method: 'POST', url: '/mint-requests',
-      payload: { account: ACCOUNT, assetId: 'hkd', amount: '10' },
-    });
+    const res = await mint({ account: ACCOUNT, assetId: 'hkd', amount: '10' });
     expect(res.statusCode).toBe(409);
+  });
+
+  it('refuses the wallet bearer without the operator mint credential', async () => {
+    await seedReserve('hkd', 100n, 0n);
+    const body = { account: ACCOUNT, assetId: 'hkd', amount: '10' };
+    // The wallet's public bearer must not reach mint authority.
+    const bearerOnly = await app.inject({
+      method: 'POST', url: '/mint-requests', payload: body,
+      headers: { authorization: 'Bearer public-wallet-token' },
+    });
+    expect(bearerOnly.statusCode).toBe(403);
+    expect((await mint(body, 'wrong')).statusCode).toBe(403);
   });
 
   it('refuses a mint above the reserve and accepts one within it', async () => {
     await seedReserve('hkd', 100n, 0n);
-    const tooMuch = await app.inject({
-      method: 'POST', url: '/mint-requests',
-      payload: { account: ACCOUNT, assetId: 'hkd', amount: '101' },
-    });
+    const tooMuch = await mint({ account: ACCOUNT, assetId: 'hkd', amount: '101' });
     expect(tooMuch.statusCode).toBe(409);
 
-    const ok = await app.inject({
-      method: 'POST', url: '/mint-requests',
-      payload: { account: ACCOUNT, assetId: 'hkd', amount: '100' },
-    });
+    const ok = await mint({ account: ACCOUNT, assetId: 'hkd', amount: '100' });
     expect(ok.statusCode).toBe(200);
     expect((ok.json() as { status: string }).status).toBe('pending');
   });
 
   it('does not debit supply at request time — only the executor does', async () => {
     await seedReserve('hkd', 100n, 0n);
-    await app.inject({
-      method: 'POST', url: '/mint-requests',
-      payload: { account: ACCOUNT, assetId: 'hkd', amount: '100' },
-    });
+    await mint({ account: ACCOUNT, assetId: 'hkd', amount: '100' });
     const reserve = await store.getReserve('hkd');
     expect(reserve?.supplyRaw).toBe(0n);
   });
@@ -166,6 +175,7 @@ describe('mint requests', () => {
 
 describe('signed redeem intents', () => {
   const DESTINATION = '0x2222222222222222222222222222222222222222';
+  const L1_TX = '0x' + 'ab'.repeat(32);
   const pq = PQKey.fromMLDSA(new Uint8Array(32).fill(9));
   const account = pq.toAddressString(new TestParams());
 
@@ -176,6 +186,7 @@ describe('signed redeem intents', () => {
     account,
     amountRaw: '2000000',
     destination: DESTINATION,
+    l1TxHash: L1_TX,
     nonce: 'nonce-0001',
     expiry: Date.now() + 60_000,
     ...over,
@@ -188,6 +199,7 @@ describe('signed redeem intents', () => {
       assetId: value.assetId,
       amount: value.amountRaw,
       destination: value.destination,
+      l1TxHash: value.l1TxHash,
       nonce: value.nonce,
       expiry: value.expiry,
       keyType: 'PQ',
@@ -214,7 +226,54 @@ describe('signed redeem intents', () => {
     expect(balance?.pendingRaw).toBe(2_000_000n);
 
     const { id } = res.json() as { id: string };
-    expect((await store.getOperation(id))?.destination).toBe(DESTINATION);
+    const op = await store.getOperation(id);
+    expect(op?.destination).toBe(DESTINATION);
+    // The release is bound to the L1 return, not just to the signature.
+    expect(op?.ref).toEqual({ chain: 'l1-order', txHash: L1_TX, logIndex: 0 });
+  });
+
+  it('refuses a redemption whose L1 funding transfer is missing or unconfirmed', async () => {
+    await rebuild({
+      store,
+      now: () => `2026-01-01T00:00:0${tick++}.000Z`,
+      newId: () => `op${tick}`,
+      verifyRedemption: async () => 'pending',
+    });
+    const pending = await app.inject({ method: 'POST', url: '/redeem-intents', payload: body() });
+    expect(pending.statusCode).toBe(409);
+    expect((pending.json() as { retryable?: boolean }).retryable).toBe(true);
+
+    await rebuild({
+      store,
+      now: () => `2026-01-01T00:00:0${tick++}.000Z`,
+      newId: () => `op${tick}`,
+      verifyRedemption: async () => 'invalid',
+    });
+    const invalid = await app.inject({ method: 'POST', url: '/redeem-intents', payload: body() });
+    expect(invalid.statusCode).toBe(409);
+    // Nothing was reserved or debited.
+    expect((await store.getHolderBalance('gold', account))?.pendingRaw).toBe(0n);
+  });
+
+  it('fails closed when L1 redemption verification is not configured', async () => {
+    await rebuild({
+      store,
+      now: () => `2026-01-01T00:00:0${tick++}.000Z`,
+      newId: () => `op${tick}`,
+    });
+    const res = await app.inject({ method: 'POST', url: '/redeem-intents', payload: body() });
+    expect(res.statusCode).toBe(503);
+    expect((await store.getHolderBalance('gold', account))?.pendingRaw).toBe(0n);
+  });
+
+  it('refuses to reuse one L1 funding transfer for a second redemption', async () => {
+    expect((await app.inject({ method: 'POST', url: '/redeem-intents', payload: body() })).statusCode)
+      .toBe(200);
+    const second = await app.inject({
+      method: 'POST', url: '/redeem-intents',
+      payload: body({ intent: { nonce: 'nonce-0002' } }),
+    });
+    expect(second.statusCode).toBe(409);
   });
 
   it('rejects a replayed nonce', async () => {

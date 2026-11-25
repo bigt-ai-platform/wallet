@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PQKey } from "bigtangle-ts";
+import { PQKey } from "bigt-ai-ts";
 import { didFromPQKey, signChallengePQ } from "did/pq";
 import { recordDigest, verifyRecordSig, type AnchoredRecord } from "record-sig";
 import { p2pOrderRecord, p2pSwapRecord, type P2pOrderRecord, type P2pSwapRecord } from "p2p-protocol";

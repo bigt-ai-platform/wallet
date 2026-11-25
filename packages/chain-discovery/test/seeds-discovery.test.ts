@@ -70,7 +70,7 @@ describe('new seeds are usable without a client update', () => {
           res.end(
             JSON.stringify({
               serverInfoList: [
-                { url: nodeAUrl, servertype: 'bigtangle', chain: 'L0', status: 'active' },
+                { url: nodeAUrl, servertype: 'bigt-ai', chain: 'L0', status: 'active' },
                 { url: OTHER_CHAIN, chain: 'ordermatch', status: 'active' },
                 { url: deadUrl, chain: 'L0', status: 'active' },
               ],

@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import fs from 'node:fs';
 
 /**
  * Wallet-file save on the web build.
@@ -16,6 +17,7 @@ const EC_PUB = '024e3b81af9c2234cad09d679ce6035ed1392347ce64ce405f5dcd36228a25de
 const BTC_ADDRESS = '1FB3WSwtExGLQUmNp4AQF66tAwAQp6igW3';
 
 type PickerCall = { suggestedName?: string; content?: string };
+type WithCalls = { __pickerCalls: PickerCall[] };
 
 /** Plain EC wallet: loaded as-is, so the Keys screen is unlocked on boot. */
 async function seedPlainWallet(page: Page) {
@@ -60,25 +62,65 @@ async function gotoKeys(page: Page) {
   await expect(page.getByText('Manage Keys').first()).toBeAttached({ timeout: 10000 });
 }
 
-test('back up wallet file writes the JSON through the save picker', async ({ page }) => {
-  await stubSavePicker(page);
-  await seedPlainWallet(page);
-  await page.goto('/');
-  await gotoKeys(page);
+const DESKTOP_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36';
+const MOBILE_UA =
+  'Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Mobile Safari/537.36';
 
-  await page.getByTestId('keys-export-wallet').click();
+// The app picks the save strategy from `navigator.userAgent` (mobile Chrome's
+// picker writes a 0-byte file and then rejects with AbortError), and this spec
+// runs in the Pixel 7 project, so each runtime is pinned explicitly instead of
+// inheriting the device emulation.
+test.describe('desktop browser', () => {
+  test.use({ userAgent: DESKTOP_UA });
 
-  type WithCalls = { __pickerCalls: PickerCall[] };
-  await expect
-    .poll(() => page.evaluate(() => (globalThis as unknown as WithCalls).__pickerCalls.length), {
-      timeout: 20000,
-    })
-    .toBe(1);
+  test('back up wallet file writes the JSON through the save picker', async ({ page }) => {
+    await stubSavePicker(page);
+    await seedPlainWallet(page);
+    await page.goto('/');
+    await gotoKeys(page);
 
-  const calls = await page.evaluate(() => (globalThis as unknown as WithCalls).__pickerCalls);
-  expect(calls[0].suggestedName).toMatch(/^wallet_.*\.json$/);
-  const saved = JSON.parse(calls[0].content ?? '') as {
-    keys?: Array<{ address?: string; keyType?: string }>;
-  };
-  expect(saved.keys?.some((k) => k.keyType === 'EC' && k.address === BTC_ADDRESS)).toBe(true);
+    await page.getByTestId('keys-export-wallet').click();
+
+    await expect
+      .poll(() => page.evaluate(() => (globalThis as unknown as WithCalls).__pickerCalls.length), {
+        timeout: 20000,
+      })
+      .toBe(1);
+
+    const calls = await page.evaluate(() => (globalThis as unknown as WithCalls).__pickerCalls);
+    expect(calls[0].suggestedName).toMatch(/^wallet_.*\.json$/);
+    const saved = JSON.parse(calls[0].content ?? '') as {
+      keys?: Array<{ address?: string; keyType?: string }>;
+    };
+    expect(saved.keys?.some((k) => k.keyType === 'EC' && k.address === BTC_ADDRESS)).toBe(true);
+  });
+});
+
+test.describe('mobile browser', () => {
+  test.use({ userAgent: MOBILE_UA });
+
+  test('back up wallet file skips the picker and downloads the JSON', async ({ page }) => {
+    // The picker stub must stay unused: mobile Chrome's picker saves a 0-byte
+    // file, so the app has to fall back to the anchor download.
+    await stubSavePicker(page);
+    await seedPlainWallet(page);
+    await page.goto('/');
+    await gotoKeys(page);
+
+    const downloadPromise = page.waitForEvent('download', { timeout: 20000 });
+    await page.getByTestId('keys-export-wallet').click();
+    const download = await downloadPromise;
+    expect(download.suggestedFilename()).toMatch(/^wallet_.*\.json$/);
+
+    const saved = JSON.parse(fs.readFileSync((await download.path())!, 'utf8')) as {
+      keys?: Array<{ address?: string; keyType?: string }>;
+    };
+    expect(saved.keys?.some((k) => k.keyType === 'EC' && k.address === BTC_ADDRESS)).toBe(true);
+
+    const pickerCalls = await page.evaluate(
+      () => (globalThis as unknown as WithCalls).__pickerCalls.length
+    );
+    expect(pickerCalls).toBe(0);
+  });
 });

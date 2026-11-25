@@ -14,10 +14,10 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
   Address, Coin, Escrow, FreeStandingTransactionOutput, MainNetParams, PQKey, UTXO, Wallet, escrowSpendAmount,
-} from 'bigtangle-ts';
+} from 'bigt-ai-ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const L0 = (process.env.L0_URL || 'https://eu1.bigtangle.org').replace(/\/+$/, '') + '/';
+const L0 = (process.env.L0_URL || 'https://eu1.bigt-ai.org').replace(/\/+$/, '') + '/';
 const ENGINE = (process.env.ENGINE_URL || 'https://wallet.bigt.ai/p2p').replace(/\/+$/, '');
 const KEYS_FILE = process.env.KEYS_FILE || resolve(HERE, 'demo-output', 'p2p-prod-keys.json');
 const rail = process.argv[2];

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ECKey, PQKey, Sha256Hash, Utils, SignatureBundle } from 'bigtangle-ts';
+import { ECKey, PQKey, Sha256Hash, Utils, SignatureBundle } from 'bigt-ai-ts';
 import { ECKey as DidECKey } from 'did';
 import { verifyRecordSig, type AnchoredRecord } from 'record-sig';
 import { P2P_ORDER_ID_RE } from 'p2p-protocol';

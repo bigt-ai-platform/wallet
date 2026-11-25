@@ -13,7 +13,7 @@ vi.mock('@capacitor/core', () => ({
   CapacitorHttp: { request: mocks.request },
 }));
 
-import { OkHttp3Util } from 'bigtangle-ts/dist/net/bigtangle/utils/OkHttp3Util';
+import { OkHttp3Util } from 'bigt-ai-ts/dist/net/bigt-ai/utils/OkHttp3Util';
 import {
   base64ToBytes,
   bytesToBase64,

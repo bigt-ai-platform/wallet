@@ -1,14 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   ECKey, MainNetParams, PQKey, SignatureBundle, TestParams, Utils,
-} from 'bigtangle-ts';
+} from 'bigt-ai-ts';
 import type { WalletKey } from '@/lib/walletKeys';
 import {
-  REDEEM_INTENT_DOMAIN, buildRedeemIntent, intentHash, intentMessage,
+  REDEEM_INTENT_DOMAIN, RedeemPendingError, buildRedeemIntent, intentHash, intentMessage,
   newNonce, signRedeemIntent, submitRedeemIntent,
 } from '../redeemIntent';
 
 const DESTINATION = '0x2222222222222222222222222222222222222222';
+const L1_TX = '0x' + 'ab'.repeat(32);
 
 function intentFor(account: string, network: 'Mainnet' | 'Test' = 'Test') {
   return buildRedeemIntent({
@@ -16,6 +17,7 @@ function intentFor(account: string, network: 'Mainnet' | 'Test' = 'Test') {
     account,
     amountRaw: '2000000',
     destination: DESTINATION,
+    l1TxHash: L1_TX,
     network,
     nonce: 'nonce-0001',
     expiry: 1_760_000_000_000,
@@ -32,6 +34,7 @@ describe('intent message', () => {
       account: 'abc',
       amountRaw: '2000000',
       destination: DESTINATION,
+      l1TxHash: L1_TX,
       nonce: 'nonce-0001',
       expiry: 1_760_000_000_000,
     }));
@@ -113,6 +116,7 @@ describe('submit', () => {
         assetId: 'usdt',
         amount: '2000000',
         destination: DESTINATION,
+        l1TxHash: L1_TX,
         nonce: 'nonce-0001',
         expiry: 1_760_000_000_000,
         keyType: 'PQ',
@@ -130,6 +134,16 @@ describe('submit', () => {
       json: async () => ({ error: 'insufficient balance' }),
     })));
     await expect(submitRedeemIntent(intent, proof, settings)).rejects.toThrow('insufficient balance');
+    vi.unstubAllGlobals();
+  });
+
+  it('marks an unconfirmed L1 transfer as retryable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({ error: 'not confirmed yet', retryable: true }),
+    })));
+    await expect(submitRedeemIntent(intent, proof, settings)).rejects.toBeInstanceOf(RedeemPendingError);
     vi.unstubAllGlobals();
   });
 });

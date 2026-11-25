@@ -72,7 +72,7 @@ for the MainNet prerequisite background.
 ## 6. Carried-over blockers from the old plan
 
 - **MainNetParams EC/PQ key mismatch** — the app is Test-network only until the
-  Bigtangle root keys accept post-quantum keys. Decide whether to fix before
+  Bigt-Ai root keys accept post-quantum keys. Decide whether to fix before
   any store listing (a testnet-only wallet on Play is possible but odd) — this
   gated the old plan and still gates a meaningful release.
 

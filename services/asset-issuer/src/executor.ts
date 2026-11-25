@@ -22,9 +22,19 @@ import {
 } from './domain.js';
 import type { Store } from './store.js';
 
+export interface SignerContext {
+  /** Stable key so an HSM/MPC signer can return the same payout on a retry. */
+  operationId: string;
+}
+
 export interface L1Minter {
   /** Reissue `l1Raw` of the asset's token to `account` on L1-order. */
-  mint(assetId: string, account: string, l1Raw: string): Promise<{ txHash: string }>;
+  mint(
+    assetId: string,
+    account: string,
+    l1Raw: string,
+    context?: SignerContext,
+  ): Promise<{ txHash: string }>;
 }
 
 export interface Treasury {
@@ -38,6 +48,7 @@ export interface Treasury {
     account: string,
     destination: string,
     externalRaw: string,
+    context?: SignerContext,
   ): Promise<{ txHash: string }>;
 }
 
@@ -52,6 +63,13 @@ export interface TransferExecutor {
  */
 export type DepositVerifier = (operation: Operation, asset: AssetConfig) => Promise<boolean>;
 
+/**
+ * Re-checks that a redemption is backed by its L1 funding transfer at execution
+ * time. A signed intent proves *who* chose the destination; the confirmed L1
+ * return proves the tokens were actually given up.
+ */
+export type RedemptionVerifier = (operation: Operation, asset: AssetConfig) => Promise<boolean>;
+
 export interface ExecutorOptions {
   store: Store;
   assets: AssetConfig[];
@@ -61,6 +79,8 @@ export interface ExecutorOptions {
   now: () => string;
   /** Required for chain-observed `deposit` operations (fail closed if absent). */
   verifyDeposit?: DepositVerifier;
+  /** Required for every release (fail closed if absent). */
+  verifyRedemption?: RedemptionVerifier;
 }
 
 export interface RunResult {
@@ -73,7 +93,7 @@ const MINT_KINDS = new Set<Operation['kind']>(['deposit', 'mint']);
 const RELEASE_KINDS = new Set<Operation['kind']>(['withdrawal', 'redeem']);
 
 export async function runOnce(options: ExecutorOptions, limit = 50): Promise<RunResult> {
-  const { store, assets, l1, treasury, transfers, now, verifyDeposit } = options;
+  const { store, assets, l1, treasury, transfers, now, verifyDeposit, verifyRedemption } = options;
   const result: RunResult = { completed: 0, failed: 0, skipped: 0 };
   // Atomic claim: the row is `processing` and owned by this worker before any
   // chain call, so two workers cannot mint the same operation.
@@ -103,21 +123,43 @@ export async function runOnce(options: ExecutorOptions, limit = 50): Promise<Run
             throw new Error('deposit is not present on chain at finality');
           }
         }
-        await executeMint(store, asset, operation, l1);
+        await executeMint(store, asset, operation, l1, now);
       } else if (RELEASE_KINDS.has(operation.kind)) {
-        await executeRelease(store, asset, operation, treasury);
+        if (!operation.ref) {
+          throw new Error('release has no L1 funding transfer');
+        }
+        if (!verifyRedemption) {
+          throw new Error('redemption verification is not configured (set L1_URL + L1_ISSUER_KEY)');
+        }
+        if (!(await verifyRedemption(operation, asset))) {
+          throw new Error('L1 redemption transfer is not confirmed at the issuer address');
+        }
+        await executeRelease(store, asset, operation, treasury, now);
       } else if (operation.kind === 'transfer') {
         if (!transfers) throw new Error('transfer executor not configured');
-        await transfers.transfer(asset.assetId, operation.account, operation.externalRef ?? '', operation.amountRaw);
-        await settleTransfer(store, asset, operation);
+        const { txHash } = await transfers.transfer(
+          asset.assetId,
+          operation.account,
+          operation.externalRef ?? '',
+          operation.amountRaw,
+        );
+        const settled = { ...operation, payoutRef: txHash, updatedAt: now() };
+        await store.saveOperation(settled);
+        await store.settleOperation(
+          { ...settled, status: 'completed' },
+          { kind: 'transfer', amountRaw: BigInt(operation.amountRaw) },
+        );
       } else {
         throw new Error(`unsupported operation kind: ${operation.kind}`);
       }
-      await store.saveOperation({ ...operation, status: 'completed', updatedAt: now() });
       result.completed += 1;
     } catch (error) {
+      // Keep a payout/mint hash that was persisted before the failure: on
+      // requeue it is the proof that the signer already ran.
+      const latest = await store.getOperation(operation.id);
       await store.saveOperation({
         ...operation,
+        ...(latest?.payoutRef ? { payoutRef: latest.payoutRef } : {}),
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
         updatedAt: now(),
@@ -133,24 +175,35 @@ async function executeMint(
   asset: AssetConfig,
   operation: Operation,
   l1: L1Minter,
+  now: () => string,
 ): Promise<void> {
-  const reserve = await reserveFor(store, asset.assetId);
   const amount = BigInt(operation.l1AmountRaw);
-  const caps = { maxSupplyRaw: asset.maxSupplyRaw, maxMintRaw: asset.maxMintRaw };
-  // Re-checked at execution time: the HTTP layer only saw an earlier snapshot.
-  if (!canMint(reserve, amount) || !withinCaps(reserve, amount, caps)) {
-    throw new Error('mint would exceed the reserve or the asset cap');
-  }
-  await l1.mint(asset.assetId, operation.account, operation.l1AmountRaw);
-  await store.putReserve({ ...reserve, supplyRaw: reserve.supplyRaw + amount });
+  let current = operation;
 
-  const balance = (await store.getHolderBalance(asset.assetId, operation.account)) ?? {
-    assetId: asset.assetId,
-    account: operation.account,
-    availableRaw: 0n,
-    pendingRaw: 0n,
-  };
-  await store.putHolderBalance({ ...balance, availableRaw: balance.availableRaw + amount });
+  // A requeue after the signer already ran must not mint twice: `payoutRef` is
+  // persisted before the ledger settles, so its presence means "minted, only
+  // the settlement is outstanding".
+  if (!current.payoutRef) {
+    const reserve = await reserveFor(store, asset.assetId);
+    const caps = { maxSupplyRaw: asset.maxSupplyRaw, maxMintRaw: asset.maxMintRaw };
+    // Re-checked at execution time: the HTTP layer only saw an earlier snapshot.
+    if (!canMint(reserve, amount) || !withinCaps(reserve, amount, caps)) {
+      throw new Error('mint would exceed the reserve or the asset cap');
+    }
+    const { txHash } = await l1.mint(
+      asset.assetId,
+      operation.account,
+      operation.l1AmountRaw,
+      { operationId: operation.id },
+    );
+    current = { ...current, payoutRef: txHash, updatedAt: now() };
+    await store.saveOperation(current);
+  }
+
+  await store.settleOperation(
+    { ...current, status: 'completed', updatedAt: now() },
+    { kind: 'mint', amountRaw: amount },
+  );
 }
 
 function requireEvmAddress(value: string, name: string): string {
@@ -166,8 +219,8 @@ async function executeRelease(
   asset: AssetConfig,
   operation: Operation,
   treasury: Treasury,
+  now: () => string,
 ): Promise<void> {
-  const reserve = await reserveFor(store, asset.assetId);
   const amount = BigInt(operation.l1AmountRaw);
   // A release without a signed-intent destination is exactly the redirect bug:
   // fail closed rather than send to the L1 account or a DB-supplied address.
@@ -176,32 +229,30 @@ async function executeRelease(
   }
   const destination = requireEvmAddress(operation.destination, 'destination');
   const externalRaw = fromL1Amount(operation.l1AmountRaw, asset.l1Decimals, asset.externalDecimals);
-  await treasury.release(asset.assetId, operation.account, destination, externalRaw.toString());
-  // The token is now in issuer custody and is retired: supply and reserve both
-  // drop by the same L1 amount, preserving the invariant.
-  await store.putReserve({
-    ...reserve,
-    supplyRaw: reserve.supplyRaw > amount ? reserve.supplyRaw - amount : 0n,
-    reserveRaw: reserve.reserveRaw > amount ? reserve.reserveRaw - amount : 0n,
-  });
 
-  const balance = await store.getHolderBalance(asset.assetId, operation.account);
-  if (balance) {
-    await store.putHolderBalance({
-      ...balance,
-      pendingRaw: balance.pendingRaw > amount ? balance.pendingRaw - amount : 0n,
-    });
+  let current = operation;
+  if (!current.payoutRef) {
+    const reserve = await reserveFor(store, asset.assetId);
+    if (reserve.supplyRaw < amount) {
+      throw new Error('release would exceed the issued supply; refusing to pay out');
+    }
+    const { txHash } = await treasury.release(
+      asset.assetId,
+      operation.account,
+      destination,
+      externalRaw.toString(),
+      { operationId: operation.id },
+    );
+    current = { ...current, payoutRef: txHash, updatedAt: now() };
+    await store.saveOperation(current);
   }
-}
 
-async function settleTransfer(store: Store, asset: AssetConfig, operation: Operation): Promise<void> {
-  const amount = BigInt(operation.amountRaw);
-  const balance = await store.getHolderBalance(asset.assetId, operation.account);
-  if (!balance) return;
-  await store.putHolderBalance({
-    ...balance,
-    pendingRaw: balance.pendingRaw > amount ? balance.pendingRaw - amount : 0n,
-  });
+  // Supply and reserve drop by the same L1 amount, preserving the invariant.
+  // The holder's pending amount is released only if its balance was debited.
+  await store.settleOperation(
+    { ...current, status: 'completed', updatedAt: now() },
+    { kind: 'release', amountRaw: amount },
+  );
 }
 
 async function reserveFor(store: Store, assetId: string): Promise<ReserveEntry> {

@@ -33,7 +33,7 @@
 import { assertAuthAllowsNetwork, authFromEnv } from './auth.js';
 import { EvmChainClient } from './chain.evm.js';
 import { assetsFromEnv, type AssetConfig } from './config.js';
-import { reconcile } from './domain.js';
+import { reconcile, type Operation } from './domain.js';
 import { runOnce, type DepositVerifier, type L1Minter, type Treasury } from './executor.js';
 import { runSweep } from './sweep.evm.js';
 import {
@@ -46,13 +46,14 @@ import {
 } from './signers.js';
 import { publishAttestations } from './attestation.js';
 import {
-  BigtangleL1Minter,
-  BigtangleRedemptionSource,
+  BigtAiL1Minter,
+  BigtAiRedemptionVerifier,
   RefusingTreasury,
   composeChainClient,
+  type RedemptionCheck,
   type WalletLike,
 } from './l1.js';
-import { createBigtangleWallet } from './l1.bigtangle.js';
+import { createBigtAiWallet } from './l1.bigt-ai.js';
 import { buildServer } from './server.js';
 import { MemoryStore, type Store } from './store.js';
 import { PgStore } from './store.pg.js';
@@ -90,6 +91,8 @@ export interface CliOptions {
   treasuryCommand?: string;
   treasuryLive: boolean;
   signerTimeoutMs: number;
+  /** Operator credential for `/mint-requests`; absent = mint API disabled. */
+  mintToken?: string;
   sweep: SweepConfig;
 }
 
@@ -153,6 +156,7 @@ export function parseCli(argv: string[], env: NodeJS.ProcessEnv = process.env): 
       : {}),
     treasuryLive: env.ALLOW_LIVE_TREASURY === '1',
     signerTimeoutMs,
+    ...(env.MINT_API_TOKEN?.trim() ? { mintToken: env.MINT_API_TOKEN.trim() } : {}),
     sweep: {
       live: env.ALLOW_LIVE_SWEEP === '1',
       minTokenRaw: bigintEnv(env, 'SWEEP_MIN_RAW', '0'),
@@ -178,6 +182,8 @@ export interface Pipeline {
   live: boolean;
   /** Set when an EVM deposit source exists; the executor fails closed without it. */
   verifyDeposit?: DepositVerifier;
+  /** Set when the issuer L1 wallet exists; every release fails closed without it. */
+  verifyRedemption?: (operation: Operation, asset: AssetConfig) => Promise<RedemptionCheck>;
   close: () => Promise<void>;
 }
 
@@ -187,18 +193,17 @@ function missing(reason: string) {
 
 export function buildPipeline(options: CliOptions, wallet?: WalletLike): Pipeline {
   const store: Store = options.databaseUrl ? new PgStore(options.databaseUrl) : new MemoryStore();
-  // In `command` mode no L1 key exists in this process: the HSM/MPC service
-  // owns reissue+pay, so there is also no local redemption scanner.
-  const walletLike = options.l1Signer === 'local'
-    ? wallet
-      ?? (options.l1Url && options.issuerKey
-        ? createBigtangleWallet({
-          url: options.l1Url,
-          network: options.network,
-          issuerKeyHex: options.issuerKey,
-        })
-        : undefined)
-    : undefined;
+  // A read-only wallet is enough to verify a redemption's L1 return, so `serve`
+  // can verify even when minting runs through an HSM/MPC command. Only
+  // `L1_SIGNER=local` may use the same wallet to sign a mint.
+  const verificationWallet = wallet ?? (options.l1Url && options.issuerKey
+    ? createBigtAiWallet({
+      url: options.l1Url,
+      network: options.network,
+      issuerKeyHex: options.issuerKey,
+    })
+    : undefined);
+  const walletLike = options.l1Signer === 'local' ? verificationWallet : undefined;
 
   const deposits = options.ethRpcUrl
     ? new EvmChainClient({
@@ -213,27 +218,30 @@ export function buildPipeline(options: CliOptions, wallet?: WalletLike): Pipelin
       mapAccount: (from, asset) => (asset.depositAddressMode === 'per-user' ? undefined : from),
     })
     : undefined;
-  const redemptions = walletLike
-    ? new BigtangleRedemptionSource(walletLike, options.assets)
+  // Redemptions are intent-driven now: a bare L1 transfer to the issuer has no
+  // destination, so scanning it would only create releases that must fail and
+  // would consume the chain reference a signed intent needs. `BigtAiRedemptionSource`
+  // stays available for diagnostics but is not part of the live pipeline.
+  const verifier = verificationWallet
+    ? new BigtAiRedemptionVerifier(verificationWallet, options.assets)
     : undefined;
 
   return {
     store,
     assets: options.assets,
-    ...(deposits && redemptions
-      ? { chain: composeChainClient(deposits, redemptions) }
-      : deposits
-        ? { chain: composeChainClient(deposits, { redemptions: async () => [] }) }
-        : {}),
+    ...(deposits
+      ? { chain: composeChainClient(deposits, { redemptions: async () => [] }) }
+      : {}),
     minter: options.l1Signer === 'command' && options.l1MintCommand
       ? new CommandL1Minter(options.l1MintCommand, execCommandRunner(options.signerTimeoutMs))
       : walletLike
-        ? new BigtangleL1Minter({ wallet: walletLike, assets: options.assets, live: options.live })
+        ? new BigtAiL1Minter({ wallet: walletLike, assets: options.assets, live: options.live })
         : missing('set L1_URL + L1_ISSUER_KEY or L1_MINT_COMMAND'),
     treasury: options.treasuryLive && options.treasuryCommand
       ? new CommandTreasury(options.treasuryCommand, execCommandRunner(options.signerTimeoutMs))
       : new RefusingTreasury(),
     ...(deposits ? { verifyDeposit: (op, asset) => deposits.verifyDeposit(op, asset) } : {}),
+    ...(verifier ? { verifyRedemption: (op, asset) => verifier.check(op, asset) } : {}),
     fromBlock: options.fromBlock,
     live: options.live,
     close: async () => {
@@ -253,16 +261,38 @@ export interface PassSummary {
 export async function runPass(pipeline: Pipeline): Promise<PassSummary> {
   const summary: PassSummary = { deposits: null, redemptions: null, executed: null, attestations: 0, breaches: 0 };
   if (pipeline.chain) {
-    summary.deposits = await scanDeposits({
-      store: pipeline.store,
-      client: pipeline.chain,
-      assets: pipeline.assets,
-      now: () => new Date().toISOString(),
-      newId: () => `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-    }, pipeline.fromBlock);
+    // Catch up to the finalized head instead of re-reading one fixed window:
+    // the cursor is only advanced after a window's deposits are committed, so a
+    // restart resumes and a failed window is retried (idempotently).
+    const chain = pipeline.chain;
+    const window = chain.depositWindow ?? 2000;
+    const cursorChain = 'ethereum';
+    const cursor = await pipeline.store.getScanCursor(cursorChain);
+    let from = cursor ?? pipeline.fromBlock;
+    const head = await chain.finalizedBlock(cursorChain);
+    summary.deposits = { recorded: 0, skipped: 0, deferred: 0 };
+    let highestScanned = -1;
+    for (let windows = 0; from <= head && windows < 200; windows += 1) {
+      const to = Math.min(head, from + window - 1);
+      const result = await scanDeposits({
+        store: pipeline.store,
+        client: chain,
+        assets: pipeline.assets,
+        now: () => new Date().toISOString(),
+        newId: () => `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+      }, from, to);
+      summary.deposits.recorded += result.recorded;
+      summary.deposits.skipped += result.skipped;
+      summary.deposits.deferred += result.deferred;
+      highestScanned = to;
+      from = to + 1;
+    }
+    if (highestScanned >= 0 && (cursor === undefined || highestScanned + 1 > cursor)) {
+      await pipeline.store.putScanCursor(cursorChain, highestScanned + 1);
+    }
     summary.redemptions = await scanRedemptions({
       store: pipeline.store,
-      client: pipeline.chain,
+      client: chain,
       assets: pipeline.assets,
       now: () => new Date().toISOString(),
       newId: () => `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
@@ -275,6 +305,12 @@ export async function runPass(pipeline: Pipeline): Promise<PassSummary> {
     treasury: pipeline.treasury,
     now: () => new Date().toISOString(),
     ...(pipeline.verifyDeposit ? { verifyDeposit: pipeline.verifyDeposit } : {}),
+    ...(pipeline.verifyRedemption
+      ? {
+        verifyRedemption: async (op: Operation, asset: AssetConfig) =>
+          (await pipeline.verifyRedemption!(op, asset)) === 'ok',
+      }
+      : {}),
   });
   summary.attestations = (await publishAttestations({
     store: pipeline.store,
@@ -331,6 +367,8 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
         ...(process.env.DEPOSIT_XPUB ? { depositXpub: process.env.DEPOSIT_XPUB } : {}),
         ...(process.env.DEPOSIT_XPUB_PATH ? { depositXpubPath: process.env.DEPOSIT_XPUB_PATH } : {}),
         ...(process.env.DEPOSIT_ASSET_ID ? { defaultDepositAssetId: process.env.DEPOSIT_ASSET_ID } : {}),
+        ...(options.mintToken ? { mintToken: options.mintToken } : {}),
+        ...(pipeline.verifyRedemption ? { verifyRedemption: pipeline.verifyRedemption } : {}),
         network: options.network,
         auth,
       }).listen({

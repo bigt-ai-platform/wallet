@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Address, ECKey, MainNetParams, TestParams } from "bigtangle-ts";
+import { Address, ECKey, MainNetParams, TestParams } from "bigt-ai-ts";
 import { escrowAddress, escrowRedeemScript, settlementParams } from "../src/escrow.js";
 
 const a = ECKey.createNewKey();

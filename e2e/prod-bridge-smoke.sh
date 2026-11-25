@@ -13,7 +13,7 @@
 #   # fund the SHARED test wallet (ML-DSA seed 0x01) on another chain instead of
 #   # a throwaway key — the prerequisite for a Remote*IT run there:
 #   BRIDGE_CHAIN_ID=prediction BRIDGE_AMOUNT_BIG=1 \
-#     BRIDGE_BENEFICIARY_SEED=0101…01 PROD_L1_URL=https://ordereu1.bigtangle.org/ \
+#     BRIDGE_BENEFICIARY_SEED=0101…01 PROD_L1_URL=https://ordereu1.bigt-ai.org/ \
 #     ./e2e/prod-bridge-smoke.sh
 #
 # Prerequisites (one-time):
@@ -34,8 +34,8 @@ BRIDGE_CHAIN_ID="${BRIDGE_CHAIN_ID:-ordermatch}"
 # throwaway key, e.g. the shared test wallet 0101…01 — then a Remote*IT on that
 # chain has BIG. Default empty = throwaway key (plain mint-path smoke).
 BRIDGE_BENEFICIARY_SEED="${BRIDGE_BENEFICIARY_SEED:-}"
-PROD_URL="${PROD_URL:-https://eu1.bigtangle.org/}"
-PROD_L1_URL="${PROD_L1_URL:-https://ordereu1.bigtangle.org/}"
+PROD_URL="${PROD_URL:-https://eu1.bigt-ai.org/}"
+PROD_L1_URL="${PROD_L1_URL:-https://ordereu1.bigt-ai.org/}"
 NET_PARAMS="${NET_PARAMS:-main}"
 
 # 1 BIG = 10^6 sat on this network.
@@ -53,9 +53,9 @@ echo "extra args:  $EXTRA_ARGS"
 echo ""
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
-  echo "(dry run) PROD_URL=$PROD_URL PROD_L1_URL=$PROD_L1_URL NET_PARAMS=$NET_PARAMS EXTRA_ARGS='$EXTRA_ARGS' $HELPER net.bigtangle.server.remote.RemoteBridgeIT"
+  echo "(dry run) PROD_URL=$PROD_URL PROD_L1_URL=$PROD_L1_URL NET_PARAMS=$NET_PARAMS EXTRA_ARGS='$EXTRA_ARGS' $HELPER net.bigt-ai.server.remote.RemoteBridgeIT"
   exit 0
 fi
 
 exec env PROD_URL="$PROD_URL" PROD_L1_URL="$PROD_L1_URL" NET_PARAMS="$NET_PARAMS" \
-  EXTRA_ARGS="$EXTRA_ARGS" "$HELPER" net.bigtangle.server.remote.RemoteBridgeIT
+  EXTRA_ARGS="$EXTRA_ARGS" "$HELPER" net.bigt-ai.server.remote.RemoteBridgeIT

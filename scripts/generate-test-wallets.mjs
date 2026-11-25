@@ -1,17 +1,17 @@
-// generate-wallets.mjs — create a bigtangle app-format wallet JSON per test key
-// (TestKeys) using the bigtangle-ts client. Writes to ../blockchain/helper/test/wallet/
+// generate-wallets.mjs — create a bigt-ai app-format wallet JSON per test key
+// (TestKeys) using the bigt-ai-ts client. Writes to ../blockchain/helper/test/wallet/
 //
 // Usage: node generate-wallets.mjs [password]
-//   password defaults to "bigtangle" (documented in README.md).
+//   password defaults to "bigt-ai" (documented in README.md).
 //
 // Produces per role:
 //   <role>-wallet.json        plain SerializedWallet (scripts/harness)
 //   <role>-wallet.enc.json    encrypted (app "Load from file" format) with <password>
-import { PQKey, Address, TestParams, Utils } from '../packages/bigtangle-ts/dist/index.js';
-import { KeyCrypterScrypt } from '../packages/bigtangle-ts/dist/net/bigtangle/crypto/KeyCrypterScrypt.js';
+import { PQKey, Address, TestParams, Utils } from '../packages/bigt-ai-ts/dist/index.js';
+import { KeyCrypterScrypt } from '../packages/bigt-ai-ts/dist/net/bigt-ai/crypto/KeyCrypterScrypt.js';
 
 const OUT = new URL('../../blockchain/helper/test/wallet/', import.meta.url);
-const PASSWORD = process.argv[2] || 'bigtangle';
+const PASSWORD = process.argv[2] || 'bigt-ai';
 
 // role | seed byte (repeated 32x) — matches helper/test/TestKeys
 const KEYS = [

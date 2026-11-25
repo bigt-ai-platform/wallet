@@ -16,7 +16,8 @@ import { Pool } from 'pg';
 import type { AssetConfig } from './config.js';
 import type { AttestationRecord, Operation, OperationStatus, ReserveEntry } from './domain.js';
 import type {
-  DepositAddressRecord, HolderBalance, RedeemIntentRecord, Store,
+  DepositAddressRecord, HolderBalance, RedeemIntentRecord, RedeemRequestResult,
+  ReserveDelta, SettleEffect, Store,
 } from './store.js';
 
 interface OperationRow {
@@ -33,6 +34,7 @@ interface OperationRow {
   idempotency_key: string | null;
   external_ref: string | null;
   destination: string | null;
+  payout_ref: string | null;
   attempts: number;
   error: string | null;
   created_at: Date;
@@ -40,7 +42,20 @@ interface OperationRow {
 }
 
 const OPERATION_COLUMNS = `id, kind, asset_id, account, amount_raw, l1_amount_raw, status,
-  chain, tx_hash, log_index, idempotency_key, external_ref, destination, attempts, error, created_at, updated_at`;
+  chain, tx_hash, log_index, idempotency_key, external_ref, destination, payout_ref,
+  attempts, error, created_at, updated_at`;
+
+/** Placeholders for {@link OPERATION_COLUMNS}, shared by every insert path. */
+const OPERATION_VALUES = '($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)';
+
+function operationParams(op: Operation): unknown[] {
+  return [
+    op.id, op.kind, op.assetId, op.account, op.amountRaw, op.l1AmountRaw, op.status,
+    op.ref?.chain ?? null, op.ref?.txHash ?? null, op.ref?.logIndex ?? null,
+    op.idempotencyKey ?? null, op.externalRef ?? null, op.destination ?? null,
+    op.payoutRef ?? null, op.attempts, op.error ?? null, op.createdAt, op.updatedAt,
+  ];
+}
 
 interface DepositAddressRow {
   asset_id: string;
@@ -77,6 +92,7 @@ function toOperation(row: OperationRow): Operation {
     ...(row.idempotency_key ? { idempotencyKey: row.idempotency_key } : {}),
     ...(row.external_ref ? { externalRef: row.external_ref } : {}),
     ...(row.destination ? { destination: row.destination } : {}),
+    ...(row.payout_ref ? { payoutRef: row.payout_ref } : {}),
     attempts: row.attempts,
     ...(row.error ? { error: row.error } : {}),
     createdAt: row.created_at.toISOString(),
@@ -123,20 +139,16 @@ export class PgStore implements Store {
   async saveOperation(op: Operation): Promise<void> {
     await this.pool.query(
       `INSERT INTO operations (${OPERATION_COLUMNS})
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       VALUES ${OPERATION_VALUES}
        ON CONFLICT (id) DO UPDATE SET
          status = EXCLUDED.status,
          attempts = EXCLUDED.attempts,
          error = EXCLUDED.error,
          external_ref = EXCLUDED.external_ref,
          destination = EXCLUDED.destination,
+         payout_ref = EXCLUDED.payout_ref,
          updated_at = EXCLUDED.updated_at`,
-      [
-        op.id, op.kind, op.assetId, op.account, op.amountRaw, op.l1AmountRaw, op.status,
-        op.ref?.chain ?? null, op.ref?.txHash ?? null, op.ref?.logIndex ?? null,
-        op.idempotencyKey ?? null, op.externalRef ?? null, op.destination ?? null,
-        op.attempts, op.error ?? null, op.createdAt, op.updatedAt,
-      ],
+      operationParams(op),
     );
   }
 
@@ -384,6 +396,212 @@ export class PgStore implements Store {
       `SELECT COALESCE(MAX(address_index), -1) + 1 AS next FROM deposit_addresses`,
     );
     return Number(res.rows[0]?.next ?? 0);
+  }
+
+  async getScanCursor(chain: string): Promise<number | undefined> {
+    const res = await this.pool.query<{ block: string }>(
+      `SELECT block FROM scan_cursors WHERE chain = $1`, [chain],
+    );
+    const row = res.rows[0];
+    return row ? Number(row.block) : undefined;
+  }
+
+  async putScanCursor(chain: string, block: number): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO scan_cursors (chain, block, updated_at) VALUES ($1,$2,now())
+       ON CONFLICT (chain) DO UPDATE SET block = EXCLUDED.block, updated_at = now()`,
+      [chain, Math.max(0, Math.trunc(block))],
+    );
+  }
+
+  /**
+   * Reserve credit + operation insert in one transaction. The old two-step
+   * write could leave the reserve credited with no operation row, and the next
+   * pass (idempotent only on the operation) credited it again.
+   */
+  async creditDeposit(delta: ReserveDelta, op: Operation): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const inserted = await client.query(
+        `INSERT INTO operations (${OPERATION_COLUMNS})
+         VALUES ${OPERATION_VALUES}
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
+        operationParams(op),
+      );
+      if (inserted.rowCount !== 1) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      if (delta.reserveDeltaRaw > 0n || delta.dustDeltaRaw > 0n) {
+        // Upsert: the first deposit for an asset may arrive before any reserve
+        // row exists. `EXCLUDED` carries the delta, so a conflict adds to the
+        // stored value instead of overwriting it.
+        await client.query(
+          `INSERT INTO reserves (asset_id, reserve_raw, supply_raw, dust_raw, updated_at)
+           VALUES ($1,$2,0,$3,now())
+           ON CONFLICT (asset_id) DO UPDATE SET
+             reserve_raw = reserves.reserve_raw + EXCLUDED.reserve_raw,
+             dust_raw = reserves.dust_raw + EXCLUDED.dust_raw,
+             updated_at = now()`,
+          [delta.assetId, delta.reserveDeltaRaw.toString(), delta.dustDeltaRaw.toString()],
+        );
+      }
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * One transaction: lock the balance row, insert the operation (whose chain
+   * ref may only back one release), insert the intent (nonce/hash may only be
+   * used once) and debit the balance when it covers the amount. A worker can
+   * never claim the operation before the debit is committed.
+   */
+  async putRedeemRequest(
+    record: RedeemIntentRecord,
+    op: Operation,
+    debitRaw: bigint,
+  ): Promise<RedeemRequestResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const balance = await client.query<{ available_raw: string }>(
+        `SELECT available_raw FROM holder_balances
+          WHERE asset_id = $1 AND account = $2
+          FOR UPDATE`,
+        [record.assetId, record.account],
+      );
+      const insertedOp = await client.query(
+        `INSERT INTO operations (${OPERATION_COLUMNS})
+         VALUES ${OPERATION_VALUES}
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
+        operationParams(op),
+      );
+      if (insertedOp.rowCount !== 1) {
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'replay' };
+      }
+      const insertedIntent = await client.query(
+        `INSERT INTO redeem_intents
+           (asset_id, account, nonce, intent_hash, destination, amount_raw, expiry, operation_id, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT DO NOTHING
+         RETURNING asset_id`,
+        [
+          record.assetId, record.account, record.nonce, record.intentHash,
+          record.destination, record.amountRaw, record.expiry, record.operationId, record.createdAt,
+        ],
+      );
+      if (insertedIntent.rowCount !== 1) {
+        await client.query('ROLLBACK');
+        return { ok: false, reason: 'replay' };
+      }
+      const available = BigInt(balance.rows[0]?.available_raw ?? '0');
+      const debited = !!balance.rows[0] && available >= debitRaw;
+      if (debited) {
+        await client.query(
+          `UPDATE holder_balances
+              SET available_raw = available_raw - $3,
+                  pending_raw = pending_raw + $3,
+                  updated_at = now()
+            WHERE asset_id = $1 AND account = $2`,
+          [record.assetId, record.account, debitRaw.toString()],
+        );
+      }
+      await client.query('COMMIT');
+      return { ok: true, debited };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      // A lost race on either unique index is a replay, not a 500.
+      if ((error as { code?: string }).code === '23505') return { ok: false, reason: 'replay' };
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Complete the operation and apply its ledger effect under one row lock.
+   * `completed` is terminal, so a replayed settlement is a no-op instead of a
+   * second supply/balance write.
+   */
+  async settleOperation(op: Operation, effect: SettleEffect): Promise<boolean> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const current = await client.query<{ status: OperationStatus }>(
+        `SELECT status FROM operations WHERE id = $1 FOR UPDATE`, [op.id],
+      );
+      const row = current.rows[0];
+      if (!row) throw new Error(`unknown operation: ${op.id}`);
+      if (row.status === 'completed') {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      const amount = effect.amountRaw.toString();
+      if (effect.kind === 'mint') {
+        // The CHECK (supply_raw <= reserve_raw) rejects an over-issue here too.
+        const updated = await client.query(
+          `UPDATE reserves
+              SET supply_raw = supply_raw + $2, updated_at = now()
+            WHERE asset_id = $1`,
+          [op.assetId, amount],
+        );
+        if (updated.rowCount !== 1) throw new Error(`no reserve credited for ${op.assetId}`);
+        await client.query(
+          `INSERT INTO holder_balances (asset_id, account, available_raw, pending_raw, updated_at)
+           VALUES ($1,$2,$3,0,now())
+           ON CONFLICT (asset_id, account) DO UPDATE SET
+             available_raw = holder_balances.available_raw + EXCLUDED.available_raw,
+             updated_at = now()`,
+          [op.assetId, op.account, amount],
+        );
+      } else if (effect.kind === 'release') {
+        const updated = await client.query(
+          `UPDATE reserves
+              SET supply_raw = GREATEST(supply_raw - $2, 0),
+                  reserve_raw = GREATEST(reserve_raw - $2, 0),
+                  updated_at = now()
+            WHERE asset_id = $1`,
+          [op.assetId, amount],
+        );
+        if (updated.rowCount !== 1) throw new Error(`no reserve credited for ${op.assetId}`);
+        await client.query(
+          `UPDATE holder_balances
+              SET pending_raw = GREATEST(pending_raw - $3, 0), updated_at = now()
+            WHERE asset_id = $1 AND account = $2`,
+          [op.assetId, op.account, amount],
+        );
+      } else {
+        await client.query(
+          `UPDATE holder_balances
+              SET pending_raw = GREATEST(pending_raw - $3, 0), updated_at = now()
+            WHERE asset_id = $1 AND account = $2`,
+          [op.assetId, op.account, amount],
+        );
+      }
+      await client.query(
+        `UPDATE operations
+            SET status = 'completed', payout_ref = $2, error = NULL, updated_at = $3
+          WHERE id = $1`,
+        [op.id, op.payoutRef ?? null, op.updatedAt],
+      );
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

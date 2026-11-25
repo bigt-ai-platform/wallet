@@ -30,7 +30,7 @@ assumption; Medium = operational/privacy; Low = hygiene.
 
 | Key | Type / location today | Authority | Blast radius if compromised |
 |---|---|---|---|
-| `L1_ISSUER_KEY` | ML-DSA seed, env of the `loop` worker, loaded by `PQKey.fromPrivateKeyHex` (`l1.bigtangle.ts`) | reissue/mint + pay holder | **unbacked L1 supply**, up to asset caps |
+| `L1_ISSUER_KEY` | ML-DSA seed, env of the `loop` worker, loaded by `PQKey.fromPrivateKeyHex` (`l1.bigt-ai.ts`) | reissue/mint + pay holder | **unbacked L1 supply**, up to asset caps |
 | `ISSUER_SIGNERS` / `signnumber` | public keys + threshold in `ASSETS_JSON` | M-of-N reissuance | a stolen single share is not enough *if* threshold > 1 |
 | Chain **domain key** | operator/chain-held, required on top of the issuer key | validates reissuance | minting stops if lost; misuse is a chain-level event |
 | `DEPOSIT_XPUB` | public BIP32 xpub, env/config of `serve` | derive receive addresses | privacy (watch all addresses), **not** theft |
@@ -80,8 +80,8 @@ assumption; Medium = operational/privacy; Low = hygiene.
 | ID | Risk | Impact | Current control | Gap | Mitigation | Sev |
 |---|---|---|---|---|---|---|
 | C1 | Hot wallet key online | drains redemption float | `RefusingTreasury`; **implemented seam:** `TREASURY_RELEASE_COMMAND` gated by `ALLOW_LIVE_TREASURY=1` | destination binding + approval not implemented; keep the flag off | HSM/MPC + approval above threshold; float cap; resolve L1↔ETH at the signer | Critical |
-| C2 | Release destination not authenticated | attacker redirects a redemption | **implemented:** `/redeem-intents` verifies an L1-key signature over account+amount+destination+nonce/expiry; `operations.destination`; `executeRelease` refuses without it; `/deposit` has the signing card | — | keep observed L1 transfers failing closed; test the card on device | Critical |
-| C3 | Redeem from issuer float | releases value for its own stock | `BigtangleRedemptionSource` only reads `redemptionAddress` | a misconfig could point at the float | separate address, tests, reconcile supply vs reserve | High |
+| C2 | Release destination not authenticated | attacker redirects a redemption | **implemented:** `/redeem-intents` verifies an L1-key signature over account+amount+destination+`l1TxHash`+nonce/expiry; `operations.destination`; `executeRelease` refuses without it; `/deposit` has the signing card | — | keep observed L1 transfers failing closed; test the card on device | Critical |
+| C3 | Redeem from issuer float / stale credit | releases value without retiring the L1 tokens | **implemented:** the intent names the L1 funding tx and the release is refused unless a confirmed output of the exact token/amount pays `redemptionAddress`; the unique `(chain, tx_hash, log_index)` backs one release | an unsigned L1 transfer alone still cannot release | reconcile supply vs reserve; keep `redemptionAddress` separate from the float | High |
 | C4 | No finality before release | reorg after release | design says L1 finality | not coded | finality gate, idempotent release | High |
 | C5 | Approval bypass / replay | unauthorized release | — | no approval flow | signed intents, nonce/expiry, 2-person rule | High |
 
@@ -100,7 +100,7 @@ assumption; Medium = operational/privacy; Low = hygiene.
 
 | ID | Risk | Impact | Current control | Gap | Mitigation | Sev |
 |---|---|---|---|---|---|---|
-| E1 | No authentication on `serve` | anyone can `/transfers`, `/redeem-requests`, `/deposit-address` for any account | **implemented:** default-deny outside Test, `AUTH_MODE=bearer` or `hmac`, `/health` public | `bearer` is shared, not account-bound; `hmac` needs a signing client | set `hmac` (or a signing proxy) in production; keep the proxy; rate-limit | Critical |
+| E1 | No authentication on `serve` | anyone can `/transfers`, `/redeem-requests`, `/deposit-address` for any account | **implemented:** default-deny outside Test, `AUTH_MODE=bearer` or `hmac`, `/health` public; `/mint-requests` needs the separate operator `MINT_API_TOKEN` | `bearer` is shared, not account-bound; `hmac` needs a signing client | set `hmac` (or a signing proxy) in production; keep the proxy; rate-limit | Critical |
 | E2 | Account id spoofing | move another holder's balance | **implemented:** `hmac` ties `x-account` to the request account | `bearer` mode does not | require `hmac`/DID signatures for value routes; bearer only for reads if needed | Critical |
 | E3 | Address-allocation spam | DB growth / index exhaustion | unique constraints | unauthenticated | auth + per-account cap + rate limit | Medium |
 | E4 | Admin paths (`requeue`) | replay failed ops | code only | no role separation | admin auth + audit | High |
@@ -238,5 +238,5 @@ assumption; Medium = operational/privacy; Low = hygiene.
 
 **See also:** [`usdt-issuer-deposit-withdraw.md`](./usdt-issuer-deposit-withdraw.md),
 [`external-assets-operations.md`](./external-assets-operations.md),
-`services/asset-issuer/src/l1.bigtangle.ts`, `src/executor.ts`, `src/sweep.evm.ts`,
+`services/asset-issuer/src/l1.bigt-ai.ts`, `src/executor.ts`, `src/sweep.evm.ts`,
 `src/server.ts`, `src/store.pg.ts`.

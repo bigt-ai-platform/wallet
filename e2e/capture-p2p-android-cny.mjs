@@ -25,7 +25,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import { Address, MainNetParams, PQKey, Sha256Hash, Utils } from 'bigtangle-ts';
+import { Address, MainNetParams, PQKey, Sha256Hash, Utils } from 'bigt-ai-ts';
 import { didFromPQKey } from 'did/pq';
 
 const ROOT = resolve(import.meta.dirname, '..');

@@ -78,8 +78,8 @@ async function captureOne(browser, lang, shot) {
     // Switch the app's active language explicitly (browser locale does not
     // drive the app's i18n). The bundle exposes i18n on globalThis.
     await page.evaluate((code) => {
-      if (globalThis.__bigtangleI18n) {
-        globalThis.__bigtangleI18n.changeLanguage(code);
+      if (globalThis.__bigtAiI18n) {
+        globalThis.__bigtAiI18n.changeLanguage(code);
       }
     }, lang);
     await page.waitForTimeout(1000);

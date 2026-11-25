@@ -1,4 +1,4 @@
-# Predict — Kalshi/Polymarket-style Prediction Market on Bigtangle
+# Predict — Kalshi/Polymarket-style Prediction Market on Bigt-Ai
 
 Status: implemented (design proposal of 2026-10-10 kept below for history)
 Date: 2026-10-10, updated 2026-10-23
@@ -91,7 +91,7 @@ units, not ¢.
 | Collateral | USD ($1 = 1 share) | USDC on Polygon | BIG or USD-pegged currency token, per-event; pegged in from L0 via bridge |
 | Token model | Shares at an exchange (no transferable token) | CTF conditional tokens (ERC-1155-style) + split/merge | Native chain tokens YES/NO + **CTF-style split/merge** (decision 2) — the math is ported, the plumbing is native |
 | Oracle / resolution | The exchange itself resolves; legal liability is the bond (regulated clearinghouse as trusted oracle) | UMA optimistic oracle: propose with bond → challenge → token-holder vote; liar slashed | v1: 2-of-3 resolver committee + permissionless bonded disputes + liveness rules (§3.3); **phase 4: UMA-style staked oracle** |
-| Chain / infra | Off-chain (with crypto-settlement pilots) | Polygon PoS (external L1) | Dedicated bigtangle L1 (`prediction`) anchored to L0; inherits bigtangle PoS security (young validator set) |
+| Chain / infra | Off-chain (with crypto-settlement pilots) | Polygon PoS (external L1) | Dedicated bigt-ai L1 (`prediction`) anchored to L0; inherits bigt-ai PoS security (young validator set) |
 | Market making | Designated market makers at the central book | Open — anyone provides CLOB liquidity | Open — anyone can split/merge and place orders |
 | App / access | Kalshi app, KYC, geo-fenced | Web app, wallet connect (MetaMask etc.) | Integrated Expo wallet app; native chain — no web3 wallet glue |
 
@@ -119,7 +119,7 @@ compliance liability if real money is ever at stake (§8).
   `RemoteBinaryTests` is only a block-serialization round-trip).
 - **Primitives to build on:**
   - L1 order-match chain (`l1-order-server`): limit order books
-    (`bigtangle-servercore/.../OrderBook.java`), 8h order escrow with virtual
+    (`bigt-ai-servercore/.../OrderBook.java`), 8h order escrow with virtual
     payout txs (`ServiceBaseOrder`), token creation
     (`OrderMatchL1Params.java` allows `BLOCKTYPE_TOKEN_CREATION` — but **no
     contract-event blocks yet**).
@@ -197,7 +197,7 @@ compliance liability if real money is ever at stake (§8).
 
 | Key | Value |
 |---|---|
-| `classname` | `net.bigtangle.server.service.PredictionContract` |
+| `classname` | `net.bigt-ai.server.service.PredictionContract` |
 | `question` | market question text |
 | `collateralTokenid` | token id redeemable 1:1 per winning share |
 | `outcomeTokenids` | `["<YES tokenid>","<NO tokenid>"]` |
@@ -350,13 +350,13 @@ in v1, and deliberately keeps a compliance kill switch):
 
 | Component | Level | Notes |
 |---|---|---|
-| Consensus | inherited PoS | Same as ordermatch (`stakeDeposit`/slashing). Reality check: bigtangle L1 validator sets are young and small — consensus-grade decentralization is aspirational for all these chains equally |
+| Consensus | inherited PoS | Same as ordermatch (`stakeDeposit`/slashing). Reality check: bigt-ai L1 validator sets are young and small — consensus-grade decentralization is aspirational for all these chains equally |
 | Matching | ✅ fully on-chain | Deterministic engine in servercore, runs on every node — no operator discretion over fills |
 | Custody | ✅ non-custodial | Vault escrow + conservation asserted by every node; no operator can touch funds; `invalid` void guarantees exit |
 | Issuance | ⚠️ permissioned creation | Market creation needs the prediction chain's domain-signing authorization (Implementation update above); split/merge and trading stay open to anyone |
 | Resolution v1 | ⚠️ committee (2-of-3) | Narrowed from single-issuer; bonded permissionless disputes; liveness rules prevent vault hostage (§3.3). Still the trust bottleneck until phase 4 |
 | Dispute window | ⚠️ optimistic | Security = "≥1 honest watcher exists"; disputes are a permissionless right with bonds, not a favor from the resolvers |
-| App / RPC | ⚠️ trusted server | App trusts its L0/L1 RPC for chain data (standard light-client limitation; bigtangle's bridge SPV machinery is an upgrade path for client-side verification) |
+| App / RPC | ⚠️ trusted server | App trusts its L0/L1 RPC for chain data (standard light-client limitation; bigt-ai's bridge SPV machinery is an upgrade path for client-side verification) |
 | Kill switch | ❌ operator lever *by design* | Decision 1's compliance feature — geo-block/offline just this venue — also means operators/validators can halt it. Stated trade, not an accident |
 
 **Verdict:** v1 = Polymarket-grade custody + committee-grade (not
@@ -391,7 +391,7 @@ are the availability/systemic risks.
 
 ## 5. Client SDK (TS, phase 2)
 
-`packages/bigtangle-ts`: a `PredictionMarket` helper module on top of the
+`packages/bigt-ai-ts`: a `PredictionMarket` helper module on top of the
 existing `payContract` / `contractEventCancel` / `searchContractTokens` /
 `outputsOfTokenid` calls:
 
@@ -402,7 +402,7 @@ existing `payContract` / `contractEventCancel` / `searchContractTokens` /
 
 Per the Java-first rule in AGENTS.md: write `PredictionMarketIT` as a Java
 remote test first (origin of truth), then port to
-`packages/bigtangle-ts/test/testintegration/PredictionMarket.test.ts`
+`packages/bigt-ai-ts/test/testintegration/PredictionMarket.test.ts`
 (gated by `INCLUDE_INTEGRATION_TESTS`).
 
 ## 6. App (expo-app, phase 3)
@@ -426,7 +426,7 @@ remote test first (origin of truth), then port to
   trading can happen on the new chain.
 - `services/http.ts` / `services/transaction.ts`: thin wrappers for the new
   SDK calls against the **prediction-chain URL** (new constant, same pattern
-  as the order-chain `TEST_L1_URL` / `ordereu1.bigtangle.org`).
+  as the order-chain `TEST_L1_URL` / `ordereu1.bigt-ai.org`).
 - Playwright: `predict.spec.ts` happy path (create → buy YES → resolve →
   redeem) on the `e2e/infra.sh` local stack.
 
@@ -444,7 +444,7 @@ remote test first (origin of truth), then port to
       (incl. 2-of-3 resolvers, single-dispute adjudication, bonded disputes,
       liveness rules — §3.3), fixed-supply assertion (§2.5), no-value-creation
       conservation unit tests.
-2. **SDK** (TS, `packages/bigtangle-ts`): helpers + unit tests; Java remote
+2. **SDK** (TS, `packages/bigt-ai-ts`): helpers + unit tests; Java remote
    IT first, then TS port; run `e2eremote.sh` (infra now starts three
    chains).
 3. **App** (`expo-app`): bridge/peg-in UI, predict tab, event detail,

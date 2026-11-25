@@ -19,9 +19,9 @@
  * retries (store never holds a state the chain seed lacks). No key / no URL →
  * no hook, which is the mock mode.
  */
-import { Coin, NetworkParameters, Transaction, Wallet } from "bigtangle-ts";
-import { Utils } from "bigtangle-ts";
-import { PQKey } from "bigtangle-ts";
+import { Coin, NetworkParameters, Transaction, Wallet } from "bigt-ai-ts";
+import { Utils } from "bigt-ai-ts";
+import { PQKey } from "bigt-ai-ts";
 import { didFromPQKey, signChallengePQ } from "did/pq";
 import { recordDigest } from "record-sig";
 import { p2pSwapRecord, type P2pSwapRecord } from "p2p-protocol";
@@ -41,7 +41,7 @@ export interface L1Anchor {
   resolveUrl?: () => string | null;
 }
 
-const BIG = NetworkParameters.getBIGTANGLE_TOKENID();
+const BIG = NetworkParameters.getBIGT_AI_TOKENID();
 
 /**
  * Resolve the engine's anchor identity from env, or null when incomplete.

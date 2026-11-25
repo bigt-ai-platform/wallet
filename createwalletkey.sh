@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# createwalletkey.sh — create a password-protected bigtangle wallet key file.
+# createwalletkey.sh — create a password-protected bigt-ai wallet key file.
 #
 # Writes the app's encrypted wallet JSON ({salt,iv,data,N,r,p}, scrypt+AES-CBC)
 # at <wallet-file>; readable again with ./walletkeys.sh.
@@ -27,12 +27,12 @@
 # Exit codes: 0 ok, 2 usage, 3 bad source wallet, 4 new password required,
 #             5 wrong source password, 6 output exists (use --force).
 #
-# Requires the workspace SDK build: packages/bigtangle-ts/dist/index.js
-#   npm --prefix packages/bigtangle-ts run build
+# Requires the workspace SDK build: packages/bigt-ai-ts/dist/index.js
+#   npm --prefix packages/bigt-ai-ts run build
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SDK="$ROOT/packages/bigtangle-ts/dist/index.js"
+SDK="$ROOT/packages/bigt-ai-ts/dist/index.js"
 
 PASSWORD=""
 IN_PASSWORD=""
@@ -98,7 +98,7 @@ fi
 
 if [ ! -f "$SDK" ]; then
   echo "error: SDK build not found: $SDK" >&2
-  echo "       run: npm --prefix packages/bigtangle-ts run build" >&2
+  echo "       run: npm --prefix packages/bigt-ai-ts run build" >&2
   exit 2
 fi
 

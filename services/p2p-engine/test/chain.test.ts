@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ECKey } from "bigtangle-ts";
+import { ECKey } from "bigt-ai-ts";
 import {
   HttpChainClient,
   confirmedTxToAddress,

@@ -48,8 +48,8 @@ import {
 } from "./netguard.js";
 import { hexToBytes } from "did";
 import { pqPubFromDid } from "did/pq";
-import { PQKey, Utils } from "bigtangle-ts";
-import type { Escrow } from "bigtangle-ts";
+import { PQKey, Utils } from "bigt-ai-ts";
+import type { Escrow } from "bigt-ai-ts";
 import {
   P2P_ORDER_ID_RE,
   checkP2pFill,

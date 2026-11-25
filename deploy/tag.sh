@@ -79,7 +79,7 @@ assert_mainnet_default
 # runtime in the browser (the v1.0.91 wallet shipped `checkP2pFill is not a
 # function` because p2p-protocol/dist predated the export while
 # p2pOrderBook.ts re-exported it). Order is dependency-first.
-for pkg in bigtangle-ts chain-discovery did mobile-control p2p-protocol record-sig; do
+for pkg in bigt-ai-ts chain-discovery did mobile-control p2p-protocol record-sig; do
   echo -e "${GREEN}--- build $pkg ---${NC}"
   ( cd "packages/$pkg" && yarn build )
 done

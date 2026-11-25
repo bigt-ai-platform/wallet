@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Regenerate the help-center PDF guides under docs/p2p-demo/assets from the
- * markdown sources in docs/guides. Renders a styled HTML page (bigtangle theme)
+ * markdown sources in docs/guides. Renders a styled HTML page (bigt-ai theme)
  * and prints it to PDF via headless Chromium — the same pipeline as
  * ../dai/scripts/docs-pdf.mts, adapted to this repo's layout.
  *

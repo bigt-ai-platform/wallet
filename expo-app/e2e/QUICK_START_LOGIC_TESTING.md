@@ -92,11 +92,11 @@ expect(result.direction).toBe('up');
 ```typescript
 // Verify token filter logic
 const tokens = [
-  { tokenname: 'BigTangle', tokenid: 'BIG123', description: 'Main' },
+  { tokenname: 'Bigt-Ai', tokenid: 'BIG123', description: 'Main' },
   { tokenname: 'Bitcoin', tokenid: 'BTC456', description: 'BTC' },
 ];
 const filtered = verifyTokenFilter(tokens, 'BIG');
-expect(filtered.length).toBe(2); // BigTangle + Bitcoin
+expect(filtered.length).toBe(2); // Bigt-Ai + Bitcoin
 ```
 
 ### Sorting

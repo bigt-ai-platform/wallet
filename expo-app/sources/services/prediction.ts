@@ -1,7 +1,7 @@
 /**
  * Prediction-market service (docs/prediction-market.md, l1-prediction-server).
  *
- * Wraps the bigtangle-ts prediction helpers against the L1-prediction chain:
+ * Wraps the bigt-ai-ts prediction helpers against the L1-prediction chain:
  * listing contract tokens (the events), reading positions, and submitting the
  * contract events (create/split/merge/resolve/dispute/redeem). Trading the
  * YES/collateral and NO/collateral pairs reuses the normal L1 order flow
@@ -26,7 +26,7 @@ import {
   PredictionMarketConfig,
   PredictionMarketOrders,
   type BookLevel,
-} from 'bigtangle-ts';
+} from 'bigt-ai-ts';
 import { httpService } from './http';
 import { orderOnLayer1 } from './transaction';
 import { parseTokenAmount } from '@/lib/tokenformat';
@@ -45,7 +45,7 @@ const CREATE_FEE = 1000n;
 export const PREDICTION_CHAIN_ID = 'ordermatch';
 
 /** The contract classname that marks a token as a prediction market. */
-export const PREDICTION_CLASSNAME = 'net.bigtangle.server.service.PredictionContract';
+export const PREDICTION_CLASSNAME = 'net.bigt-ai.server.service.PredictionContract';
 
 export type PredictionOracle = 'committee' | 'staked';
 /**
@@ -158,7 +158,7 @@ export function parsePredictionEvent(token: any): PredictionEvent | null {
     contractTokenid: String(token.tokenid),
     question: map.get('question') ?? '',
     supply: BigInt(map.get('S') ?? '0'),
-    collateralTokenid: map.get('collateralTokenid') ?? NetworkParameters.BIGTANGLE_TOKENID_STRING,
+    collateralTokenid: map.get('collateralTokenid') ?? NetworkParameters.BIGT_AI_TOKENID_STRING,
     outcomes,
     outcomeNames: names,
     yesTokenid: outcomes[0],

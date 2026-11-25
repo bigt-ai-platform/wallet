@@ -1,5 +1,5 @@
 /**
- * `bigtangle-seeds` registry client (pure; no React Native/storage imports, so
+ * `bigt-ai-seeds` registry client (pure; no React Native/storage imports, so
  * it is unit-testable and shared by `services/discovery.ts`).
  *
  * The registry is the live node list: a newly published seed is picked up here

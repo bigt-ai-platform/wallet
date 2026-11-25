@@ -10,7 +10,7 @@ import {
   SignatureBundle,
   Transaction,
   Utils,
-} from 'bigtangle-ts';
+} from 'bigt-ai-ts';
 import { buildEscrowSighash, buildEscrowSpend, signEscrow, vaultEnginePubkey, vaultMatchesAddress } from '../p2pEscrow';
 import {
   acceptCoopRelease,
@@ -26,7 +26,7 @@ import { pqDidFromKey } from '../p2pIdentity';
 
 const params = MainNetParams.get();
 
-/** Deterministic ML-DSA seeds — same helper the bigtangle-ts EscrowTest uses. */
+/** Deterministic ML-DSA seeds — same helper the bigt-ai-ts EscrowTest uses. */
 function key(seedByte: number): PQKey {
   const seed = new Uint8Array(32);
   seed[31] = seedByte;

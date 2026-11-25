@@ -181,7 +181,7 @@ resolve_android_sdk() {
 # browser (the v1.0.91 web build shipped `checkP2pFill is not a function`
 # because p2p-protocol/dist predated that export).
 build_workspace_packages() {
-  for pkg in bigtangle-ts chain-discovery did mobile-control p2p-protocol record-sig; do
+  for pkg in bigt-ai-ts chain-discovery did mobile-control p2p-protocol record-sig; do
     ( cd "$ROOT/packages/$pkg" && npm run build >/dev/null 2>&1 ) || die "build $pkg failed"
   done
 }

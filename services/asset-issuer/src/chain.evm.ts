@@ -72,6 +72,11 @@ export class EvmChainClient implements ChainClient {
     this.addressBatch = Math.max(1, options.addressBatch ?? 100);
   }
 
+  /** Inclusive block range one `deposits(fromBlock)` call scans. */
+  get depositWindow(): number {
+    return this.logChunk;
+  }
+
   async finalizedBlock(_chain: string): Promise<number> {
     const block = await this.rpc<{ number: string } | null>('eth_getBlockByNumber', ['finalized', false]);
     if (!block?.number) {
@@ -82,9 +87,9 @@ export class EvmChainClient implements ChainClient {
     return Number.parseInt(block.number, 16);
   }
 
-  async deposits(fromBlock: number): Promise<DepositObservation[]> {
+  async deposits(fromBlock: number, toBlock?: number): Promise<DepositObservation[]> {
     const out: DepositObservation[] = [];
-    const end = fromBlock + this.logChunk - 1;
+    const end = toBlock ?? fromBlock + this.logChunk - 1;
 
     for (const asset of this.assets) {
       if (!asset.enabled || !asset.contract) continue;

@@ -6,7 +6,7 @@ import {
   Utils,
   type Sha256Hash,
   type Transaction,
-} from 'bigtangle-ts';
+} from 'bigt-ai-ts';
 import {
   p2pReleaseRecord,
   validateP2pReleaseRecord,

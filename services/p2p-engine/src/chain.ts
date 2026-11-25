@@ -1,5 +1,5 @@
 /**
- * Bigtangle L0 chain evidence (docs/p2p.md). A lock/release is never "claimed",
+ * Bigt-Ai L0 chain evidence (docs/p2p.md). A lock/release is never "claimed",
  * it is proved: the engine reads the transaction status (and, for a lock, the
  * escrow UTXO) and fails closed on an unreachable node, a non-CONFIRMED status,
  * a wrong destination, or an insufficient amount.
@@ -38,7 +38,7 @@ export interface ChainTxStatus {
   status?: string;
 }
 
-/** Raw getOutputs/getOutputsHistory output JSON (bigtangle `UTXO` shape). */
+/** Raw getOutputs/getOutputsHistory output JSON (bigt-ai `UTXO` shape). */
 export interface RawUtxo {
   address?: string;
   /** Java `Coin` JSON: `{value, tokenHex}` (or a bare number/string). */

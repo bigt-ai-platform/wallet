@@ -25,7 +25,7 @@
 #   ./e2e/prod-prediction-soak.sh                     # 10 iterations (~30 min)
 #   ./e2e/prod-prediction-soak.sh 5                   # 5 iterations
 #   PREDICTION_SOAK_SECONDS=14400 ./e2e/prod-prediction-soak.sh   # 4h budget
-#   PREDICTION_TESTS=net.bigtangle.server.remote.RemotePredictionIT#testCreateSplitMergeLifecycle \
+#   PREDICTION_TESTS=net.bigt-ai.server.remote.RemotePredictionIT#testCreateSplitMergeLifecycle \
 #     ./e2e/prod-prediction-soak.sh                   # one scenario only
 #   DRY_RUN=1 ./e2e/prod-prediction-soak.sh           # plan + read-only preflight
 #
@@ -38,9 +38,9 @@
 # peg-in — see e2e/prod-bridge-smoke.sh).
 #
 # Env:
-#   PREDICTION_URL            L1-order API     (default https://ordereu1.bigtangle.org/)
-#   PROD_URL                  L0 API           (default https://eu1.bigtangle.org/)
-#   PROD_L1_URL               L1-order API     (default https://ordereu1.bigtangle.org/)
+#   PREDICTION_URL            L1-order API     (default https://ordereu1.bigt-ai.org/)
+#   PROD_URL                  L0 API           (default https://eu1.bigt-ai.org/)
+#   PROD_L1_URL               L1-order API     (default https://ordereu1.bigt-ai.org/)
 #   NET_PARAMS                default main
 #   PREDICTION_TESTS          test class/method(s) (default the whole IT)
 #   PREDICTION_SOAK_ITERS     iterations (default 10; positional arg wins)
@@ -66,11 +66,11 @@ BRIDGE="$ROOT/e2e/prod-bridge-smoke.sh"
 [[ -x "$BRIDGE" ]] || { echo "ERROR: $BRIDGE not found" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "ERROR: python3 required" >&2; exit 1; }
 
-PREDICTION_URL="${PREDICTION_URL:-https://ordereu1.bigtangle.org/}"
-PROD_URL="${PROD_URL:-https://eu1.bigtangle.org/}"
-PROD_L1_URL="${PROD_L1_URL:-https://ordereu1.bigtangle.org/}"
+PREDICTION_URL="${PREDICTION_URL:-https://ordereu1.bigt-ai.org/}"
+PROD_URL="${PROD_URL:-https://eu1.bigt-ai.org/}"
+PROD_L1_URL="${PROD_L1_URL:-https://ordereu1.bigt-ai.org/}"
 NET_PARAMS="${NET_PARAMS:-main}"
-PREDICTION_TESTS="${PREDICTION_TESTS:-net.bigtangle.server.remote.RemotePredictionIT}"
+PREDICTION_TESTS="${PREDICTION_TESTS:-net.bigt-ai.server.remote.RemotePredictionIT}"
 PREDICTION_SOAK_ITERS="${PREDICTION_SOAK_ITERS:-10}"
 PREDICTION_SOAK_SECONDS="${PREDICTION_SOAK_SECONDS:-0}"
 PREDICTION_MIN_CHAIN_ADVANCE="${PREDICTION_MIN_CHAIN_ADVANCE:-1}"

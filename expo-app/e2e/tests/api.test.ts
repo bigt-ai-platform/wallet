@@ -14,14 +14,14 @@ import {
   UTXO,
   Utils,
   Wallet,
-} from "bigtangle-ts";
-import { TokenType } from "bigtangle-ts/dist/net/bigtangle/core/TokenType";
-import { ReqCmd } from "bigtangle-ts/dist/net/bigtangle/params/ReqCmd";
-import { GetOutputsResponse } from "bigtangle-ts/dist/net/bigtangle/response/GetOutputsResponse";
+} from "bigt-ai-ts";
+import { TokenType } from "bigt-ai-ts/dist/net/bigt-ai/core/TokenType";
+import { ReqCmd } from "bigt-ai-ts/dist/net/bigt-ai/params/ReqCmd";
+import { GetOutputsResponse } from "bigt-ai-ts/dist/net/bigt-ai/response/GetOutputsResponse";
 import { RemoteTest } from "./RemoteTest";
-import { MemoInfo } from "bigtangle-ts/dist/net/bigtangle/core/MemoInfo";
-import { OkHttp3Util } from "bigtangle-ts/dist/net/bigtangle/utils/OkHttp3Util";
-import { WalletUtil } from "bigtangle-ts/dist/net/bigtangle/utils/WalletUtil";
+import { MemoInfo } from "bigt-ai-ts/dist/net/bigt-ai/core/MemoInfo";
+import { OkHttp3Util } from "bigt-ai-ts/dist/net/bigt-ai/utils/OkHttp3Util";
+import { WalletUtil } from "bigt-ai-ts/dist/net/bigt-ai/utils/WalletUtil";
 import {
   TEST_WALLETS,
   getAllUserKeys,
@@ -71,14 +71,14 @@ class RemoteFromAddressTests extends RemoteTest {
       [PQKey.fromPrivateKey(Utils.HEX.decode(RemoteFromAddressTests.yuanTokenPriv))],
       this.contextRoot,
     );
-    this.checkBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
+    this.checkBalance(NetworkParameters.BIGT_AI_TOKENID_STRING, [
       PQKey.fromPrivateKey(Utils.HEX.decode(RemoteFromAddressTests.yuanTokenPriv)),
     ]);
-    this.checkBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
+    this.checkBalance(NetworkParameters.BIGT_AI_TOKENID_STRING, [
       this.userkeys[0],
     ]);
 
-    this.checkBalance(NetworkParameters.BIGTANGLE_TOKENID_STRING, [
+    this.checkBalance(NetworkParameters.BIGT_AI_TOKENID_STRING, [
       this.userkeys[1],
     ]);
 
@@ -92,7 +92,7 @@ class RemoteFromAddressTests extends RemoteTest {
 
     // Wait for bc token balance to be available before buying
     await this.waitForBalance(
-      NetworkParameters.BIGTANGLE_TOKENID_STRING,
+      NetworkParameters.BIGT_AI_TOKENID_STRING,
       this.userkeys,
     );
 
@@ -160,7 +160,7 @@ class RemoteFromAddressTests extends RemoteTest {
       BigInt(1), // price per yuan token (reduced)
       null, //
       null, //
-      NetworkParameters.BIGTANGLE_TOKENID_STRING, // payment token (native)
+      NetworkParameters.BIGT_AI_TOKENID_STRING, // payment token (native)
       true, // is buy order
     );
     console.log(`Buy order result: ${bs ? bs.toString() : "null"}`);
@@ -436,7 +436,7 @@ class RemoteFromAddressTests extends RemoteTest {
       BigInt(1), // price per yuan token (reduced)
       null, //
       null, // to address
-      NetworkParameters.BIGTANGLE_TOKENID_STRING, // payment token (native)
+      NetworkParameters.BIGT_AI_TOKENID_STRING, // payment token (native)
       false, // is buy order - false means it's a sell order
     );
 

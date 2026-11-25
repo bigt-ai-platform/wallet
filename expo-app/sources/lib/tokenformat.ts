@@ -1,20 +1,20 @@
 /**
  * Per-token amount formatting, mirroring the Java reference:
  *
- * - Token.decimals default 0 (net.bigtangle.core.Token), the base token "bc"
- *   (BIG) uses NetworkParameters.BIGTANGLE_DECIMAL = 6.
+ * - Token.decimals default 0 (net.bigt-ai.core.Token), the base token "bc"
+ *   (BIG) uses NetworkParameters.BIGT_AI_DECIMAL = 6.
  * - Amounts are formatted the way Java's
  *   `MonetaryFormat.FIAT.format(value, token.getDecimals())` does
  *   (shift 0, minDecimals 0 → trailing zeros trimmed).
  */
-import { NetworkParameters } from 'bigtangle-ts';
+import { NetworkParameters } from 'bigt-ai-ts';
 
 /** Decimals of the base token "bc" (BIG). */
-export const BC_DECIMALS = NetworkParameters.BIGTANGLE_DECIMAL;
+export const BC_DECIMALS = NetworkParameters.BIGT_AI_DECIMAL;
 
 /**
  * Effective decimals for a token: the token metadata value when present,
- * else BIGTANGLE_DECIMAL for "bc", else 0 (Java Token default).
+ * else BIGT_AI_DECIMAL for "bc", else 0 (Java Token default).
  */
 export function decimalsFor(tokenid: string, tokenDecimals?: number | null): number {
   if (typeof tokenDecimals === 'number' && tokenDecimals >= 0) {
@@ -30,7 +30,7 @@ export function decimalsFor(tokenid: string, tokenDecimals?: number | null): num
  * base token "bc" and 6 for every token quote (e.g. CNY).
  */
 export function orderPriceShift(baseTokenId: string): number {
-  return baseTokenId === NetworkParameters.BIGTANGLE_TOKENID_STRING ? 0 : 6;
+  return baseTokenId === NetworkParameters.BIGT_AI_TOKENID_STRING ? 0 : 6;
 }
 
 /**

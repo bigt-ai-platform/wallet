@@ -14,7 +14,7 @@ import {
   type NetworkParameters,
   type Sha256Hash,
   type Transaction,
-} from 'bigtangle-ts';
+} from 'bigt-ai-ts';
 
 /**
  * Wallet-side escrow signing (docs/p2p.md — the settlement closure). The wallet
@@ -23,7 +23,7 @@ import {
  * signs its sighash with the wallet's PQ key, so the signature verifies over
  * there over identical bytes.
  *
- * Mirrors services/p2p-engine/src/escrowSpend.ts but with bigtangle-ts only:
+ * Mirrors services/p2p-engine/src/escrowSpend.ts but with bigt-ai-ts only:
  * the `did` package pulls in node:crypto (Metro-hostile), so the did:key
  * helpers are reimplemented here the same way `p2pIdentity.ts` does.
  */
@@ -72,7 +72,7 @@ export function escrowVault(
   }
 }
 
-/** One raw `getOutputsHistory` row (bigtangle `UTXO` JSON shape). */
+/** One raw `getOutputsHistory` row (bigt-ai `UTXO` JSON shape). */
 export interface EscrowHistoryOutput {
   hashHex?: string;
   blockHashHex?: string;

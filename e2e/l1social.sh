@@ -75,7 +75,7 @@ esac
 
 # ------------------------------------------------------------------- up -----
 
-if curl -sf "$BASE/" 2>/dev/null | grep -qi "bigtangle"; then
+if curl -sf "$BASE/" 2>/dev/null | grep -qi "bigt-ai"; then
   log "L1-SOCIAL already up at $BASE"
   exit 0
 fi
@@ -102,13 +102,13 @@ fi
 command -v mvn >/dev/null 2>&1 || fail "mvn not found"
 command -v java >/dev/null 2>&1 || fail "java not found"
 [ -f "$GENESIS_CSV" ] || fail "genesis CSV missing: $GENESIS_CSV"
-[ -d "$BC_ROOT/bigtangle-core/target/classes" ] || fail "bigtangle-core not built — run ./e2e/infra.sh up first"
+[ -d "$BC_ROOT/bigt-ai-core/target/classes" ] || fail "bigt-ai-core not built — run ./e2e/infra.sh up first"
 
 # PostgreSQL (same container auto-detect as remote.sh; role root/test1234).
 export PGPASSWORD="${PGPASSWORD:-test1234}"
 PG_CONTAINER="${PG_CONTAINER:-}"
 if [ -z "$PG_CONTAINER" ] && command -v docker >/dev/null 2>&1; then
-  for cand in l0-pg-0 test-bigtangle-postgres; do
+  for cand in l0-pg-0 test-bigt-ai-postgres; do
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${cand}$"; then
       PG_CONTAINER="$cand"
       break
@@ -161,11 +161,11 @@ req_pubkey() {
   guava="$(find "$M2_REPO" -name 'guava-*.jar' ! -name '*-sources*' ! -name '*-javadoc*' | sort -V | tail -1)"
   bcprov="$(find "$M2_REPO" -name 'bcprov-jdk18on-*.jar' ! -name '*-sources*' ! -name '*-javadoc*' | sort -V | tail -1)"
   "$JAVA_HOME/bin/java" -cp \
-    "$BC_ROOT/bigtangle-core/target/classes:$slf4j:$guava:$bcprov" \
-    net.bigtangle.tools.ValidatorKeyTool pubkey "$seed" 2>/dev/null | grep '^VALIDATOR_PUBKEY=' | cut -d= -f2
+    "$BC_ROOT/bigt-ai-core/target/classes:$slf4j:$guava:$bcprov" \
+    net.bigt-ai.tools.ValidatorKeyTool pubkey "$seed" 2>/dev/null | grep '^VALIDATOR_PUBKEY=' | cut -d= -f2
 }
 SOCIAL_VALIDATOR_PUBKEY="$(req_pubkey "$SOCIAL_VALIDATOR_KEY" || true)"
-[ -n "$SOCIAL_VALIDATOR_PUBKEY" ] || fail "could not derive validator pubkey (bigtangle-core built? jars in $M2_REPO?)"
+[ -n "$SOCIAL_VALIDATOR_PUBKEY" ] || fail "could not derive validator pubkey (bigt-ai-core built? jars in $M2_REPO?)"
 info "L1-SOCIAL validator pubkey: ${SOCIAL_VALIDATOR_PUBKEY:0:24}..."
 
 info "Starting l1-social-server (log: $SOCIAL_LOG)..."
@@ -182,14 +182,14 @@ PEER_UDPPORT="$L1_SOCIAL_PEER_UDP" PEER_TCPPORT="$L1_SOCIAL_PEER_TCP" \
 SERVICE_CHAINLENGTH=true SERVICE_MICROBATCH=true \
 SERVICE_BLOCKBATCH=true SERVICE_BLOCKBATCH_RATE=10000 SERVICE_INITSYNC=true \
 nohup mvn -q -pl l1-social-server spring-boot:run \
-  -Dspring-boot.run.jvmArguments="-Dbigtangle.genesis.csv=$GENESIS_CSV -Dserver.corsAllowedOrigins=$CORS_ORIGINS" \
+  -Dspring-boot.run.jvmArguments="-DbigtAi.genesis.csv=$GENESIS_CSV -Dserver.corsAllowedOrigins=$CORS_ORIGINS" \
   >"$SOCIAL_LOG" 2>&1 &
 SOCIAL_PID=$!
 
 info "Waiting for L1-SOCIAL HTTP on $BASE ..."
 READY=0
 for i in $(seq 1 90); do
-  if curl -sf "$BASE/" 2>/dev/null | grep -qi "bigtangle"; then
+  if curl -sf "$BASE/" 2>/dev/null | grep -qi "bigt-ai"; then
     READY=1
     break
   fi

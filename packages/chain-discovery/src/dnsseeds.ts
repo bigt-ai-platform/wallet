@@ -8,10 +8,10 @@
  *   { "Status": 0, "Answer": [{ "name": "...", "type": 16|33, "data": "..." }] }
  *
  * Published records (scheme, see deploy docs):
- *   TXT  _bigtangle-l0.bigtangle.org   "https://eu1.bigtangle.org" "https://eu2.bigtangle.org"
- *   TXT  _bigtangle-l1.bigtangle.org   "https://ordereu1.bigtangle.org" ...
- *   SRV  _bigtangle-l0._tcp.bigtangle.org  0 0 443 eu1.bigtangle.org.
- *   SRV  _bigtangle-l1._tcp.bigtangle.org  0 0 443 ordereu1.bigtangle.org.
+ *   TXT  _bigt-ai-l0.bigt-ai.org   "https://eu1.bigt-ai.org" "https://eu2.bigt-ai.org"
+ *   TXT  _bigt-ai-l1.bigt-ai.org   "https://ordereu1.bigt-ai.org" ...
+ *   SRV  _bigt-ai-l0._tcp.bigt-ai.org  0 0 443 eu1.bigt-ai.org.
+ *   SRV  _bigt-ai-l1._tcp.bigt-ai.org  0 0 443 ordereu1.bigt-ai.org.
  */
 
 export const DNS_TYPE_TXT = 16;

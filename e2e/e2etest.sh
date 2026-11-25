@@ -197,15 +197,15 @@ start_window_raiser
 # chain check) so the wallet P2P UI can be driven end-to-end. Self-contained —
 # the flow needs no L0/L1.
 # Build the workspace packages the engine imports + the engine bundle (esbuild:
-# bigtangle-ts ships extensionless ESM that plain `node dist/server.js` cannot
+# bigt-ai-ts ships extensionless ESM that plain `node dist/server.js` cannot
 # load under Node's ESM resolver).
 build_p2p_engine() {
   info "Building p2p engine..."
-  # `bigtangle-ts` FIRST: the engine (and the app's web export) bundle its dist,
+  # `bigt-ai-ts` FIRST: the engine (and the app's web export) bundle its dist,
   # and a stale dist bakes in old protocol behaviour — e.g. the pre-c352c40
   # `getHash()` that never matched the node's txid, so an escrow release
   # confirmed on chain but the engine's proof polled a hash the node never knew.
-  for pkg in bigtangle-ts chain-discovery did p2p-protocol record-sig; do
+  for pkg in bigt-ai-ts chain-discovery did p2p-protocol record-sig; do
     ( cd "$ROOT/packages/$pkg" && npm run build >/dev/null 2>&1 ) || fail "build $pkg failed"
   done
   ( cd "$ROOT/services/p2p-engine" && npm run build >/dev/null 2>&1 && npm run bundle >/dev/null 2>&1 ) || fail "build/bundle p2p-engine failed"
@@ -351,9 +351,9 @@ if [[ "$CMD" == "p2p-prod" ]]; then
   info "Running P2P production e2e (deployed chain + engine)..."
   cd "$E2E_DIR"
   E2E_PROD_P2P=1 \
-  E2E_PROD_L0_URL="${E2E_PROD_L0_URL:-https://eu1.bigtangle.org}" \
-  E2E_PROD_L1_SOCIAL_URL="${E2E_PROD_L1_SOCIAL_URL:-https://socialeu1.bigtangle.org}" \
-  E2E_PROD_L1_ORDER_URL="${E2E_PROD_L1_ORDER_URL:-https://ordereu1.bigtangle.org}" \
+  E2E_PROD_L0_URL="${E2E_PROD_L0_URL:-https://eu1.bigt-ai.org}" \
+  E2E_PROD_L1_SOCIAL_URL="${E2E_PROD_L1_SOCIAL_URL:-https://socialeu1.bigt-ai.org}" \
+  E2E_PROD_L1_ORDER_URL="${E2E_PROD_L1_ORDER_URL:-https://ordereu1.bigt-ai.org}" \
   E2E_PROD_P2P_URL="${E2E_PROD_P2P_URL:-https://eu.wallet.bigt.ai/p2p}" \
   E2E_PROD_WALLET_URL="${E2E_PROD_WALLET_URL:-https://eu.wallet.bigt.ai}" \
   APP_URL="${APP_URL:-${E2E_PROD_WALLET_URL:-https://eu.wallet.bigt.ai}/}" \
@@ -370,9 +370,9 @@ if [[ "$CMD" == "p2p-prod-soak" ]]; then
   info "Running bounded prod soak/perf pass (read-only)..."
   cd "$E2E_DIR"
   E2E_PROD_SOAK=1 \
-  E2E_PROD_L0_URL="${E2E_PROD_L0_URL:-https://eu1.bigtangle.org}" \
-  E2E_PROD_L1_SOCIAL_URL="${E2E_PROD_L1_SOCIAL_URL:-https://socialeu1.bigtangle.org}" \
-  E2E_PROD_L1_ORDER_URL="${E2E_PROD_L1_ORDER_URL:-https://ordereu1.bigtangle.org}" \
+  E2E_PROD_L0_URL="${E2E_PROD_L0_URL:-https://eu1.bigt-ai.org}" \
+  E2E_PROD_L1_SOCIAL_URL="${E2E_PROD_L1_SOCIAL_URL:-https://socialeu1.bigt-ai.org}" \
+  E2E_PROD_L1_ORDER_URL="${E2E_PROD_L1_ORDER_URL:-https://ordereu1.bigt-ai.org}" \
   E2E_PROD_P2P_URL="${E2E_PROD_P2P_URL:-https://eu.wallet.bigt.ai/p2p}" \
   E2E_PROD_SOAK_SECONDS="${E2E_PROD_SOAK_SECONDS:-30}" \
     "$ROOT/node_modules/.bin/playwright" test --reporter=list p2p-prod-soak.spec.ts 2>&1

@@ -267,7 +267,7 @@ describe('onion ordering', () => {
     expect(isOnionUrl('http://abcdefghijklmnop.onion')).toBe(true);
     expect(isOnionUrl('http://abcdefghijklmnop.onion:8089')).toBe(true);
     expect(isOnionUrl('abcdefghijklmnop.onion')).toBe(true);
-    expect(isOnionUrl('https://eu1.bigtangle.org')).toBe(false);
+    expect(isOnionUrl('https://eu1.bigt-ai.org')).toBe(false);
     expect(isOnionUrl('/l0/')).toBe(false);
   });
 

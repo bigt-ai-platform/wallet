@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS operations (
     external_ref  TEXT,
     -- verified EVM destination from a signed redemption intent
     destination   TEXT,
+    -- external payout/mint tx hash, written before the ledger settles
+    payout_ref    TEXT,
     attempts      INTEGER NOT NULL DEFAULT 0,
     error         TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -54,6 +56,8 @@ CREATE TABLE IF NOT EXISTS operations (
 
 -- Existing databases: add the signed-intent destination column.
 ALTER TABLE operations ADD COLUMN IF NOT EXISTS destination TEXT;
+-- Existing databases: add the payout/mint transaction hash.
+ALTER TABLE operations ADD COLUMN IF NOT EXISTS payout_ref TEXT;
 
 -- idempotency: one operation per observed chain event
 CREATE UNIQUE INDEX IF NOT EXISTS operations_chain_ref
@@ -113,6 +117,15 @@ CREATE TABLE IF NOT EXISTS deposit_addresses (
 
 CREATE INDEX IF NOT EXISTS deposit_addresses_address
     ON deposit_addresses (lower(address));
+
+-- Scanner cursor: the highest fully processed block per chain. The pass reads
+-- it, scans forward to the finalized head, and only then advances it, so a
+-- restart resumes instead of re-reading the same 2,000-block window forever.
+CREATE TABLE IF NOT EXISTS scan_cursors (
+    chain      TEXT PRIMARY KEY,
+    block      BIGINT NOT NULL CHECK (block >= 0),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 
 CREATE TABLE IF NOT EXISTS attestations (
     asset_id      TEXT NOT NULL REFERENCES assets (asset_id),

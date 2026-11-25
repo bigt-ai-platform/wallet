@@ -45,6 +45,28 @@ export interface RedeemIntentRecord {
   createdAt: string;
 }
 
+/** Atomic result of reserving a redemption: the nonce, the operation and the debit. */
+export type RedeemRequestResult =
+  | { ok: true; debited: boolean }
+  | { ok: false; reason: 'replay' };
+
+/** Increment applied when a finalized deposit is observed. */
+export interface ReserveDelta {
+  assetId: string;
+  reserveDeltaRaw: bigint;
+  dustDeltaRaw: bigint;
+}
+
+/**
+ * Ledger effect applied together with an operation's completion. Each kind is
+ * the *only* write a worker may make for a settlement, so a crash between two
+ * separate `putReserve`/`putHolderBalance` calls can no longer half-apply.
+ */
+export type SettleEffect =
+  | { kind: 'mint'; amountRaw: bigint }
+  | { kind: 'release'; amountRaw: bigint }
+  | { kind: 'transfer'; amountRaw: bigint };
+
 export interface Store {
   saveOperation(op: Operation): Promise<void>;
   getOperation(id: string): Promise<Operation | undefined>;
@@ -81,6 +103,32 @@ export interface Store {
   nextDepositIndex(): Promise<number>;
   /** False when the nonce or intent hash was already used (replay). */
   putRedeemIntent(record: RedeemIntentRecord): Promise<boolean>;
+  /**
+   * Persisted scan cursor (last fully processed block) per chain, `undefined`
+   * when the chain has never been scanned. Without it every pass re-reads the
+   * same window and never reaches new deposits.
+   */
+  getScanCursor(chain: string): Promise<number | undefined>;
+  putScanCursor(chain: string, block: number): Promise<void>;
+  /**
+   * Credit the reserve and record the observed deposit in **one** write.
+   * False when the chain reference was already recorded, so a crash between
+   * the two old writes cannot inflate the reserve on the next pass.
+   */
+  creditDeposit(delta: ReserveDelta, op: Operation): Promise<boolean>;
+  /**
+   * Atomically reserve the intent (nonce + hash + L1 funding ref), create the
+   * pending operation and debit the holder's available balance when it covers
+   * the amount. The debit is bookkeeping only: the L1 funding transfer is what
+   * authorizes the release, so a holder who acquired the token on-market is
+   * still redeemable.
+   */
+  putRedeemRequest(record: RedeemIntentRecord, op: Operation, debitRaw: bigint): Promise<RedeemRequestResult>;
+  /**
+   * Complete an operation and apply its ledger effect atomically. Returns
+   * false when the operation was already completed (a retry is a no-op).
+   */
+  settleOperation(op: Operation, effect: SettleEffect): Promise<boolean>;
 }
 
 /** In-memory store: the test double, and the reference for the SQL schema. */
@@ -93,6 +141,7 @@ export class MemoryStore implements Store {
   private readonly depositAddresses = new Map<string, DepositAddressRecord>();
   private readonly depositByAddress = new Map<string, string>();
   private readonly redeemIntents = new Map<string, RedeemIntentRecord>();
+  private readonly scanCursors = new Map<string, number>();
 
   async saveOperation(op: Operation): Promise<void> {
     this.operations.set(op.id, { ...op });
@@ -230,6 +279,101 @@ export class MemoryStore implements Store {
       .some((entry) => entry.intentHash === record.intentHash);
     if (this.redeemIntents.has(key) || hashTaken) return false;
     this.redeemIntents.set(key, { ...record });
+    return true;
+  }
+
+  async getScanCursor(chain: string): Promise<number | undefined> {
+    return this.scanCursors.get(chain);
+  }
+
+  async putScanCursor(chain: string, block: number): Promise<void> {
+    this.scanCursors.set(chain, block);
+  }
+
+  async creditDeposit(delta: ReserveDelta, op: Operation): Promise<boolean> {
+    if (op.ref && this.byKey.has(`chain:${chainKey(op.ref)}`)) return false;
+    if (this.operations.has(op.id)) return false;
+    const current = this.reserves.get(delta.assetId) ?? {
+      assetId: delta.assetId,
+      reserveRaw: 0n,
+      supplyRaw: 0n,
+      dustRaw: 0n,
+    };
+    this.reserves.set(delta.assetId, {
+      ...current,
+      reserveRaw: current.reserveRaw + delta.reserveDeltaRaw,
+      dustRaw: current.dustRaw + delta.dustDeltaRaw,
+    });
+    await this.saveOperation(op);
+    return true;
+  }
+
+  async putRedeemRequest(
+    record: RedeemIntentRecord,
+    op: Operation,
+    debitRaw: bigint,
+  ): Promise<RedeemRequestResult> {
+    const key = `${record.assetId}:${record.account}:${record.nonce}`;
+    const hashTaken = [...this.redeemIntents.values()]
+      .some((entry) => entry.intentHash === record.intentHash);
+    // The L1 funding output may authorize exactly one release.
+    const refTaken = !!op.ref && this.byKey.has(`chain:${chainKey(op.ref)}`);
+    if (this.redeemIntents.has(key) || hashTaken || refTaken || this.operations.has(op.id)) {
+      return { ok: false, reason: 'replay' };
+    }
+    this.redeemIntents.set(key, { ...record });
+    await this.saveOperation(op);
+    const balance = this.balances.get(`${record.assetId}:${record.account}`);
+    if (balance && balance.availableRaw >= debitRaw) {
+      this.balances.set(`${record.assetId}:${record.account}`, {
+        ...balance,
+        availableRaw: balance.availableRaw - debitRaw,
+        pendingRaw: balance.pendingRaw + debitRaw,
+      });
+      return { ok: true, debited: true };
+    }
+    return { ok: true, debited: false };
+  }
+
+  async settleOperation(op: Operation, effect: SettleEffect): Promise<boolean> {
+    const current = this.operations.get(op.id);
+    if (!current) throw new Error(`unknown operation: ${op.id}`);
+    if (current.status === 'completed') return false;
+    const amount = effect.amountRaw;
+    const balanceKey = `${op.assetId}:${op.account}`;
+    const balance = this.balances.get(balanceKey) ?? {
+      assetId: op.assetId,
+      account: op.account,
+      availableRaw: 0n,
+      pendingRaw: 0n,
+    };
+    if (effect.kind === 'mint') {
+      const reserve = this.reserves.get(op.assetId);
+      if (!reserve) throw new Error(`no reserve credited for ${op.assetId}`);
+      if (reserve.supplyRaw + amount > reserve.reserveRaw) {
+        throw new Error('settlement would exceed the reserve');
+      }
+      this.reserves.set(op.assetId, { ...reserve, supplyRaw: reserve.supplyRaw + amount });
+      this.balances.set(balanceKey, { ...balance, availableRaw: balance.availableRaw + amount });
+    } else if (effect.kind === 'release') {
+      const reserve = this.reserves.get(op.assetId);
+      if (!reserve) throw new Error(`no reserve credited for ${op.assetId}`);
+      this.reserves.set(op.assetId, {
+        ...reserve,
+        supplyRaw: reserve.supplyRaw > amount ? reserve.supplyRaw - amount : 0n,
+        reserveRaw: reserve.reserveRaw > amount ? reserve.reserveRaw - amount : 0n,
+      });
+      this.balances.set(balanceKey, {
+        ...balance,
+        pendingRaw: balance.pendingRaw > amount ? balance.pendingRaw - amount : 0n,
+      });
+    } else {
+      this.balances.set(balanceKey, {
+        ...balance,
+        pendingRaw: balance.pendingRaw > amount ? balance.pendingRaw - amount : 0n,
+      });
+    }
+    this.operations.set(op.id, { ...op, status: 'completed' });
     return true;
   }
 }

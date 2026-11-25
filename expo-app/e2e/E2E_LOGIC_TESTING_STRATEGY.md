@@ -74,7 +74,7 @@ it('should create valid wallet', async () => {
 └─────────┬───────────────────────────┘
           │
 ┌─────────▼───────────┬─────────────┐
-│   React Native UI   │ bigtangle-ts│
+│   React Native UI   │ bigt-ai-ts│
 └─────────┬───────────┴─────────────┘
           │
 ┌─────────▼───────────────────────────┐
@@ -88,7 +88,7 @@ it('should create valid wallet', async () => {
 
 `e2e/helpers/logic-verification.ts`:
 ```typescript
-import { ECKey, Address, Wallet } from '@bigtangle/bigtangle-ts';
+import { ECKey, Address, Wallet } from '@bigt-ai/bigt-ai-ts';
 import * as SecureStore from 'expo-secure-store';
 
 /**

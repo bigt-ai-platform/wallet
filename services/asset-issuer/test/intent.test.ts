@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ECKey, MainNetParams, PQKey, TestParams, Utils } from 'bigtangle-ts';
+import { ECKey, MainNetParams, PQKey, TestParams, Utils } from 'bigt-ai-ts';
 import {
   REDEEM_INTENT_DOMAIN,
   intentHash,
@@ -10,6 +10,7 @@ import {
 } from '../src/intent.js';
 
 const DESTINATION = '0x2222222222222222222222222222222222222222';
+const L1_TX = '0x' + 'ab'.repeat(32);
 
 function intent(over: Partial<RedeemIntent> = {}): RedeemIntent {
   return {
@@ -19,6 +20,7 @@ function intent(over: Partial<RedeemIntent> = {}): RedeemIntent {
     account: 'account',
     amountRaw: '1000000',
     destination: DESTINATION,
+    l1TxHash: L1_TX,
     nonce: 'nonce-0001',
     expiry: Date.now() + 60_000,
     ...over,
@@ -31,6 +33,10 @@ describe('intent message', () => {
     expect(intentMessage(base)).toBe(intentMessage({ ...base }));
     expect(intentMessage({ ...base, amountRaw: '2' })).not.toBe(intentMessage(base));
     expect(intentMessage({ ...base, destination: '0x3333333333333333333333333333333333333333' }))
+      .not.toBe(intentMessage(base));
+    // The L1 funding transaction is part of the signed bytes: swapping it must
+    // invalidate the signature and therefore the release.
+    expect(intentMessage({ ...base, l1TxHash: '0x' + 'cd'.repeat(32) }))
       .not.toBe(intentMessage(base));
   });
 });
@@ -97,6 +103,7 @@ describe('field validation', () => {
       .toMatchObject({ ok: false });
     expect(validateIntentFields({ ...valid, amountRaw: '0' }, now)).toMatchObject({ ok: false });
     expect(validateIntentFields({ ...valid, destination: '0x12' }, now)).toMatchObject({ ok: false });
+    expect(validateIntentFields({ ...valid, l1TxHash: '0x1234' }, now)).toMatchObject({ ok: false });
     expect(validateIntentFields({ ...valid, nonce: 'short' }, now)).toMatchObject({ ok: false });
   });
 });

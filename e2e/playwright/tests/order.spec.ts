@@ -94,9 +94,9 @@ test.describe('Order Screen', () => {
     test.setTimeout(480000);
     test.skip(!HAS_SERVER || !E2E_L1_URL, 'E2E_SERVER_URL / E2E_L1_URL not set');
 
-    const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+    const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
     const l1Url = E2E_L1_URL.replace(/\/+$/, '') + '/';
-    const bcToken = sdk.NetworkParameters.BIGTANGLE_TOKENID_STRING;
+    const bcToken = sdk.NetworkParameters.BIGT_AI_TOKENID_STRING;
 
     const postJson = async (endpoint: string, body: any): Promise<any> => {
       const res = await fetch(l1Url + endpoint, {

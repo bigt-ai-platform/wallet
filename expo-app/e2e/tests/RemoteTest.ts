@@ -1,14 +1,14 @@
 import { expect } from "vitest";
 import { ObjectMapper } from "jackson-js";
 import { Buffer } from "buffer";
-import { Address, Block, Coin, PQKey, Sha256Hash, UTXO, Utils, NetworkParameters, TestParams, Wallet, CoinConstants, Transaction } from "bigtangle-ts";
-import { ReqCmd } from "bigtangle-ts/dist/net/bigtangle/params/ReqCmd";
-import { GetBalancesResponse } from "bigtangle-ts/dist/net/bigtangle/response/GetBalancesResponse";
-import { GetTokensResponse } from "bigtangle-ts/dist/net/bigtangle/response/GetTokensResponse";
-import { TokenIndexResponse } from "bigtangle-ts/dist/net/bigtangle/response/TokenIndexResponse";
-import { OkHttp3Util } from "bigtangle-ts/dist/net/bigtangle/utils/OkHttp3Util";
-import { Json } from "bigtangle-ts/dist/net/bigtangle/utils/Json";
-import { WalletUtil } from "bigtangle-ts/dist/net/bigtangle/utils/WalletUtil";
+import { Address, Block, Coin, PQKey, Sha256Hash, UTXO, Utils, NetworkParameters, TestParams, Wallet, CoinConstants, Transaction } from "bigt-ai-ts";
+import { ReqCmd } from "bigt-ai-ts/dist/net/bigt-ai/params/ReqCmd";
+import { GetBalancesResponse } from "bigt-ai-ts/dist/net/bigt-ai/response/GetBalancesResponse";
+import { GetTokensResponse } from "bigt-ai-ts/dist/net/bigt-ai/response/GetTokensResponse";
+import { TokenIndexResponse } from "bigt-ai-ts/dist/net/bigt-ai/response/TokenIndexResponse";
+import { OkHttp3Util } from "bigt-ai-ts/dist/net/bigt-ai/utils/OkHttp3Util";
+import { Json } from "bigt-ai-ts/dist/net/bigt-ai/utils/Json";
+import { WalletUtil } from "bigt-ai-ts/dist/net/bigt-ai/utils/WalletUtil";
 export abstract class RemoteTest {
   public objectMapper = new ObjectMapper();
   public contextRoot = "http://localhost:8088/";
@@ -73,7 +73,7 @@ export abstract class RemoteTest {
     );
   }
     // Convert token ID to Uint8Array
-    const tokenIdBytes = Buffer.from(Utils.HEX.decode(NetworkParameters.BIGTANGLE_TOKENID_STRING));
+    const tokenIdBytes = Buffer.from(Utils.HEX.decode(NetworkParameters.BIGT_AI_TOKENID_STRING));
     return this.payList(addedBlocks, giveMoneyResult, tokenIdBytes);
   }
 
@@ -141,7 +141,7 @@ export abstract class RemoteTest {
     const utxos= await this.getBalanceByKeys(false, walletKeys);
     for (const utxo of utxos) {
       if (utxo.getValue() &&
-          utxo.getTokenId() !== NetworkParameters.BIGTANGLE_TOKENID_STRING &&
+          utxo.getTokenId() !== NetworkParameters.BIGT_AI_TOKENID_STRING &&
           utxo.getValue()!.isGreaterThan( CoinConstants.ZERO)) {
         this.wallet.setServerURL(this.contextRoot);
         try {
@@ -152,7 +152,7 @@ export abstract class RemoteTest {
             BigInt(1000),
             null, // validToTime
             null, // validFromTime
-            NetworkParameters.BIGTANGLE_TOKENID_STRING,
+            NetworkParameters.BIGT_AI_TOKENID_STRING,
             true // allowRemainder
           );
           this.blocksAddedAll.push(sellOrder);

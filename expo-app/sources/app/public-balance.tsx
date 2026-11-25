@@ -181,7 +181,7 @@ export default function PublicBalanceScreen() {
   };
 
   // Java formats balances with the token's own metadata decimals; the base
-  // token "bc" uses NetworkParameters.BIGTANGLE_DECIMAL, other tokens
+  // token "bc" uses NetworkParameters.BIGT_AI_DECIMAL, other tokens
   // default to 0 (Java Token default).
   const decimalsOf = (tokenId: string): number => decimalsFor(tokenId, tokenDecimals[tokenId]);
 

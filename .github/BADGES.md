@@ -53,7 +53,7 @@ Add these badges to your README.md to show build status:
 ## Full Example README Section
 
 ```markdown
-# BigTangle Mobile App
+# Bigt-Ai Mobile App
 
 [![CI](https://github.com/YOUR_USERNAME/YOUR_REPO/workflows/CI%20-%20Test%20%26%20Lint/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPO/actions/workflows/ci.yml)
 [![Publish](https://github.com/YOUR_USERNAME/YOUR_REPO/workflows/Publish%20App%20(Web,%20Android,%20iOS)/badge.svg)](https://github.com/YOUR_USERNAME/YOUR_REPO/actions/workflows/publish.yml)

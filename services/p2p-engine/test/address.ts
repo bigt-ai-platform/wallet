@@ -1,4 +1,4 @@
-import { ECKey } from "bigtangle-ts";
+import { ECKey } from "bigt-ai-ts";
 import { settlementParams } from "../src/escrow.js";
 
 /** A real base58 destination on the engine's settlement network. */

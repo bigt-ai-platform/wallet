@@ -1,5 +1,5 @@
 /**
- * API Types for Bigtangle Network
+ * API Types for Bigt-Ai Network
  *
  * Type definitions for API requests and responses
  */

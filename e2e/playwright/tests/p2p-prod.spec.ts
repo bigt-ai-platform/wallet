@@ -36,9 +36,9 @@ const ready = process.env.E2E_PROD_P2P === '1';
 const write = process.env.E2E_PROD_P2P_WRITE === '1';
 const sellerSeed = process.env.E2E_PROD_P2P_SEED || '';
 
-const L0 = (process.env.E2E_PROD_L0_URL || 'https://eu1.bigtangle.org').replace(/\/+$/, '');
-const SOCIAL = (process.env.E2E_PROD_L1_SOCIAL_URL || 'https://socialeu1.bigtangle.org').replace(/\/+$/, '');
-const ORDER = (process.env.E2E_PROD_L1_ORDER_URL || 'https://ordereu1.bigtangle.org').replace(/\/+$/, '');
+const L0 = (process.env.E2E_PROD_L0_URL || 'https://eu1.bigt-ai.org').replace(/\/+$/, '');
+const SOCIAL = (process.env.E2E_PROD_L1_SOCIAL_URL || 'https://socialeu1.bigt-ai.org').replace(/\/+$/, '');
+const ORDER = (process.env.E2E_PROD_L1_ORDER_URL || 'https://ordereu1.bigt-ai.org').replace(/\/+$/, '');
 const ENGINE = (process.env.E2E_PROD_P2P_URL || 'https://eu.wallet.bigt.ai/p2p').replace(/\/+$/, '');
 const WALLET = (process.env.E2E_PROD_WALLET_URL || '').replace(/\/+$/, '');
 
@@ -136,7 +136,7 @@ async function replayChain() {
 
 /** Authenticated engine envelope (did + nonce + timestamp + PQ signature). */
 async function signBody(seed: string, fields: Record<string, unknown>) {
-  const { PQKey } = await import('../../../packages/bigtangle-ts/dist/index.js');
+  const { PQKey } = await import('../../../packages/bigt-ai-ts/dist/index.js');
   const { didFromPQKey, signChallengePQ } = await import('../../../packages/did/dist/pq.js');
   const { canonicalJson } = await import('../../../services/p2p-engine/dist/sign.js');
   const key = PQKey.fromPrivateKeyHex(seed);
@@ -147,7 +147,7 @@ async function signBody(seed: string, fields: Record<string, unknown>) {
 }
 
 async function freshSeed(): Promise<string> {
-  const { PQKey } = await import('../../../packages/bigtangle-ts/dist/index.js');
+  const { PQKey } = await import('../../../packages/bigt-ai-ts/dist/index.js');
   const seed = PQKey.createNew().getPrivateKeySeedAsHex();
   if (!seed) throw new Error('PQKey did not expose a private seed');
   return seed as string;

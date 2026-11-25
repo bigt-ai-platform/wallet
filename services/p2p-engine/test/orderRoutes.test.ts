@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { randomBytes } from "node:crypto";
-import { PQKey, Utils } from "bigtangle-ts";
+import { PQKey, Utils } from "bigt-ai-ts";
 import { Ed25519Key, didFromEd25519Key } from "did";
 import { buildApp } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";

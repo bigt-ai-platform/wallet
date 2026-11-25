@@ -37,7 +37,7 @@ assert_mainnet_default() {
 
   # app.ts must pin the private relay entry points (../apiserver on
   # s1002.bigt.ai) and the same-origin web bases. The legacy JSF host
-  # https://m.bigtangle.org serves HTML, not the JSON-RPC order API, and must
+  # https://m.bigt-ai.org serves HTML, not the JSON-RPC order API, and must
   # not come back anywhere in the app defaults.
   local l0_line l1_line l0_web l1_web
   l0_line="$(grep -m1 'export const PROD_L0_URL' "$app_ts" || true)"
@@ -71,8 +71,8 @@ assert_mainnet_default() {
     echo -e "${red}network guard: the retired prediction proxy/URL is back in $app_ts (prediction runs on the L1-order chain)${nc}"
     bad=1
   fi
-  if grep -q 'https://m\.bigtangle\.org' "$http_ts" "$app_ts"; then
-    echo -e "${red}network guard: legacy JSF host https://m.bigtangle.org found in the app defaults ($http_ts / $app_ts)${nc}"
+  if grep -q 'https://m\.bigt-ai\.org' "$http_ts" "$app_ts"; then
+    echo -e "${red}network guard: legacy JSF host https://m.bigt-ai.org found in the app defaults ($http_ts / $app_ts)${nc}"
     bad=1
   fi
 

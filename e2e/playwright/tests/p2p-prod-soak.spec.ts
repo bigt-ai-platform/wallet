@@ -57,11 +57,11 @@ test.describe('P2P production soak', () => {
           timeout: 150_000,
           env: {
             ...process.env,
-            E2E_PROD_L0_URL: process.env.E2E_PROD_L0_URL || 'https://eu1.bigtangle.org',
+            E2E_PROD_L0_URL: process.env.E2E_PROD_L0_URL || 'https://eu1.bigt-ai.org',
             E2E_PROD_L1_SOCIAL_URL:
-              process.env.E2E_PROD_L1_SOCIAL_URL || 'https://socialeu1.bigtangle.org',
+              process.env.E2E_PROD_L1_SOCIAL_URL || 'https://socialeu1.bigt-ai.org',
             E2E_PROD_L1_ORDER_URL:
-              process.env.E2E_PROD_L1_ORDER_URL || 'https://ordereu1.bigtangle.org',
+              process.env.E2E_PROD_L1_ORDER_URL || 'https://ordereu1.bigt-ai.org',
             E2E_PROD_P2P_URL:
               process.env.E2E_PROD_P2P_URL || 'https://eu.wallet.bigt.ai/p2p',
           },

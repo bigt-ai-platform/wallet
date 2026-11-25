@@ -64,14 +64,14 @@ FUND_L0=0 FUND_L1=1 FUND_UTXOS=8 \
   bash ../blockchain/helper/prod/fund-test-wallets.sh
 ```
 
-The Java helpers also need current `bigtangle-core` / `bigtangle-servercore`
+The Java helpers also need current `bigt-ai-core` / `bigt-ai-servercore`
 jars in the local Maven repo; if test compilation reports missing
 `AttestationSigner` / `assignedSlot`, install them:
 
 ```bash
 cd ../blockchain
 JAVA_HOME=/home/jcui/.local/java-25 PATH=$JAVA_HOME/bin:$PATH \
-  mvn -q install -DskipTests -pl bigtangle-core,bigtangle-servercore -am
+  mvn -q install -DskipTests -pl bigt-ai-core,bigt-ai-servercore -am
 ```
 
 `e2e/prod-order-soak.sh` wraps the Java prod remote test
@@ -93,7 +93,7 @@ DRY_RUN=1 ./e2e/prod-order-soak.sh
 ```
 
 Defaults: quote `USDT` (seed `12`), pair `Nvidia`, L0
-`https://eu1.bigtangle.org/`, L1-order `https://ordereu1.bigtangle.org/`, logs
+`https://eu1.bigt-ai.org/`, L1-order `https://ordereu1.bigt-ai.org/`, logs
 under `e2e/test-results/order-soak-<ts>/`. Every `RemoteOrderIT` knob passes
 through (`ORDER_COUNT`, `ORDER_PRICE`, `ORDER_STAGGER_MS`,
 `ORDER_BINANCE_LIVE`, `REQUIRE_BINANCE`, `ORDER_PRICE_NVIDIA`, `EXTRA_ARGS`,
@@ -157,7 +157,7 @@ deployed stack: it locks a small BIG UTXO in the L0 bridge vault with
 `PegInInfo{chainId=ordermatch}`, submits `processPegIn`, and waits for the
 L1-order `PegInWatcher` to mint the wrapped amount to the beneficiary. The
 first successful run moved **0.1 BIG** and observed **100000 sat** minted on
-`https://ordereu1.bigtangle.org/`.
+`https://ordereu1.bigt-ai.org/`.
 
 ```bash
 # one-time: fund the deterministic L0 test wallets

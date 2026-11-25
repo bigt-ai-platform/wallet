@@ -18,11 +18,11 @@ test.describe('Settings Screen', () => {
   test('e2e build can opt into testnet without the Settings switch', async ({ page }) => {
     await waitForApp(page);
     const hasHook = await page.evaluate(
-      () => typeof (globalThis as { __bigtangleSetTestnet?: unknown }).__bigtangleSetTestnet === 'function',
+      () => typeof (globalThis as { __bigtAiSetTestnet?: unknown }).__bigtAiSetTestnet === 'function',
     );
     expect(hasHook).toBe(true);
     await page.evaluate(
-      () => (globalThis as { __bigtangleSetTestnet?: (value: boolean) => void }).__bigtangleSetTestnet?.(true),
+      () => (globalThis as { __bigtAiSetTestnet?: (value: boolean) => void }).__bigtAiSetTestnet?.(true),
     );
     expect(await page.evaluate(() => localStorage.getItem('settings.useTestnet'))).toBe('true');
   });

@@ -9,13 +9,13 @@
  * (see `services/feed-api` chain relay) and never credit an unverified ref.
  *
  * Amounts are decimal strings so no float rounding can make a check pass or
- * fail by accident; bigtangle amounts are integer token units.
+ * fail by accident; bigt-ai amounts are integer token units.
  */
 
 export interface SettlementOutput {
   /** recipient chain address (base58), as the node reports it */
   address: string;
-  /** token id / symbol the output carries (bigtangle tokenid) */
+  /** token id / symbol the output carries (bigt-ai tokenid) */
   token: string;
   /** integer token units, decimal string to avoid float error */
   amount: string;

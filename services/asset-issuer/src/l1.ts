@@ -1,11 +1,11 @@
 /**
- * L1 (bigtangle) adapters for the issuer.
+ * L1 (bigt-ai) adapters for the issuer.
  *
  * Two seams:
  *
- * - `WalletLike` — the narrow slice of `bigtangle-ts` this service uses. Tests
- *   inject a fake; production gets the real wallet from `createBigtangleWallet`.
- * - `BigtangleL1Minter` — reissues an asset's token and pays it to the holder.
+ * - `WalletLike` — the narrow slice of `bigt-ai-ts` this service uses. Tests
+ *   inject a fake; production gets the real wallet from `createBigtAiWallet`.
+ * - `BigtAiL1Minter` — reissues an asset's token and pays it to the holder.
  *
  * **Reissuance mints to the issuer wallet, then pays the holder.** The chain's
  * token-creation output is addressed by public key, and the issuer only knows
@@ -18,7 +18,8 @@
  */
 
 import type { AssetConfig } from './config.js';
-import type { L1Minter, Treasury } from './executor.js';
+import type { Operation } from './domain.js';
+import type { SignerContext, L1Minter, Treasury } from './executor.js';
 import type { ChainClient, DepositObservation, RedemptionObservation } from './watcher.js';
 
 export interface L1TokenOutput {
@@ -31,7 +32,7 @@ export interface L1TokenOutput {
   confirmed: boolean;
 }
 
-/** The only `bigtangle-ts` surface this service depends on. */
+/** The only `bigt-ai-ts` surface this service depends on. */
 export interface WalletLike {
   /** Reissue `amountRaw` of `tokenId` to a fresh wallet-internal output. */
   reissue(asset: AssetConfig, amountRaw: string): Promise<{ blockHash: string }>;
@@ -54,10 +55,15 @@ export interface L1MinterOptions {
   signaturePollMs?: number;
 }
 
-export class BigtangleL1Minter implements L1Minter {
+export class BigtAiL1Minter implements L1Minter {
   constructor(private readonly options: L1MinterOptions) {}
 
-  async mint(assetId: string, account: string, l1Raw: string): Promise<{ txHash: string }> {
+  async mint(
+    assetId: string,
+    account: string,
+    l1Raw: string,
+    _context?: SignerContext,
+  ): Promise<{ txHash: string }> {
     const asset = this.options.assets.find((a) => a.assetId === assetId);
     if (!asset) throw new Error(`unknown asset: ${assetId}`);
     if (!asset.l1TokenId) {
@@ -99,8 +105,13 @@ function sleep(ms: number): Promise<void> {
  * address. We deliberately do **not** derive them from the issuer's own token
  * balance: that balance also holds freshly minted float, and using it as a
  * redemption signal would release external value for our own stock.
+ *
+ * **Diagnostics only.** The live pipeline no longer wires this source: a bare
+ * L1 transfer has no destination and cannot authorize a release, and recording
+ * it would consume the `(chain, txHash, logIndex)` a signed intent needs.
+ * Redemptions are verified by `BigtAiRedemptionVerifier` instead.
  */
-export class BigtangleRedemptionSource {
+export class BigtAiRedemptionSource {
   constructor(
     private readonly wallet: WalletLike,
     private readonly assets: AssetConfig[],
@@ -144,6 +155,7 @@ export class RefusingTreasury implements Treasury {
     _account: string,
     _destination: string,
     _externalRaw: string,
+    _context?: SignerContext,
   ): Promise<{ txHash: string }> {
     throw new Error(
       `treasury release for ${assetId} is not configured: wire the HSM/MPC custody adapter before enabling redeem`,
@@ -151,14 +163,65 @@ export class RefusingTreasury implements Treasury {
   }
 }
 
+export type RedemptionCheck = 'ok' | 'pending' | 'invalid';
+
+/**
+ * Verifies that a redemption is backed by a real, finalized L1 return.
+ *
+ * The issuer cannot pay out on its own holder-balance record alone: after a
+ * spot trade the seller keeps that credit while the buyer holds the tokens, so
+ * releasing on the credit would drain the reserve without retiring any supply.
+ * A release therefore needs an L1 output paid to `redemptionAddress` for the
+ * **exact** token and amount the intent names, and the operation's
+ * `(chain, txHash, logIndex)` is unique, so one return authorizes one release.
+ */
+export class BigtAiRedemptionVerifier {
+  constructor(
+    private readonly wallet: WalletLike,
+    private readonly assets: AssetConfig[],
+  ) {}
+
+  async check(operation: Operation, asset: AssetConfig): Promise<RedemptionCheck> {
+    if (!operation.ref || operation.ref.chain !== 'l1-order') return 'invalid';
+    if (!asset.l1TokenId || !asset.redemptionAddress) return 'invalid';
+    const want = BigInt(operation.l1AmountRaw);
+    if (want <= 0n) return 'invalid';
+
+    const txHash = normalizeHash(operation.ref.txHash);
+    const outputs = await this.wallet.tokenOutputs(asset.l1TokenId);
+    const inTx = outputs.filter((output) => normalizeHash(output.txHash) === txHash);
+    if (inTx.length === 0) {
+      // The transaction may not be indexed by this node yet; the caller retries.
+      return 'pending';
+    }
+    for (const output of inTx) {
+      if (output.tokenId !== asset.l1TokenId) continue;
+      if (output.address !== asset.redemptionAddress) continue;
+      if (output.valueRaw !== want) continue;
+      return output.confirmed ? 'ok' : 'pending';
+    }
+    return 'invalid';
+  }
+
+  async verify(operation: Operation, asset: AssetConfig): Promise<boolean> {
+    return (await this.check(operation, asset)) === 'ok';
+  }
+}
+
+function normalizeHash(value: string): string {
+  return value.replace(/^0x/i, '').toLowerCase();
+}
+
 /** Compose a `ChainClient` from the EVM deposit source plus L1 redemptions. */
 export function composeChainClient(
-  deposits: Pick<ChainClient, 'finalizedBlock' | 'deposits'>,
+  deposits: Pick<ChainClient, 'finalizedBlock' | 'deposits' | 'depositWindow'>,
   redemptions: Pick<ChainClient, 'redemptions'>,
 ): ChainClient {
   return {
     finalizedBlock: (chain: string) => deposits.finalizedBlock(chain),
-    deposits: (fromBlock: number): Promise<DepositObservation[]> => deposits.deposits(fromBlock),
+    deposits: (fromBlock: number, toBlock?: number): Promise<DepositObservation[]> =>
+      deposits.deposits(fromBlock, toBlock),
     redemptions: (fromBlock: number) => redemptions.redemptions(fromBlock),
+    ...(deposits.depositWindow ? { depositWindow: deposits.depositWindow } : {}),
   };
 }

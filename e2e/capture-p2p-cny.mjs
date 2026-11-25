@@ -22,7 +22,7 @@ import { mkdirSync, writeFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
-import { PQKey, Sha256Hash, Utils } from 'bigtangle-ts';
+import { PQKey, Sha256Hash, Utils } from 'bigt-ai-ts';
 import { didFromPQKey } from 'did/pq';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -228,7 +228,7 @@ async function createWallet(browser, name) {
 async function setLanguage(page, lang) {
   if (lang === 'en') return;
   const ok = await page.evaluate((l) => {
-    const i = globalThis.__bigtangleI18n;
+    const i = globalThis.__bigtAiI18n;
     if (!i?.changeLanguage) return false;
     i.changeLanguage(l);
     return true;

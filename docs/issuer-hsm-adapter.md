@@ -66,7 +66,7 @@ transaction is type-2, and only then broadcasts it.
 ### `l1-mint`
 
 ```json
-{ "op": "l1-mint", "assetId": "usdt", "account": "<base58 L1>", "amountRaw": "100000000" }
+{ "op": "l1-mint", "assetId": "usdt", "account": "<base58 L1>", "amountRaw": "100000000", "operationId": "op_…" }
 ```
 
 Response:
@@ -76,14 +76,16 @@ Response:
 ```
 
 The command owns the token id, the signer set/threshold and the
-reissue → drain signatures → pay sequence. It must be idempotent per
-`(assetId, account, amountRaw, operation)` or refuse a replay; the service's
+reissue → drain signatures → pay sequence. `operationId` is the service's
+operation row: the command **must** persist it and return the **same**
+transaction for a repeated call, so a retry after a crash cannot reissue. It
+must also refuse a replay where the key cannot be honoured; the service's
 operation row is the idempotency key, not a second ledger.
 
 ### `treasury-release`
 
 ```json
-{ "op": "treasury-release", "assetId": "usdt", "account": "<base58 L1>", "externalRaw": "2000000" }
+{ "op": "treasury-release", "assetId": "usdt", "account": "<base58 L1>", "destination": "0x…", "externalRaw": "2000000", "operationId": "op_…" }
 ```
 
 Response:
@@ -92,10 +94,12 @@ Response:
 { "txHash": "0x…" }
 ```
 
-**The command must resolve the holder's verified Ethereum destination itself.**
-The service only knows the L1 account; releasing to it directly (or to a
-DB-supplied address) is the redirect risk from the key review. Keep
-`ALLOW_LIVE_TREASURY` off until that mapping and the approval policy exist.
+`destination` is the address the holder **signed** in `/redeem-intents`; pay
+exactly it, never the L1 account or another DB-supplied address. The L1 return
+that backs the release has already been verified by the service. Like
+`l1-mint`, the command must dedupe on `operationId` and return the original
+transaction on a retry. Keep `ALLOW_LIVE_TREASURY` off until the approval policy
+exists above the signer.
 
 ## Wrapper shape
 

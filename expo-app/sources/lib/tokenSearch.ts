@@ -14,12 +14,12 @@ export const BIG_TOKEN: TokenItem = {
   decimals: BC_DECIMALS,
 };
 
-/** `BIG`, `BIGTANGLE`, or the raw id `bc` (prefix match, case-insensitive). */
+/** `BIG`, `BIGT-AI`, or the raw id `bc` (prefix match, case-insensitive). */
 export function matchesBigToken(keyword: string): boolean {
   const want = keyword.trim().toUpperCase();
   return (
     want.length > 0 &&
-    ('BIG'.startsWith(want) || 'BIGTANGLE'.startsWith(want) || want === 'BC')
+    ('BIG'.startsWith(want) || 'BIGT-AI'.startsWith(want) || want === 'BC')
   );
 }
 

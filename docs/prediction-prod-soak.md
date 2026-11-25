@@ -19,7 +19,7 @@ DRY_RUN=1 ./e2e/prod-prediction-soak.sh          # plan + read-only preflight
 ## What one iteration does
 
 `e2e/prod-prediction-soak.sh` runs the remote suite
-`net.bigtangle.server.remote.RemotePredictionIT` against the **live** node
+`net.bigt-ai.server.remote.RemotePredictionIT` against the **live** node
 (`helper/prod/prodtest.sh`, so every iteration is one `mvn test` with its own
 log). Each test mints a fresh market with random token ids, so a run keeps
 accumulating real markets instead of reusing one:
@@ -35,7 +35,7 @@ mempool, engine execution (`confirmPredictionExecution`), the beacon
 confirmation and the coinbase payout — on production.
 
 Choose a narrower surface with `PREDICTION_TESTS`, e.g.
-`PREDICTION_TESTS=net.bigtangle.server.remote.RemotePredictionIT#testCreateSplitMergeLifecycle`.
+`PREDICTION_TESTS=net.bigt-ai.server.remote.RemotePredictionIT#testCreateSplitMergeLifecycle`.
 
 ## Per-iteration assertions
 
@@ -67,7 +67,7 @@ key (`-Dbridge.beneficiarySeed`, added for this purpose):
 BRIDGE_CHAIN_ID=ordermatch \
 BRIDGE_AMOUNT_BIG=1 \
 BRIDGE_BENEFICIARY_SEED=$(printf '01%.0s' {1..32}) \
-PROD_L1_URL=https://ordereu1.bigtangle.org/ \
+PROD_L1_URL=https://ordereu1.bigt-ai.org/ \
   ./e2e/prod-bridge-smoke.sh
 ```
 
@@ -91,9 +91,9 @@ finalises on L0 and is skipped on the order chain, so the soak keeps failing at
 
 | env | default | meaning |
 |---|---|---|
-| `PREDICTION_URL` | `https://ordereu1.bigtangle.org/` | L1-order API under test (hosts prediction) |
-| `PROD_URL` | `https://eu1.bigtangle.org/` | L0 API (fees/peg-in source) |
-| `PROD_L1_URL` | `https://ordereu1.bigtangle.org/` | L1-order API (prodtest preflight) |
+| `PREDICTION_URL` | `https://ordereu1.bigt-ai.org/` | L1-order API under test (hosts prediction) |
+| `PROD_URL` | `https://eu1.bigt-ai.org/` | L0 API (fees/peg-in source) |
+| `PROD_L1_URL` | `https://ordereu1.bigt-ai.org/` | L1-order API (prodtest preflight) |
 | `NET_PARAMS` | `main` | network params for the test client |
 | `PREDICTION_TESTS` | whole `RemotePredictionIT` | class or `Class#method` |
 | `PREDICTION_SOAK_ITERS` | `10` | iterations (or first positional arg) |

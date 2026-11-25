@@ -3,13 +3,13 @@ import path from 'node:path';
 
 // Regression for the "bad decrypt" legacy .wallet import failure: the bundle
 // must derive the AES key from the password's UTF-16BE bytes (Java clients),
-// which requires a single bigtangle-ts copy in the build. Needs no infra — the
+// which requires a single bigt-ai-ts copy in the build. Needs no infra — the
 // decrypt happens entirely in the browser.
 const WALLET_FILE = path.resolve(
   __dirname,
-  '../../../packages/bigtangle-ts/test/oldwallet/java-encrypted.wallet',
+  '../../../packages/bigt-ai-ts/test/oldwallet/java-encrypted.wallet',
 );
-const OLD_PASSWORD = 'bigtangle';
+const OLD_PASSWORD = 'bigt-ai';
 const EC_ADDRESS = 'mkzY5JpvC9hMb59rh4hHDjx3JvnFqWFBC7';
 
 test.describe('Old .wallet import (crypto)', () => {

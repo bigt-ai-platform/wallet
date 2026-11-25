@@ -63,7 +63,7 @@ export default function KeysScreen() {
     getUnlockedWallet,
     getPassword,
   } = useWallet();
-  const [addingKey, setAddingKey] = useState<null | "ethereum" | "bigtangle">(null);
+  const [addingKey, setAddingKey] = useState<null | "ethereum" | "bigt-ai">(null);
   const unlockedFile = getUnlockedWallet();
   const walletKeyList = unlockedFile ? allWalletKeys(unlockedFile) : [];
 
@@ -128,7 +128,7 @@ export default function KeysScreen() {
 
   // Create a legacy EC wallet (Ethereum / TRON compatible).
   const handleAddKey = useCallback(
-    async (role: "ethereum" | "bigtangle") => {
+    async (role: "ethereum" | "bigt-ai") => {
       const file = getUnlockedWallet();
       if (!file || addingKey) return;
       setAddingKey(role);
@@ -137,7 +137,7 @@ export default function KeysScreen() {
         const extra =
           role === "ethereum"
             ? { ...createEcWallet().wallet, role: "ethereum" as const }
-            : { ...createPqWallet().wallet, role: "bigtangle" as const };
+            : { ...createPqWallet().wallet, role: "bigt-ai" as const };
         const next = withKey(file, extra);
         const pwd = getPassword();
         const content = pwd ? await saveKeyToFile(next, pwd) : serializeWalletFile(next);
@@ -716,7 +716,7 @@ export default function KeysScreen() {
                     return (
                       <View key={k.privateKey.slice(0, 12)} style={styles.keyRow}>
                         <Text style={styles.label}>
-                          {isEvm ? t('keys.ethereumKey') : t('keys.bigtangleKey')}
+                          {isEvm ? t('keys.ethereumKey') : t('keys.bigtAiKey')}
                         </Text>
                         <Text style={styles.address} selectable>{shown}</Text>
                       </View>
@@ -751,12 +751,12 @@ export default function KeysScreen() {
               {unlockedFile && needsPostQuantumKey(unlockedFile) ? (
                 <TouchableOpacity
                   style={[styles.button, styles.buttonPrimary]}
-                  onPress={() => void handleAddKey('bigtangle')}
+                  onPress={() => void handleAddKey('bigt-ai')}
                   disabled={addingKey !== null}
                   testID="keys-add-pq-key"
                 >
                   <Text style={[styles.buttonText, styles.buttonTextPrimary]}>
-                    {addingKey === 'bigtangle' ? t('keys.adding') : t('keys.addPqKey')}
+                    {addingKey === 'bigt-ai' ? t('keys.adding') : t('keys.addPqKey')}
                   </Text>
                 </TouchableOpacity>
               ) : null}

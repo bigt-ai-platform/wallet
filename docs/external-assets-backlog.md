@@ -45,7 +45,7 @@ Wallet: **W5, W6, W7, W9, W10 done** (W9 executed: 4/4). No EVM screen was modif
 |---|---|---|---|
 | I1 | Schema + `PgStore` | `(chain, txHash, logIndex)` + client key; DB `CHECK (supply <= reserve)`; `completed`-terminal trigger | **verified** on Postgres 16 (idempotency, trigger, CHECK, BigInt, attestations) |
 | I2 | Deposit watcher + EVM source | `src/chain.evm.ts` (ERC-20 logs, `finalized`, account mapping seam); native ETH still needs the address index | **done (ERC-20)** |
-| I3 | Mint executor + L1 binding | `src/l1.ts` + `src/l1.bigtangle.ts` (reissue → multi-sign → pay holder), gated by `ALLOW_LIVE_L1`; wrapper tested, **chain binding unverified** | **done (needs Test run)** |
+| I3 | Mint executor + L1 binding | `src/l1.ts` + `src/l1.bigt-ai.ts` (reissue → multi-sign → pay holder), gated by `ALLOW_LIVE_L1`; wrapper tested, **chain binding unverified** | **done (needs Test run)** |
 | I4 | Redeem watcher + release | watcher done (`redemptionAddress`, confirmed only); release **not implemented** — `RefusingTreasury` | **partial (blocked on custody)** |
 | I5 | State machine + retries + duplicate guards | domain logic, tested | **done** |
 | I6 | Endpoints matching `services/distributor.ts` | 8 routes incl. `/assets` and `/health` | **done** |
@@ -62,7 +62,7 @@ Issuer remaining: **treasury/custody release** (HSM/MPC adapter + approval flow)
 |---|---|---|
 | `e2e/playwright/tests/external-asset.spec.ts` | wallet UI vs the contract mock | **4/4** |
 | `e2e/issuer-wire.sh` + `external-asset-wire.spec.ts` | wallet UI vs the **real issuer** (Fastify + Postgres, seeded balance) | **2/2** |
-| `packages/bigtangle-ts/test/testintegration/externalAssetsChain.test.ts` | the four tokens on the **real L1-order chain** (`e2e/infra.sh up`) | **2/2**, including reissuance (mint) |
+| `packages/bigt-ai-ts/test/testintegration/externalAssetsChain.test.ts` | the four tokens on the **real L1-order chain** (`e2e/infra.sh up`) | **2/2**, including reissuance (mint) |
 
 What the real-chain run found (and fixed):
 
@@ -81,7 +81,7 @@ but the *signature protocol*: a token block is only solid once the node has all
 the signatures it asks for (`getTokenSignByTokenid`), and the chain's **domain
 key** is required on top of the issuer signature. `getTokenIndex` stays 0 until
 then, which is why the earlier assertions looked wrong. The test (and the
-issuer's `BigtangleL1Minter`) now drain pending signatures before paying, and
+issuer's `BigtAiL1Minter`) now drain pending signatures before paying, and
 the token index advances 0 → 1 with a new block hash.
 
 **Operational consequence:** minting needs the domain key as well as the issuer

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# walletkeys.sh — print the keys of a bigtangle wallet file.
+# walletkeys.sh — print the keys of a bigt-ai wallet file.
 #
 # Handles the wallet-formats the current app writes, plus the validator
 # keystore, and delegates legacy protobuf `.wallet` files to oldwallet.sh:
@@ -23,12 +23,12 @@
 # Exit codes: 0 ok, 2 usage, 3 unsupported/not a wallet file, 4 password
 #             required, 5 wrong password / failed decryption.
 #
-# Requires the workspace SDK build: packages/bigtangle-ts/dist/index.js
-#   npm --prefix packages/bigtangle-ts run build
+# Requires the workspace SDK build: packages/bigt-ai-ts/dist/index.js
+#   npm --prefix packages/bigt-ai-ts run build
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SDK="$ROOT/packages/bigtangle-ts/dist/index.js"
+SDK="$ROOT/packages/bigt-ai-ts/dist/index.js"
 
 JSON_OUT=0
 PUBLIC_ONLY=0
@@ -69,12 +69,12 @@ fi
 
 if [ ! -f "$SDK" ]; then
   echo "error: SDK build not found: $SDK" >&2
-  echo "       run: npm --prefix packages/bigtangle-ts run build" >&2
+  echo "       run: npm --prefix packages/bigt-ai-ts run build" >&2
   exit 2
 fi
-if [ -n "$(find "$ROOT/packages/bigtangle-ts/src" -newer "$SDK" -name '*.ts' -print -quit 2>/dev/null)" ]; then
-  echo "note: bigtangle-ts sources are newer than dist — rebuild to be sure:" >&2
-  echo "      npm --prefix packages/bigtangle-ts run build" >&2
+if [ -n "$(find "$ROOT/packages/bigt-ai-ts/src" -newer "$SDK" -name '*.ts' -print -quit 2>/dev/null)" ]; then
+  echo "note: bigt-ai-ts sources are newer than dist — rebuild to be sure:" >&2
+  echo "      npm --prefix packages/bigt-ai-ts run build" >&2
 fi
 
 # Legacy protobuf .wallet: let oldwallet.sh handle it unchanged.

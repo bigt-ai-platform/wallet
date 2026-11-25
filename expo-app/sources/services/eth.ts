@@ -200,6 +200,20 @@ export interface TransferRequest {
   gasLimitOverride?: bigint;
   /** Fee preset (defaults to standard). */
   preset?: GasPreset;
+  /**
+   * Maximum network fee the user approved in the review sheet. The send is
+   * refused when a fresh estimate (or a fee spike) exceeds it, so the amount on
+   * the confirmation screen is binding.
+   */
+  maxFeeWei?: bigint;
+}
+
+/** The network fee moved past the reviewed maximum; re-approval is required. */
+export class FeeExceedsApprovalError extends Error {
+  constructor(readonly requiredWei: bigint, readonly approvedWei: bigint) {
+    super('The network fee increased above the approved amount');
+    this.name = 'FeeExceedsApprovalError';
+  }
 }
 
 export interface PreparedTransfer {
@@ -288,10 +302,17 @@ async function broadcast(prepared: PreparedTransfer, privateKeyHex: string, chai
   return { hash, from: signed.from };
 }
 
+function assertApprovedFee(prepared: PreparedTransfer, approved?: bigint): void {
+  if (approved !== undefined && prepared.maxFeeWei > approved) {
+    throw new FeeExceedsApprovalError(prepared.maxFeeWei, approved);
+  }
+}
+
 export async function sendNativeTransfer(req: TransferRequest): Promise<{ hash: string; from: string }> {
   const chain = chainOr(req.chain);
   await assertEthChain(chain);
   const prepared = await prepareNativeTransfer({ ...req, chain });
+  assertApprovedFee(prepared, req.maxFeeWei);
   const native = await getNativeBalance(prepared.from, chain);
   if (req.amount + prepared.maxFeeWei > native) throw new Error('Insufficient balance for amount + fee');
   return broadcast(prepared, req.privateKeyHex, chain);
@@ -303,6 +324,7 @@ export async function sendTokenTransfer(
   const chain = chainOr(req.chain);
   await assertEthChain(chain);
   const prepared = await prepareTokenTransfer({ ...req, chain });
+  assertApprovedFee(prepared, req.maxFeeWei);
   const gasBalance = await getNativeBalance(prepared.from, chain);
   if (prepared.maxFeeWei > gasBalance) throw new Error('Insufficient native balance for the network fee');
   const tokenBalance = await getErc20Balance(req.token.address, prepared.from, chain);

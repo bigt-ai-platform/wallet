@@ -33,7 +33,7 @@ model), engine source `services/p2p-engine/src/`.
    the whole fiat leg. Every step uses
    `instructions`/`proof`/`confirm`/`release`/`complete` (`state.ts:9-28`).
    Everything before `MATCHED` and the escrow lock is identical on every rail.
-2. **2-of-3 P2SH escrow on Bigtangle L0.** Seller, buyer and engine hold one
+2. **2-of-3 P2SH escrow on Bigt-Ai L0.** Seller, buyer and engine hold one
    key each; any two satisfy the script. Nobody — including the engine — can
    move the tokens alone. Against a real chain the engine proves the lock
    (`CONFIRMED`, destination, amount) and fails closed otherwise
@@ -209,7 +209,7 @@ derived escrow address and holds the advertised amount:
 
 ```json
 { "txHash": "…64 hex…", "escrowAddress": "3PZ7gUE86SjcCkDDzYWcdXkHju3thAg5u2",
-  "…": "CONFIRMED on https://eu1.bigtangle.org — proof, not a claim" }
+  "…": "CONFIRMED on https://eu1.bigt-ai.org — proof, not a claim" }
 ```
 
 ![Seller pastes the escrow tx hash](assets/screenshots/p2p-cny-wechat-05-escrow-lock-en.png)

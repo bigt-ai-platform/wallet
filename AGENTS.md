@@ -35,8 +35,8 @@ screenshots. If a demo vault ever needs to be unwound, use
 ## Remote integration tests are ported from the Java blockchain test suite
 
 The remote (network/integration) TypeScript tests under
-`packages/bigtangle-ts/test/testintegration/` are **ports** of the corresponding
-Java remote test classes in `../blockchain/layer0-mcmc/src/test/java/net/bigtangle/mcmc/remote/`.
+`packages/bigt-ai-ts/test/testintegration/` are **ports** of the corresponding
+Java remote test classes in `../blockchain/layer0-mcmc/src/test/java/net/bigt-ai/mcmc/remote/`.
 
 | TS test file | Java source (origin) |
 |---|---|
@@ -72,9 +72,9 @@ first. The TS code is only there to test the TS implementation.**
 
 ### 1. `e2eremote.sh` (TS remote tests, infra via `infra.sh` → Java `remote.sh`)
 - Runs the TS remote tests under
-  `packages/bigtangle-ts/test/testintegration/`:
+  `packages/bigt-ai-ts/test/testintegration/`:
   ```
-  cd packages/bigtangle-ts && npx vitest run --exclude '**/RemoteTest.ts' test/testintegration/
+  cd packages/bigt-ai-ts && npx vitest run --exclude '**/RemoteTest.ts' test/testintegration/
   ```
 - Infra is brought up through `e2e/infra.sh` (→
   `../blockchain/.../remote.sh infra`), so the TS tests run against the **same
@@ -85,7 +85,7 @@ first. The TS code is only there to test the TS implementation.**
   `FUND_ENABLED` (`server.fundEnabled=true`), which it does by default.
 
 ### 2. `remote.sh` (maven/spring-boot, Java)
-- Located in `../blockchain/layer0-mcmc/src/test/java/net/bigtangle/mcmc/remote/remote.sh`.
+- Located in `../blockchain/layer0-mcmc/src/test/java/net/bigt-ai/mcmc/remote/remote.sh`.
 - Starts L0/L1/MCMC via `mvn spring-boot:run` and runs the **Java** remote test
   classes. This is the reference/oracle for expected behavior.
 - `e2e/infra.sh` is a thin wrapper that execs `remote.sh infra` (up) or
@@ -123,7 +123,7 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   (`lightweight-charts`); the chart assertion now accepts either. Full run:
   43 passed / 3 skipped / 0 failed (`trade.spec.ts` "renders a CNY-quoted
   market" now green). Rebuild `../blockchain` (`mvn install -pl
-  bigtangle-servercore`) before re-running so the running L1 picks up the jar.
+  bigt-ai-servercore`) before re-running so the running L1 picks up the jar.
 - **Still pre-existing**: the repo-wide `vitest` collection of
   `expo-app/e2e/tests/*` dies with `truncated ML-DSA private key` (wallet unit
   tests are the `test/unit/` suites — 108 passing).
@@ -173,7 +173,7 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   `responseType: 'arraybuffer'`, installed into `OkHttp3Util` from
   `app/_layout.tsx`); see `android.md` → **Binary POSTs**. Tests:
   `expo-app/sources/services/__tests__/binaryPost.test.ts`,
-  `packages/bigtangle-ts/test/utils/OkHttp3UtilTransportTest.ts`.
+  `packages/bigt-ai-ts/test/utils/OkHttp3UtilTransportTest.ts`.
   The plugin import must stay **static**: `import('@capacitor/core')` becomes
   Metro's `_asyncRequire(id, {paths})`, which never settles in the WebView
   (payment stuck at "发送中…", no request made, no resource entry) — the
@@ -255,8 +255,8 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   33-byte secp256k1 pubkey (an ML-DSA pubkey is ~2.6 KB).
 - **The pinned relay `https://92.5.34.128` works now (not just a cert problem).**
   s1002 ran only the seeds registry: there was no `/l0/` or `/l1/` route at all.
-  Caddy there now proxies `/l0/*` → `https://eu1.bigtangle.org`, `/l1/*` →
-  `https://ordereu1.bigtangle.org`, keeps `/getPeers`, and sets the global
+  Caddy there now proxies `/l0/*` → `https://eu1.bigt-ai.org`, `/l1/*` →
+  `https://ordereu1.bigt-ai.org`, keeps `/getPeers`, and sets the global
   `default_sni 92.5.34.128` (Android sends no SNI for an IP-literal URL, which
   made Caddy answer `TLSV1_ALERT_INTERNAL_ERROR`). The IP cert is from Caddy's
   local CA (IP SAN, 12 h auto-renew); the app pins that root in
@@ -526,10 +526,10 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   that case — the spec submits directly and asserts `eth.errSelf`. e2e:
   "Withdraw (exchange style)" specs (ERC-20 payload + own-address rejection).
 - **Dual-key wallets (PQ + EC) and multi-key spend.** New wallets are created
-  with a **PQ key (role `bigtangle`)** and an **EC key (role `ethereum`)**;
+  with a **PQ key (role `bigt-ai`)** and an **EC key (role `ethereum`)**;
   `SerializedWallet.keys[]` carries both and `WalletHelper` keeps
-  `wallet` = the primary (Bigtangle) key plus `keys[]` = all keys. Roles live in
-  `lib/walletKeys.ts` (`allKeys`, `bigtangleKey`, `ethereumKey`, `withKey`,
+  `wallet` = the primary (Bigt-Ai) key plus `keys[]` = all keys. Roles live in
+  `lib/walletKeys.ts` (`allKeys`, `bigtAiKey`, `ethereumKey`, `withKey`,
   `needsEthereumKey`, `needsPostQuantumKey`, `signingKeys`); the EVM screens sign
   with `ethereumKey(wallet)` so a PQ-primary wallet works, and Keys lists every
   key (0x address for the EC key) with **Add Ethereum key** / **Add
@@ -609,7 +609,7 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   `executeRelease` refuses a release without it, and the unsigned
   `/redeem-requests` plus observed L1 transfers fail closed. The `/deposit`
   USDT page has a **Redeem to Ethereum** card (`services/redeemIntent.ts`,
-  signed with the wallet's Bigtangle key) that posts the intent. `deposit.tsx`
+  signed with the wallet's Bigt-Ai key) that posts the intent. `deposit.tsx`
   now sends the **L1** account to `/deposit-address`
   (it used the EVM account, while `/deposits` already used the L1 one);
   `ethereum.spec.ts` asserts the query and the posted redeem proof. Tests:
@@ -668,3 +668,59 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   RN → legacy documents dir + share). Tests: `services/__tests__/walletFile.test.ts`
   (all three branches) and
   `e2e/playwright/tests/wallet-file-save.spec.ts` (picker path writes the JSON).
+
+## Notes as of 2026-11-25
+
+- **Redemption needs the L1 return, not just a signature (security fix).** The
+  signed intent only proved *who chose the destination*: the issuer paid out
+  against its own holder-balance row (`services/asset-issuer/src/server.ts`),
+  so after a spot trade the seller kept the credit while the buyer held the
+  tokens — the seller could redeem and drain the reserve without retiring any
+  supply. The intent is now **v2** (`bigt-ai-wallet-redeem-v2`) and carries
+  `l1TxHash`; `/redeem-intents` refuses unless that transaction has a confirmed
+  L1 output of the **exact** token and amount to the asset's
+  `redemptionAddress` (`BigtAiRedemptionVerifier`). The operation's
+  `(chain, txHash, logIndex)` is unique, so one L1 return backs one release, and
+  the executor re-verifies it at settlement. The holder balance is bookkeeping
+  (debited when it covers the amount) — a buyer who acquired the token
+  on-market can redeem because the L1 return is what is exchanged.
+  `BigtAiRedemptionSource` (blind scan) is no longer wired into the pass: it
+  would consume the chain reference and create destination-less withdrawals.
+  Wallet: `/deposit` → USDT → Redeem now sends `payOnLayer1` to the published
+  `redemptionAddress` (from `/assets`) and retries the same intent while the
+  server answers `409 {retryable}`; a `redeem-funding-tx` field accepts a hash
+  when the tokens were sent elsewhere or a retry is needed. Tests:
+  `services/asset-issuer/test/{intent,server,executor,l1,store}.test.ts`,
+  `expo-app/sources/services/__tests__/redeemIntent.test.ts`, the
+  `ethereum.spec.ts` USDT-deposit spec.
+- **Minting has its own operator credential.** `EXPO_PUBLIC_ISSUER_API_TOKEN` is
+  in the web bundle, so it could reach `POST /mint-requests` and mint against
+  the pooled reserve. The route now requires `MINT_API_TOKEN`
+  (`x-mint-token`) and answers `403` when it is unset. The wallet bearer still
+  serves `/deposit-address` and `/deposits`.
+- **The deposit scan cursor is persisted (`scan_cursors`).** Each pass used to
+  read one fixed `FROM_BLOCK … +2000` window, so deposits after startup were
+  never seen. `runPass` now catches up to `finalized` in `depositWindow` windows
+  and advances the cursor only after a window commits; `FROM_BLOCK` seeds a
+  chain's cursor on first sight. The reserve credit and the deposit operation
+  are one store transaction (`Store.creditDeposit`), so a crash between them can
+  no longer double-credit.
+- **Redemption, settlements and payouts are atomic/idempotent.**
+  `Store.putRedeemRequest` commits the nonce, the intent hash, the L1 ref, the
+  operation and the optional balance debit in one transaction (a worker cannot
+  claim a release before its debit). `Store.settleOperation` applies the
+  supply/balance effect and the `completed` status under one row lock. The
+  executor writes `operations.payout_ref` **before** settling and skips the
+  signer when it is already set, so a requeue after a crash settles without
+  paying twice. HSM/MPC commands now receive `operationId` and must dedupe on
+  it (`docs/issuer-hsm-adapter.md`); the `treasury-release` payload also carries
+  the verified `destination` (the doc had said the command resolves it itself).
+- **Spot availability comes from the signing key only.** `trade.tsx` summed
+  every key's L1 balance (`getBalancesForKeysOn`) while `orderOnLayer1` spends
+  only the primary key's UTXOs, so a dual-key wallet could show funds an order
+  could not use; it now queries the primary key (`getBalancesOn`).
+- **The withdraw review's fee is binding.** `sendNativeTransfer` /
+  `sendTokenTransfer` accept `maxFeeWei` and throw
+  `FeeExceedsApprovalError` when a fresh estimate exceeds the fee shown on the
+  confirm sheet; `/withdraw` re-previews and asks for confirmation again
+  instead of broadcasting at a higher fee.

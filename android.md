@@ -196,9 +196,9 @@ publish/consume a manifest — and `versionCode` must strictly increase.
 Native builds pin `PRIVATE_API_BASE = https://92.5.34.128` (no DNS dependency),
 so every L0/L1 call goes to the `s1002` box. That host runs Caddy with:
 
-- `handle_path /l0/*` → `https://eu1.bigtangle.org`
-- `handle_path /l1/*` → `https://ordereu1.bigtangle.org`
-- `/getPeers` → the local `bigtangle-seeds` registry (`:8089`)
+- `handle_path /l0/*` → `https://eu1.bigt-ai.org`
+- `handle_path /l1/*` → `https://ordereu1.bigt-ai.org`
+- `/getPeers` → the local `bigt-ai-seeds` registry (`:8089`)
 
 The config lives in `/etc/caddy/Caddyfile.d/seeds.caddy` on `92.5.34.128`
 (a copy is kept in `deploy/s1002-relay.caddy`).
@@ -233,22 +233,22 @@ cannot query SRV/TXT directly; DoH is ordinary HTTPS, so it works on web and
 device (both `https://dns.google/resolve` and Cloudflare send
 `Access-Control-Allow-Origin: *`). Override the resolver with
 `EXPO_PUBLIC_DOH_URL`, the seed domain with `EXPO_PUBLIC_DNS_SEEDS_DOMAIN`
-(default `bigtangle.org`).
+(default `bigt-ai.org`).
 
 Ops publishes, per network domain:
 
 ```
-_bigtangle-l0.<domain>       TXT  "https://eu1.bigtangle.org" "https://eu2.bigtangle.org" "https://eu3.bigtangle.org"
-_bigtangle-l1.<domain>       TXT  "https://ordereu1.bigtangle.org" "https://ordereu2.bigtangle.org" "https://ordereu3.bigtangle.org"
-_bigtangle-l0._tcp.<domain>  SRV  0 0 443 eu1.bigtangle.org.
-_bigtangle-l1._tcp.<domain>  SRV  0 0 443 ordereu1.bigtangle.org.
+_bigt-ai-l0.<domain>       TXT  "https://eu1.bigt-ai.org" "https://eu2.bigt-ai.org" "https://eu3.bigt-ai.org"
+_bigt-ai-l1.<domain>       TXT  "https://ordereu1.bigt-ai.org" "https://ordereu2.bigt-ai.org" "https://ordereu3.bigt-ai.org"
+_bigt-ai-l0._tcp.<domain>  SRV  0 0 443 eu1.bigt-ai.org.
+_bigt-ai-l1._tcp.<domain>  SRV  0 0 443 ordereu1.bigt-ai.org.
 ```
 
 (TXT with several quoted strings or several RRs; SRV is an alternative giving
 target + port. `A` records are used only to resolve SRV targets.)
 
 `EXPO_PUBLIC_SEEDS_URLS` (comma-separated) points at the
-[`bigtangle-seeds`](https://github.com/bigt-ai-platform/seeds) registries: the
+[`bigt-ai-seeds`](https://github.com/bigt-ai-platform/seeds) registries: the
 client `POST`s `/serverinfolist`, keeps the active nodes for its chain (`L0`,
 `ordermatch`) and caches them 1h. This is the *live* node list, so the compiled
 `MAINNET_*_URLS` seeds (the censorable `NetworkParameters` set) are only a
@@ -337,12 +337,12 @@ become U+FFFD (`EF BF BD`) and the native side writes them back with
 and the node answers
 
 ```
-net.bigtangle.exception.ProtocolException:
+net.bigt-ai.exception.ProtocolException:
   java.lang.ArrayIndexOutOfBoundsException: arraycopy:
   last source index 658 out of bounds for byte[547]
-    at net.bigtangle.core.Message.readBytes(Message.java:313)
-    at net.bigtangle.core.TransactionOutput.parse(...)
-    at net.bigtangle.core.BitcoinSerializer.makeTransaction(...)
+    at net.bigt-ai.core.Message.readBytes(Message.java:313)
+    at net.bigt-ai.core.TransactionOutput.parse(...)
+    at net.bigt-ai.core.BitcoinSerializer.makeTransaction(...)
 ```
 
 (the app shows that body verbatim in an alert). Browsers send the `Uint8Array`
@@ -357,7 +357,7 @@ which the Android side base64-decodes) with `responseType: 'arraybuffer'`, and
 `OkHttp3Util` (so `Wallet.submitTransaction` / `saveBlock` / `signToken`)
 through it. Plain `fetch` is kept on web/Node. Regression tests:
 `expo-app/sources/services/__tests__/binaryPost.test.ts` and
-`packages/bigtangle-ts/test/utils/OkHttp3UtilTransportTest.ts`.
+`packages/bigt-ai-ts/test/utils/OkHttp3UtilTransportTest.ts`.
 
 `CapacitorHttp` must be a **static** import. `import('@capacitor/core')`
 compiles to Metro's `_asyncRequire(id, {paths})`, which never settles in the

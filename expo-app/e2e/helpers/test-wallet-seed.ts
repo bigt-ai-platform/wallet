@@ -5,7 +5,7 @@
  * WARNING: These keys are for TESTING ONLY - never use in production
  */
 
-import { PQKey, NetworkParameters, TestParams, Utils } from "bigtangle-ts";
+import { PQKey, NetworkParameters, TestParams, Utils } from "bigt-ai-ts";
 
 /**
  * Test wallet configuration

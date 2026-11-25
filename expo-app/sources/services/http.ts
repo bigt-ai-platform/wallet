@@ -1,7 +1,7 @@
 /**
- * HTTP Service for Bigtangle API
+ * HTTP Service for Bigt-Ai API
  *
- * Handles all HTTP communication with Bigtangle network
+ * Handles all HTTP communication with Bigt-Ai network
  */
 
 import { device } from '@/storage';
@@ -30,7 +30,7 @@ import {
   type ChainNumberInfo,
   type OutputDetail,
 } from '@/types/api';
-import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigtangle-ts';
+import { PQKey, ECKey, Utils, MainNetParams, TestParams } from 'bigt-ai-ts';
 import { decimalsFor, formatTokenAmount } from '@/lib/tokenformat';
 import { collapseTokenEmissions } from '@/lib/tokenlist';
 import { findExchangeToken as findExchangeTokenIn } from '@/lib/exchangeToken';
@@ -76,7 +76,7 @@ function isWebProd(): boolean {
  *
  * The L1 (order match) chains carry no seed list of their own, so they use
  * the constants in constants/app.ts (same-origin /l1/ on web, PROD_L1_URL on
- * native; the legacy m.bigtangle.org host is the JSF webapp, not the
+ * native; the legacy m.bigt-ai.org host is the JSF webapp, not the
  * JSON-RPC order API).
  */
 function discoverL0Url(useTestnet: boolean): string {
@@ -144,8 +144,8 @@ export class HttpService {
     // test order chain; development/e2e builds can still set it programmatically.
     if (!IS_DEV && !E2E_ALLOW_TESTNET && this.getUseTestnet()) this.setTestnet(false);
     if (E2E_ALLOW_TESTNET && typeof globalThis !== 'undefined') {
-      (globalThis as { __bigtangleSetTestnet?: (value: boolean) => void })
-        .__bigtangleSetTestnet = (value: boolean) => this.setTestnet(value);
+      (globalThis as { __bigtAiSetTestnet?: (value: boolean) => void })
+        .__bigtAiSetTestnet = (value: boolean) => this.setTestnet(value);
     }
   }
 
@@ -176,7 +176,7 @@ export class HttpService {
     if (savedUrl) {
       // A saved testnet host outlives the removed toggle; never let it pin a
       // mainnet build to the empty test network.
-      if (!this.getUseTestnet() && /(^|\.)testm\.bigtangle\.org|testnet/i.test(savedUrl)) {
+      if (!this.getUseTestnet() && /(^|\.)testm\.bigt-ai\.org|testnet/i.test(savedUrl)) {
         return this.getDefaultServerUrl();
       }
       // Values saved by older builds may name the raw network seeds
@@ -300,7 +300,7 @@ export class HttpService {
   }
 
   /**
-   * Legacy L1 chain URLs saved by older builds. The legacy `m.bigtangle.org`
+   * Legacy L1 chain URLs saved by older builds. The legacy `m.bigt-ai.org`
    * host serves the JSF webapp, not the order API, and raw-network seeds are
    * equally unreachable from the browser — replace both with the current
    * mainnet default (/l1/ on web, the public order node on native).
@@ -309,9 +309,9 @@ export class HttpService {
     if (!url) return url;
     const useTestnet = device.get(STORAGE_KEYS.USE_TESTNET) === 'true';
     if (useTestnet) return url;
-    if (/^https?:\/\/m\.bigtangle\.org\/?$/.test(url)) return defaultL1Url(false);
-    if (/^https?:\/\/testm\.bigtangle\.org\/?$/i.test(url)
-        || /(^|\.)testm\.bigtangle\.org|testnet/i.test(url)) return defaultL1Url(false);
+    if (/^https?:\/\/m\.bigt-ai\.org\/?$/.test(url)) return defaultL1Url(false);
+    if (/^https?:\/\/testm\.bigt-ai\.org\/?$/i.test(url)
+        || /(^|\.)testm\.bigt-ai\.org|testnet/i.test(url)) return defaultL1Url(false);
     const seeds = MainNetParams.get().serverSeeds().map((s) => `http://${s}`);
     if (seeds.some((s) => url.startsWith(s))) return defaultL1Url(false);
     return url;
@@ -635,7 +635,7 @@ export class HttpService {
     return balances.map((c: any) => {
       const tokenid: string = c.tokenHex || c.tokenid || 'bc';
       const token = tokennames[tokenid] || {};
-      // Token metadata decimals (bc = BIGTANGLE_DECIMAL) — Java formats
+      // Token metadata decimals (bc = BIGT_AI_DECIMAL) — Java formats
       // balances with the token's own decimals, never a hardcoded 8.
       const decimals = decimalsFor(tokenid, token.decimals);
       const raw = BigInt(c.value || 0);

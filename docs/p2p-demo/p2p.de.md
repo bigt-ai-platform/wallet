@@ -2,7 +2,7 @@
 
 **Begriffe.** FIAT = Fiat-Währung; CNY = chinesischer Yuan; USD = US-Dollar; P2P = Peer-to-Peer.
 
-**Worum es geht.** In der Bigtangle Wallet tauschst du **BIG** direkt gegen Fiat-Währung (WeChat Pay / Alipay / Bank oder **PayPal USD**). Die BIG des Verkäufers kommen zuerst in eine **Treuhandadresse**, über die nur mit Zustimmung von zwei der drei Seiten — Verkäufer, Käufer und Plattform — verfügt werden kann. Der Käufer zahlt das Geld direkt an den Verkäufer; nachdem der Verkäufer den Eingang auf seinem eigenen Kontoauszug bestätigt hat, gibt er die BIG frei. Die Plattform verwahrt dein Geld nicht und berührt die Fiat-Währung nicht.
+**Worum es geht.** In der Bigt-Ai Wallet tauschst du **BIG** direkt gegen Fiat-Währung (WeChat Pay / Alipay / Bank oder **PayPal USD**). Die BIG des Verkäufers kommen zuerst in eine **Treuhandadresse**, über die nur mit Zustimmung von zwei der drei Seiten — Verkäufer, Käufer und Plattform — verfügt werden kann. Der Käufer zahlt das Geld direkt an den Verkäufer; nachdem der Verkäufer den Eingang auf seinem eigenen Kontoauszug bestätigt hat, gibt er die BIG frei. Die Plattform verwahrt dein Geld nicht und berührt die Fiat-Währung nicht.
 
 **Zu den Screenshots.** Die Screenshots unten stammen aus einer Demo-Umgebung auf einem echten Gerät; Beträge und Hash-Werte sind Demodaten, es ist kein echtes Geld im Spiel.
 

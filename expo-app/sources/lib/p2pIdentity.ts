@@ -1,4 +1,4 @@
-import { Base58, ECKey, PQKey, Sha256Hash, Utils } from 'bigtangle-ts';
+import { Base58, ECKey, PQKey, Sha256Hash, Utils } from 'bigt-ai-ts';
 
 /**
  * App-local P2P identity helpers.
@@ -7,7 +7,7 @@ import { Base58, ECKey, PQKey, Sha256Hash, Utils } from 'bigtangle-ts';
  * each request with a did:key over that key, and a signature over the sha256 of
  * the canonical (sorted top-level keys) JSON body. This mirrors
  * `packages/did` + `services/p2p-engine/src/sign.ts` but is implemented with
- * `bigtangle-ts` only, because importing the `did` package pulls in
+ * `bigt-ai-ts` only, because importing the `did` package pulls in
  * `node:crypto` (Metro-hostile).
  */
 const MULTICODEC_MLDSA87 = 0x300001;

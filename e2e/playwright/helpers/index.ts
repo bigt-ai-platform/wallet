@@ -66,8 +66,8 @@ export async function configureServerUrl(page: Page, serverUrl: string, l1Url?: 
     // exposes a narrow test hook (EXPO_PUBLIC_E2E_ALLOW_TESTNET); fall back to
     // storage + reload for older builds that predate the hook.
     const switched = await page.evaluate(() => {
-      const fn = (globalThis as { __bigtangleSetTestnet?: (value: boolean) => void })
-        .__bigtangleSetTestnet;
+      const fn = (globalThis as { __bigtAiSetTestnet?: (value: boolean) => void })
+        .__bigtAiSetTestnet;
       if (typeof fn !== 'function') return false;
       fn(true);
       return true;
@@ -119,8 +119,8 @@ export async function fundFromGenesisWallet(
   keys: any[],
   amount: bigint,
 ): Promise<void> {
-  const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
-  const bcToken = sdk.NetworkParameters.BIGTANGLE_TOKENID_STRING;
+  const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
+  const bcToken = sdk.NetworkParameters.BIGT_AI_TOKENID_STRING;
   const genesisKey = sdk.PQKey.fromMLDSA(new Uint8Array(32).fill(0x01));
   const wallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [genesisKey], serverUrl);
   wallet.setServerURL(serverUrl);
@@ -142,7 +142,7 @@ export async function fundFromGenesisWallet(
 
 /** Wait until `key` holds a confirmed, spendable BIG UTXO on `serverUrl`. */
 export async function waitForConfirmedBc(key: any, serverUrl: string, tokenid = 'bc'): Promise<void> {
-  const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+  const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
   const w = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [key], serverUrl);
   for (let i = 0; i < 60; i++) {
     const cands = await w.calculateAllSpendCandidates(null, false);

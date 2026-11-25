@@ -18,8 +18,8 @@ integrate it; we do not issue, redeem or bridge it.
 
 ## 1. Why not treat Ethereum as an L1
 
-The L0↔L1 bridge (`bigtangle-bridge`: `BridgeService` + `AnchorService`) assumes
-the L1 is a **bigtangle node**: it signs `LayerAnchor`s from a local block
+The L0↔L1 bridge (`bigt-ai-bridge`: `BridgeService` + `AnchorService`) assumes
+the L1 is a **bigt-ai node**: it signs `LayerAnchor`s from a local block
 store, mints wrapped tokens as zero-input `CROSSTANGLE` blocks, and takes
 peg-out burns from the anchor payload. An Ethereum chain has none of those
 producers, so plugging it in would mean an off-chain relayer that signs state
@@ -68,8 +68,9 @@ GET  {api}/statement?account=<addr>&limit=<n>
                  status, at?, counterparty?, memo?, hash? }] }
 
 POST {api}/transfers        { account, assetId, to, amount, memo? }
-POST {api}/mint-requests    { account, assetId, amount, reference? }
-POST {api}/redeem-requests  { account, assetId, amount, reference? }
+POST {api}/mint-requests    { account, assetId, amount, reference? }   // x-mint-token
+POST {api}/redeem-intents   { account, assetId, amount, destination, l1TxHash,
+                              nonce, expiry, keyType, publicKey, signature }
   -> { id, status }
 
 GET  {api}/transfers/<id>   -> { id, status }

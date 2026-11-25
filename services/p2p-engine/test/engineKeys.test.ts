@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { PQKey, Utils } from "bigtangle-ts";
+import { PQKey, Utils } from "bigt-ai-ts";
 import {
   engineKeyring,
   engineSigner,

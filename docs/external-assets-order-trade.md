@@ -68,7 +68,7 @@ timeout/refund), never an on-chain wrap.
 
 ## 2. Why not the bridge
 
-`bigtangle-bridge` assumes the L1 is a bigtangle node (signed `LayerAnchor`,
+`bigt-ai-bridge` assumes the L1 is a bigt-ai node (signed `LayerAnchor`,
 `CROSSTANGLE` mints, `AnchorBurn` peg-out). Ethereum has none of that, so the
 only "Ethereum as L1" option is an off-chain relayer signing roots L0 cannot
 verify — `plan/hkd.md` §7.2 rates it *"Hard; separate project, not v1"*.
@@ -347,14 +347,16 @@ exists.
 2. Publish the initial `StablecoinPolicy` block per asset.
 3. Java test: create → sell → buy → match for `GOLD/HKD` and `ETH/HKD`,
    asserting payouts and the price-shift vectors.
-4. **No changes to L0, `bigtangle-bridge`, or `ServiceBaseOrder`.**
+4. **No changes to L0, `bigt-ai-bridge`, or `ServiceBaseOrder`.**
 
 ### B. Issuer service — new `../wallet/services/asset-issuer`
 
 Implements exactly the contract already declared in
 `expo-app/sources/services/distributor.ts` (`/balances`, `/statement`,
-`/transfers`, `/mint-requests`, `/redeem-requests`), so the wallet needs no new
-transport.
+`/transfers`, `/mint-requests`, `/redeem-intents`), so the wallet needs no new
+transport. `/mint-requests` is operator-only (`MINT_API_TOKEN`); a redemption
+requires an L1-key signature **and** the L1 return (`l1TxHash`), see
+[`redeem-intent.md`](./redeem-intent.md).
 
 - **Deposit watchers**: Ethereum (`/ethindex` + `getIncomingDeposits`, wait for
   `finalized`); bank/reserve confirmations for HKD and gold (manual or API).

@@ -136,9 +136,9 @@ const outFile = path.resolve(
 const jsonlFile = outFile.replace(/\.json$/i, ".jsonl");
 
 const urls = {
-  L0: trim(process.env.E2E_PROD_L0_URL || "https://eu1.bigtangle.org"),
-  SOCIAL: trim(process.env.E2E_PROD_L1_SOCIAL_URL || "https://socialeu1.bigtangle.org"),
-  ORDER: trim(process.env.E2E_PROD_L1_ORDER_URL || "https://ordereu1.bigtangle.org"),
+  L0: trim(process.env.E2E_PROD_L0_URL || "https://eu1.bigt-ai.org"),
+  SOCIAL: trim(process.env.E2E_PROD_L1_SOCIAL_URL || "https://socialeu1.bigt-ai.org"),
+  ORDER: trim(process.env.E2E_PROD_L1_ORDER_URL || "https://ordereu1.bigt-ai.org"),
   P2P: trim(process.env.E2E_PROD_P2P_URL || "https://eu.wallet.bigt.ai/p2p"),
   WALLET: trim(process.env.E2E_PROD_WALLET_URL || "https://wallet.bigt.ai"),
 };
@@ -257,7 +257,7 @@ let canonicalJson = null;
 async function initIdentity() {
   if (!signed && !write) return;
   try {
-    const { PQKey } = await import("../packages/bigtangle-ts/dist/index.js");
+    const { PQKey } = await import("../packages/bigt-ai-ts/dist/index.js");
     const pqmod = await import("../packages/did/dist/pq.js");
     const signmod = await import("../services/p2p-engine/dist/sign.js");
     const seed = process.env.E2E_PROD_SOAK_KEY?.trim();

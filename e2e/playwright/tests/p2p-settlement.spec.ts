@@ -100,7 +100,7 @@ test.describe('P2P Settlement', () => {
     test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set');
 
     const { PQKey, Address, TestParams, Wallet } = await import(
-      '../../../packages/bigtangle-ts/dist/index.js'
+      '../../../packages/bigt-ai-ts/dist/index.js'
     );
 
     const sellerKey = PQKey.createNew();

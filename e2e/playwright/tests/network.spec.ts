@@ -43,7 +43,7 @@ async function stubChain(
               { url: 'http://43.129.198.77:8082', chain: 'L0', status: 'active' },
               { url: 'http://85.215.91.140:8082', chain: 'L0', status: 'active' },
             ]
-            : [{ url: 'https://ordereu2.bigtangle.org', status: 'active' }],
+            : [{ url: 'https://ordereu2.bigt-ai.org', status: 'active' }],
         },
       });
     }

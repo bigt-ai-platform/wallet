@@ -1,21 +1,21 @@
 /**
- * Transaction Service for Bigtangle
+ * Transaction Service for Bigt-Ai
  *
  * Handles transaction creation, signing, and broadcasting
  */
 
-import { PQKey, ECKey, TestParams, MainNetParams, NetworkParameters, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigtangle-ts';
+import { PQKey, ECKey, TestParams, MainNetParams, NetworkParameters, Utils, Address, Coin, Sha256Hash, Script, ScriptBuilder, Wallet, UTXO as SdkUTXO, FreeStandingTransactionOutput, PQConstants } from 'bigt-ai-ts';
 import i18n from '../lib/i18n';
 // @ts-ignore
-import { Transaction } from 'bigtangle-ts/dist/net/bigtangle/core/Transaction';
+import { Transaction } from 'bigt-ai-ts/dist/net/bigt-ai/core/Transaction';
 // @ts-ignore
-import { TransactionInput } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionInput';
+import { TransactionInput } from 'bigt-ai-ts/dist/net/bigt-ai/core/TransactionInput';
 // @ts-ignore
-import { TransactionOutput } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutput';
+import { TransactionOutput } from 'bigt-ai-ts/dist/net/bigt-ai/core/TransactionOutput';
 // @ts-ignore
-import { TransactionOutPoint } from 'bigtangle-ts/dist/net/bigtangle/core/TransactionOutPoint';
+import { TransactionOutPoint } from 'bigt-ai-ts/dist/net/bigt-ai/core/TransactionOutPoint';
 // @ts-ignore
-import { WalletUtil } from 'bigtangle-ts/dist/net/bigtangle/utils/WalletUtil';
+import { WalletUtil } from 'bigt-ai-ts/dist/net/bigt-ai/utils/WalletUtil';
 import { httpService } from './http';
 import { postBinary } from './binaryPost';
 import { IS_DEV } from '@/constants/app';
@@ -298,7 +298,7 @@ export async function createAndSignTransaction(
  * Broadcast a signed transaction to the network.
  *
  * The L0 server exposes the raw serialized transaction via the
- * `submitTransaction` endpoint (matching the bigtangle-ts Wallet SDK), so we
+ * `submitTransaction` endpoint (matching the bigt-ai-ts Wallet SDK), so we
  * POST the raw bytes instead of a JSON wrapper.
  */
 export async function broadcastTransaction(rawTx: string): Promise<ApiResponse<string>> {
@@ -358,7 +358,7 @@ export async function broadcastPegIn(rawTx: string): Promise<ApiResponse<string>
 }
 
 /** Sign every input of a locally built transfer with the wallet key. */
-/** One key that can sign Bigtangle inputs (multi-key wallets pass several). */
+/** One key that can sign Bigt-Ai inputs (multi-key wallets pass several). */
 export interface SigningKey {
   privateKeyHex: string;
   keyType?: 'PQ' | 'EC';
@@ -423,7 +423,7 @@ async function submitBigFee(params: {
   tagged: Array<{ row: any; key: SigningKey }>;
 }): Promise<string> {
   const { netParams, tagged } = params;
-  const bigId = NetworkParameters.BIGTANGLE_TOKENID_STRING;
+  const bigId = NetworkParameters.BIGT_AI_TOKENID_STRING;
   const fee = Coin.FEE_DEFAULT.getValue();
   const candidates = tagged
     .filter(({ row }) => (row.tokenId || row.tokenHex || row.value?.tokenHex) === bigId && row.confirmed !== false)
@@ -497,7 +497,7 @@ export async function payOnLayer0(params: {
   const keys = params.keys?.length ? params.keys : [{ privateKeyHex, keyType }];
   const signers = new Map(keys.map((k) => [keyId(k), keyFromPrivateKey(k.privateKeyHex, k.keyType)]));
   const tokenBytes = hexToBytes(tokenId);
-  const isBig = tokenId.trim().toLowerCase() === NetworkParameters.BIGTANGLE_TOKENID_STRING;
+  const isBig = tokenId.trim().toLowerCase() === NetworkParameters.BIGT_AI_TOKENID_STRING;
 
   // 1. Fetch spendable UTXOs of every key (correct pubkey-hash format).
   const tagged = await fetchTaggedOutputs(keys);
@@ -678,7 +678,7 @@ export async function anchorSocialRecord(params: {
   tx.setData(new TextEncoder().encode(JSON.stringify(record)));
   tx.setDataClassName('SocialRecord');
 
-  const BIG = NetworkParameters.getBIGTANGLE_TOKENID();
+  const BIG = NetworkParameters.getBIGT_AI_TOKENID();
   let beneficiary: unknown = null;
   let amount = Coin.valueOf(0n, BIG).negate();
   for (const spendable of coinList) {
@@ -710,7 +710,7 @@ export async function anchorSocialRecord(params: {
 /**
  * Pay a token transfer on an L1 (order) chain.
  *
- * Uses the bigtangle-ts SDK Wallet pointed at the given L1 server URL, so the
+ * Uses the bigt-ai-ts SDK Wallet pointed at the given L1 server URL, so the
  * transaction is created, signed and submitted via the L1 server's
  * `submitTransaction` endpoint (the L1 server inherits it from
  * BaseDispatcherController). Returns the transaction hash on success.
@@ -752,7 +752,7 @@ export async function payOnLayer1(params: {
 }
 
 /**
- * Place a buy/sell order on an L1 (order) chain using the bigtangle-ts SDK
+ * Place a buy/sell order on an L1 (order) chain using the bigt-ai-ts SDK
  * Wallet pointed at the given L1 server URL. The SDK builds the OrderOpen
  * transaction, signs it with the wallet key, and submits it to the L1 server's
  * `submitTransaction` endpoint. Returns the submitted transaction hash.

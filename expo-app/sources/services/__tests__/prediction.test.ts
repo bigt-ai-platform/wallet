@@ -9,14 +9,14 @@ const mocks = vi.hoisted(() => ({
   order: vi.fn(),
 }));
 
-vi.mock('bigtangle-ts', async () => {
-  const { PredictionMarketOrders } = await import('../../../../packages/bigtangle-ts/src/net/bigtangle/apps/prediction/PredictionMarketOrders');
+vi.mock('bigt-ai-ts', async () => {
+  const { PredictionMarketOrders } = await import('../../../../packages/bigt-ai-ts/src/net/bigt-ai/apps/prediction/PredictionMarketOrders');
   return {
     PredictionMarketOrders,
     Wallet: { fromKeysURL: mocks.fromKeysURL },
     PQKey: { fromPrivateKey: () => ({ toAddressString: () => 'alice' }) },
     TestParams: { get: () => ({}) },
-    NetworkParameters: { BIGTANGLE_TOKENID_STRING: 'bc' },
+    NetworkParameters: { BIGT_AI_TOKENID_STRING: 'bc' },
     PredictionAction: {
       split: () => JSON.stringify({ action: 'split' }),
       merge: () => JSON.stringify({ action: 'merge' }),
@@ -41,7 +41,7 @@ import { disputeEvent, getActionAvailability, getOracleActionError, getPositions
 const token = {
   tokenid: 'market',
   tokenKeyValues: { keyvalues: Object.entries({
-    classname: 'net.bigtangle.server.service.PredictionContract',
+    classname: 'net.bigt-ai.server.service.PredictionContract',
     S: '1000', yesTokenid: 'yes-token', noTokenid: 'no-token', collateralTokenid: 'bc',
     disputeBond: '10', oracle: 'committee',
     resolutionTimeSec: String(Math.floor(Date.now() / 1000) + 86400), autoInvalidSec: '600',

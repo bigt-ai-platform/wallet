@@ -12,8 +12,8 @@ import { useTransactionConfirm } from '@/components/TransactionConfirm';
 import WalletUnlock from '@/components/WalletUnlock';
 import { notifySystemMessage } from '@/services/systemMessages';
 import {
-  accountFromPrivateKey, assetsOf, getFeeData, getTransactionReceipt, loadBalances,
-  prepareNativeTransfer, prepareTokenTransfer, sendNativeTransfer, sendTokenTransfer,
+  accountFromPrivateKey, assetsOf, FeeExceedsApprovalError, getFeeData, getTransactionReceipt,
+  loadBalances, prepareNativeTransfer, prepareTokenTransfer, sendNativeTransfer, sendTokenTransfer,
   waitForReceipt, type EthAsset, type GasPreset, type PreparedTransfer,
 } from '@/services/eth';
 import {
@@ -57,7 +57,7 @@ export default function WithdrawScreen() {
 
   const wallet = getUnlockedWallet();
   // Dual-key wallets sign Ethereum with their EC key, whatever the primary
-  // (Bigtangle) key type is.
+  // (Bigt-Ai) key type is.
   const ethKey = wallet ? ethereumKey(wallet) : null;
   const privateKey = ethKey?.privateKey;
   const isEc = !!ethKey;
@@ -81,6 +81,7 @@ export default function WithdrawScreen() {
   const [preset, setPreset] = React.useState<GasPreset>('standard');
   const [prepared, setPrepared] = React.useState<PreparedTransfer | null>(null);
   const [preparing, setPreparing] = React.useState(false);
+  const [feeTick, setFeeTick] = React.useState(0);
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState('');
   const [notice, setNotice] = React.useState('');
@@ -177,7 +178,7 @@ export default function WithdrawScreen() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asset?.key, toTrimmed, addressError, amount, preset, chain.id, privateKey]);
+  }, [asset?.key, toTrimmed, addressError, amount, preset, chain.id, privateKey, feeTick]);
 
   // A withdrawal sent in an earlier session may have confirmed while the app
   // was closed: resolve pending rows once on mount.
@@ -256,38 +257,43 @@ export default function WithdrawScreen() {
       return;
     }
     // The fee is paid in the native coin on top of the amount (native) or
-    // alongside the token transfer.
-    if (prepared) {
-      const nativeNeeded = asset.token ? prepared.maxFeeWei : raw + prepared.maxFeeWei;
-      if (nativeNeeded > nativeBalance) {
-        setError(asset.token
-          ? t('withdraw.errGas', { symbol: chain.nativeSymbol })
-          : t('eth.errInsufficient'));
-        return;
-      }
+    // alongside the token transfer. Without a fresh estimate there is no fee to
+    // approve, so the send would not be bound to anything the user saw.
+    if (!prepared) {
+      setError(t('eth.feeUnknown'));
+      return;
+    }
+    const nativeNeeded = asset.token ? prepared.maxFeeWei : raw + prepared.maxFeeWei;
+    if (nativeNeeded > nativeBalance) {
+      setError(asset.token
+        ? t('withdraw.errGas', { symbol: chain.nativeSymbol })
+        : t('eth.errInsufficient'));
+      return;
     }
     const ok = await confirmTx({
       title: t('eth.confirmTitle'),
-      subtitle: prepared
-        ? t('withdraw.confirmSubtitle', {
-          amount: formatUnits(raw, asset.decimals, locale),
-          symbol: asset.symbol,
-          to: shortAddress(toTrimmed),
-          network: chain.name,
-          fee: formatUnits(prepared.maxFeeWei, 18, locale),
-          native: chain.nativeSymbol,
-        })
-        : t('eth.confirmSubtitle', {
-          amount: formatUnits(raw, asset.decimals, locale),
-          symbol: asset.symbol,
-          to: shortAddress(toTrimmed),
-        }),
+      subtitle: t('withdraw.confirmSubtitle', {
+        amount: formatUnits(raw, asset.decimals, locale),
+        symbol: asset.symbol,
+        to: shortAddress(toTrimmed),
+        network: chain.name,
+        fee: formatUnits(prepared.maxFeeWei, 18, locale),
+        native: chain.nativeSymbol,
+      }),
     });
     if (!ok) return;
     setSending(true);
     setError('');
     try {
-      const req = { privateKeyHex: privateKey, to: toTrimmed, amount: raw, chain, preset };
+      const req = {
+        privateKeyHex: privateKey,
+        to: toTrimmed,
+        amount: raw,
+        chain,
+        preset,
+        // Bind the send to the fee the user just approved.
+        maxFeeWei: prepared.maxFeeWei,
+      };
       const sent = asset.token
         ? await sendTokenTransfer({ ...req, token: asset.token })
         : await sendNativeTransfer(req);
@@ -307,6 +313,13 @@ export default function WithdrawScreen() {
       void track(row);
       void refreshBalances();
     } catch (e) {
+      if (e instanceof FeeExceedsApprovalError) {
+        // Rejected before broadcast: refresh the estimate so the next review
+        // shows the higher fee the user must approve.
+        setError(t('withdraw.errFeeChanged'));
+        setFeeTick((n) => n + 1);
+        return;
+      }
       const msg = (e as Error).message || '';
       setError(/own address/i.test(msg) ? t('eth.errSelf') : msg || t('eth.errSend'));
     } finally {

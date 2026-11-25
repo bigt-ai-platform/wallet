@@ -3,7 +3,7 @@
  *
  * Extracted from bigtai src/crypto (proven in production). Pure crypto, no
  * blockchain runtime dependency: one secp256k1/Ed25519 keypair yields both a
- * did:key identifier and a BigTangle chain address.
+ * did:key identifier and a Bigt-Ai chain address.
  *
  * Provides: key generation, ECDSA/Ed25519 sign/verify, WIF, did:key,
  * chain address derivation, ECDH encryption, challenge auth.
@@ -406,15 +406,15 @@ export function verifyChallengeWithDid(did: string, nonce: string, compactSigHex
   return ECKey.fromPublicBytes(pubBytes).verify(sha256(hexToBytes(nonce)), hexToBytes(compactSigHex));
 }
 
-/** h160 = RIPEMD160(SHA256(pub)) — the bigtangle UTXO query key. */
+/** h160 = RIPEMD160(SHA256(pub)) — the bigt-ai UTXO query key. */
 export function pubKeyHashFromPub(pubBytes: Uint8Array): Uint8Array {
   return ripemd160(sha256(pubBytes));
 }
 
-// ── chain address (BigTangle P2PKH-style) ────────────────────────────────
+// ── chain address (Bigt-Ai P2PKH-style) ────────────────────────────────
 
 /**
- * Derive a BigTangle chain address from a public key:
+ * Derive a Bigt-Ai chain address from a public key:
  * base58(version ‖ RIPEMD160(SHA256(pub)) ‖ checksum4).
  * The version byte comes from the network's NetworkParameters (0x00 default).
  */

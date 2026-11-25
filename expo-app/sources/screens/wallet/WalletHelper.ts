@@ -1,7 +1,7 @@
 /**
- * WalletHelper.ts - Bigtangle wallet utilities
+ * WalletHelper.ts - Bigt-Ai wallet utilities
  *
- * Uses imports from bigtangle-ts to work in both Node.js and webpack environments.
+ * Uses imports from bigt-ai-ts to work in both Node.js and webpack environments.
  */
 import i18n from '../../lib/i18n';
 import { IS_DEV } from '../../constants/app';
@@ -9,15 +9,15 @@ import { httpService } from '../../services/http';
 import { serializePlainWallet } from '../../lib/plainWallet';
 import { allKeys as allWalletKeys } from '../../lib/walletKeys';
 
-import { PQKey, Utils, ECKey, Address, MainNetParams, TestParams } from 'bigtangle-ts';
+import { PQKey, Utils, ECKey, Address, MainNetParams, TestParams } from 'bigt-ai-ts';
 // @ts-ignore - These are not exported in index but exist in dist
-import { KeyCrypterScrypt } from 'bigtangle-ts/dist/net/bigtangle/crypto/KeyCrypterScrypt';
+import { KeyCrypterScrypt } from 'bigt-ai-ts/dist/net/bigt-ai/crypto/KeyCrypterScrypt';
 // @ts-ignore
-import { EncryptedData } from 'bigtangle-ts/dist/net/bigtangle/crypto/EncryptedData';
+import { EncryptedData } from 'bigt-ai-ts/dist/net/bigt-ai/crypto/EncryptedData';
 // @ts-ignore
-import { Wallet } from 'bigtangle-ts/dist/net/bigtangle/wallet/Wallet';
+import { Wallet } from 'bigt-ai-ts/dist/net/bigt-ai/wallet/Wallet';
 // @ts-ignore
-import { WalletProtobufSerializer } from 'bigtangle-ts/dist/net/bigtangle/wallet/WalletProtobufSerializer';
+import { WalletProtobufSerializer } from 'bigt-ai-ts/dist/net/bigt-ai/wallet/WalletProtobufSerializer';
 
 export interface CredentialEntry {
   url: string;
@@ -33,12 +33,12 @@ export interface Key {
   readonly keyType?: 'PQ' | 'EC';
   /** Network the address was derived on (EC keys only). */
   readonly network?: string;
-  /** Wallet role: the Bigtangle key or the Ethereum (EVM) key. */
-  readonly role?: 'bigtangle' | 'ethereum';
+  /** Wallet role: the Bigt-Ai key or the Ethereum (EVM) key. */
+  readonly role?: 'bigt-ai' | 'ethereum';
 }
 
 export interface WalletFile {
-  /** Primary (Bigtangle) key. */
+  /** Primary (Bigt-Ai) key. */
   wallet: Key;
   /** Every key of the file, primary included (multi-key wallets). */
   keys?: Key[];
@@ -84,7 +84,7 @@ function ecParams(network?: string) {
 /**
  * Create a legacy secp256k1 (EC) wallet. Needed for Ethereum/TRON support:
  * those chains use the secp256k1 key directly, and a PQ key has no such
- * counterpart. The Bigtangle address is the legacy P2PKH form.
+ * counterpart. The Bigt-Ai address is the legacy P2PKH form.
  */
 export function createEcWallet(): WalletFile {
   const ecKey = ECKey.createNew();
@@ -119,7 +119,7 @@ export function importEcPrivateKey(privateKeyInput: string): WalletFile {
   return { wallet, keys: [wallet] };
 }
 
-// Default context root for bigtangle network
+// Default context root for bigt-ai network
 const DEFAULT_CONTEXT_ROOT = 'http://localhost:8088/';
 
 /**
@@ -133,8 +133,8 @@ function pqKeyAddress(pqKey: PQKey): string {
   return Address.fromP2PKH(params, pqKey.getPubKeyHash()).toBase58();
 }
 
-// Use bigtangle-ts PQKey for wallet creation
-/** A single post-quantum key (Bigtangle role). */
+// Use bigt-ai-ts PQKey for wallet creation
+/** A single post-quantum key (Bigt-Ai role). */
 export function createPqWallet(): WalletFile {
   const pqKey = PQKey.createNew();
   const pq: Key = {
@@ -142,7 +142,7 @@ export function createPqWallet(): WalletFile {
     pubkey: Utils.HEX.encode(pqKey.getPrefixedPublicKeyBytes()),
     privateKey: pqKey.getPrivateKeyHex(),
     keyType: 'PQ',
-    role: 'bigtangle',
+    role: 'bigt-ai',
   };
   return { wallet: pq, keys: [pq] };
 }
@@ -150,7 +150,7 @@ export function createPqWallet(): WalletFile {
 export async function createWallet(): Promise<WalletFile> {
   const pq: Key = createPqWallet().wallet;
 
-  // New wallets are dual-key: the PQ key for Bigtangle, an EC key for Ethereum
+  // New wallets are dual-key: the PQ key for Bigt-Ai, an EC key for Ethereum
   // (and later TRON). One encrypted file, one password, one backup.
   const ecKey = ECKey.createNew();
   const params = ecParams();
@@ -238,7 +238,7 @@ function keyFromData(keyData: {
       privateKey: keyData.privateKey,
       keyType: 'EC',
       network: keyData.network,
-      role: keyData.role === 'bigtangle' || keyData.role === 'ethereum' ? keyData.role : undefined,
+      role: keyData.role === 'bigt-ai' || keyData.role === 'ethereum' ? keyData.role : undefined,
     };
   }
   const rawKey = Utils.HEX.decode(keyData.privateKey);
@@ -248,7 +248,7 @@ function keyFromData(keyData: {
     pubkey: pqKey.getPublicKeyAsHex(),
     privateKey: pqKey.getPrivateKeyHex(),
     keyType: 'PQ',
-    role: keyData.role === 'bigtangle' || keyData.role === 'ethereum' ? keyData.role : undefined,
+    role: keyData.role === 'bigt-ai' || keyData.role === 'ethereum' ? keyData.role : undefined,
   };
 }
 
@@ -300,9 +300,9 @@ export async function loadWallet(
   }
 
   const keys = parsed.keys.map(keyFromData);
-  // Primary = the Bigtangle key: explicit role, else PQ, else the first key.
+  // Primary = the Bigt-Ai key: explicit role, else PQ, else the first key.
   const wallet =
-    keys.find((k) => k.role === 'bigtangle') ??
+    keys.find((k) => k.role === 'bigt-ai') ??
     keys.find((k) => (k.keyType ?? 'PQ') === 'PQ') ??
     keys[0];
 
@@ -328,7 +328,7 @@ export function loadPlainWalletSync(fileData: string): WalletFile {
 
   const keys = parsed.keys.map(keyFromData);
   const wallet =
-    keys.find((k) => k.role === 'bigtangle') ??
+    keys.find((k) => k.role === 'bigt-ai') ??
     keys.find((k) => (k.keyType ?? 'PQ') === 'PQ') ??
     keys[0];
 
@@ -364,7 +364,7 @@ export async function importPrivateKey(
 
 /**
  * Read an old-format `.wallet` protobuf file (as produced by the legacy Java
- * bigtangle clients) and report whether it is password-encrypted. This never
+ * bigt-ai clients) and report whether it is password-encrypted. This never
  * requires the password.
  */
 export async function parseOldWalletFile(
@@ -536,15 +536,15 @@ export function base64ToBytes(b64: string): Uint8Array {
 }
 
 /**
- * Create a bigtangle-ts Wallet instance from a WalletFile
+ * Create a bigt-ai-ts Wallet instance from a WalletFile
  * Uses ECKey derived from PQ key material for Wallet compatibility
  */
-export async function createBigtangleWallet(
+export async function createBigtAiWallet(
   walletFile: WalletFile,
   contextRoot: string = DEFAULT_CONTEXT_ROOT,
 ): Promise<any> {
-  const { TestParams } = await import('bigtangle-ts');
-  const { Wallet: BtWallet } = await import('bigtangle-ts/dist/net/bigtangle/wallet/Wallet');
+  const { TestParams } = await import('bigt-ai-ts');
+  const { Wallet: BtWallet } = await import('bigt-ai-ts/dist/net/bigt-ai/wallet/Wallet');
 
   const params = TestParams.get();
   const btWallet = await BtWallet.fromKeysURL(params, [], contextRoot);

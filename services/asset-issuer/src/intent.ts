@@ -21,9 +21,9 @@ import {
   TestParams,
   Utils,
   type NetworkParameters,
-} from 'bigtangle-ts';
+} from 'bigt-ai-ts';
 
-export const REDEEM_INTENT_DOMAIN = 'bigtangle-wallet-redeem-v1';
+export const REDEEM_INTENT_DOMAIN = 'bigt-ai-wallet-redeem-v2';
 
 export type RedeemNetwork = 'Mainnet' | 'Test';
 export type IntentKeyType = 'EC' | 'PQ';
@@ -38,6 +38,12 @@ export interface RedeemIntent {
   amountRaw: string;
   /** Ethereum destination (0x + 40 hex). */
   destination: string;
+  /**
+   * Hash of the L1 transaction that paid `amountRaw` of the asset's token to
+   * the issuer's redemption address. The release is refused without a confirmed
+   * output for it, and the hash may back only one release.
+   */
+  l1TxHash: string;
   /** Unique per (asset, account); a replay is rejected. */
   nonce: string;
   /** Unix milliseconds. */
@@ -70,6 +76,7 @@ export function intentMessage(intent: RedeemIntent): string {
     account: intent.account,
     amountRaw: intent.amountRaw,
     destination: intent.destination,
+    l1TxHash: intent.l1TxHash,
     nonce: intent.nonce,
     expiry: intent.expiry,
   });
@@ -170,6 +177,9 @@ export function validateIntentFields(intent: RedeemIntent, now: number): VerifyR
   }
   if (!/^0x[0-9a-fA-F]{40}$/.test(intent.destination)) {
     return { ok: false, error: 'destination must be a 20-byte 0x address' };
+  }
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(intent.l1TxHash)) {
+    return { ok: false, error: 'l1TxHash must be a 32-byte transaction hash' };
   }
   if (!intent.nonce || intent.nonce.length < 8 || intent.nonce.length > 128) {
     return { ok: false, error: 'nonce must be 8..128 characters' };

@@ -2,18 +2,18 @@
  * Wallet key roles.
  *
  * A wallet file may hold more than one key:
- *  - **bigtangle** (PQ preferred; a legacy EC key when the wallet has no PQ):
- *    signs Bigtangle L0/L1 transactions, holds the BIG address;
+ *  - **bigt-ai** (PQ preferred; a legacy EC key when the wallet has no PQ):
+ *    signs Bigt-Ai L0/L1 transactions, holds the BIG address;
  *  - **ethereum** (always EC/secp256k1): Ethereum, the EVM deposit/withdraw
  *    pages and (later) TRON.
  *
  * New wallets are created with both. Old EC-only wallets keep their EC key as
- * the Bigtangle key and can add a PQ key later; a PQ-only wallet can add an EC
+ * the Bigt-Ai key and can add a PQ key later; a PQ-only wallet can add an EC
  * key for Ethereum. Multi-key spend keeps funds on every key reachable.
  */
 
 export type KeyType = 'PQ' | 'EC';
-export type KeyRole = 'bigtangle' | 'ethereum';
+export type KeyRole = 'bigt-ai' | 'ethereum';
 
 export interface WalletKey {
   address: string;
@@ -27,7 +27,7 @@ export interface WalletKey {
 }
 
 export interface WalletKeySet {
-  /** Primary key (the Bigtangle key). */
+  /** Primary key (the Bigt-Ai key). */
   wallet: WalletKey;
   /** Every key in the file, primary included. */
   keys?: WalletKey[];
@@ -48,11 +48,11 @@ export function allKeys(file: WalletKeySet): WalletKey[] {
   return out;
 }
 
-/** The Bigtangle key: explicit role first, then PQ, then the primary. */
-export function bigtangleKey(file: WalletKeySet): WalletKey {
+/** The Bigt-Ai key: explicit role first, then PQ, then the primary. */
+export function bigtAiKey(file: WalletKeySet): WalletKey {
   const keys = allKeys(file);
   return (
-    keys.find((k) => k.role === 'bigtangle') ??
+    keys.find((k) => k.role === 'bigt-ai') ??
     keys.find((k) => (k.keyType ?? 'PQ') === 'PQ') ??
     keys[0]
   );
@@ -70,10 +70,10 @@ export function ethereumKey(file: WalletKeySet): WalletKey | null {
 
 /** Append a key (replacing a same-role key) and rebuild the key list. */
 export function withKey<T extends WalletKeySet>(file: T, key: WalletKey): T {
-  const role: KeyRole = key.role ?? (key.keyType === 'EC' ? 'ethereum' : 'bigtangle');
+  const role: KeyRole = key.role ?? (key.keyType === 'EC' ? 'ethereum' : 'bigt-ai');
   const tagged: WalletKey = { ...key, role };
-  const others = allKeys(file).filter((k) => (k.role ?? (k.keyType === 'EC' ? 'ethereum' : 'bigtangle')) !== role);
-  const keys = role === 'bigtangle' ? [tagged, ...others] : [...others, tagged];
+  const others = allKeys(file).filter((k) => (k.role ?? (k.keyType === 'EC' ? 'ethereum' : 'bigt-ai')) !== role);
+  const keys = role === 'bigt-ai' ? [tagged, ...others] : [...others, tagged];
   return { ...file, wallet: keys[0], keys } as T;
 }
 

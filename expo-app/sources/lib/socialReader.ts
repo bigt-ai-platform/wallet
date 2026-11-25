@@ -1,4 +1,4 @@
-import { MainNetParams, Utils, type NetworkParameters, type Transaction } from 'bigtangle-ts';
+import { MainNetParams, Utils, type NetworkParameters, type Transaction } from 'bigt-ai-ts';
 import { verifyRecordSig } from 'record-sig';
 import { P2P_ORDER_TYPE, P2P_RELEASE_TYPE, P2P_SWAP_TYPE } from 'p2p-protocol';
 

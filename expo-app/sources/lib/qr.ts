@@ -29,7 +29,7 @@ export function isWebUrl(text: string): boolean {
   return /^https?:\/\//i.test(s) || /^www\.[a-z0-9-]+\./i.test(s);
 }
 
-// bigtangle addresses: EC keys use bitcoin-style base58
+// bigt-ai addresses: EC keys use bitcoin-style base58
 // (`VersionedChecksummedBytes`, e.g. 1… or testnet n…); PQ keys use the 35-byte
 // PQ address rendered as hex (70 chars, prefixed by the network header byte).
 const BASE58_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{20,50}$/;
@@ -82,7 +82,7 @@ export function paymentRequestFromJson(obj: Record<string, unknown>): ParsedPaym
  * Classify scanned QR content:
  *  - `{address, quantity|amount, tokenid, memo}` JSON → payment request
  *  - http(s)/www link → url
- *  - a plain bigtangle address → payment request (address only)
+ *  - a plain bigt-ai address → payment request (address only)
  *  - anything else → unknown
  */
 export function parseQrContent(content: string): QrParseResult {

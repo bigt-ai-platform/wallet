@@ -1,6 +1,6 @@
 import { P2P_ENGINE_URL, P2P_SOCIAL_URL } from '@/constants/app';
 import { serverErrorMessage } from '@/lib/httpError';
-import type { ECKey, PQKey } from 'bigtangle-ts';
+import type { ECKey, PQKey } from 'bigt-ai-ts';
 import { p2pOrderRecord, type P2pReleaseRecord } from 'p2p-protocol';
 import { newOrderId, signP2pRecord, signedBody } from '@/lib/p2pIdentity';
 import { parseP2pMatch, parseP2pOrders, parseP2pSwap, parseP2pSwaps } from '@/lib/p2pOrderBook';

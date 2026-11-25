@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "P2P settlement engine (docs/p2p.md): Bigtangle PQ 2-of-3 escrow + PayPal Invoices/Payouts over an append-only swap event log.",
+  "description": "P2P settlement engine (docs/p2p.md): Bigt-Ai PQ 2-of-3 escrow + PayPal Invoices/Payouts over an append-only swap event log.",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "bundle": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/server.bundle.mjs --external:pg --banner:js=\"import { createRequire } from 'module'; const require = createRequire(import.meta.url);\"",
@@ -13,7 +13,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "bigtangle-ts": "*",
+    "bigt-ai-ts": "*",
     "chain-discovery": "*",
     "did": "*",
     "p2p-protocol": "*",

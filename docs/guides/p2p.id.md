@@ -1,6 +1,6 @@
 # Penyelesaian FIAT — pertukaran CNY bawaan wallet
 
-**Apa ini.** Pertukaran peer-to-peer antara kripto di **Bigtangle L0** dan fiat
+**Apa ini.** Pertukaran peer-to-peer antara kripto di **Bigt-Ai L0** dan fiat
 CNY (WeChat Pay / Alipay / bank). Penjual menaruh token di escrow pada **alamat
 P2SH 2-dari-3** (penjual, pembeli, mesin); pembeli membayar penjual **langsung**
 di aplikasi pembayarannya sendiri; penjual mengonfirmasi penerimaan pada

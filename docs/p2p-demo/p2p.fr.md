@@ -2,7 +2,7 @@
 
 **Terminologie.** FIAT = monnaie fiduciaire ; CNY = yuan ; USD = dollar américain ; P2P = pair à pair.
 
-**De quoi s'agit-il.** Dans le portefeuille Bigtangle, échangez des **BIG** directement contre de la monnaie fiduciaire (WeChat Pay / Alipay / virement bancaire, ou **PayPal USD**). Les BIG du vendeur sont d'abord placés dans une **adresse de séquestre** qui ne peut être utilisée qu'avec l'accord de deux parties sur trois — vendeur, acheteur et plateforme ; l'acheteur paie l'argent directement au vendeur ; le vendeur confirme sur son propre relevé, puis libère les BIG. La plateforme ne conserve pas vos fonds et ne touche jamais à la monnaie fiduciaire.
+**De quoi s'agit-il.** Dans le portefeuille Bigt-Ai, échangez des **BIG** directement contre de la monnaie fiduciaire (WeChat Pay / Alipay / virement bancaire, ou **PayPal USD**). Les BIG du vendeur sont d'abord placés dans une **adresse de séquestre** qui ne peut être utilisée qu'avec l'accord de deux parties sur trois — vendeur, acheteur et plateforme ; l'acheteur paie l'argent directement au vendeur ; le vendeur confirme sur son propre relevé, puis libère les BIG. La plateforme ne conserve pas vos fonds et ne touche jamais à la monnaie fiduciaire.
 
 **À propos des captures d'écran.** Les captures ci-dessous proviennent d'un environnement de démonstration sur appareil réel ; les montants et les empreintes affichés sont des données de démonstration et n'impliquent aucun fonds réel.
 

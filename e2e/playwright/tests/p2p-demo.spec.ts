@@ -140,7 +140,7 @@ test.describe('P2P Demo (real L0)', () => {
     test.setTimeout(20 * 60 * 1000);
     test.skip(!READY, 'needs E2E_SERVER_URL + E2E_P2P_ENGINE_URL + engine key/pubkey');
 
-    const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+    const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
     const { didFromPQKey } = await import('did/pq');
     const params = sdk.TestParams.get();
 

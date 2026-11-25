@@ -55,13 +55,13 @@ require_bin() { command -v "$1" >/dev/null 2>&1 || fail "$1 not found (install w
 # Workspace packages whose runtime entry is their compiled dist/ (gitignored).
 build_ws() {
   info "Building workspace packages..."
-  for pkg in bigtangle-ts chain-discovery did p2p-protocol record-sig; do
+  for pkg in bigt-ai-ts chain-discovery did p2p-protocol record-sig; do
     ( cd "$ROOT/packages/$pkg" && npm run build >/dev/null 2>&1 ) || fail "build $pkg failed"
   done
   log "Workspace packages built."
 }
 
-# The engine runs from an esbuild bundle (bigtangle-ts ships extensionless ESM).
+# The engine runs from an esbuild bundle (bigt-ai-ts ships extensionless ESM).
 build_engine() {
   info "Building p2p engine bundle..."
   ( cd "$ROOT/services/p2p-engine" && npm run build >/dev/null 2>&1 && npm run bundle >/dev/null 2>&1 ) || fail "build/bundle p2p-engine failed"

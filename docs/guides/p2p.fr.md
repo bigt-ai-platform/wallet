@@ -1,7 +1,7 @@
 # Règlement FIAT — échange CNY natif au wallet
 
 **De quoi il s'agit.** Un échange pair à pair entre de la crypto sur
-**Bigtangle L0** et de la monnaie fiat CNY (WeChat Pay / Alipay / banque). Le
+**Bigt-Ai L0** et de la monnaie fiat CNY (WeChat Pay / Alipay / banque). Le
 vendeur place ses jetons sous séquestre dans une **adresse P2SH 2-sur-3**
 (vendeur, acheteur, moteur) ; l'acheteur paie le vendeur **directement** dans sa
 propre application de paiement ; le vendeur confirme la réception sur son propre

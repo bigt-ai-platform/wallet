@@ -93,7 +93,7 @@ log "All e2e tests passed."
 # ── 6. Run integration tests (optional) ──────────────────────────────
 if [[ "${RUN_INTEGRATION_TESTS:-1}" == "1" ]]; then
   info "Running TypeScript integration tests..."
-  cd "$ROOT/packages/bigtangle-ts"
+  cd "$ROOT/packages/bigt-ai-ts"
   TEST_CONTEXT_ROOT="http://localhost:8088/" \
   TEST_WALLET_SERVER_URL="http://localhost:8088/" \
   npm run test:integration 2>&1 || true

@@ -1,6 +1,6 @@
-# Wallet — Bigtangle blockchain wallet (iOS · Android · Web)
+# Wallet — Bigt-Ai blockchain wallet (iOS · Android · Web)
 
-A cross-platform wallet app for the Bigtangle blockchain, built with React
+A cross-platform wallet app for the Bigt-Ai blockchain, built with React
 Native and Expo. It manages post-quantum (PQ) key wallets, sends UTXO
 transactions across Layer 0 / L1 order-match chains, places buy/sell orders,
 browses and creates tokens, and renders price/volume charts — all in 6
@@ -8,7 +8,7 @@ languages, from a single TypeScript monorepo.
 
 The blockchain protocol logic lives in the **Java** codebase
 (`../blockchain`); this repo ships a TypeScript port of that logic
-(`packages/bigtangle-ts`) plus the mobile/web client built on it.
+(`packages/bigt-ai-ts`) plus the mobile/web client built on it.
 
 ## Features
 
@@ -67,7 +67,7 @@ wallet/
 │   │   ├── text/             # typed `t()` helper / legacy dict
 │   │   ├── unistyles/        # theme tokens & styling setup
 │   │   ├── constants/        # networks, L1 chains, fonts, version
-│   │   ├── utils/            # bigtangle, alert, status helpers
+│   │   ├── utils/            # bigt-ai, alert, status helpers
 │   │   └── types/            # shared API types
 │   ├── app.config.js         # Expo config (3 APP_ENV variants)
 │   ├── eas.json              # EAS build profiles
@@ -77,7 +77,7 @@ wallet/
 │   ├── p2p-engine/           #   P2P settlement engine (fastify + Postgres)
 │   ├── p2p-verify/           #   payment-verification worker (engine + device agent)
 │   └── asset-issuer/         #   HKD/USD/GOLD/ETH issuer: reserve ledger + distributor API
-├── packages/bigtangle-ts/    # TypeScript blockchain client (Java port)
+├── packages/bigt-ai-ts/    # TypeScript blockchain client (Java port)
 │   ├── src/                  # protocol, crypto (PQ/EC), wallet, scripts
 │   └── test/                 # core + remote integration tests
 ├── e2e/                      # Playwright web e2e suite + infra helpers
@@ -120,7 +120,7 @@ hamburger drawer + bottom tab bar on mobile.
 
 - **Framework**: React Native 0.81.4, Expo SDK 54 (new architecture), Expo Router 6
 - **Language**: TypeScript ~5.9 (strict)
-- **Blockchain client**: `bigtangle-ts` (workspace package, v1.0.7)
+- **Blockchain client**: `bigt-ai-ts` (workspace package, v1.0.7)
 - **Styling**: react-native-unistyles 3 (light/dark theme tokens)
 - **State**: Zustand 5 + React Context (`WalletProvider`)
 - **Crypto deps**: @noble/ciphers, @noble/hashes, @noble/post-quantum,
@@ -146,16 +146,16 @@ hamburger drawer + bottom tab bar on mobile.
 yarn install
 ```
 
-This installs the workspaces (`expo-app` + `packages/bigtangle-ts`).
+This installs the workspaces (`expo-app` + `packages/bigt-ai-ts`).
 
 ### 2. Build the TS workspace packages
 
-`expo-app` (and the P2P engine) depend on the workspace `bigtangle-ts` and
+`expo-app` (and the P2P engine) depend on the workspace `bigt-ai-ts` and
 `chain-discovery`, whose runtime entries are their compiled `dist/`. Keep them
 in sync after any change:
 
 ```bash
-( cd packages/bigtangle-ts && yarn build )
+( cd packages/bigt-ai-ts && yarn build )
 ( cd packages/chain-discovery && yarn build )
 ```
 
@@ -210,7 +210,7 @@ follow AGENTS.md's **Java-first** rule: reproduce, compare with
 ### TypeScript / unit tests (no chain)
 
 ```bash
-cd packages/bigtangle-ts
+cd packages/bigt-ai-ts
 yarn test             # vitest: core, crypto, script, wallet, PQ/EC compat, …
 
 cd expo-app
@@ -220,7 +220,7 @@ yarn typecheck
 ### Remote integration tests (chain required)
 
 `e2eremote.sh` brings up the Java infra and runs the TS remote suites under
-`packages/bigtangle-ts/test/testintegration/` (ports 18088 / 18086):
+`packages/bigt-ai-ts/test/testintegration/` (ports 18088 / 18086):
 
 ```bash
 QUICK=1 ./e2eremote.sh        # fast smoke subset
@@ -272,12 +272,12 @@ from the browser). See `deploy/README.md`.
 
 ## Architecture notes
 
-### bigtangle-ts (`packages/bigtangle-ts`)
+### bigt-ai-ts (`packages/bigt-ai-ts`)
 
-A TypeScript client mirroring the Java `bigtangle-core`: post-quantum key
+A TypeScript client mirroring the Java `bigt-ai-core`: post-quantum key
 bundles (ML-DSA + SLH-DSA via `PQKey`, default ML-DSA-87) alongside EC,
 `Wallet`, UTXO `Transaction`/`Script` building, params for main/testnet, and
-HTTP/WebSocket transport. See `packages/bigtangle-ts/README.md` for the
+HTTP/WebSocket transport. See `packages/bigt-ai-ts/README.md` for the
 carefully-maintained **differences from Java** (prefixed vs unprefixed public
 key bytes, Jackson parser limitations, tx version upgrade to
 `PQConstants.TX_PQ_VERSION`, etc.) and cross-platform PQ/EC test fixtures.
@@ -300,8 +300,8 @@ browser (`expo-app/jackson-stub.js`, `expo-app/node-web-stub.js`).
 ### Reading a legacy `.wallet` file
 
 `oldwallet.sh` prints the network, encryption parameters and keys of a legacy
-bigtangle protobuf wallet, using the same `WalletProtobufSerializer` as the app
-(it also accepts the pre-rename network ids `net.bigtangle`,
+bigt-ai protobuf wallet, using the same `WalletProtobufSerializer` as the app
+(it also accepts the pre-rename network ids `net.bigt-ai`,
 `org.bitcoin.production`, …):
 
 ```bash
@@ -326,12 +326,12 @@ mainnet/testnet switching and app-wide L1 chain selection
 - Read `AGENTS.md` first — it defines the Java-first verification workflow and
   the remote-test ↔ Java mapping.
 - Format/typecheck before opening a PR (`yarn typecheck` in `expo-app`,
-  `yarn build && yarn test` in `packages/bigtangle-ts`).
+  `yarn build && yarn test` in `packages/bigt-ai-ts`).
 - No fabricated credentials or server-side secrets: wallets must remain
   self-contained key files.
 
 ## License
 
 AGPL-3.0-or-later — see [LICENSE](./LICENSE). The bundled
-`packages/bigtangle-ts` package keeps its own MIT license (see
-`packages/bigtangle-ts/LICENSE`).
+`packages/bigt-ai-ts` package keeps its own MIT license (see
+`packages/bigt-ai-ts/LICENSE`).

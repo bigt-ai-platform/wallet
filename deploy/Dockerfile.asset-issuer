@@ -3,7 +3,7 @@
 # Build from the repo root:
 #   docker build -f deploy/Dockerfile.asset-issuer -t wallet-asset-issuer:latest .
 #
-# The service imports the workspace package `bigtangle-ts` (the L1 binding), so
+# The service imports the workspace package `bigt-ai-ts` (the L1 binding), so
 # — exactly like `deploy/Dockerfile.p2p-engine` — the image is built from the
 # repo root with the workspace install. A standalone `npm ci` cannot resolve a
 # workspace dependency.
@@ -22,7 +22,7 @@ COPY services/asset-issuer ./services/asset-issuer
 RUN yarn install --frozen-lockfile --ignore-scripts --ignore-engines \
     --production=false 2>/dev/null || yarn install --ignore-scripts --ignore-engines
 
-RUN yarn workspace bigtangle-ts build \
+RUN yarn workspace bigt-ai-ts build \
  && yarn workspace asset-issuer build
 
 FROM node:20-slim AS runtime
@@ -31,7 +31,7 @@ ENV NODE_ENV=production
 
 # The compiled service plus the workspace package it imports at runtime.
 COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages/bigtangle-ts ./packages/bigtangle-ts
+COPY --from=build /app/packages/bigt-ai-ts ./packages/bigt-ai-ts
 COPY --from=build /app/services/asset-issuer/package.json ./services/asset-issuer/package.json
 COPY --from=build /app/services/asset-issuer/dist ./services/asset-issuer/dist
 

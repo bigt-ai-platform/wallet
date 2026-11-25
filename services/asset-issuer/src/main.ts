@@ -9,6 +9,8 @@
 
 import { assertAuthAllowsNetwork, authFromEnv } from './auth.js';
 import { assetsFromEnv } from './config.js';
+import { BigtAiRedemptionVerifier } from './l1.js';
+import { createBigtAiWallet } from './l1.bigt-ai.js';
 import { buildServer } from './server.js';
 import { MemoryStore, type Store } from './store.js';
 import { PgStore } from './store.pg.js';
@@ -45,6 +47,20 @@ if (databaseUrl) {
   console.warn('[asset-issuer] WARNING: in-memory store — operations and idempotency keys are lost on restart');
 }
 
+// A redemption is only accepted when the L1 return can be verified, so the
+// HTTP process needs read access to the issuer's L1 wallet as well. It never
+// signs here (minting/releasing runs in the executor).
+const redemptionVerifier = process.env.L1_URL && process.env.L1_ISSUER_KEY
+  ? new BigtAiRedemptionVerifier(
+    createBigtAiWallet({
+      url: process.env.L1_URL,
+      network,
+      issuerKeyHex: process.env.L1_ISSUER_KEY,
+    }),
+    assets,
+  )
+  : undefined;
+
 const app = buildServer({
   store,
   assets,
@@ -52,6 +68,10 @@ const app = buildServer({
   ...(process.env.DEPOSIT_XPUB ? { depositXpub: process.env.DEPOSIT_XPUB } : {}),
   ...(process.env.DEPOSIT_XPUB_PATH ? { depositXpubPath: process.env.DEPOSIT_XPUB_PATH } : {}),
   ...(process.env.DEPOSIT_ASSET_ID ? { defaultDepositAssetId: process.env.DEPOSIT_ASSET_ID } : {}),
+  ...(process.env.MINT_API_TOKEN?.trim() ? { mintToken: process.env.MINT_API_TOKEN.trim() } : {}),
+  ...(redemptionVerifier
+    ? { verifyRedemption: (op, asset) => redemptionVerifier.check(op, asset) }
+    : {}),
   network,
   auth,
 });

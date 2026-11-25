@@ -61,7 +61,7 @@ const DEMO: { lang: 'en' | 'de' | 'zh'; tag: string; markets: Market[] }[] = [
 async function resolvePredictionKey(raw: string): Promise<string> {
   const hex = raw.startsWith('0x') ? raw.slice(2) : raw;
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) return raw;
-  const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+  const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
   const seed = new Uint8Array(32);
   for (let i = 0; i < 32; i++) seed[i] = parseInt(hex.substr(i * 2, 2), 16);
   return sdk.PQKey.fromMLDSA(seed).getPrivateKeyHex();
@@ -93,7 +93,7 @@ test.describe('Predict demo capture', () => {
     mkdirSync(OUT, { recursive: true });
     await page.setViewportSize({ width: 1280, height: 1000 });
 
-    const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+    const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
     const privateKey = await resolvePredictionKey(E2E_PREDICTION_KEY);
     const operator = sdk.PQKey.fromPrivateKey(new Uint8Array(sdk.Utils.HEX.decode(privateKey)));
     const params = sdk.TestParams.get();
@@ -117,7 +117,7 @@ test.describe('Predict demo capture', () => {
 
     for (const { lang, tag, markets } of DEMO) {
       // The tab label is translated, so switch language in place on the Predict screen.
-      await page.evaluate((code) => (globalThis as any).__bigtangleI18n.changeLanguage(code), lang);
+      await page.evaluate((code) => (globalThis as any).__bigtAiI18n.changeLanguage(code), lang);
       for (const [i, market] of markets.entries()) {
         const n = i + 1;
         const card = page.locator('[data-testid^="predict-event-"]').filter({ hasText: market.question }).first();

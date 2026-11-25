@@ -70,6 +70,9 @@ services:
       API_TOKEN: ${API_TOKEN:-}
       API_HMAC_SECRET: ${API_HMAC_SECRET:-}
       AUTH_MAX_SKEW_MS: ${AUTH_MAX_SKEW_MS:-300000}
+      # Operator-only mint credential; the wallet bearer cannot mint. Empty
+      # disables POST /mint-requests (403) instead of trusting the public token.
+      MINT_API_TOKEN: ${MINT_API_TOKEN:-}
       # Per-asset caps / decimals override (JSON). Empty = DEFAULT_ASSETS in
       # services/asset-issuer/src/config.ts, which must match
       # expo-app/sources/lib/externalAssets.ts.

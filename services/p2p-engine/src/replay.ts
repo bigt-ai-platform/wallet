@@ -17,7 +17,7 @@
  * (receiveAddress, profiles, receipts) is store-only
  * and deliberately not recoverable from the chain (docs/p2p.md §14).
  */
-import { type NetworkParameters } from "bigtangle-ts";
+import { type NetworkParameters } from "bigt-ai-ts";
 import { verifyRecordSig, type AnchoredRecord } from "record-sig";
 import {
   P2P_ORDER_TYPE,

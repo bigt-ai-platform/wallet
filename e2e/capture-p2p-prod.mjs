@@ -37,13 +37,13 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { Address, Coin, Escrow, MainNetParams, PQKey, Sha256Hash, Utils, Wallet } from 'bigtangle-ts';
+import { Address, Coin, Escrow, MainNetParams, PQKey, Sha256Hash, Utils, Wallet } from 'bigt-ai-ts';
 import { didFromPQKey } from 'did/pq';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const APP = (process.env.APP_URL || 'https://wallet.bigt.ai').replace(/\/+$/, '') + '/';
-const L0 = (process.env.L0_URL || 'https://eu1.bigtangle.org').replace(/\/+$/, '') + '/';
+const L0 = (process.env.L0_URL || 'https://eu1.bigt-ai.org').replace(/\/+$/, '') + '/';
 const ENGINE = (process.env.ENGINE_URL || `${APP}p2p`).replace(/\/+$/, '');
 const SHOTS = process.env.SHOTS_DIR
   ? resolve(process.env.SHOTS_DIR)

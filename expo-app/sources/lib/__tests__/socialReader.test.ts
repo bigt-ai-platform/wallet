@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { MainNetParams, Transaction } from 'bigtangle-ts';
+import { MainNetParams, Transaction } from 'bigt-ai-ts';
 import { P2P_ORDER_TYPE, P2P_RELEASE_TYPE, P2P_SWAP_TYPE } from 'p2p-protocol';
 import {
   collectSocialRecords,

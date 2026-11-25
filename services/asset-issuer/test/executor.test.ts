@@ -17,6 +17,7 @@ const options = (): ExecutorOptions => ({
   treasury: { release },
   transfers: { transfer },
   verifyDeposit: async () => true,
+  verifyRedemption: async () => true,
   now: () => `2026-01-01T00:00:0${tick++}.000Z`,
 });
 
@@ -51,7 +52,7 @@ describe('mint execution', () => {
 
     const result = await runOnce(options());
     expect(result).toEqual({ completed: 1, failed: 0, skipped: 0 });
-    expect(mint).toHaveBeenCalledWith('hkd', 'w1', '1000');
+    expect(mint).toHaveBeenCalledWith('hkd', 'w1', '1000', { operationId: 'op1' });
 
     const reserve = await store.getReserve('hkd');
     expect(reserve?.supplyRaw).toBe(1000n);
@@ -133,6 +134,7 @@ describe('release execution', () => {
     // gold is 6dp on both sides, so the external amount equals the L1 amount
     expect(release).toHaveBeenCalledWith(
       'gold', 'w1', '0x2222222222222222222222222222222222222222', '2000',
+      { operationId: 'op1' },
     );
     const reserve = await store.getReserve('gold');
     expect(reserve?.supplyRaw).toBe(2000n);
@@ -152,6 +154,61 @@ describe('release execution', () => {
     expect(result.failed).toBe(1);
     expect(release).not.toHaveBeenCalled();
     expect((await store.getOperation('op1'))?.error).toContain('verified destination');
+  });
+
+  it('refuses a release with no L1 funding transfer', async () => {
+    await store.putReserve({ assetId: 'gold', reserveRaw: 5000n, supplyRaw: 4000n, dustRaw: 0n });
+    await store.putHolderBalance({ assetId: 'gold', account: 'w1', availableRaw: 0n, pendingRaw: 2000n });
+    await store.saveOperation(op({
+      kind: 'redeem', assetId: 'gold', ref: undefined,
+      amountRaw: '2000', l1AmountRaw: '2000',
+    }));
+
+    const result = await runOnce(options());
+    expect(result.failed).toBe(1);
+    expect(release).not.toHaveBeenCalled();
+    expect((await store.getOperation('op1'))?.error).toContain('no L1 funding');
+  });
+
+  it('fails closed when redemption verification is not configured', async () => {
+    const { verifyRedemption: _omit, ...withoutVerifier } = options();
+    await store.putReserve({ assetId: 'gold', reserveRaw: 5000n, supplyRaw: 4000n, dustRaw: 0n });
+    await store.putHolderBalance({ assetId: 'gold', account: 'w1', availableRaw: 0n, pendingRaw: 2000n });
+    await store.saveOperation(op({ kind: 'redeem', assetId: 'gold', amountRaw: '2000', l1AmountRaw: '2000' }));
+
+    const result = await runOnce(withoutVerifier);
+    expect(result.failed).toBe(1);
+    expect(release).not.toHaveBeenCalled();
+    expect((await store.getOperation('op1'))?.error).toContain('not configured');
+  });
+
+  it('does not pay twice when a failed operation already recorded its payout', async () => {
+    await store.putReserve({ assetId: 'gold', reserveRaw: 5000n, supplyRaw: 4000n, dustRaw: 0n });
+    await store.putHolderBalance({ assetId: 'gold', account: 'w1', availableRaw: 0n, pendingRaw: 2000n });
+    // The payout succeeded but the ledger write did not; the operator requeued.
+    await store.saveOperation(op({
+      kind: 'redeem', assetId: 'gold', status: 'failed', payoutRef: '0xpaid',
+      amountRaw: '2000', l1AmountRaw: '2000',
+    }));
+    await requeue(store, 'op1', () => '2026-01-03T00:00:00.000Z');
+
+    const result = await runOnce(options());
+    expect(result.completed).toBe(1);
+    expect(release).not.toHaveBeenCalled();
+    expect((await store.getReserve('gold'))?.supplyRaw).toBe(2000n);
+    expect((await store.getOperation('op1'))?.status).toBe('completed');
+  });
+
+  it('re-checks the L1 return at execution time', async () => {
+    await store.putReserve({ assetId: 'gold', reserveRaw: 5000n, supplyRaw: 4000n, dustRaw: 0n });
+    await store.saveOperation(op({ kind: 'redeem', assetId: 'gold', amountRaw: '2000', l1AmountRaw: '2000' }));
+    const result = await runOnce({
+      ...options(),
+      verifyRedemption: async () => false,
+    });
+    expect(result.failed).toBe(1);
+    expect(release).not.toHaveBeenCalled();
+    expect((await store.getOperation('op1'))?.error).toContain('not confirmed');
   });
 
   it('refuses an L1 amount that is not representable at the external scale', async () => {

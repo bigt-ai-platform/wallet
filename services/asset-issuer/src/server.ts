@@ -29,6 +29,7 @@ import {
   reconcile,
   transition,
   withinCaps,
+  type ChainRef,
   type Operation,
   type OperationKind,
   type OperationStatus,
@@ -37,7 +38,7 @@ import type { Store } from './store.js';
 import { emptyStatusCounts, renderMetrics } from './metrics.js';
 import { toChecksumAddress } from './depositAddress.js';
 import { ensureDepositAddress } from './depositService.js';
-import { AuthError, checkBearer, checkHmac, type AuthConfig } from './auth.js';
+import { AuthError, checkBearer, checkHmac, safeEqual, type AuthConfig } from './auth.js';
 import {
   REDEEM_INTENT_DOMAIN,
   intentHash,
@@ -48,6 +49,7 @@ import {
   type RedeemNetwork,
 } from './intent.js';
 import { bytesToHex } from './ethTx.js';
+import type { RedemptionCheck } from './l1.js';
 
 export interface ServerOptions {
   store: Store;
@@ -78,6 +80,18 @@ export interface ServerOptions {
    * `off` outside Test (see `assertAuthAllowsNetwork`).
    */
   auth?: AuthConfig;
+  /**
+   * Operator credential for `POST /mint-requests`. Mint authority is separate
+   * from the wallet-facing bearer: the app's `EXPO_PUBLIC_ISSUER_API_TOKEN` is
+   * shipped in the bundle, so it must never be able to mint against the pooled
+   * reserve. Absent = the mint API is disabled.
+   */
+  mintToken?: string;
+  /**
+   * Confirms a redemption is backed by a finalized L1 transfer to the asset's
+   * `redemptionAddress`. Without it `/redeem-intents` fails closed.
+   */
+  verifyRedemption?: (operation: Operation, asset: AssetConfig) => Promise<RedemptionCheck>;
 }
 
 interface OperationBody {
@@ -90,6 +104,8 @@ interface OperationBody {
   idempotencyKey?: string;
   /** Signed redemption intent. */
   destination?: string;
+  /** L1 funding transaction hash for the redemption. */
+  l1TxHash?: string;
   nonce?: string;
   expiry?: number;
   keyType?: IntentKeyType;
@@ -205,7 +221,11 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   async function createOperation(
     kind: OperationKind,
-    fields: Pick<Operation, 'assetId' | 'account' | 'amountRaw' | 'l1AmountRaw'> & { destination?: string },
+    fields: Pick<Operation, 'assetId' | 'account' | 'amountRaw' | 'l1AmountRaw'> & {
+      destination?: string;
+      externalRef?: string;
+      ref?: ChainRef;
+    },
     idempotencyKey?: string,
   ): Promise<Operation> {
     const timestamp = now();
@@ -223,12 +243,30 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return op;
   }
 
+  /**
+   * Operator-only mint authority. The wallet-facing bearer is shipped in the
+   * web bundle, so it is not a mint credential: a caller that holds it must not
+   * be able to issue supply against the pooled reserve.
+   */
+  function requireMintAuthority(headers: Record<string, string | string[] | undefined>): void {
+    if (!options.mintToken) {
+      throw new HttpError(403, 'the mint API is disabled: set MINT_API_TOKEN on the issuer');
+    }
+    const presented = header(headers['x-mint-token']) ?? '';
+    if (!safeEqual(presented, options.mintToken)) {
+      throw new HttpError(403, 'invalid mint credential');
+    }
+  }
+
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof AuthError) {
       return reply.status(error.status).send({ error: error.message });
     }
     if (error instanceof HttpError) {
-      return reply.status(error.status).send({ error: error.message });
+      return reply.status(error.status).send({
+        error: error.message,
+        ...(error.retryable ? { retryable: true } : {}),
+      });
     }
     return reply.status(500).send({ error: 'internal error' });
   });
@@ -258,6 +296,9 @@ export function buildServer(options: ServerOptions): FastifyInstance {
       ...(a.depositAddress ? { depositAddress: a.depositAddress } : {}),
       ...(a.depositAddressMode ? { depositAddressMode: a.depositAddressMode } : {}),
       ...(a.referencePrefix ? { referencePrefix: a.referencePrefix } : {}),
+      // The wallet must send L1 tokens here before it can sign a redemption;
+      // exposing it is what makes the funding leg possible.
+      ...(a.redemptionAddress ? { redemptionAddress: a.redemptionAddress } : {}),
     })),
   }));
 
@@ -360,7 +401,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
         amount: op.l1AmountRaw,
         status: op.status,
         at: op.createdAt,
-        ...(op.externalRef ? { hash: op.externalRef } : {}),
+        ...(op.externalRef || op.payoutRef ? { hash: op.externalRef ?? op.payoutRef } : {}),
       })),
     };
   });
@@ -390,11 +431,15 @@ export function buildServer(options: ServerOptions): FastifyInstance {
       account,
       amountRaw: amount.toString(),
       l1AmountRaw: amount.toString(),
+      // The executor needs the recipient; dropping it turned every transfer
+      // into a payment to the empty address.
+      externalRef: to,
     }, body.idempotencyKey);
     return { id: op.id, status: op.status };
   });
 
   app.post('/mint-requests', async (request) => {
+    requireMintAuthority(request.headers);
     const body = (request.body ?? {}) as OperationBody;
     const account = requireAccount(body.account);
     const asset = requireAsset(body.assetId);
@@ -424,6 +469,12 @@ export function buildServer(options: ServerOptions): FastifyInstance {
    * Signed redemption: the destination is bound to the L1 account by an L1-key
    * signature, and the nonce/hash is stored so it cannot be replayed. This is
    * the only path that authorizes a treasury release.
+   *
+   * The signature proves *who* chose the destination; it does not prove the
+   * tokens were returned. The intent therefore names the L1 funding transaction,
+   * and the release is refused unless that transaction pays the exact token and
+   * amount to the issuer's redemption address at finality. Its
+   * `(chain, txHash, logIndex)` is unique, so one L1 return backs one release.
    */
   app.post('/redeem-intents', async (request) => {
     const body = (request.body ?? {}) as OperationBody;
@@ -445,6 +496,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
       account,
       amountRaw: amount.toString(),
       destination: (body.destination ?? '').trim(),
+      l1TxHash: (body.l1TxHash ?? '').trim(),
       nonce: (body.nonce ?? '').trim(),
       expiry: Number(body.expiry),
     };
@@ -460,20 +512,49 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     const verified = verifyRedeemIntent(intent, proof);
     if (!verified.ok) throw new HttpError(401, verified.error);
 
-    const balance = await store.getHolderBalance(asset.assetId, account);
-    if (!balance || balance.availableRaw < amount) {
-      throw new HttpError(409, 'insufficient balance');
+    if (!options.verifyRedemption) {
+      throw new HttpError(
+        503,
+        'redemption is not configured: the issuer needs L1_URL + L1_ISSUER_KEY to verify the L1 return',
+      );
     }
 
-    const op = await createOperation('redeem', {
+    const timestamp = now();
+    const op: Operation = {
+      id: newId(),
+      kind: 'redeem',
       assetId: asset.assetId,
       account,
       amountRaw: amount.toString(),
       l1AmountRaw: amount.toString(),
       destination: intent.destination,
-    }, body.idempotencyKey);
+      ref: { chain: 'l1-order', txHash: intent.l1TxHash, logIndex: 0 },
+      ...(body.idempotencyKey ? { idempotencyKey: body.idempotencyKey } : {}),
+      status: 'pending',
+      attempts: 0,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
 
-    const stored = await store.putRedeemIntent({
+    const check = await options.verifyRedemption(op, asset);
+    if (check === 'pending') {
+      throw new HttpError(
+        409,
+        'the L1 funding transfer is not confirmed yet; retry shortly',
+        true,
+      );
+    }
+    if (check !== 'ok') {
+      throw new HttpError(
+        409,
+        `no confirmed L1 transfer of ${amount.toString()} to the ${asset.assetId} redemption address`,
+      );
+    }
+
+    // Nonce, intent hash, L1 funding ref, pending operation and the (optional)
+    // holder-balance debit are one atomic write, so a worker cannot claim a
+    // release before its debit is committed.
+    const stored = await store.putRedeemRequest({
       assetId: asset.assetId,
       account,
       nonce: intent.nonce,
@@ -482,23 +563,11 @@ export function buildServer(options: ServerOptions): FastifyInstance {
       amountRaw: amount.toString(),
       expiry: intent.expiry,
       operationId: op.id,
-      createdAt: now(),
-    });
-    if (!stored) {
-      await store.saveOperation({
-        ...op,
-        status: 'failed',
-        error: 'redeem intent nonce/hash already used',
-        updatedAt: now(),
-      });
-      throw new HttpError(409, 'redeem intent nonce or hash was already used');
+      createdAt: timestamp,
+    }, op, amount);
+    if (!stored.ok) {
+      throw new HttpError(409, 'redeem intent nonce, hash or L1 funding was already used');
     }
-
-    await store.putHolderBalance({
-      ...balance,
-      availableRaw: balance.availableRaw - amount,
-      pendingRaw: balance.pendingRaw + amount,
-    });
     return { id: op.id, status: op.status };
   });
 
@@ -540,7 +609,7 @@ export async function alreadyObserved(store: Store, chain: string, txHash: strin
 }
 
 class HttpError extends Error {
-  constructor(readonly status: number, message: string) {
+  constructor(readonly status: number, message: string, readonly retryable = false) {
     super(message);
     this.name = 'HttpError';
   }

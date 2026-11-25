@@ -9,9 +9,9 @@ describe('chain roles', () => {
   });
 
   it('builds the published DNS seed names', () => {
-    expect(dnsTxtName('l0', 'bigtangle.org')).toBe('_bigtangle-l0.bigtangle.org');
-    expect(dnsSrvName('l1', 'bigtangle.org')).toBe('_bigtangle-l1._tcp.bigtangle.org');
-    expect(dnsTxtName('social', 'bigtangle.org')).toBe('_bigtangle-social.bigtangle.org');
+    expect(dnsTxtName('l0', 'bigt-ai.org')).toBe('_bigt-ai-l0.bigt-ai.org');
+    expect(dnsSrvName('l1', 'bigt-ai.org')).toBe('_bigt-ai-l1._tcp.bigt-ai.org');
+    expect(dnsTxtName('social', 'bigt-ai.org')).toBe('_bigt-ai-social.bigt-ai.org');
   });
 
   it('covers exactly l0 | l1 | social', () => {

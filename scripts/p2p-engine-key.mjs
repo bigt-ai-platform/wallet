@@ -29,7 +29,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PQKey, Utils } from "bigtangle-ts";
+import { PQKey, Utils } from "bigt-ai-ts";
 import { didFromPQKey } from "did/pq";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -118,10 +118,10 @@ SETTLEMENT_ADMIN_TOKEN=${randomBytes(32).toString("hex")}
 #    L0 client the engine accepts escrow_lock WITHOUT proof (server.ts). The
 #    plural vars are comma lists: every candidate is gated on a healthy
 #    getChainNumber probe (fail closed), the singular var stays as boot seed.
-SETTLEMENT_L0_URLS=https://eu1.bigtangle.org,https://eu2.bigtangle.org,https://eu3.bigtangle.org
-SETTLEMENT_L0_URL=https://eu1.bigtangle.org
-SETTLEMENT_L1_SOCIAL_URLS=https://socialeu1.bigtangle.org,https://socialeu2.bigtangle.org
-SETTLEMENT_L1_SOCIAL_URL=https://socialeu1.bigtangle.org
+SETTLEMENT_L0_URLS=https://eu1.bigt-ai.org,https://eu2.bigt-ai.org,https://eu3.bigt-ai.org
+SETTLEMENT_L0_URL=https://eu1.bigt-ai.org
+SETTLEMENT_L1_SOCIAL_URLS=https://socialeu1.bigt-ai.org,https://socialeu2.bigt-ai.org
+SETTLEMENT_L1_SOCIAL_URL=https://socialeu1.bigt-ai.org
 
 # ── rails: CNY user-to-user only (PayPal is not an engine rail). ──
 SETTLEMENT_CNY_RAILS=wechat,alipay,bank

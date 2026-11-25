@@ -1,6 +1,6 @@
 # Liquidação FIAT — troca CNY nativa da carteira
 
-**O que é.** Uma troca ponto a ponto entre cripto na **Bigtangle L0** e fiat CNY
+**O que é.** Uma troca ponto a ponto entre cripto na **Bigt-Ai L0** e fiat CNY
 (WeChat Pay / Alipay / banco). O vendedor deposita os tokens em um **endereço
 P2SH 2-de-3** (vendedor, comprador, motor); o comprador paga o vendedor
 **diretamente** no próprio aplicativo de pagamento; o vendedor confirma o

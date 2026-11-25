@@ -2,8 +2,10 @@
  * Signed redemption intent (L1 USDT → Ethereum USDT).
  *
  * The L1 key proves the destination; the issuer verifies it with the same
- * fixed-order message and stores the nonce. This module only builds/signs/sends;
- * the issuer owns balances and the treasury release.
+ * fixed-order message, checks that the named L1 transaction actually returned
+ * the tokens to the issuer's redemption address, stores the nonce and debits
+ * the balance. This module only builds/signs/sends; the issuer owns balances
+ * and the treasury release.
  */
 
 import {
@@ -15,10 +17,10 @@ import {
   TestParams,
   Utils,
   type NetworkParameters,
-} from 'bigtangle-ts';
+} from 'bigt-ai-ts';
 import type { WalletKey } from '@/lib/walletKeys';
 
-export const REDEEM_INTENT_DOMAIN = 'bigtangle-wallet-redeem-v1';
+export const REDEEM_INTENT_DOMAIN = 'bigt-ai-wallet-redeem-v2';
 
 export type RedeemNetwork = 'Mainnet' | 'Test';
 export type RedeemKeyType = 'EC' | 'PQ';
@@ -30,6 +32,8 @@ export interface RedeemIntent {
   account: string;
   amountRaw: string;
   destination: string;
+  /** L1 funding transaction hash that paid the tokens to the issuer. */
+  l1TxHash: string;
   nonce: string;
   expiry: number;
 }
@@ -63,6 +67,7 @@ export function intentMessage(intent: RedeemIntent): string {
     account: intent.account,
     amountRaw: intent.amountRaw,
     destination: intent.destination,
+    l1TxHash: intent.l1TxHash,
     nonce: intent.nonce,
     expiry: intent.expiry,
   });
@@ -77,6 +82,7 @@ export interface BuildIntentInput {
   account: string;
   amountRaw: string;
   destination: string;
+  l1TxHash: string;
   network: RedeemNetwork;
   nonce: string;
   expiry: number;
@@ -90,6 +96,7 @@ export function buildRedeemIntent(input: BuildIntentInput): RedeemIntent {
     account: input.account,
     amountRaw: input.amountRaw,
     destination: input.destination,
+    l1TxHash: input.l1TxHash,
     nonce: input.nonce,
     expiry: input.expiry,
   };
@@ -126,7 +133,7 @@ function addressMatches(account: string, key: ECKey | PQKey, params: NetworkPara
   return false;
 }
 
-/** Sign the intent with the wallet's Bigtangle key (PQ or legacy EC). */
+/** Sign the intent with the wallet's Bigt-Ai key (PQ or legacy EC). */
 export function signRedeemIntent(key: WalletKey, intent: RedeemIntent): RedeemProof {
   const params = networkParams(intent.network);
   const keyType: RedeemKeyType = key.keyType ?? 'PQ';
@@ -171,6 +178,7 @@ export async function submitRedeemIntent(
       assetId: intent.assetId,
       amount: intent.amountRaw,
       destination: intent.destination,
+      l1TxHash: intent.l1TxHash,
       nonce: intent.nonce,
       expiry: intent.expiry,
       keyType: proof.keyType,
@@ -183,10 +191,23 @@ export async function submitRedeemIntent(
     id?: string;
     status?: string;
     error?: string;
+    retryable?: boolean;
   };
   if (!response.ok) {
+    // The L1 funding transfer is not confirmed yet; the caller may retry the
+    // same signed intent (nothing was reserved server-side).
+    if (body.retryable) throw new RedeemPendingError(body.error || 'Redemption is pending');
     throw new Error(body.error || `Redeem request failed (HTTP ${response.status})`);
   }
   if (!body.id) throw new Error('Issuer response is missing the operation id');
   return { id: body.id, status: body.status ?? 'pending' };
+}
+
+/** Retryable: the L1 return exists but is not confirmed yet. */
+export class RedeemPendingError extends Error {
+  readonly retryable = true;
+  constructor(message: string) {
+    super(message);
+    this.name = 'RedeemPendingError';
+  }
 }

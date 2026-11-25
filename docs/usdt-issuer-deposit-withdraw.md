@@ -22,7 +22,7 @@ closed until a treasury adapter exists.
 ## 0. The model in one picture
 
 ```
-        Ethereum mainnet                         L1-order (bigtangle)
+        Ethereum mainnet                         L1-order (bigt-ai)
   ┌──────────────────────────┐            ┌──────────────────────────────┐
   │ user's 0x… wallet        │            │ user's base58 L1 wallet      │
   │   USDT (ERC-20, 6 dp)    │            │   USDT token (6 dp)          │
@@ -101,7 +101,7 @@ public key.
 cd ../blockchain
 
 export WALLET=/secure/issuer/usdt-issuer.json     # encrypted keystore preferred
-export L1_URL=https://ordereu1.bigtangle.org
+export L1_URL=https://ordereu1.bigt-ai.org
 export SERVER_NET=Mainnet
 export ISSUER_SIGNERS=<pub1>,<pub2>,<pub3>
 export ISSUER_M=2
@@ -223,8 +223,10 @@ Rules the service enforces:
 - `l1Decimals` is **6** for every listed asset.
 - `maxSupplyRaw` / `maxMintRaw` are smallest-unit decimal strings.
 - `custodyAddress` + `contract` enable the ERC-20 deposit scanner.
-- `l1TokenId` is required to mint; `redemptionAddress` is required to scan
-  redemptions.
+- `l1TokenId` is required to mint; `redemptionAddress` is required to verify a
+  redemption's L1 return and **must be a dedicated address of the issuer wallet**
+  (the verifier reads that wallet's confirmed outputs). Never use it as a mint
+  payout destination.
 - `signers`/`signnumber` are the reissuance threshold (default: the issuer key,
   threshold 1).
 
@@ -292,7 +294,7 @@ ETH_RPC_URL=https://your-private-rpc \
 DEPOSIT_XPUB=<account-level xpub> \
 DEPOSIT_XPUB_PATH=0 \
 DEPOSIT_ASSET_ID=usdt \
-L1_URL=https://ordereu1.bigtangle.org \
+L1_URL=https://ordereu1.bigt-ai.org \
 L1_ISSUER_KEY=<issuer key from HSM/MPC> \
 FROM_BLOCK=<last scanned block> \
 ALLOW_LIVE_L1=1 \
@@ -328,11 +330,11 @@ Safety defaults:
 - The executor claims operations atomically and re-verifies a chain-observed
   deposit against `eth_getTransactionReceipt` + `finalized` before minting; a
   DB row alone is not proof.
-- `FROM_BLOCK` is the scan cursor. The built-in pass scans **one**
-  `FROM_BLOCK … FROM_BLOCK+2000` window and does not advance it, so run it with
-  an operator-managed cursor (set `FROM_BLOCK` to the last finalized head you
-  processed on each run) or extend the pipeline to persist one. Idempotency
-  makes re-scans safe, but re-scanning alone never reaches new blocks.
+- `FROM_BLOCK` seeds the **persisted scan cursor** the first time a chain is
+  seen (`scan_cursors`). Each pass then scans forward window by window to the
+  finalized head and advances the cursor only after the window's deposits are
+  committed, so a restart resumes and a failed window is retried. Idempotency
+  (`(chain, txHash, logIndex)`) still makes overlapping replays safe.
 
 ## A5. Expose the endpoints the `/deposit` page speaks
 
@@ -550,10 +552,9 @@ Common causes of "deposit not credited":
    chain's key.
 2. Sent to the static address but the issuer API expects a per-user address.
 3. Confirmations present but not **finalized**.
-4. The scanner cursor (`FROM_BLOCK`) already passed the block without recording
-   it (e.g. DB restored from an older snapshot), or it is stale and the block
-   lies outside the current 2,000-block window (the built-in pass does not
-   advance its own cursor — see §A4).
+4. The scanner cursor (`scan_cursors`) already passed the block without
+   recording it (e.g. DB restored from an older snapshot). Reset the cursor row
+   to re-scan the range; deposits are idempotent.
 5. The token policy is paused.
 
 ---
@@ -600,28 +601,43 @@ Example: withdraw 25 USDT, max fee 0.00042 ETH → receive 25 USDT, ETH debit
 
 ## C3. Bridge redemption (L1 USDT → Ethereum USDT)
 
-The destination is authorized by a **signed intent**, not by an API token:
+A redemption needs **two** things: the L1 account authorizes the destination,
+and the tokens actually come back on L1.
 
-1. Build and sign an intent with the L1 key (PQ or legacy EC):
-   `{domain, network, assetId, account, amountRaw, destination, nonce, expiry}`.
+1. The wallet sends the amount with `payOnLayer1` to the asset's
+   `redemptionAddress` (published in `/assets`), then builds and signs the
+   intent with the L1 key (PQ or legacy EC):
+   `{domain, network, assetId, account, amountRaw, destination, l1TxHash, nonce, expiry}`.
    See [`redeem-intent.md`](./redeem-intent.md) for the exact bytes and a
-   `bigtangle-ts` signing example.
+   `bigt-ai-ts` signing example. A hash can also be pasted into the card's
+   `redeem-funding-tx` field if the tokens were sent elsewhere.
 2. `POST /redeem-intents` with the proof (`keyType`, `publicKey`, `signature`).
-3. The server verifies that the key derives the account, checks amount/nonce/
-   expiry, rejects a replay (`redeem_intents` unique nonce + hash), debits the
-   holder balance and creates a `redeem` operation with `destination`.
-4. The executor re-checks the invariant and calls
+3. The server verifies the signature and the fields, then verifies `l1TxHash`:
+   a confirmed output of the **exact** token and amount to `redemptionAddress`.
+   Not yet indexed/confirmed is `409 { retryable: true }`; the wallet retries the
+   same intent.
+4. Only then does it atomically store the intent (unique nonce + hash), create
+   the `redeem` operation with `destination` and the L1 reference, and debit the
+   holder balance when it covers the amount. The unique
+   `(chain, tx_hash, log_index)` means one L1 return backs one release.
+5. The executor re-verifies the L1 output at finality and calls
    `Treasury.release(assetId, account, destination, externalRaw)`; supply and
-   reserve drop by the same amount and `health` stays clean.
-5. `RefusingTreasury` fails loudly until the HSM/MPC command is configured:
+   reserve drop by the same amount and `health` stays clean. `payout_ref` is
+   written before the ledger settles, so a requeue never pays twice.
+6. `RefusingTreasury` fails loudly until the HSM/MPC command is configured:
    `TREASURY_RELEASE_COMMAND` **and** `ALLOW_LIVE_TREASURY=1`.
 
 Fail-closed rules:
 
 - `POST /redeem-requests` (unsigned) returns `400`; use `/redeem-intents`.
-- A `withdrawal` observed as an L1 transfer to `redemptionAddress` has **no
-  destination** and fails (`release requires a verified destination`). It cannot
-  choose where value leaves custody.
+- No confirmed L1 return for the named transaction ⇒ no operation, no debit, no
+  release (`503` when L1 verification is not configured at all).
+- A `withdrawal` observed from a bare L1 transfer has **no destination** and
+  fails (`release requires a verified destination`). It cannot choose where
+  value leaves custody, and the blind scan is no longer part of the live pass.
+- The holder balance is bookkeeping, not authorization: a buyer who acquired
+  the token on-market can redeem even with no issuer balance, because the L1
+  return is what is exchanged.
 - The treasury command receives the verified destination; it must still enforce
   the approval policy and M-of-N.
 
@@ -652,7 +668,7 @@ To finish the leg you still need:
 | `supply ≤ reserve` per asset | `GET /health`, `cli health` | **yes** |
 | Pending operations age | `operations` table | yes |
 | Failed mints / duplicate-guard hits | `operations` | yes |
-| Deposit cursor lag | `FROM_BLOCK` vs finalized head | warn |
+| Deposit cursor lag | `scan_cursors.block` vs finalized head | warn |
 | Hot-wallet ETH / USDT float | RPC | yes (low) |
 | `/eth` 5xx rate | Caddy | warn |
 
@@ -690,11 +706,16 @@ Incidents:
 6. Deposit while the issuer is stopped, then start it: exactly one mint.
 7. Withdraw 25 USDT self-custody to an exchange deposit address; confirm
    `success`, fee paid in ETH only, notification + explorer link.
-8. Redeem 10 USDT with a signed intent: `200`, balance debited, operation
-   `redeem` has the destination. Without the treasury command it fails with the
-   treasury message; with `TREASURY_RELEASE_COMMAND` +
+8. Redeem 10 USDT: send 10 L1 USDT to `redemptionAddress`, sign an intent with
+   that transaction hash, `POST /redeem-intents` → `200`, operation `redeem`
+   has the destination and the L1 reference. Without the treasury command it
+   fails with the treasury message; with `TREASURY_RELEASE_COMMAND` +
    `ALLOW_LIVE_TREASURY=1` the command receives the verified destination.
-   An unsigned `/redeem-requests` and an observed L1 transfer both fail closed.
+   An unsigned `/redeem-requests`, an intent with no confirmed L1 return, and a
+   second intent reusing the same L1 transaction all fail closed.
+9. Sell the L1 USDT to a second wallet on the spot market, then try to redeem
+   from the seller's old issuer balance: the request is refused because the
+   seller no longer holds an L1 transfer to return (the buyer can redeem).
 9. Fund the deposit address with gas, run `cli sweep` (plan): one job for the
    100 USDT balance. Run live: the USDT moves to the omnibus, the next plan is
    empty, and a sub-threshold balance is skipped (`below-min`).
@@ -741,9 +762,10 @@ Incidents:
     fund gas, and the local `DEPOSIT_XPRV` path is for testnet/small float —
     production should use an HSM/MPC signer. Without a sweep, funds are safe but
     fragmented across addresses.
-12. **The scan window does not advance itself.** Each pass covers
-    `FROM_BLOCK … +2000`; move the cursor forward (or extend the pipeline) or
-    deposits outside the window are never seen. Idempotency makes replays safe.
+12. **The scan cursor is persisted.** Each pass catches up to the finalized head
+    in `logChunk` windows and advances `scan_cursors` only after the window's
+    deposits are committed. `FROM_BLOCK` only seeds a chain that has never been
+    scanned. Reset the row to deliberately re-scan (deposits are idempotent).
 
 ---
 

@@ -2,7 +2,7 @@
 
 **Istilah.** FIAT = mata uang fiat; CNY = yuan Tiongkok; USD = dolar AS; P2P = peer-to-peer.
 
-**Apa ini.** Di dompet Bigtangle, kamu menukar **BIG** langsung dengan mata uang fiat (WeChat Pay / Alipay / bank, atau **PayPal USD**). BIG milik penjual lebih dulu dimasukkan ke **alamat escrow** yang hanya dapat digunakan jika dua dari tiga pihak — penjual, pembeli, dan platform — menyetujuinya. Pembeli membayar uang langsung kepada penjual; setelah penjual mengonfirmasi di mutasi rekeningnya sendiri, BIG dilepas. Platform tidak menyimpan uangmu dan tidak menyentuh mata uang fiat.
+**Apa ini.** Di dompet Bigt-Ai, kamu menukar **BIG** langsung dengan mata uang fiat (WeChat Pay / Alipay / bank, atau **PayPal USD**). BIG milik penjual lebih dulu dimasukkan ke **alamat escrow** yang hanya dapat digunakan jika dua dari tiga pihak — penjual, pembeli, dan platform — menyetujuinya. Pembeli membayar uang langsung kepada penjual; setelah penjual mengonfirmasi di mutasi rekeningnya sendiri, BIG dilepas. Platform tidak menyimpan uangmu dan tidak menyentuh mata uang fiat.
 
 **Tentang tangkapan layar.** Tangkapan layar di bawah berasal dari lingkungan demo di perangkat sungguhan; nominal dan hash merupakan data demo, tanpa uang sungguhan.
 

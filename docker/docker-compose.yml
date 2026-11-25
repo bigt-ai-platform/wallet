@@ -25,7 +25,7 @@ services:
     build:
       context: /home/jcui/git/blockchain
       dockerfile: /home/jcui/git/wallet/docker/Dockerfile
-    image: bigtangle-l0:dev
+    image: bigt-ai-l0:dev
     container_name: l0-svr
     networks: [l0-test-net]
     ports:
@@ -53,7 +53,7 @@ services:
     build:
       context: /home/jcui/git/blockchain
       dockerfile: /home/jcui/git/wallet/docker/Dockerfile
-    image: bigtangle-l0:dev
+    image: bigt-ai-l0:dev
     container_name: l0-mcmc
     networks: [l0-test-net]
     ports:
@@ -106,7 +106,7 @@ services:
     build:
       context: /home/jcui/git/blockchain
       dockerfile: /home/jcui/git/wallet/docker/Dockerfile
-    image: bigtangle-l0:dev
+    image: bigt-ai-l0:dev
     container_name: l1-order-svr
     networks: [l0-test-net]
     ports:
@@ -134,7 +134,7 @@ services:
     build:
       context: /home/jcui/git/blockchain
       dockerfile: /home/jcui/git/wallet/docker/Dockerfile
-    image: bigtangle-l0:dev
+    image: bigt-ai-l0:dev
     container_name: l1-order-mcmc
     networks: [l0-test-net]
     ports:

@@ -96,7 +96,7 @@
   - 英文描述（4000 字内）
   - 中文描述（4000 字内）
 - [ ] **关键词**
-  - 如：blockchain, wallet, crypto, bigtangle, bigt.ai
+  - 如：blockchain, wallet, crypto, bigt-ai, bigt.ai
 - [ ] **支持 URL**
   - 如 `https://bigt.ai`
 - [ ] **营销 URL**（可选）

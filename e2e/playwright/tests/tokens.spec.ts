@@ -73,7 +73,7 @@ test.describe('Tokens Screen', () => {
     test.setTimeout(300000);
     test.skip(!HAS_SERVER, 'E2E_SERVER_URL not set');
 
-    const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+    const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
 
     // Mirrors RemoteTokenIT.testCreateToken: the genesis wallet (ML-DSA-87
     // seed 0x01, root domain signer) creates the token and pays the fee from
@@ -161,7 +161,7 @@ test.describe('Tokens Screen', () => {
     // Generate the wallet key in Node so we can fund by base58 (the network
     // spends classic base58 addresses; the app UI shows PQ hex).
     const { PQKey, Address, TestParams } = await import(
-      '../../../packages/bigtangle-ts/dist/index.js'
+      '../../../packages/bigt-ai-ts/dist/index.js'
     );
     const aliceKey = PQKey.createNew();
     const aliceBase58 = Address.fromKey(TestParams.get(), aliceKey).toString();
@@ -224,7 +224,7 @@ test.describe('Tokens Screen', () => {
     // L0 transactionstatus table keys records by the first output (recipient),
     // so poll Bob's address until a CONFIRMED transaction appears.
     const { Wallet, TestParams: TP } = await import(
-      '../../../packages/bigtangle-ts/dist/index.js'
+      '../../../packages/bigt-ai-ts/dist/index.js'
     );
     let confirmedTx: any = null;
     for (let i = 0; i < 60; i++) {

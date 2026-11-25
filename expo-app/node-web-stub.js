@@ -1,5 +1,5 @@
 /*
- * Web-build shim for Node built-in modules the bigtangle-ts SDK references
+ * Web-build shim for Node built-in modules the bigt-ai-ts SDK references
  * (https/http/net/tls).
  *
  * The SDK's OkHttp3Util creates an axios instance with a custom

@@ -10,10 +10,10 @@ describe('isWebUrl', () => {
   it('recognizes http(s) links', () => {
     expect(isWebUrl('https://wallet.bigt.ai/pay')).toBe(true);
     expect(isWebUrl('http://example.com')).toBe(true);
-    expect(isWebUrl('www.bigtangle.org')).toBe(true);
+    expect(isWebUrl('www.bigt-ai.org')).toBe(true);
   });
   it('rejects non-links', () => {
-    expect(isWebUrl('bigtangle address')).toBe(false);
+    expect(isWebUrl('bigt-ai address')).toBe(false);
     expect(isWebUrl('n3MotdMXgRKwrSwDLwAdr3gPaXQsFXdNDs')).toBe(false);
   });
 });

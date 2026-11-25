@@ -136,3 +136,28 @@ export async function getBridgeDeposits(account: string): Promise<BridgeDeposit[
       (d.status === 'pending' || d.status === 'credited' || d.status === 'failed')
   );
 }
+
+export interface IssuerAsset {
+  assetId: string;
+  symbol: string;
+  decimals: number;
+  /** L1 address the user must pay to redeem back to Ethereum. */
+  redemptionAddress?: string;
+}
+
+/**
+ * The issuer's asset list, which publishes the L1 `redemptionAddress`.
+ * A redemption is only accepted when the tokens actually returned on L1, so the
+ * card needs this address to fund the intent.
+ */
+export async function getIssuerAssets(): Promise<IssuerAsset[]> {
+  const s = getBridgeSettings();
+  if (!s.apiUrl) return [];
+  const res = await fetch(`${trimBase(s.apiUrl)}/assets`, { headers: authHeaders(s.apiToken) });
+  if (!res.ok) throw new Error(`Issuer assets API HTTP ${res.status}`);
+  const body = (await res.json()) as { items?: IssuerAsset[] };
+  return (body.items ?? []).filter(
+    (a): a is IssuerAsset =>
+      !!a && typeof a.assetId === 'string' && typeof a.symbol === 'string'
+  );
+}

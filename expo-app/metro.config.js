@@ -7,7 +7,7 @@ const config = getDefaultConfig(__dirname, {
 });
 
 // The real jackson-js (a CJS UMD) breaks Metro's ESM interop on web, which
-// makes the bigtangle-ts SDK classes (decorated with @JsonProperty) fail to
+// makes the bigt-ai-ts SDK classes (decorated with @JsonProperty) fail to
 // load. Route it to a web stub: no-op decorators + a minimal JSON mapper.
 const JACKSON_STUB = path.join(__dirname, "jackson-stub.js");
 // Metro maps Node built-ins (https/http/net/tls) to empty modules on web, so

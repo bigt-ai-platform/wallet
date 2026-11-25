@@ -93,6 +93,60 @@ async function main() {
 
   check('listOperationsByStatus ordering', (await store.listOperationsByStatus('completed', 10)).length >= 1);
 
+  // Atomic deposit: the chain ref and the reserve credit commit together.
+  const deposit = {
+    ...op,
+    id: 'smoke_dep',
+    ref: { chain: 'ethereum', txHash: '0xDEF', logIndex: 1 },
+    idempotencyKey: 'smoke-dep',
+  };
+  check('deposit credit applies once', await store.creditDeposit(
+    { assetId: 'hkd', reserveDeltaRaw: 100n, dustDeltaRaw: 0n }, deposit,
+  ));
+  check('deposit credit is idempotent on the chain ref', !(await store.creditDeposit(
+    { assetId: 'hkd', reserveDeltaRaw: 100n, dustDeltaRaw: 0n }, deposit,
+  )));
+  check('reserve was credited exactly once', (await store.getReserve('hkd'))?.reserveRaw === 5_000_100n);
+
+  // Atomic redemption reservation: nonce, L1 ref, operation and debit together.
+  const redeem = {
+    ...op,
+    id: 'smoke_redeem',
+    kind: 'redeem' as const,
+    ref: { chain: 'l1-order', txHash: '0xFEED', logIndex: 0 },
+    idempotencyKey: 'smoke-redeem',
+    amountRaw: '5',
+    l1AmountRaw: '5',
+    destination: '0x2222222222222222222222222222222222222222',
+  };
+  const intent = {
+    assetId: 'hkd', account: 'w1', nonce: 'smoke-nonce', intentHash: 'smoke-hash',
+    destination: redeem.destination, amountRaw: '5', expiry: Date.now() + 60_000,
+    operationId: redeem.id, createdAt: now(),
+  };
+  check('redeem request reserves once', (await store.putRedeemRequest(intent, redeem, 5n)).ok);
+  check('redeem replay is refused', !(await store.putRedeemRequest(
+    { ...intent, nonce: 'smoke-nonce-2', intentHash: 'smoke-hash-2' },
+    { ...redeem, id: 'smoke_redeem_2' },
+    5n,
+  )).ok);
+
+  check('settle applies the release', await store.settleOperation(
+    { ...redeem, status: 'completed', payoutRef: '0xpaid' },
+    { kind: 'release', amountRaw: 5n },
+  ));
+  check('settle is a no-op on replay', !(await store.settleOperation(
+    { ...redeem, status: 'completed', payoutRef: '0xpaid' },
+    { kind: 'release', amountRaw: 5n },
+  )));
+  check('release retired supply and released pending',
+    (await store.getReserve('hkd'))?.supplyRaw === 1_499_995n
+    && (await store.getHolderBalance('hkd', 'w1'))?.pendingRaw === 2n);
+  check('payout ref is stored', (await store.getOperation('smoke_redeem'))?.payoutRef === '0xpaid');
+
+  await store.putScanCursor('ethereum', 123);
+  check('scan cursor round-trips', (await store.getScanCursor('ethereum')) === 123);
+
   await store.close();
   console.log(failures === 0 ? '\nRESULT=OK' : `\nRESULT=FAIL(${failures})`);
   process.exit(failures === 0 ? 0 : 1);

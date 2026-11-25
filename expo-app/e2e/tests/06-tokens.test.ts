@@ -94,15 +94,15 @@ describe('Tokens Screen', () => {
       // ============ LOGIC VERIFICATION ============
       // Test token filter logic
       const mockTokens = [
-        { tokenname: 'BigTangle', tokenid: 'BIG123', description: 'Main token' },
+        { tokenname: 'Bigt-Ai', tokenid: 'BIG123', description: 'Main token' },
         { tokenname: 'Bitcoin', tokenid: 'BTC456', description: 'BTC token' },
         { tokenname: 'Ethereum', tokenid: 'ETH789', description: 'ETH token' },
       ];
 
       const searchTerm = 'BIG';
       const filtered = verifyTokenFilter(mockTokens, searchTerm);
-      expect(filtered.length).toBe(2); // BigTangle and Bitcoin
-      expect(filtered.some(t => t.tokenname === 'BigTangle')).toBe(true);
+      expect(filtered.length).toBe(2); // Bigt-Ai and Bitcoin
+      expect(filtered.some(t => t.tokenname === 'Bigt-Ai')).toBe(true);
       expect(filtered.some(t => t.tokenid === 'BIG123')).toBe(true);
       console.log(`✅ Filter logic: "${searchTerm}" matches ${filtered.length} tokens`);
 

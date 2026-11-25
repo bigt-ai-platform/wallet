@@ -7,7 +7,7 @@ import path from 'node:path';
 // browser.
 const WALLET_FILE = path.resolve(
   __dirname,
-  '../../../packages/bigtangle-ts/test/oldwallet/cui.wallet',
+  '../../../packages/bigt-ai-ts/test/oldwallet/cui.wallet',
 );
 const EC_ADDRESS = '16UmWyaGYmCWew2KGE1eUjiR1yMBdFSwKL';
 

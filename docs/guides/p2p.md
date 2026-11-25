@@ -1,6 +1,6 @@
 # FIAT Settlement — Wallet-Native CNY Swap
 
-**What this is.** A peer-to-peer swap between crypto on **Bigtangle L0** and CNY
+**What this is.** A peer-to-peer swap between crypto on **Bigt-Ai L0** and CNY
 fiat (WeChat Pay / Alipay / bank). The seller escrows tokens in a **2-of-3 P2SH
 address** (seller, buyer, engine); the buyer pays the seller **directly** in
 their own payment app; the seller confirms receipt on their own statement and

@@ -1,15 +1,15 @@
 /**
  * Post-quantum DID support — the keypair management model from ../wallet:
- * ML-DSA-87 keys (PQKey, bigtangle-ts), challenge signatures as
- * SignatureBundles. bigtangle-ts is a peer dependency, imported here only.
+ * ML-DSA-87 keys (PQKey, bigt-ai-ts), challenge signatures as
+ * SignatureBundles. bigt-ai-ts is a peer dependency, imported here only.
  *
  * DID form: did:key:z<base58btc(uvarint(codec) ‖ prefixedPubBytes)>
  * codec 0x300001 is in the multicodec private-use range until an official
  * ML-DSA-87-prefixed codepoint is registered.
  */
-import { Sha256Hash } from "bigtangle-ts/dist/net/bigtangle/core/Sha256Hash.js";
-import { PQKey } from "bigtangle-ts/dist/net/bigtangle/crypto/pq/PQKey.js";
-import { SignatureBundle } from "bigtangle-ts/dist/net/bigtangle/crypto/pq/SignatureBundle.js";
+import { Sha256Hash } from "bigt-ai-ts/dist/net/bigt-ai/core/Sha256Hash.js";
+import { PQKey } from "bigt-ai-ts/dist/net/bigt-ai/crypto/pq/PQKey.js";
+import { SignatureBundle } from "bigt-ai-ts/dist/net/bigt-ai/crypto/pq/SignatureBundle.js";
 import { base58Decode, base58Encode, concat, decodeUvarint, encodeUvarint, hexToBytes, bytesToHex } from "./index.js";
 
 export const MULTICODEC_DAI_MLDSA87_PREFIXED = 0x300001;

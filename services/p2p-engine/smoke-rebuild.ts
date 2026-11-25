@@ -12,7 +12,7 @@ import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { PQKey, TestParams, Utils } from "bigtangle-ts";
+import { PQKey, TestParams, Utils } from "bigt-ai-ts";
 import { didFromPQKey } from "did/pq";
 import { p2pSwapRecord } from "p2p-protocol";
 import { signSwapRecord, submitSocialRecord } from "./src/anchor.js";

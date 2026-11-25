@@ -1,6 +1,6 @@
 # FIAT-Abwicklung — wallet-nativer CNY-Tausch
 
-**Worum es geht.** Ein Peer-to-Peer-Tausch zwischen Krypto auf **Bigtangle L0**
+**Worum es geht.** Ein Peer-to-Peer-Tausch zwischen Krypto auf **Bigt-Ai L0**
 und CNY-Fiat (WeChat Pay / Alipay / Bank). Der Verkäufer hinterlegt Token in
 einer **2-von-3-P2SH-Adresse** (Verkäufer, Käufer, Engine); der Käufer zahlt den
 Verkäufer **direkt** in seiner eigenen Zahlungs-App; der Verkäufer bestätigt den

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createHash } from "node:crypto";
-import { PQKey } from "bigtangle-ts";
+import { PQKey } from "bigt-ai-ts";
 import { Ed25519Key, didFromEd25519Key } from "did";
 import { didFromPQKey, signChallengePQ } from "did/pq";
 import { ReplayGuard, canonicalJson, signPayload, validateSignedRequest, verifySignature } from "../src/sign.js";

@@ -4,7 +4,7 @@ import { BC_DECIMALS } from '../tokenformat';
 
 describe('tokenSearch / native BIG', () => {
   it('matches BIG by name prefix and by its raw id', () => {
-    for (const keyword of ['b', 'bi', 'BIG', 'big', 'bigtangle', 'bc', 'BC', '  big  ']) {
+    for (const keyword of ['b', 'bi', 'BIG', 'big', 'bigt-ai', 'bc', 'BC', '  big  ']) {
       expect(matchesBigToken(keyword), keyword).toBe(true);
     }
     for (const keyword of ['', '   ', 'usdt', 'nvidia', 'x']) {

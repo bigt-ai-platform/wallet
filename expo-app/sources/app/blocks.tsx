@@ -10,7 +10,7 @@ import { httpService } from '@/services/http';
 import { toBlockRow, type BlockRow } from '@/lib/blockinfo';
 import { IS_DEV } from '@/constants/app';
 import { MONO_FONT } from '@/constants/fonts';
-import { Utils, TestParams, MainNetParams } from 'bigtangle-ts';
+import { Utils, TestParams, MainNetParams } from 'bigt-ai-ts';
 import { layerLabel } from '@/lib/layerLabel';
 
 /**

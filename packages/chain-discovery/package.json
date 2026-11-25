@@ -1,7 +1,7 @@
 {
   "name": "chain-discovery",
   "version": "0.1.0",
-  "description": "Bigtangle chain endpoint discovery: DNS/registry seeds, health probes, ranking (shared by the wallet app and the P2P engine)",
+  "description": "Bigt-Ai chain endpoint discovery: DNS/registry seeds, health probes, ranking (shared by the wallet app and the P2P engine)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

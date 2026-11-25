@@ -29,8 +29,8 @@ mkdirSync(SHOTS, { recursive: true });
 mkdirSync(PDFS, { recursive: true });
 
 const WALLET_PWD = 'AlicePass123!';
-const sdk = await import('../packages/bigtangle-ts/dist/index.js');
-const bcToken = sdk.NetworkParameters.BIGTANGLE_TOKENID_STRING;
+const sdk = await import('../packages/bigt-ai-ts/dist/index.js');
+const bcToken = sdk.NetworkParameters.BIGT_AI_TOKENID_STRING;
 
 async function postJson(endpoint, body) {
   const res = await fetch(L1 + endpoint, {

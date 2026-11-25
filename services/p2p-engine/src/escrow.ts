@@ -5,11 +5,11 @@
  * in lexicographic order by `ScriptBuilder.createRedeemScript`, so all three
  * parties derive the same script — and therefore the same escrow address — from
  * the same key set. Only the address/script derivation lives here; the engine
- * consumes `bigtangle-ts` for the actual spend assembly, which is the wallet's
+ * consumes `bigt-ai-ts` for the actual spend assembly, which is the wallet's
  * on-chain half.
  */
-import { Address, MainNetParams, ScriptBuilder, TestParams, Utils } from "bigtangle-ts";
-import type { ECKey, NetworkParameters, PQKey, Script } from "bigtangle-ts";
+import { Address, MainNetParams, ScriptBuilder, TestParams, Utils } from "bigt-ai-ts";
+import type { ECKey, NetworkParameters, PQKey, Script } from "bigt-ai-ts";
 
 export type EscrowKey = ECKey | PQKey;
 

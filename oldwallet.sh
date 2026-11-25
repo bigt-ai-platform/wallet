@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Read the keys of a legacy bigtangle .wallet (protobuf) file.
+# Read the keys of a legacy bigt-ai .wallet (protobuf) file.
 #
 #   ./oldwallet.sh <wallet-file> [password] [--json] [--public]
 #
@@ -9,9 +9,9 @@
 #   --public   never print private keys / WIF (addresses only)
 #   -h|--help  show this help
 #
-# Reads the file with the workspace TypeScript SDK (packages/bigtangle-ts/dist),
+# Reads the file with the workspace TypeScript SDK (packages/bigt-ai-ts/dist),
 # the same WalletProtobufSerializer the wallet app uses, so it accepts every
-# historic network id (Mainnet/Test/net.bigtangle/org.bitcoin.production/...).
+# historic network id (Mainnet/Test/net.bigt-ai/org.bitcoin.production/...).
 # Encrypted wallets are decrypted with the Java UTF-16BE password derivation
 # first and the SDK's UTF-8 derivation as fallback.
 #
@@ -19,11 +19,11 @@
 #             5 wrong password, 6 unsupported encryption.
 #
 # Rebuild the SDK after changing its sources:
-#   npm --prefix packages/bigtangle-ts run build
+#   npm --prefix packages/bigt-ai-ts run build
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SDK="$ROOT/packages/bigtangle-ts/dist/index.js"
+SDK="$ROOT/packages/bigt-ai-ts/dist/index.js"
 
 JSON_OUT=0
 PUBLIC_ONLY=0
@@ -66,12 +66,12 @@ fi
 
 if [ ! -f "$SDK" ]; then
   echo "error: SDK build not found: $SDK" >&2
-  echo "       run: npm --prefix packages/bigtangle-ts run build" >&2
+  echo "       run: npm --prefix packages/bigt-ai-ts run build" >&2
   exit 2
 fi
-if [ -n "$(find "$ROOT/packages/bigtangle-ts/src" -newer "$SDK" -name '*.ts' -print -quit 2>/dev/null)" ]; then
-  echo "note: bigtangle-ts sources are newer than dist — rebuild to be sure:" >&2
-  echo "      npm --prefix packages/bigtangle-ts run build" >&2
+if [ -n "$(find "$ROOT/packages/bigt-ai-ts/src" -newer "$SDK" -name '*.ts' -print -quit 2>/dev/null)" ]; then
+  echo "note: bigt-ai-ts sources are newer than dist — rebuild to be sure:" >&2
+  echo "      npm --prefix packages/bigt-ai-ts run build" >&2
 fi
 
 read_wallet() {
@@ -98,7 +98,7 @@ const fail = (code, message) => {
 
 const bytes = new Uint8Array(fs.readFileSync(file));
 if (!WalletProtobufSerializer.isWallet(bytes)) {
-  fail(3, `${file} is not a legacy bigtangle .wallet (protobuf) file`);
+  fail(3, `${file} is not a legacy bigt-ai .wallet (protobuf) file`);
 }
 
 let proto;

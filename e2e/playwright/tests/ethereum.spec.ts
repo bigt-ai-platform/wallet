@@ -5,7 +5,7 @@ import { startEthRpcMock } from '../../eth-rpc-mock.mjs';
 /**
  * Ethereum deposit / withdraw (docs/ethereum.md).
  *
- * A plain EC wallet (the well-known key `0x4c08…`, whose Bigtangle mainnet
+ * A plain EC wallet (the well-known key `0x4c08…`, whose Bigt-Ai mainnet
  * address is `1FB3WS…`) and a local JSON-RPC mock drive every flow, so no
  * chain, provider or funds are involved. The mock captures the broadcast raw
  * transactions; the specs assert they are well-formed type-2 payloads signed
@@ -265,10 +265,13 @@ test.describe('USDT deposit (exchange style)', () => {
     expect(mock.depositQueries.account).toBe(BTC_ADDRESS);
     expect(await page.locator('[data-testid="deposit-address-card"] svg').count()).toBeGreaterThan(0);
 
-    // Redeem: the L1 key signs the destination; the issuer receives the proof.
+    // Redeem: the L1 key signs the destination and the L1 funding tx; the
+    // issuer receives the proof. A pasted hash skips the on-chain send, which
+    // this mock has no L1 node for.
     await expect(page.getByTestId('redeem-card')).toBeVisible();
     await page.getByTestId('redeem-amount').fill('5');
     await page.getByTestId('redeem-destination').fill(RECIPIENT);
+    await page.getByTestId('redeem-funding-tx').fill(`0x${'ab'.repeat(32)}`);
     await page.getByTestId('redeem-submit').click();
     await expect(page.getByTestId('redeem-notice')).toContainText('op-redeem', { timeout: 20000 });
     expect(mock.redeemRequests).toHaveLength(1);
@@ -277,6 +280,7 @@ test.describe('USDT deposit (exchange style)', () => {
       assetId: 'usdt',
       amount: '5000000',
       destination: RECIPIENT,
+      l1TxHash: `0x${'ab'.repeat(32)}`,
       keyType: 'EC',
     });
     expect(String(mock.redeemRequests[0]!.signature)).toMatch(/^[0-9a-f]+$/);
@@ -393,7 +397,7 @@ test.describe('Ethereum wallet gating', () => {
     await page.waitForTimeout(1500);
     await gotoKeys(page);
 
-    // New wallets get a PQ key for Bigtangle and an EC key for Ethereum.
+    // New wallets get a PQ key for Bigt-Ai and an EC key for Ethereum.
     await page.getByText('Create New Wallet').first().click();
     await page.getByText('Save with Password').first().click();
     const pw = page.locator('input[type="password"]');
@@ -413,7 +417,7 @@ test.describe('Ethereum wallet gating', () => {
     await disableFilePicker(page);
     // A post-quantum-only wallet (the shape of wallets created before the dual
     // key default). Built with the SDK so the ML-DSA key is valid.
-    const sdk = (await import('bigtangle-ts')) as any;
+    const sdk = (await import('bigt-ai-ts')) as any;
     const pq = sdk.PQKey.createNew();
     const address = sdk.Address.fromP2PKH(
       sdk.MainNetParams.get(),
@@ -422,7 +426,7 @@ test.describe('Ethereum wallet gating', () => {
     await page.addInitScript(
       ([a, pub, priv]) => {
         const wallet = {
-          keys: [{ address: a, pubkey: pub, privateKey: priv, keyType: 'PQ', role: 'bigtangle' }],
+          keys: [{ address: a, pubkey: pub, privateKey: priv, keyType: 'PQ', role: 'bigt-ai' }],
         };
         localStorage.setItem('device.walletEncryptedContent', JSON.stringify(wallet));
         localStorage.setItem('device.walletAddress', a);

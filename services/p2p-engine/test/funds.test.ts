@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { createHash, randomBytes } from "node:crypto";
 import { Ed25519Key, didFromEd25519Key, pubKeyHashFromPub, didFromECKey, ECKey as DidECKey, bytesToHex } from "did";
 import { didFromPQKey } from "did/pq";
-import { Coin, NetworkParameters, PQKey, Utils } from "bigtangle-ts";
+import { Coin, NetworkParameters, PQKey, Utils } from "bigt-ai-ts";
 import { P2P_BIG_FEE, type SettlementOutput } from "p2p-protocol";
 import { buildApp } from "../src/server.js";
 import { MemSettlementStore } from "../src/store.js";
@@ -214,7 +214,7 @@ describe("did balance key", () => {
     expect(
       rawToDecimal(
         Coin.FEE_DEFAULT.getValue().toString(),
-        NetworkParameters.BIGTANGLE_DECIMAL,
+        NetworkParameters.BIGT_AI_DECIMAL,
       ),
     ).toBe(P2P_BIG_FEE);
   });

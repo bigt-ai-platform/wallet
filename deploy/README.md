@@ -1,17 +1,17 @@
-# Deploy — Bigtangle wallet web
+# Deploy — Bigt-Ai wallet web
 
 Serves the wallet web app (expo static export) on a region VM — **fully
 containerised**, mirroring `../dai/deploy`. Unlike dai there is no app
 tier: the wallet talks to the **existing prod chain** straight from the browser
 (mainnet L0/L1 through the same-origin `/l0/*` + `/l1/*` Caddy proxies to
-`L0_API` / `L1_API`, defaults `https://eu1.bigtangle.org` /
-`https://ordereu1.bigtangle.org`) so this stack is a single nginx container +
+`L0_API` / `L1_API`, defaults `https://eu1.bigt-ai.org` /
+`https://ordereu1.bigt-ai.org`) so this stack is a single nginx container +
 a host Caddy vhost.
 
 ```
 Cloudflare (DNS-only A → region VM)
         │
-┌───────▼────────┐   region VM (e.g. wallet.bigtangle.org)
+┌───────▼────────┐   region VM (e.g. wallet.bigt-ai.org)
 │  Caddy :443     │
 │  domain → :8084 (web container, 127.0.0.1)
 └───────┬────────┘
@@ -26,8 +26,8 @@ Cloudflare (DNS-only A → region VM)
 > tenants).
 
 > **Chain is NOT in this stack.** The app connects to the already-running
-> mainnet/testnet chain (`eu1.bigtangle.org` + `ordereu1.bigtangle.org` /
-> `m.bigtangle.org` + `testm.bigtangle.org`). Per-region or private chain
+> mainnet/testnet chain (`eu1.bigt-ai.org` + `ordereu1.bigt-ai.org` /
+> `m.bigt-ai.org` + `testm.bigt-ai.org`). Per-region or private chain
 > containers are intentionally out of scope — deploy the chain itself with
 > `../blockchain/helper/prod/*` if you need your own.
 
@@ -40,7 +40,7 @@ Cloudflare (DNS-only A → region VM)
 | `compose.p2p-engine.yml` | P2P engine with Postgres (`engine` + `db`, `SETTLEMENT_STORE=pg`) — opt-in for a busy chain / heavy reads |
 | `compose.asset-issuer.yml` | Asset issuer + its **own** Postgres (`issuer` + `db`), published on `127.0.0.1:8090` — per-user EVM deposit addresses, mint/redeem executor, reserve ledger |
 | `Dockerfile.p2p-engine` | P2P engine runtime image (node 20, esbuild bundle; no compile host needed) |
-| `Dockerfile.asset-issuer` | Asset issuer runtime image (node 20; service + the `bigtangle-ts` L1 binding) |
+| `Dockerfile.asset-issuer` | Asset issuer runtime image (node 20; service + the `bigt-ai-ts` L1 binding) |
 | `Dockerfile.app` | Runtime image: packages the host-built `web-build/` export under nginx; **no compile in-image** |
 | `nginx.conf` | SPA fallback (`index.html`) + hard caching of hashed Metro assets |
 | `tag.sh` | HOST build: `expo export` + the two service images → registry push **or** docker-save tars (no registry needed) |
@@ -161,7 +161,7 @@ VM is fully rebuilt by `deploy`.
 ## Network (mainnet vs testnet)
 
 The **production export defaults to mainnet** (`IS_DEV=false` →
-`https://ordereu1.bigtangle.org` L1 on native, same-origin `/l0/` + `/l1/`
+`https://ordereu1.bigt-ai.org` L1 on native, same-origin `/l0/` + `/l1/`
 proxies on web); users can switch to the testnet chain in the app's Settings.
 If you want a build whose *default* is testnet, export with the testnet URLs
 baked in (edit `expo-app/sources/constants/app.ts` and the params used by
@@ -172,9 +172,9 @@ at runtime by design.
 (`assert_mainnet_default`) is run by both `deploy.sh` and `tag.sh` before any
 tag/build: it verifies the checked-in `constants/app.ts` +
 `services/http.ts` still pin the mainnet L1 order node
-(`https://ordereu1.bigtangle.org`, same-origin `/l1/` on web), the same-origin
+(`https://ordereu1.bigt-ai.org`, same-origin `/l1/` on web), the same-origin
 `/l0/` web path and `MainNetParams` seeds, and **aborts the release** if a
-testnet default has leaked in (the legacy JSF host `m.bigtangle.org` is
+testnet default has leaked in (the legacy JSF host `m.bigt-ai.org` is
 rejected too). There is intentionally no bypass — a non-mainnet build must be
 done out-of-band, never through the release train.
 
@@ -182,8 +182,8 @@ done out-of-band, never through the release train.
 
 The browser app calls the chain endpoints same-origin:
 - L0 main chain: `/l0/*` → `L0_API` (`region.conf`, default
-  `https://eu1.bigtangle.org`) and `/l1/*` → `L1_API` (`region.conf`, default
-  `https://ordereu1.bigtangle.org`). The legacy `m.bigtangle.org` host serves
+  `https://eu1.bigt-ai.org`) and `/l1/*` → `L1_API` (`region.conf`, default
+  `https://ordereu1.bigt-ai.org`). The legacy `m.bigt-ai.org` host serves
   the JSF webapp, not the JSON-RPC order API.
 - The host Caddy vhost (written by `region.sh`) handles these prefixes; the
   web container also ships the same proxies in `deploy/nginx.conf` as a

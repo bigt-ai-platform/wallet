@@ -38,7 +38,12 @@ export interface Operation {
   /** Amount minted/released on L1, smallest units at the L1 scale. */
   l1AmountRaw: Amount;
   status: OperationStatus;
-  /** Set for chain-observed operations; absent for API-initiated requests. */
+  /**
+   * Set for chain-observed operations; absent for API-initiated requests.
+   * For a `redeem` it is the **L1 funding transfer** that backs it (the output
+   * paid to `redemptionAddress`), and the unique `(chain, txHash, logIndex)`
+   * index is what lets one L1 return authorize exactly one release.
+   */
   ref?: ChainRef;
   /**
    * Client-supplied idempotency key for API-initiated operations (a POST may be
@@ -51,6 +56,12 @@ export interface Operation {
    * a signed intent; `executeRelease` refuses a release without it.
    */
   destination?: string;
+  /**
+   * Hash of the external payout/mint transaction once the signer reports it.
+   * Persisted before the ledger is settled so a requeue never broadcasts a
+   * second payout for the same operation.
+   */
+  payoutRef?: string;
   attempts: number;
   error?: string;
   createdAt: string;

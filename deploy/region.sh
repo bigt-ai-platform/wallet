@@ -435,10 +435,10 @@ ${dom}, www.${dom} {
         reverse_proxy ${L0_API}
     }
     handle_path /l0/eu2/* {
-        reverse_proxy https://eu2.bigtangle.org
+        reverse_proxy https://eu2.bigt-ai.org
     }
     handle_path /l0/hk1/* {
-        reverse_proxy https://hk1.bigtangle.org
+        reverse_proxy https://hk1.bigt-ai.org
     }
     handle_path /l0/* {
         reverse_proxy ${L0_API}
@@ -447,10 +447,10 @@ ${dom}, www.${dom} {
         reverse_proxy ${L1_API}
     }
     handle_path /l1/ordereu2/* {
-        reverse_proxy https://ordereu2.bigtangle.org
+        reverse_proxy https://ordereu2.bigt-ai.org
     }
     handle_path /l1/orderhk1/* {
-        reverse_proxy https://orderhk1.bigtangle.org
+        reverse_proxy https://orderhk1.bigt-ai.org
     }
     handle_path /l1/* {
         reverse_proxy ${L1_API}
@@ -514,10 +514,10 @@ ${apex}, www.${apex} {
         reverse_proxy ${L0_API}
     }
     handle_path /l0/eu2/* {
-        reverse_proxy https://eu2.bigtangle.org
+        reverse_proxy https://eu2.bigt-ai.org
     }
     handle_path /l0/hk1/* {
-        reverse_proxy https://hk1.bigtangle.org
+        reverse_proxy https://hk1.bigt-ai.org
     }
     handle_path /l0/* {
         reverse_proxy ${L0_API}
@@ -526,10 +526,10 @@ ${apex}, www.${apex} {
         reverse_proxy ${L1_API}
     }
     handle_path /l1/ordereu2/* {
-        reverse_proxy https://ordereu2.bigtangle.org
+        reverse_proxy https://ordereu2.bigt-ai.org
     }
     handle_path /l1/orderhk1/* {
-        reverse_proxy https://orderhk1.bigtangle.org
+        reverse_proxy https://orderhk1.bigt-ai.org
     }
     handle_path /l1/* {
         reverse_proxy ${L1_API}

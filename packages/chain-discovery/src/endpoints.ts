@@ -285,7 +285,7 @@ export function isOnionUrl(url: string): boolean {
   return /(^|\/\/)[^/]*\.onion(:|\/|$)/i.test(url ?? '');
 }
 
-/** A `bigtangle-seeds` /serverinfolist entry. */
+/** A `bigt-ai-seeds` /serverinfolist entry. */
 export interface RegistryEntry {
   url?: string;
   chain?: string;

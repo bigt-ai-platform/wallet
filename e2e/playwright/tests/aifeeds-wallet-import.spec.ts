@@ -13,7 +13,7 @@ const WALLET_FILE = path.resolve(
   __dirname,
   '../fixtures/aifeeds-wallet-backup.wallet.json',
 );
-const PASSWORD = 'bigtangle';
+const PASSWORD = 'bigt-ai';
 const MAINNET_ADDRESS = '1HunxyPHUo6sAoduVLTKSt2RcyJc7Z4P9e';
 
 test.describe('aifeeds/dai wallet backup import', () => {

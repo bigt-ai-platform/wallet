@@ -45,7 +45,7 @@ test.describe('Payment', () => {
     //    app wallet file stores the PQ hex address — so fund/send here use the
     //    base58 form.
     const { PQKey, Address, TestParams } = await import(
-      '../../../packages/bigtangle-ts/dist/index.js'
+      '../../../packages/bigt-ai-ts/dist/index.js'
     );
 
     const aliceKey = PQKey.createNew();
@@ -83,7 +83,7 @@ test.describe('Payment', () => {
     //    sending — spending an unconfirmed coinbase can leave the payment
     //    stuck at BATCHED and never confirmed.
     const { Wallet, TestParams: TP } = await import(
-      '../../../packages/bigtangle-ts/dist/index.js'
+      '../../../packages/bigt-ai-ts/dist/index.js'
     );
     const aliceWallet = Wallet.fromKeysURL(TP.get(), [aliceKey], E2E_SERVER_URL);
     let aliceReady = false;

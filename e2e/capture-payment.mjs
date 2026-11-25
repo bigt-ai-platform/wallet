@@ -166,7 +166,7 @@ async function closeDrawer(page) {
 }
 
 async function main() {
-  const sdk = await import('../packages/bigtangle-ts/dist/index.js');
+  const sdk = await import('../packages/bigt-ai-ts/dist/index.js');
   const { PQKey, Address, TestParams, Wallet } = sdk;
 
   // 1. Generate the wallet key in Node and fund it on the L0 payment base
@@ -189,7 +189,7 @@ async function main() {
   const fundTx = await genesisWallet.payMoneyToECKeyList(
     null,
     giveMoney,
-    new Uint8Array(sdk.Utils.HEX.decode(sdk.NetworkParameters.BIGTANGLE_TOKENID_STRING)),
+    new Uint8Array(sdk.Utils.HEX.decode(sdk.NetworkParameters.BIGT_AI_TOKENID_STRING)),
     'e2e-payment-pdf',
     fundCoins,
   );

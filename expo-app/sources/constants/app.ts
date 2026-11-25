@@ -56,7 +56,7 @@ export const DEV_L1_URL = 'http://127.0.0.1:24086/';
  * servers — the raw seeds in MainNetParams.serverSeeds() are plain http and
  * the production nodes send no CORS headers, so browsers can only reach the
  * network through these hosts (or, for the web build, a same-origin proxy).
- * The legacy m.bigtangle.org host serves the JSF webapp, not the JSON-RPC
+ * The legacy m.bigt-ai.org host serves the JSF webapp, not the JSON-RPC
  * order API.
  */
 /**
@@ -94,15 +94,15 @@ export const MAINNET_L1_URLS = [PRIVATE_L1_URL];
 
 /**
  * DNS is only the bootstrap for the *seed* set. Ops publishes
- * `_bigtangle-l0[l1]` TXT/SRV records under this domain and the app resolves
+ * `_bigt-ai-l0[l1]` TXT/SRV records under this domain and the app resolves
  * them via DNS-over-HTTPS (WebView/RN cannot query SRV/TXT directly). The
  * static MAINNET_* lists above are the fallback when DNS yields nothing.
  */
 export const DOH_URL = process.env.EXPO_PUBLIC_DOH_URL || 'https://dns.google/resolve';
-export const DNS_SEEDS_DOMAIN = process.env.EXPO_PUBLIC_DNS_SEEDS_DOMAIN || 'bigtangle.org';
+export const DNS_SEEDS_DOMAIN = process.env.EXPO_PUBLIC_DNS_SEEDS_DOMAIN || 'bigt-ai.org';
 
 /**
- * bigtangle-seeds registries (plain JSON `POST /serverinfolist`) for live node
+ * bigt-ai-seeds registries (plain JSON `POST /serverinfolist`) for live node
  * discovery, so the compiled `MAINNET_*` seeds are only a fallback. Must be a
  * TLS URL reachable from the app (e.g. a wallet-domain `/seeds/` proxy) — an
  * `http://` registry is blocked by the WebView/Android cleartext policy.
@@ -143,7 +143,7 @@ export const PROD_WEB_L1_NODES = nodeNames('l1').map((name) => ({
 }));
 
 /** Testnet L1 (order match) endpoint (no web proxy — testnet is dev-only). */
-export const DEFAULT_L1_TESTNET_URL = 'https://testm.bigtangle.org';
+export const DEFAULT_L1_TESTNET_URL = 'https://testm.bigt-ai.org';
 
 /**
  * OTA release updates (Android APK only). The release bucket is public-read, so

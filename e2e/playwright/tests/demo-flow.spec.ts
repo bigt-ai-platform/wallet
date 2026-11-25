@@ -113,7 +113,7 @@ const tokensHtml = `
   <div style="padding:0 16px;">
     <div style="border:1px solid #e5e5e5;border-radius:10px;padding:12px;font-size:14px;background:#fff;color:#000;margin-bottom:16px;">Search by name or ID</div>
     ${[ 
-      {n:"BigTangle", id:"bc", d:"BigTangle Currency"},
+      {n:"Bigt-Ai", id:"bc", d:"Bigt-Ai Currency"},
       {n:"USD Coin", id:"usdc", d:"USD stablecoin"},
     ].map(t => `
     <div style="background:#fff;border-radius:10px;border:1px solid #e5e5e5;padding:14px;margin-bottom:8px;display:flex;align-items:center;">
@@ -138,7 +138,7 @@ const settingsHtml = `
     </div>
     <div style="background:#fff;border-radius:12px;border:1px solid #e5e5e5;padding:16px;margin-bottom:12px;">
       <div style="font-size:12px;font-weight:600;color:#8e8e93;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px;">Server URL</div>
-      <div style="border:1px solid #e5e5e5;border-radius:8px;padding:12px;font-size:13px;font-family:monospace;color:#000;background:#f5f5f5;margin-bottom:10px;">https://testp.bigtangle.org:8088/</div>
+      <div style="border:1px solid #e5e5e5;border-radius:8px;padding:12px;font-size:13px;font-family:monospace;color:#000;background:#f5f5f5;margin-bottom:10px;">https://testp.bigt-ai.org:8088/</div>
       <div style="background:#10a37f;border-radius:8px;padding:10px;text-align:center;"><span style="color:#fff;font-size:14px;font-weight:600;">Save</span></div>
     </div>
     <div style="background:#fff;border-radius:12px;border:1px solid #e5e5e5;padding:16px;margin-bottom:12px;">

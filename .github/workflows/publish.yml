@@ -56,8 +56,8 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Build bigtangle-ts
-        working-directory: ./packages/bigtangle-ts
+      - name: Build bigt-ai-ts
+        working-directory: ./packages/bigt-ai-ts
         run: yarn build
 
       - name: Build chain-discovery
@@ -124,8 +124,8 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Build bigtangle-ts
-        working-directory: ./packages/bigtangle-ts
+      - name: Build bigt-ai-ts
+        working-directory: ./packages/bigt-ai-ts
         run: yarn build
 
       - name: Build chain-discovery
@@ -190,8 +190,8 @@ jobs:
       - name: Install dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Build bigtangle-ts
-        working-directory: ./packages/bigtangle-ts
+      - name: Build bigt-ai-ts
+        working-directory: ./packages/bigt-ai-ts
         run: yarn build
 
       - name: Build chain-discovery

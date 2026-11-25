@@ -1,6 +1,6 @@
 # Ethereum in the wallet — plan (port of `../vmproject`'s ETH support)
 
-**Status: P0–P2 implemented.** New wallets are **dual-key** (PQ for Bigtangle +
+**Status: P0–P2 implemented.** New wallets are **dual-key** (PQ for Bigt-Ai +
 EC for Ethereum, one encrypted file). An EC-only wallet can add a PQ key and a
 PQ-only wallet can add an Ethereum key in Keys, both with multi-key spend. EVM
 balances, the deposit address/EIP-681 QR, EIP-1559 withdrawals for ETH + ERC-20,
@@ -13,7 +13,7 @@ secp256k1 counterpart, so it must add an EC key first.
 
 ## 1. What the Java webapp does (reference implementation)
 
-`../vmproject` exposes Ethereum through web3j, not through the Bigtangle node.
+`../vmproject` exposes Ethereum through web3j, not through the Bigt-Ai node.
 The wallet's **existing EC private key is used directly as the Ethereum private
 key**; the address is web3j's `Credentials.create(hex).getAddress()`.
 
@@ -24,7 +24,7 @@ key**; the address is web3j's `Credentials.create(hex).getAddress()`.
 | `vmcore/.../action/EthPublicBalanceAction.java` | Address **or public-key** → balance lookup, optional token contract; page `cc/.../public/eth/balance.xhtml` |
 | `vmcore/.../eth/GasService.java` | Gas price from Etherscan `gastracker` (API key in source) / node `eth_gasPrice` |
 | `vmcore/.../basic/CryptoTokenlist.java` | `ethtokens = { ETH, USDT }`; USDT mainnet contract `0xdac17f958d2ee523a2206206994597c13d831ec7` |
-| `BigtangleDataService.getEthereumURL()` | Hard-coded Infura mainnet URL **with the project key in source** |
+| `BigtAiDataService.getEthereumURL()` | Hard-coded Infura mainnet URL **with the project key in source** |
 
 Behaviour worth keeping: ETH + ERC-20 in one list, fee shown before sending,
 gas fields visible, public lookup by address *or* EC public key.
@@ -42,9 +42,9 @@ Behaviour we must **not** copy:
 ## 2. Why EC works and PQ does not
 
 ```
-Bigtangle EC key   32-byte secp256k1 secret            ← already in the wallet
+Bigt-Ai EC key   32-byte secp256k1 secret            ← already in the wallet
    │
-   ├─ Bigtangle address : base58( P2PKH( hash160(pubkey) ) )   (unchanged)
+   ├─ Bigt-Ai address : base58( P2PKH( hash160(pubkey) ) )   (unchanged)
    └─ Ethereum address  : 0x + keccak256(uncompressed pubkey)[12..32]
        private key = the same 32-byte secret (vmproject parity)
 ```
@@ -66,8 +66,8 @@ deliverable is an EC entry path (§7, P0) — otherwise no new user can use ETH.
 
 | Need | Available today |
 |---|---|
-| secp256k1 sign + recovery id | `secp256k1.ecdsaSign(msg32, priv)` → `{ signature: 64B, recid }` (the lib `bigtangle-ts`'s `ECKey` already uses) |
-| keccak-256 | `@noble/hashes/sha3.js` `keccak_256` (dependency of `bigtangle-ts`) |
+| secp256k1 sign + recovery id | `secp256k1.ecdsaSign(msg32, priv)` → `{ signature: 64B, recid }` (the lib `bigt-ai-ts`'s `ECKey` already uses) |
+| keccak-256 | `@noble/hashes/sha3.js` `keccak_256` (dependency of `bigt-ai-ts`) |
 | uncompressed pubkey | `secp256k1.publicKeyCreate(priv, false)` |
 
 Verified locally: privkey `0x…01` → `0x7e5f4552091a69125d5dfcb7b8c2659029395bdf`
@@ -80,7 +80,7 @@ version-pinned at the app level.
 
 ## 3. Security and product decisions (must be explicit in the UI)
 
-1. **Key reuse.** The Ethereum key is the Bigtangle EC key. That is what
+1. **Key reuse.** The Ethereum key is the Bigt-Ai EC key. That is what
    vmproject does, and it makes the EC wallet a single recovery secret. It also
    means: whoever obtains the EC secret controls both chains, and the two
    addresses are linkable (same public key). The Ethereum screen shows a
@@ -152,8 +152,8 @@ Follows the existing `lib/*` + `lib/__tests__/*` pattern (no React Native import
 |---|---|
 | `app/ethereum.tsx` (new stack screen, sidebar entry under TRADE/PORTFOLIO or a new "Ethereum" group) | EC gate; account card (0x address + copy + QR); balances (ETH + tokens); send/receive buttons; recent ETH activity |
 | `app/receive.tsx` | reuse; add an Ethereum mode (EIP-681 QR, EIP-55 text) |
-| `app/home/payment.tsx` | add a chain selector (Bigtangle L0 / L1 chains / Ethereum) that switches the token source, address validation and confirm sheet |
-| `app/public-balance.tsx` | add a chain toggle: Bigtangle (today) / Ethereum (0x address or EC pubkey; ETH + optional token contract) |
+| `app/home/payment.tsx` | add a chain selector (Bigt-Ai L0 / L1 chains / Ethereum) that switches the token source, address validation and confirm sheet |
+| `app/public-balance.tsx` | add a chain toggle: Bigt-Ai (today) / Ethereum (0x address or EC pubkey; ETH + optional token contract) |
 | `app/(tabs)/settings.tsx` | "Ethereum" card: network (Mainnet/Sepolia/custom RPC), RPC URL, USDT/custom token list |
 | `app/home/keys.tsx` | EC wallet create/import (§7 P0) + "Ethereum uses this key" note for EC wallets |
 

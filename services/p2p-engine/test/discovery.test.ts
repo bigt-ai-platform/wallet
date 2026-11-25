@@ -14,7 +14,7 @@ function sources(overrides: Partial<DiscoverySources> = {}): DiscoverySources {
     role: "l0",
     staticUrls: [],
     dohUrl: "",
-    seedsDomain: "bigtangle.org",
+    seedsDomain: "bigt-ai.org",
     registryUrls: [],
     ...overrides,
   };
@@ -109,18 +109,18 @@ describe("poolFromEnv", () => {
 describe("gatherCandidates", () => {
   it("unions static + DNS + registry (role-matched), deduped", async () => {
     const fetchImpl = mockFetch({
-      "https://dns.google/resolve?name=_bigtangle-social.bigtangle.org&type=TXT":
+      "https://dns.google/resolve?name=_bigt-ai-social.bigt-ai.org&type=TXT":
         {
           Status: 0,
           Answer: [
             {
-              name: "_bigtangle-social.bigtangle.org",
+              name: "_bigt-ai-social.bigt-ai.org",
               type: 16,
               data: '"https://dns1.example"',
             },
           ],
         },
-      "https://dns.google/resolve?name=_bigtangle-social._tcp.bigtangle.org&type=SRV":
+      "https://dns.google/resolve?name=_bigt-ai-social._tcp.bigt-ai.org&type=SRV":
         { Status: 0 },
       "https://reg.example/serverinfolist": {
         serverInfoList: [

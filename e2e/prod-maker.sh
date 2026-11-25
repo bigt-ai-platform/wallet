@@ -30,7 +30,7 @@ echo "extra:  $ARGS"
 echo ""
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
-  echo "(dry run) ORDER_TOKEN_NAME=USDT ORDER_QUOTE_SEED=12 ORDER_PAIR_TOKENS=Nvidia LOOP_ITERS=1 EXTRA_ARGS='$ARGS' $HELPER net.bigtangle.server.remote.RemoteOrderIT#testMakerOrders"
+  echo "(dry run) ORDER_TOKEN_NAME=USDT ORDER_QUOTE_SEED=12 ORDER_PAIR_TOKENS=Nvidia LOOP_ITERS=1 EXTRA_ARGS='$ARGS' $HELPER net.bigt-ai.server.remote.RemoteOrderIT#testMakerOrders"
   exit 0
 fi
 
@@ -42,7 +42,7 @@ exec env \
   PAUSE_SEC=0 \
   MAX_FAILS=1 \
   EXTRA_ARGS="$ARGS" \
-  PROD_URL="${PROD_URL:-https://eu1.bigtangle.org/}" \
-  PROD_L1_URL="${PROD_L1_URL:-https://ordereu1.bigtangle.org/}" \
+  PROD_URL="${PROD_URL:-https://eu1.bigt-ai.org/}" \
+  PROD_L1_URL="${PROD_L1_URL:-https://ordereu1.bigt-ai.org/}" \
   NET_PARAMS="${NET_PARAMS:-main}" \
-  "$HELPER" net.bigtangle.server.remote.RemoteOrderIT#testMakerOrders
+  "$HELPER" net.bigt-ai.server.remote.RemoteOrderIT#testMakerOrders

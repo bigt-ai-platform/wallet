@@ -31,7 +31,7 @@ import {
   Utils,
   escrowSpendAmount,
   type Transaction,
-} from "bigtangle-ts";
+} from "bigt-ai-ts";
 import type { ChainClient } from "./chain.js";
 import { settlementParams } from "./escrow.js";
 import { pqPubFromDid } from "did/pq";

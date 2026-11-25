@@ -37,7 +37,7 @@ const PASSWORD = 'PredictE2ePass123!';
 async function resolvePredictionKey(raw: string): Promise<string> {
   const hex = raw.startsWith('0x') ? raw.slice(2) : raw;
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) return raw;
-  const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+  const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
   const seed = new Uint8Array(32);
   for (let i = 0; i < 32; i++) seed[i] = parseInt(hex.substr(i * 2, 2), 16);
   return sdk.PQKey.fromMLDSA(seed).getPrivateKeyHex();
@@ -86,7 +86,7 @@ test.describe('Predict Screen', () => {
       const tokens = markets.map((market) => ({
         tokenid: market.tokenid,
         tokenKeyValues: { keyvalues: Object.entries({
-          classname: 'net.bigtangle.server.service.PredictionContract', S: '1000',
+          classname: 'net.bigt-ai.server.service.PredictionContract', S: '1000',
           outcomeTokenids: `${market.tokenid}-yes,${market.tokenid}-no`, outcomeNames: 'YES,NO',
           collateralTokenid: 'bc', question: market.question, oracle: 'staked',
           resolutionTimeSec: String(Math.floor(Date.now() / 1000) + 3600),
@@ -230,7 +230,7 @@ test.describe('Predict Screen', () => {
   for (const viewport of [{ width: 390, height: 844 }, { width: 1440, height: 1000 }]) {
     test(`guards actions and previews partial liquidity at ${viewport.width}px`, async ({ page }, testInfo) => {
       await page.setViewportSize(viewport);
-      const values = { classname: 'net.bigtangle.server.service.PredictionContract', S: '1000',
+      const values = { classname: 'net.bigt-ai.server.service.PredictionContract', S: '1000',
         outcomeTokenids: 'yes-token,no-token', outcomeNames: 'Home,Away', collateralTokenid: 'bc',
         question: 'Will the home team win?', oracle: 'staked', proposalBond: '10', disputeBond: '10',
         resolutionTimeSec: String(Math.floor(Date.now() / 1000) + 3600), disputeWindowSec: '300', autoInvalidSec: '600' };
@@ -324,7 +324,7 @@ test.describe('Predict Lifecycle (real L1-prediction)', () => {
     test.skip(!HAS_LIFECYCLE, 'requires E2E_L1_URL + E2E_PREDICTION_KEY (funded operator key)');
 
     const question = `e2e predict ${Date.now()}?`;
-    const sdk = await import('../../../packages/bigtangle-ts/dist/index.js');
+    const sdk = await import('../../../packages/bigt-ai-ts/dist/index.js');
     const privateKey = await resolvePredictionKey(E2E_PREDICTION_KEY);
     const operator = sdk.PQKey.fromPrivateKey(new Uint8Array(sdk.Utils.HEX.decode(privateKey)));
     const wallet = sdk.Wallet.fromKeysURL(sdk.TestParams.get(), [operator], E2E_L1_URL);

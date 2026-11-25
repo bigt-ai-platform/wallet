@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  allKeys, bigtangleKey, ethereumKey, needsEthereumKey, needsPostQuantumKey,
+  allKeys, bigtAiKey, ethereumKey, needsEthereumKey, needsPostQuantumKey,
   signingKeys, walletAddresses, withKey, type WalletKey,
 } from '../walletKeys';
 
@@ -19,15 +19,15 @@ describe('wallet key roles', () => {
     ]);
   });
 
-  it('picks the PQ key for Bigtangle and the EC key for Ethereum', () => {
+  it('picks the PQ key for Bigt-Ai and the EC key for Ethereum', () => {
     const w = { wallet: pq(), keys: [pq(), ec()] };
-    expect(bigtangleKey(w).keyType).toBe('PQ');
+    expect(bigtAiKey(w).keyType).toBe('PQ');
     expect(ethereumKey(w)?.keyType).toBe('EC');
   });
 
-  it('uses the EC key as the Bigtangle key in a legacy wallet', () => {
+  it('uses the EC key as the Bigt-Ai key in a legacy wallet', () => {
     const w = { wallet: ec(), keys: [ec()] };
-    expect(bigtangleKey(w).keyType).toBe('EC');
+    expect(bigtAiKey(w).keyType).toBe('EC');
     expect(ethereumKey(w)?.keyType).toBe('EC');
     expect(needsPostQuantumKey(w)).toBe(true);
     expect(needsEthereumKey(w)).toBe(false);
@@ -40,7 +40,7 @@ describe('wallet key roles', () => {
     expect(ethereumKey(w)).toBeNull();
   });
 
-  it('adds a key by role and keeps the Bigtangle key primary', () => {
+  it('adds a key by role and keeps the Bigt-Ai key primary', () => {
     const pqOnly = { wallet: pq(), keys: [pq()] };
     const dual = withKey(pqOnly, ec());
     expect(allKeys(dual)).toHaveLength(2);
@@ -50,7 +50,7 @@ describe('wallet key roles', () => {
     const ecOnly = { wallet: ec(), keys: [ec()] };
     const upgraded = withKey(ecOnly, pq());
     expect(upgraded.wallet.keyType).toBe('PQ');
-    expect(bigtangleKey(upgraded).keyType).toBe('PQ');
+    expect(bigtAiKey(upgraded).keyType).toBe('PQ');
     expect(needsPostQuantumKey(upgraded)).toBe(false);
     // The legacy EC key survives, so old funds stay reachable.
     expect(allKeys(upgraded).map((k) => k.keyType)).toEqual(['PQ', 'EC']);

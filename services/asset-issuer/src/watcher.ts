@@ -49,8 +49,15 @@ export interface RedemptionObservation {
 
 export interface ChainClient {
   finalizedBlock(chain: string): Promise<number>;
-  deposits(fromBlock: number): Promise<DepositObservation[]>;
+  /**
+   * Deposit observations for `fromBlock … toBlock` (inclusive). When `toBlock`
+   * is omitted the client uses its own window; the CLI always passes one so it
+   * can advance the persisted cursor by exactly the range it scanned.
+   */
+  deposits(fromBlock: number, toBlock?: number): Promise<DepositObservation[]>;
   redemptions(fromBlock: number): Promise<RedemptionObservation[]>;
+  /** Inclusive window the client scans per `deposits` call, for cursor advance. */
+  readonly depositWindow?: number;
 }
 
 export interface WatcherOptions {
@@ -67,11 +74,15 @@ export interface ScanResult {
   deferred: number;
 }
 
-export async function scanDeposits(options: WatcherOptions, fromBlock = 0): Promise<ScanResult> {
+export async function scanDeposits(
+  options: WatcherOptions,
+  fromBlock = 0,
+  toBlock?: number,
+): Promise<ScanResult> {
   const { store, client, assets, now, newId } = options;
   const result: ScanResult = { recorded: 0, skipped: 0, deferred: 0 };
 
-  for (const observation of await client.deposits(fromBlock)) {
+  for (const observation of await client.deposits(fromBlock, toBlock)) {
     const asset = findAssetConfig(assets, observation.assetId);
     if (!asset || !asset.enabled) {
       result.skipped += 1;
@@ -95,20 +106,6 @@ export async function scanDeposits(options: WatcherOptions, fromBlock = 0): Prom
       continue;
     }
 
-    // Credit the reserve *before* the operation exists: the value is already in
-    // custody, and a crash between the two must not lose it.
-    const reserve = (await store.getReserve(asset.assetId)) ?? {
-      assetId: asset.assetId,
-      reserveRaw: 0n,
-      supplyRaw: 0n,
-      dustRaw: 0n,
-    };
-    await store.putReserve({
-      ...reserve,
-      reserveRaw: reserve.reserveRaw + l1,
-      dustRaw: reserve.dustRaw + dust,
-    });
-
     const timestamp = now();
     const operation: Operation = {
       id: newId(),
@@ -127,8 +124,15 @@ export async function scanDeposits(options: WatcherOptions, fromBlock = 0): Prom
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    await store.saveOperation(operation);
-    result.recorded += 1;
+    // Reserve credit and the operation are one write: a crash between them used
+    // to credit the same deposit twice on the next pass.
+    const recorded = await store.creditDeposit({
+      assetId: asset.assetId,
+      reserveDeltaRaw: l1,
+      dustDeltaRaw: dust,
+    }, operation);
+    if (recorded) result.recorded += 1;
+    else result.skipped += 1;
   }
   return result;
 }

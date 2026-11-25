@@ -2,7 +2,7 @@
 
 **Terminología.** FIAT = moneda fiduciaria; CNY = yuan chino; USD = dólar estadounidense; P2P = entre particulares.
 
-**Qué es esto.** En la cartera Bigtangle puedes intercambiar **BIG** directamente por moneda fiduciaria (WeChat Pay / Alipay / banco, o **PayPal USD**). Los BIG del vendedor se depositan primero en una **dirección de depósito en garantía** que solo puede moverse cuando dos de las tres partes —vendedor, comprador y plataforma— están de acuerdo; el comprador paga el dinero directamente al vendedor; y el vendedor libera los BIG cuando ha confirmado el cobro en su propio extracto. La plataforma no custodia tu dinero ni toca la moneda fiduciaria.
+**Qué es esto.** En la cartera Bigt-Ai puedes intercambiar **BIG** directamente por moneda fiduciaria (WeChat Pay / Alipay / banco, o **PayPal USD**). Los BIG del vendedor se depositan primero en una **dirección de depósito en garantía** que solo puede moverse cuando dos de las tres partes —vendedor, comprador y plataforma— están de acuerdo; el comprador paga el dinero directamente al vendedor; y el vendedor libera los BIG cuando ha confirmado el cobro en su propio extracto. La plataforma no custodia tu dinero ni toca la moneda fiduciaria.
 
 **Sobre las capturas.** Las imágenes siguientes proceden del entorno de demostración en un dispositivo real; los importes y los hashes son datos de demostración y no implican dinero real.
 

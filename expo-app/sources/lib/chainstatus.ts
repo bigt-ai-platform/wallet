@@ -61,14 +61,14 @@ export function shortHash(hash: string | null | undefined, size = 8): string {
  */
 const MAINNET_NODES: Record<'l0' | 'l1', Record<string, string[]>> = {
   l0: {
-    eu1: ['eu1.bigtangle.org', '85.214.37.95'],
-    eu2: ['eu2.bigtangle.org', '85.215.91.140'],
-    hk1: ['hk1.bigtangle.org', '43.129.198.77'],
+    eu1: ['eu1.bigt-ai.org', '85.214.37.95'],
+    eu2: ['eu2.bigt-ai.org', '85.215.91.140'],
+    hk1: ['hk1.bigt-ai.org', '43.129.198.77'],
   },
   l1: {
-    ordereu1: ['ordereu1.bigtangle.org', '85.214.37.95'],
-    ordereu2: ['ordereu2.bigtangle.org', '85.215.91.140'],
-    orderhk1: ['orderhk1.bigtangle.org', '43.135.48.72'],
+    ordereu1: ['ordereu1.bigt-ai.org', '85.214.37.95'],
+    ordereu2: ['ordereu2.bigt-ai.org', '85.215.91.140'],
+    orderhk1: ['orderhk1.bigt-ai.org', '43.135.48.72'],
   },
 };
 
@@ -86,7 +86,7 @@ export function proxyBaseForNode(role: ChainRole, name: string): string {
 /**
  * The node a base URL refers to, or null. Handles the web per-node proxy paths
  * (`/l0/eu2/`), the bare web primary (`/l0/` → eu1), native/mainnet hosts
- * (`https://eu2.bigtangle.org` → eu2) and the raw registry addresses
+ * (`https://eu2.bigt-ai.org` → eu2) and the raw registry addresses
  * (`http://85.215.91.140:8082` → eu2).
  */
 export function nodeNameForUrl(url: string, role: ChainRole): string | null {
