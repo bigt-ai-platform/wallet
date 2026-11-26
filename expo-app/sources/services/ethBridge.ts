@@ -104,11 +104,15 @@ function authHeaders(token: string): Record<string, string> {
  * Deposit address for this account: the issuer API's per-user address when it
  * is configured, else the static issuer address.
  */
-export async function getDepositAddress(account: string): Promise<DepositAddress | null> {
+export async function getDepositAddress(
+  account: string,
+  assetId = 'usdt',
+): Promise<DepositAddress | null> {
   const s = getBridgeSettings();
   if (s.apiUrl) {
     const res = await fetch(
-      `${trimBase(s.apiUrl)}/deposit-address?account=${encodeURIComponent(account)}`,
+      `${trimBase(s.apiUrl)}/deposit-address?account=${encodeURIComponent(account)}`
+        + `&assetId=${encodeURIComponent(assetId)}`,
       { headers: authHeaders(s.apiToken) }
     );
     if (!res.ok) throw new Error(`Deposit address API HTTP ${res.status}`);
@@ -121,11 +125,15 @@ export async function getDepositAddress(account: string): Promise<DepositAddress
 }
 
 /** Issuer-reported deposit status; an unconfigured API simply returns none. */
-export async function getBridgeDeposits(account: string): Promise<BridgeDeposit[]> {
+export async function getBridgeDeposits(
+  account: string,
+  assetId = 'usdt',
+): Promise<BridgeDeposit[]> {
   const s = getBridgeSettings();
   if (!s.apiUrl) return [];
   const res = await fetch(
-    `${trimBase(s.apiUrl)}/deposits?account=${encodeURIComponent(account)}`,
+    `${trimBase(s.apiUrl)}/deposits?account=${encodeURIComponent(account)}`
+      + `&assetId=${encodeURIComponent(assetId)}`,
     { headers: authHeaders(s.apiToken) }
   );
   if (!res.ok) throw new Error(`Deposit status API HTTP ${res.status}`);
@@ -143,6 +151,8 @@ export interface IssuerAsset {
   decimals: number;
   /** L1 address the user must pay to redeem back to Ethereum. */
   redemptionAddress?: string;
+  /** Canonical L1 token id that must be returned for a redemption. */
+  l1TokenId?: string;
 }
 
 /**

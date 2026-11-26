@@ -50,6 +50,15 @@ export type RedeemRequestResult =
   | { ok: true; debited: boolean }
   | { ok: false; reason: 'replay' };
 
+/** Per-asset caps applied when mint capacity is reserved. */
+export interface MintCaps {
+  maxSupplyRaw: bigint;
+  maxMintRaw: bigint;
+}
+
+/** `exceeds` means the reservation would breach the reserve or a cap. */
+export type MintReserveResult = 'reserved' | 'exceeds';
+
 /** Increment applied when a finalized deposit is observed. */
 export interface ReserveDelta {
   assetId: string;
@@ -125,6 +134,21 @@ export interface Store {
    */
   putRedeemRequest(record: RedeemIntentRecord, op: Operation, debitRaw: bigint): Promise<RedeemRequestResult>;
   /**
+   * Reserve mint headroom **before** the L1 signer runs. Concurrent operations
+   * read the same `supply_raw`, so an execution-time read alone lets two mints
+   * pass the check and over-issue; the reservation is serialized and counted
+   * (with other reservations) against the reserve and the asset caps.
+   */
+  reserveMint(operationId: string, assetId: string, amountRaw: bigint, caps: MintCaps): Promise<MintReserveResult>;
+  /** Release a reservation after a signer failure (or an explicit cancel). */
+  releaseMintReservation(operationId: string): Promise<void>;
+  /**
+   * Unsettled redeem rows stored at output index 0. The schema cannot recover a
+   * historical output index; these must be audited before their release, and
+   * `/health` surfaces the count.
+   */
+  countRedeemRefsAtZero(): Promise<number>;
+  /**
    * Complete an operation and apply its ledger effect atomically. Returns
    * false when the operation was already completed (a retry is a no-op).
    */
@@ -142,6 +166,7 @@ export class MemoryStore implements Store {
   private readonly depositByAddress = new Map<string, string>();
   private readonly redeemIntents = new Map<string, RedeemIntentRecord>();
   private readonly scanCursors = new Map<string, number>();
+  private readonly mintReservations = new Map<string, { assetId: string; amountRaw: bigint }>();
 
   async saveOperation(op: Operation): Promise<void> {
     this.operations.set(op.id, { ...op });
@@ -335,6 +360,37 @@ export class MemoryStore implements Store {
     return { ok: true, debited: false };
   }
 
+  async reserveMint(
+    operationId: string,
+    assetId: string,
+    amountRaw: bigint,
+    caps: MintCaps,
+  ): Promise<MintReserveResult> {
+    // Idempotent: a requeue after a crash already holds this operation's slot.
+    if (this.mintReservations.has(operationId)) return 'reserved';
+    if (amountRaw <= 0n || amountRaw > caps.maxMintRaw) return 'exceeds';
+    const reserve = this.reserves.get(assetId);
+    if (!reserve) return 'exceeds';
+    let pending = 0n;
+    for (const entry of this.mintReservations.values()) {
+      if (entry.assetId === assetId) pending += entry.amountRaw;
+    }
+    const after = reserve.supplyRaw + pending + amountRaw;
+    if (after > reserve.reserveRaw || after > caps.maxSupplyRaw) return 'exceeds';
+    this.mintReservations.set(operationId, { assetId, amountRaw });
+    return 'reserved';
+  }
+
+  async releaseMintReservation(operationId: string): Promise<void> {
+    this.mintReservations.delete(operationId);
+  }
+
+  async countRedeemRefsAtZero(): Promise<number> {
+    return [...this.operations.values()].filter((op) => (
+      op.kind === 'redeem' && op.status !== 'completed' && op.ref?.logIndex === 0
+    )).length;
+  }
+
   async settleOperation(op: Operation, effect: SettleEffect): Promise<boolean> {
     const current = this.operations.get(op.id);
     if (!current) throw new Error(`unknown operation: ${op.id}`);
@@ -355,6 +411,8 @@ export class MemoryStore implements Store {
       }
       this.reserves.set(op.assetId, { ...reserve, supplyRaw: reserve.supplyRaw + amount });
       this.balances.set(balanceKey, { ...balance, availableRaw: balance.availableRaw + amount });
+      // The reservation is consumed by the settlement (idempotent if absent).
+      this.mintReservations.delete(op.id);
     } else if (effect.kind === 'release') {
       const reserve = this.reserves.get(op.assetId);
       if (!reserve) throw new Error(`no reserve credited for ${op.assetId}`);

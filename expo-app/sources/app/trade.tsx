@@ -11,7 +11,8 @@ import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
 import { recordOrder } from '@/services/tracking';
-import { BC_DECIMALS, decimalsFor, orderPriceShift } from '@/lib/tokenformat';
+import { BC_DECIMALS, decimalsFor, orderPriceDecimals, orderRawEncodable } from '@/lib/tokenformat';
+import { parseUnits } from '@/lib/eth/units';
 import { quoteSymbols } from '@/lib/markets';
 import { includeNativeBig } from '@/lib/tokenSearch';
 import { utcOffsetLabel } from '@/lib/timeformat';
@@ -92,9 +93,10 @@ type OrderKind = 'buy' | 'sell';
  *
  * Live data comes from the L1 order chain: the aggregated bid/ask book from
  * `getOrders`, executed matches from `getOrdersTicker`, and the time-series
- * from `getOrdersTicker`. Raw on-chain long values are scaled by the traded
- * token's decimals (the L1 matcher prices with `tokenDecimals + priceShift`,
- * and `priceShift` is 0 for the `bc` base), mirroring Java `MarketOrderItem`.
+ * from `getOrdersTicker`. Raw prices are scaled by the **quote** token's
+ * decimals plus the quote shift (Java formats the ticker price with
+ * `base.getDecimals() + getOrderPriceShift(base)`); quantities use the traded
+ * token's decimals.
  */
 export default function TradeScreen() {
   const { t } = useTranslation();
@@ -149,10 +151,10 @@ export default function TradeScreen() {
   const [quote, setQuote] = React.useState<QuoteToken>(BC_QUOTE);
   const [quotes, setQuotes] = React.useState<QuoteToken[]>([BC_QUOTE]);
 
-  // Raw order prices carry the quote shift too: scale = tokenDecimals +
-  // priceShift(quote), 6 for CNY against 0 for bc.
-  const priceShift = orderPriceShift(quote.tokenid);
-  const priceDecimals = tokenDecimals + priceShift;
+  // Raw order prices are scaled by the **quote** token's decimals plus the
+  // quote shift (Wallet.java:1868-1872). The traded token's decimals scale only
+  // the quantity (and the settlement divisor).
+  const priceDecimals = orderPriceDecimals(quote.decimals, quote.tokenid);
 
   /** Raw long → human number using the token's decimals. */
   const toHuman = (raw: number | undefined, dec: number) => (Number(raw) || 0) / Math.pow(10, dec);
@@ -230,24 +232,41 @@ export default function TradeScreen() {
   };
 
   // Apply the Predict deep link once (and after the quote list resolves, so a
-  // non-BC collateral is picked up rather than falling back to BIG).
+  // non-BC collateral is picked up rather than falling back to BIG). Resolve
+  // the traded token's decimals before selecting it: a deep link used to leave
+  // non-BC tokens at 0 decimals, mis-sizing the quantity.
   const presetRef = React.useRef(false);
   React.useEffect(() => {
     const tokenid = typeof params.tokenid === 'string' ? params.tokenid : '';
-    if (!tokenid || presetRef.current) return;
+    if (!tokenid || presetRef.current) return undefined;
+    const tokenname = typeof params.tokenname === 'string' ? params.tokenname : undefined;
     const wantedQuote = typeof params.quote === 'string' ? params.quote : '';
     if (typeof params.chain === 'string' && params.chain) {
       if (httpService.getActiveL1ChainId() !== params.chain) httpService.setActiveL1ChainId(params.chain);
     }
-    if (wantedQuote && wantedQuote !== BC_QUOTE.tokenid) {
-      const q = quotes.find((x) => x.tokenid === wantedQuote);
-      if (!q) return; // quote list still loading
+    let cancelled = false;
+    void (async () => {
+      let decimals: number | undefined;
+      try {
+        const listed = tokenname ? await httpService.findExchangeToken(tokenname) : undefined;
+        const fallback = listed ?? (await httpService.searchExchangeTokens(tokenid)).data
+          ?.find((tk) => tk.tokenid === tokenid);
+        decimals = fallback?.decimals;
+      } catch {
+        /* keep undefined; decimalsFor falls back to the token convention */
+      }
+      if (cancelled) return;
+      if (wantedQuote && wantedQuote !== BC_QUOTE.tokenid) {
+        const q = quotes.find((x) => x.tokenid === wantedQuote);
+        if (!q) return; // quote list still loading
+        presetRef.current = true;
+        selectToken({ tokenid, tokenname, decimals }, q);
+        return;
+      }
       presetRef.current = true;
-      selectToken({ tokenid, tokenname: typeof params.tokenname === 'string' ? params.tokenname : undefined }, q);
-      return;
-    }
-    presetRef.current = true;
-    selectToken({ tokenid, tokenname: typeof params.tokenname === 'string' ? params.tokenname : undefined }, BC_QUOTE);
+      selectToken({ tokenid, tokenname, decimals }, BC_QUOTE);
+    })();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.tokenid, params.tokenname, params.quote, params.chain, quotes]);
 
@@ -257,7 +276,7 @@ export default function TradeScreen() {
       if (res.success && res.data) {
         const resp = res.data as { tickers?: any[]; tokennames?: Record<string, TokenItem> };
         const dec = decimalsFor(token.tokenid, resp.tokennames?.[token.tokenid]?.decimals ?? token.decimals);
-        const pdec = dec + orderPriceShift(q.tokenid);
+        const pdec = orderPriceDecimals(q.decimals, q.tokenid);
         const datas: ChartPoint[] = (resp.tickers || [])
           .filter((tk: any) => tk.tokenid === token.tokenid)
           .map((tk: any) => ({
@@ -294,7 +313,7 @@ export default function TradeScreen() {
       if (dayRes.success && dayRes.data) {
         const resp = dayRes.data as { tickers?: any[]; tokennames?: Record<string, TokenItem> };
         const dec = decimalsFor(token.tokenid, resp.tokennames?.[token.tokenid]?.decimals ?? token.decimals);
-        const pdec = dec + orderPriceShift(q.tokenid);
+        const pdec = orderPriceDecimals(q.decimals, q.tokenid);
         const pts = (resp.tickers || [])
           .filter((tk: any) => tk.tokenid === token.tokenid)
           .map((tk: any) => ({
@@ -440,19 +459,37 @@ export default function TradeScreen() {
     });
     if (!approved) { Alert.alert(t('transaction.error'), t('confirm.cancelled')); return; }
 
+    // Exact integers: the raw price uses the QUOTE token's decimals, the raw
+    // quantity the traded token's decimals. Do not round through a float.
+    let priceRaw: bigint;
+    let amountRaw: bigint;
+    try {
+      priceRaw = parseUnits(price, priceDecimals);
+      amountRaw = parseUnits(amountOf(kind), tokenDecimals);
+    } catch {
+      Alert.alert('', t('trade.invalidAmount'));
+      return;
+    }
+    if (priceRaw <= 0n || amountRaw <= 0n) {
+      Alert.alert('', t('trade.invalidAmount'));
+      return;
+    }
+    if (!orderRawEncodable(priceRaw, amountRaw, tokenDecimals, quote.tokenid)) {
+      Alert.alert('', t('trade.priceTooLarge'));
+      return;
+    }
+
     setSubmitting(kind);
     try {
       const dec = tokenDecimals;
-      const scale = Math.pow(10, dec);
-      const rawScale = Math.pow(10, dec + priceShift);
       const txHash = await orderOnLayer1({
         side: kind,
         privateKeyHex: wallet.wallet.privateKey,
         keyType: wallet.wallet.keyType,
         l1Url: httpService.l1Bases(l1Url)[0] ?? l1Url,
         tokenId: selected.tokenid,
-        price: BigInt(Math.floor(priceNum * rawScale)),
-        amount: BigInt(Math.floor(amountNum * scale)),
+        price: priceRaw,
+        amount: amountRaw,
         baseToken: quote.tokenid,
         decimals: dec,
       });

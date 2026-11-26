@@ -6,14 +6,15 @@ import { requeue, runOnce, type ExecutorOptions } from '../src/executor.js';
 
 let store: MemoryStore;
 let tick = 0;
-let mint: ReturnType<typeof vi.fn>;
+let issue: ReturnType<typeof vi.fn>;
+let pay: ReturnType<typeof vi.fn>;
 let release: ReturnType<typeof vi.fn>;
 let transfer: ReturnType<typeof vi.fn>;
 
 const options = (): ExecutorOptions => ({
   store,
   assets: DEFAULT_ASSETS,
-  l1: { mint },
+  l1: { issue, pay },
   treasury: { release },
   transfers: { transfer },
   verifyDeposit: async () => true,
@@ -40,7 +41,8 @@ const op = (over: Partial<Operation> = {}): Operation => ({
 beforeEach(() => {
   store = new MemoryStore();
   tick = 0;
-  mint = vi.fn(async () => ({ txHash: '0xmint' }));
+  issue = vi.fn(async () => ({ txHash: '0xissue' }));
+  pay = vi.fn(async () => ({ txHash: '0xmint' }));
   release = vi.fn(async () => ({ txHash: '0xrelease' }));
   transfer = vi.fn(async () => ({ txHash: '0xtransfer' }));
 });
@@ -52,7 +54,8 @@ describe('mint execution', () => {
 
     const result = await runOnce(options());
     expect(result).toEqual({ completed: 1, failed: 0, skipped: 0 });
-    expect(mint).toHaveBeenCalledWith('hkd', 'w1', '1000', { operationId: 'op1' });
+    expect(issue).toHaveBeenCalledWith('hkd', '1000', { operationId: 'op1' });
+    expect(pay).toHaveBeenCalledWith('hkd', 'w1', '1000', { operationId: 'op1' });
 
     const reserve = await store.getReserve('hkd');
     expect(reserve?.supplyRaw).toBe(1000n);
@@ -68,14 +71,14 @@ describe('mint execution', () => {
 
     const result = await runOnce(options());
     expect(result.failed).toBe(1);
-    expect(mint).not.toHaveBeenCalled();
+    expect(issue).not.toHaveBeenCalled();
     const failed = await store.getOperation('op1');
     expect(failed?.status).toBe('failed');
     expect(failed?.error).toContain('reserve');
   });
 
   it('fails the operation when the signer errors, and does not credit anything', async () => {
-    mint.mockRejectedValueOnce(new Error('hsm unavailable'));
+    issue.mockRejectedValueOnce(new Error('hsm unavailable'));
     await store.putReserve({ assetId: 'hkd', reserveRaw: 5000n, supplyRaw: 0n, dustRaw: 0n });
     await store.saveOperation(op());
 
@@ -83,6 +86,37 @@ describe('mint execution', () => {
     expect(result.failed).toBe(1);
     expect((await store.getReserve('hkd'))?.supplyRaw).toBe(0n);
     expect((await store.getOperation('op1'))?.error).toBe('hsm unavailable');
+    // The signer started without a reference: the outcome is ambiguous.
+    expect((await store.getOperation('op1'))?.issuanceRef).toBe('attempted');
+  });
+
+  it('keeps capacity and refuses an ordinary requeue after an ambiguous issuance', async () => {
+    await store.putReserve({ assetId: 'hkd', reserveRaw: 1000n, supplyRaw: 0n, dustRaw: 0n });
+    issue.mockRejectedValueOnce(new Error('hsm down'));
+    await store.saveOperation(op({ id: 'op1', amountRaw: '1000', l1AmountRaw: '1000' }));
+
+    expect((await runOnce(options())).failed).toBe(1);
+    // The reservation is retained: a concurrent mint of the same capacity must fail.
+    await store.saveOperation(op({
+      id: 'op2',
+      ref: { chain: 'ethereum', txHash: '0xdef', logIndex: 0 },
+      amountRaw: '1000',
+      l1AmountRaw: '1000',
+    }));
+    expect((await runOnce(options())).failed).toBe(1);
+    expect(issue).toHaveBeenCalledTimes(1);
+    expect((await store.getOperation('op2'))?.error).toContain('reserve');
+    expect((await store.getReserve('hkd'))?.supplyRaw).toBe(0n);
+
+    // An ordinary requeue must not risk a second issuance.
+    await expect(requeue(store, 'op1', () => '2026-01-04T00:00:00.000Z'))
+      .rejects.toThrow(/ambiguous/);
+
+    // An explicitly reconciled/forced retry reuses the slot and settles.
+    await requeue(store, 'op1', () => '2026-01-04T00:00:00.000Z', { force: true });
+    const retried = await runOnce(options());
+    expect(retried.completed).toBe(1);
+    expect((await store.getReserve('hkd'))?.supplyRaw).toBe(1000n);
   });
 
   it('refuses a deposit the chain does not confirm at finality', async () => {
@@ -91,7 +125,7 @@ describe('mint execution', () => {
 
     const result = await runOnce({ ...options(), verifyDeposit: async () => false });
     expect(result.failed).toBe(1);
-    expect(mint).not.toHaveBeenCalled();
+    expect(issue).not.toHaveBeenCalled();
     expect((await store.getOperation('op1'))?.error).toContain('finality');
   });
 
@@ -102,7 +136,7 @@ describe('mint execution', () => {
 
     const result = await runOnce(withoutVerifier);
     expect(result.failed).toBe(1);
-    expect(mint).not.toHaveBeenCalled();
+    expect(issue).not.toHaveBeenCalled();
     expect((await store.getOperation('op1'))?.error).toContain('not configured');
   });
 
@@ -119,7 +153,7 @@ describe('mint execution', () => {
     await store.putReserve({ assetId: 'hkd', reserveRaw: 5000n, supplyRaw: 0n, dustRaw: 0n });
     await store.saveOperation(op({ status: 'completed' }));
     expect(await runOnce(options())).toEqual({ completed: 0, failed: 0, skipped: 0 });
-    expect(mint).not.toHaveBeenCalled();
+    expect(issue).not.toHaveBeenCalled();
   });
 });
 

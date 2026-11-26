@@ -8,7 +8,9 @@ import { formatValue } from '../amountformat';
 
 /** Digits-only decimal string → smallest units; throws on invalid input. */
 export function parseUnits(text: string, decimals: number): bigint {
-  const value = text.trim().replace(/,/g, '');
+  // Do not strip commas: in a comma-decimal locale `1,5` must not silently
+  // become 15. Ambiguous input is rejected and the user retypes it.
+  const value = text.trim();
   if (!/^\d*(\.\d*)?$/.test(value) || value === '' || value === '.') {
     throw new Error('Invalid amount');
   }

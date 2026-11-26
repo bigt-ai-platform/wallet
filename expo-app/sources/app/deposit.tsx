@@ -25,6 +25,11 @@ import {
   getBridgeDeposits, getBridgeSettings, getDepositAddress, getIssuerAssets, isBridgeConfigured,
   type BridgeDeposit, type DepositAddress,
 } from '@/services/ethBridge';
+import {
+  clearPendingRedemptionFunding, loadPendingRedemptionFundings, matchingPendingRedemptionFunding,
+  redemptionMemo, savePendingRedemptionFunding, type PendingRedemptionFunding,
+} from '@/services/redeemFunding';
+import type { WalletAccountItem } from '@/types/api';
 import { getEthChain } from '@/services/ethRpc';
 import { formatUnits, parseUnits, shortAddress } from '@/lib/eth/units';
 import { isAddress, requireAddress, toChecksumAddress } from '@/lib/eth/address';
@@ -90,7 +95,6 @@ export default function DepositScreen() {
   const [loading, setLoading] = React.useState(false);
 
   const [sourceBalance, setSourceBalance] = React.useState<bigint>(0n);
-  const [l1Balance, setL1Balance] = React.useState<string>('');
   const [history, setHistory] = React.useState<BridgeDeposit[]>([]);
 
   const [amount, setAmount] = React.useState('');
@@ -101,7 +105,9 @@ export default function DepositScreen() {
   const [redeemAmount, setRedeemAmount] = React.useState('');
   const [redeemDestination, setRedeemDestination] = React.useState('');
   const [redeemFundingTx, setRedeemFundingTx] = React.useState('');
-  const [l1Usdt, setL1Usdt] = React.useState<{ tokenid: string; decimals: number } | null>(null);
+  const [l1Balances, setL1Balances] = React.useState<WalletAccountItem[]>([]);
+  const [issuerUsdtTokenId, setIssuerUsdtTokenId] = React.useState('');
+  const [pendingFundings, setPendingFundings] = React.useState<PendingRedemptionFunding[]>([]);
   const [redemptionAddress, setRedemptionAddress] = React.useState('');
   const [redeeming, setRedeeming] = React.useState(false);
   const [redeemError, setRedeemError] = React.useState('');
@@ -129,7 +135,7 @@ export default function DepositScreen() {
       // The issuer keys a per-user address by the L1 account (the same id
       // `/deposits` uses), so a Binance-style allocation is stable per wallet.
       // Falling back to the EVM account keeps static issuers working.
-      const next = await getDepositAddress(publicInfo?.address ?? account);
+      const next = await getDepositAddress(publicInfo?.address ?? account, coin.toLowerCase());
       setTarget(next);
       if (!next) setTargetError(t('deposit.notConfigured'));
     } catch (e) {
@@ -138,7 +144,7 @@ export default function DepositScreen() {
     } finally {
       setLoading(false);
     }
-  }, [account, publicInfo?.address, network?.direct, network?.id, t]);
+  }, [account, publicInfo?.address, network?.direct, network?.id, coin, t]);
 
   const loadBalancesAndHistory = React.useCallback(async () => {
     if (!account || !network) return;
@@ -160,27 +166,20 @@ export default function DepositScreen() {
     } catch {
       setSourceBalance(0n);
     }
-    // L1 credit destination: the wallet's Bigt-Ai address on the order chain.
-    // The USDT token id is chain-specific, so look it up in its balances.
-    const bigtAiPrivateKey = wallet?.wallet.privateKey;
-    const bigtAiKeyType = wallet?.wallet.keyType;
-    if (bigtAiPrivateKey && l1Chain) {
+    // L1 credit destination on the order chain. The redemption send spends
+    // every key (`payOnLayer1` uses signingKeys), so the balance shown here must
+    // merge all keys too — a dual-key wallet whose USDT sits on the EC key must
+    // still be redeemable. Keep the raw rows to match the canonical token id.
+    if (wallet && l1Chain) {
       try {
-        const res = await httpService.getBalancesOn(l1Chain.url, bigtAiPrivateKey, bigtAiKeyType);
-        const usdt = (res.data ?? []).find(
-          (b) => (b.tokenname || '').toUpperCase().includes('USDT') || b.tokenid?.toLowerCase().includes('usdt')
-        );
-        setL1Balance(usdt ? `${usdt.balance} ${usdt.tokenname || 'USDT'}` : t('deposit.l1Unavailable'));
-        // The redemption must pay the real L1 token back, so keep its id and
-        // scale (not just the display string).
-        setL1Usdt(usdt ? { tokenid: usdt.tokenid, decimals: usdt.decimals } : null);
+        const res = await httpService.getBalancesForKeysOn(l1Chain.url, signingKeys(wallet));
+        setL1Balances(res.data ?? []);
       } catch {
-        setL1Balance(t('deposit.l1Unavailable'));
-        setL1Usdt(null);
+        setL1Balances([]);
       }
     }
     try {
-      const remote = await getBridgeDeposits(publicInfo?.address ?? account);
+      const remote = await getBridgeDeposits(publicInfo?.address ?? account, coin.toLowerCase());
       // Keep locally-sent deposits the issuer has not reported yet.
       setHistory((prev) => {
         const localOnly = prev.filter((p) => !remote.some((r) => r.hash === p.hash));
@@ -189,7 +188,7 @@ export default function DepositScreen() {
     } catch {
       /* keep the local history when the API is unreachable */
     }
-  }, [account, network, wallet, l1Chain, publicInfo?.address, locale, t]);
+  }, [account, network, wallet, l1Chain, publicInfo?.address, coin, locale, t]);
 
   React.useEffect(() => {
     if (step === 'address') void loadAddress();
@@ -199,11 +198,13 @@ export default function DepositScreen() {
     if (step === 'address') void loadBalancesAndHistory();
   }, [step, loadBalancesAndHistory]);
 
-  // The issuer publishes the L1 address a redemption must pay; without it the
-  // card cannot fund the intent and stays disabled (fail closed).
+  // The issuer publishes the L1 address a redemption must pay and the
+  // canonical token id; without them the card cannot fund the intent and stays
+  // disabled (fail closed).
   React.useEffect(() => {
     if (!bridge.apiUrl) {
       setRedemptionAddress('');
+      setIssuerUsdtTokenId('');
       return undefined;
     }
     let cancelled = false;
@@ -211,13 +212,57 @@ export default function DepositScreen() {
       try {
         const items = await getIssuerAssets();
         const usdt = items.find((a) => a.assetId.toLowerCase() === 'usdt');
-        if (!cancelled) setRedemptionAddress(usdt?.redemptionAddress ?? '');
+        if (!cancelled) {
+          setRedemptionAddress(usdt?.redemptionAddress ?? '');
+          setIssuerUsdtTokenId(usdt?.l1TokenId ?? '');
+        }
       } catch {
-        if (!cancelled) setRedemptionAddress('');
+        if (!cancelled) {
+          setRedemptionAddress('');
+          setIssuerUsdtTokenId('');
+        }
       }
     })();
     return () => { cancelled = true; };
   }, [bridge.apiUrl]);
+
+  // A funding payment sent before a reload/rejection must be reused, not sent twice.
+  React.useEffect(() => {
+    setPendingFundings(loadPendingRedemptionFundings());
+  }, []);
+
+  const l1Usdt = React.useMemo(() => {
+    if (!l1Balances.length || !issuerUsdtTokenId) return null;
+    // The issuer's canonical token id is required for a new payment. Name
+    // matching is deliberately not used: a same-named token must not be sent.
+    const found = l1Balances.find(
+      (b) => b.tokenid?.toLowerCase() === issuerUsdtTokenId.toLowerCase(),
+    );
+    return found ?? null;
+  }, [l1Balances, issuerUsdtTokenId]);
+
+  const l1Balance = l1Usdt
+    ? `${l1Usdt.balance} ${l1Usdt.tokenname || 'USDT'}`
+    : t('deposit.l1Unavailable');
+  const redeemNetwork = httpService.getUseTestnet() ? 'Test' : 'Mainnet';
+  const resumableFunding = pendingFundings.filter((entry) => (
+    entry.account === publicInfo?.address
+    && entry.network === redeemNetwork
+    && entry.assetId.toLowerCase() === 'usdt'
+  ));
+
+  // Shown to manual senders: the L1 payment must carry this exact memo so the
+  // issuer can bind the return to this account.
+  const fundingMemoPreview = React.useMemo(() => {
+    if (!publicInfo?.address) return '';
+    try {
+      const raw = parseUnits(redeemAmount, l1Usdt?.decimals ?? 6);
+      if (raw <= 0n) return '';
+      return redemptionMemo('usdt', raw.toString(), publicInfo.address);
+    } catch {
+      return '';
+    }
+  }, [redeemAmount, l1Usdt, publicInfo?.address]);
 
   const copy = async (value: string) => {
     await Clipboard.setStringAsync(value);
@@ -313,23 +358,6 @@ export default function DepositScreen() {
       setRedeemError(t('deposit.redeemNotConfigured'));
       return;
     }
-    // A pasted funding hash needs no L1 send, so the wallet may not have the
-    // token/address loaded (or may be unable to reach the order chain).
-    const providedFunding = redeemFundingTx.trim();
-    if (!providedFunding) {
-      if (!l1Chain) {
-        setRedeemError(t('deposit.redeemUnavailable'));
-        return;
-      }
-      if (!l1Usdt) {
-        setRedeemError(t('deposit.redeemNoL1'));
-        return;
-      }
-      if (!redemptionAddress) {
-        setRedeemError(t('deposit.redeemNoRedemption'));
-        return;
-      }
-    }
 
     let raw: bigint;
     try {
@@ -341,6 +369,39 @@ export default function DepositScreen() {
     if (raw <= 0n) {
       setRedeemError(t('deposit.redeemErrAmount'));
       return;
+    }
+    const amountRaw = raw.toString();
+    const memo = redemptionMemo('usdt', amountRaw, publicInfo.address);
+
+    // Resume a saved return BEFORE requiring a spendable balance: a user who
+    // returned their whole balance still has a pending payment to submit.
+    const providedFunding = redeemFundingTx.trim();
+    const saved = providedFunding
+      ? null
+      : matchingPendingRedemptionFunding(
+        publicInfo.address, 'usdt', amountRaw, redeemNetwork,
+      );
+    let fundingTx = providedFunding || saved?.txHash || '';
+
+    if (!fundingTx) {
+      if (!l1Chain) {
+        setRedeemError(t('deposit.redeemUnavailable'));
+        return;
+      }
+      if (!issuerUsdtTokenId) {
+        // A new payment needs the issuer's canonical token id; name matching
+        // could send a same-named token the issuer does not accept.
+        setRedeemError(t('deposit.redeemNoTokenId'));
+        return;
+      }
+      if (!l1Usdt) {
+        setRedeemError(t('deposit.redeemNoL1'));
+        return;
+      }
+      if (!redemptionAddress) {
+        setRedeemError(t('deposit.redeemNoRedemption'));
+        return;
+      }
     }
 
     let destination: string;
@@ -357,11 +418,33 @@ export default function DepositScreen() {
       return;
     }
 
+    // Claim the action before the approval sheet: a second tap must not start a
+    // second L1 transfer while the first is being confirmed.
     setRedeeming(true);
-    // Keep the funding hash across a failed submit: the tokens already left
-    // this wallet, so a retry must reuse the same L1 return, never send again.
-    let fundingTx = redeemFundingTx.trim();
+    const approved = await confirmTx({
+      title: t('deposit.redeemTitle'),
+      subtitle: fundingTx
+        ? t('deposit.redeemConfirmExisting', {
+          amount: redeemAmount,
+          destination: shortAddress(destination),
+        })
+        : t('deposit.redeemConfirm', {
+          amount: redeemAmount,
+          token: 'USDT',
+          address: shortAddress(redemptionAddress),
+          destination: shortAddress(destination),
+        }),
+    });
+    if (!approved) {
+      setRedeeming(false);
+      return;
+    }
+
     try {
+      if (saved) {
+        setRedeemFundingTx(fundingTx);
+        setRedeemNotice(t('deposit.redeemReuseFunding', { hash: `${fundingTx.slice(0, 12)}…` }));
+      }
       if (!fundingTx) {
         fundingTx = await payOnLayer1({
           privateKeyHex: key.privateKey,
@@ -371,19 +454,31 @@ export default function DepositScreen() {
           toAddress: redemptionAddress,
           amount: raw,
           tokenId: l1Usdt!.tokenid,
+          // Binds the L1 return to the account signing this intent; the issuer
+          // recomputes and requires this exact memo.
+          memo,
         });
         setRedeemFundingTx(fundingTx);
+        savePendingRedemptionFunding({
+          txHash: fundingTx,
+          account: publicInfo.address,
+          assetId: 'usdt',
+          amountRaw,
+          memo,
+          network: redeemNetwork,
+        });
+        setPendingFundings(loadPendingRedemptionFundings());
       }
 
       const intent = buildRedeemIntent({
         assetId: 'usdt',
         account: publicInfo.address,
-        amountRaw: raw.toString(),
+        amountRaw,
         destination,
         // The issuer refuses a release without a confirmed L1 return for this
         // exact token, amount and address.
         l1TxHash: fundingTx,
-        network: httpService.getUseTestnet() ? 'Test' : 'Mainnet',
+        network: redeemNetwork,
         nonce: newNonce(),
         expiry: Date.now() + 10 * 60_000,
       });
@@ -418,6 +513,9 @@ export default function DepositScreen() {
       setRedeemAmount('');
       setRedeemDestination('');
       setRedeemFundingTx('');
+      // Clear only the return the issuer accepted; other pending returns stay.
+      clearPendingRedemptionFunding(fundingTx);
+      setPendingFundings(loadPendingRedemptionFundings());
       void loadBalancesAndHistory();
     } catch (e) {
       const message = (e as Error).message || t('deposit.redeemUnavailable');
@@ -638,6 +736,38 @@ export default function DepositScreen() {
                     {t('deposit.redeemFundingHint', { address: redemptionAddress })}
                   </Text>
                 ) : null}
+                {fundingMemoPreview ? (
+                  <Text style={s.meta} testID="redeem-memo-hint">
+                    {t('deposit.redeemMemoHint', { memo: fundingMemoPreview })}
+                  </Text>
+                ) : null}
+                {resumableFunding.length > 0 ? (
+                  <View testID="redeem-pending-list">
+                    <Text style={s.meta}>{t('deposit.redeemPendingList')}</Text>
+                    {resumableFunding.map((entry) => (
+                      <TouchableOpacity
+                        key={entry.txHash}
+                        onPress={() => {
+                          setRedeemAmount(formatUnits(
+                            BigInt(entry.amountRaw),
+                            l1Usdt?.decimals ?? 6,
+                            locale,
+                          ));
+                          setRedeemFundingTx(entry.txHash);
+                          setRedeemError('');
+                        }}
+                        accessibilityRole="button"
+                        testID={`redeem-pending-${entry.txHash}`}
+                      >
+                        <Text style={s.meta}>
+                          {formatUnits(BigInt(entry.amountRaw), l1Usdt?.decimals ?? 6, locale)}
+                          {' USDT · '}
+                          {entry.txHash.slice(0, 12)}…
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ) : null}
                 <TextInput
                   style={s.input}
                   value={redeemAmount}
@@ -649,7 +779,7 @@ export default function DepositScreen() {
                 <TextInput
                   style={s.input}
                   value={redeemDestination}
-                  onChangeText={(v) => { setRedeemDestination(v); setRedeemFundingTx(''); setRedeemError(''); }}
+                  onChangeText={(v) => { setRedeemDestination(v); setRedeemError(''); }}
                   placeholder={t('deposit.redeemDestinationPh')}
                   autoCapitalize="none"
                   autoCorrect={false}

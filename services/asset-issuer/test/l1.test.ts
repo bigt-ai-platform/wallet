@@ -7,6 +7,7 @@ import {
   BigtAiRedemptionVerifier,
   RefusingTreasury,
   composeChainClient,
+  redemptionMemo,
   type L1TokenOutput,
   type WalletLike,
 } from '../src/l1.js';
@@ -34,7 +35,7 @@ describe('L1 minter', () => {
   it('refuses to sign unless explicitly enabled', async () => {
     const w = wallet();
     const minter = new BigtAiL1Minter({ wallet: w, assets: [ASSET], live: false });
-    await expect(minter.mint('hkd', 'holder', '100')).rejects.toThrow(/disabled/);
+    await expect(minter.issue('hkd', '100')).rejects.toThrow(/disabled/);
     expect(w.reissue).not.toHaveBeenCalled();
   });
 
@@ -42,10 +43,10 @@ describe('L1 minter', () => {
     const minter = new BigtAiL1Minter({
       wallet: wallet(), assets: [{ ...ASSET, l1TokenId: undefined }], live: true,
     });
-    await expect(minter.mint('hkd', 'holder', '100')).rejects.toThrow(/l1TokenId/);
+    await expect(minter.issue('hkd', '100')).rejects.toThrow(/l1TokenId/);
   });
 
-  it('reissues, multi-signs, then pays the holder — in that order', async () => {
+  it('reissues, then multi-signs and pays the holder — in that order', async () => {
     const calls: string[] = [];
     let pending = 1;
     const w = wallet({
@@ -55,7 +56,9 @@ describe('L1 minter', () => {
       pay: vi.fn(async () => { calls.push('pay'); return { txHash: 't1' }; }),
     });
     const minter = new BigtAiL1Minter({ wallet: w, assets: [ASSET], live: true, signaturePollMs: 0 });
-    expect(await minter.mint('hkd', 'holder', '100')).toEqual({ txHash: 't1' });
+    expect(await minter.issue('hkd', '100')).toEqual({ txHash: 'b1' });
+    expect(calls).toEqual(['reissue']);
+    expect(await minter.pay('hkd', 'holder', '100')).toEqual({ txHash: 't1' });
     expect(calls).toEqual(['reissue', 'multiSign', 'pay']);
     expect(w.pay).toHaveBeenCalledWith('aa11', 'holder', '100');
   });
@@ -69,21 +72,21 @@ describe('L1 minter', () => {
       pay: vi.fn(async () => { calls.push('pay'); return { txHash: 't1' }; }),
     });
     const minter = new BigtAiL1Minter({ wallet: w, assets: [ASSET], live: true, signaturePollMs: 0 });
-    expect(await minter.mint('hkd', 'holder', '100')).toEqual({ txHash: 't1' });
+    expect(await minter.pay('hkd', 'holder', '100')).toEqual({ txHash: 't1' });
     expect(calls).toEqual(['multiSign', 'pay']);
   });
 
   it('fails loudly when a token block never collects its signatures', async () => {
     const w = wallet({ pendingSigns: vi.fn(async () => 2) });
     const minter = new BigtAiL1Minter({ wallet: w, assets: [ASSET], live: true, signaturePollMs: 0 });
-    await expect(minter.mint('hkd', 'holder', '100')).rejects.toThrow(/signature/);
+    await expect(minter.pay('hkd', 'holder', '100')).rejects.toThrow(/signature/);
     expect(w.pay).not.toHaveBeenCalled();
   });
 
   it('rejects a zero amount and an empty holder', async () => {
     const minter = new BigtAiL1Minter({ wallet: wallet(), assets: [ASSET], live: true });
-    await expect(minter.mint('hkd', 'holder', '0')).rejects.toThrow(/amount/);
-    await expect(minter.mint('hkd', '', '1')).rejects.toThrow(/account/);
+    await expect(minter.issue('hkd', '0')).rejects.toThrow(/amount/);
+    await expect(minter.pay('hkd', '', '1')).rejects.toThrow(/account/);
   });
 });
 
@@ -91,6 +94,7 @@ describe('L1 redemption source', () => {
   const output = (over: Partial<L1TokenOutput> = {}): L1TokenOutput => ({
     blockHash: 'bh', txHash: 'th', index: 0, valueRaw: 500n,
     tokenId: 'aa11', address: 'REDEEM-ADDR', confirmed: true,
+    memo: redemptionMemo('hkd', '500', 'w1'),
     ...over,
   });
 
@@ -122,6 +126,7 @@ describe('redemption verifier', () => {
   const output = (over: Partial<L1TokenOutput> = {}): L1TokenOutput => ({
     blockHash: 'bh', txHash: 'th', index: 0, valueRaw: 500n,
     tokenId: 'aa11', address: 'REDEEM-ADDR', confirmed: true,
+    memo: redemptionMemo('hkd', '500', 'w1'),
     ...over,
   });
 
@@ -146,16 +151,46 @@ describe('redemption verifier', () => {
       wallet({ tokenOutputs: vi.fn(async () => [output()]) }),
       [ASSET],
     );
-    expect(await verifier.check(op(), ASSET)).toBe('ok');
+    expect(await verifier.check(op(), ASSET)).toEqual({
+      status: 'ok',
+      txHash: 'th',
+      logIndex: 0,
+    });
     expect(await verifier.verify(op(), ASSET)).toBe(true);
   });
 
-  it('rejects a wrong amount, address, token or transaction', async () => {
+  it('pins the cross-repo funding memo', () => {
+    // Pinned on the client in
+    // expo-app/sources/services/__tests__/redeemFunding.test.ts.
+    expect(redemptionMemo('USDT', '5000000', 'acct'))
+      .toBe('wallet-redeem:v1:usdt:5000000:acct');
+  });
+
+  it('returns the canonical outpoint and verifies the stored index', async () => {
+    const verifier = new BigtAiRedemptionVerifier(
+      wallet({ tokenOutputs: vi.fn(async () => [output({ txHash: '0xTH', index: 2 })]) }),
+      [ASSET],
+    );
+    expect(await verifier.check(op({ ref: { chain: 'l1-order', txHash: '0xth', logIndex: 9 } }), ASSET))
+      .toEqual({ status: 'ok', txHash: 'th', logIndex: 2 });
+    // The stored ref must be the matched outpoint, not just "some output in the tx".
+    expect(await verifier.verify(
+      op({ ref: { chain: 'l1-order', txHash: 'th', logIndex: 2 } }), ASSET,
+    )).toBe(true);
+    expect(await verifier.verify(
+      op({ ref: { chain: 'l1-order', txHash: 'th', logIndex: 0 } }), ASSET,
+    )).toBe(false);
+  });
+
+  it('rejects a wrong amount, address, token, transaction or memo', async () => {
     const cases: L1TokenOutput[] = [
       output({ valueRaw: 499n }),
       output({ address: 'SOMEONE-ELSE' }),
       output({ tokenId: 'other' }),
       output({ txHash: 'other-tx' }),
+      // Same token/amount/address, but not bound to this account.
+      output({ memo: redemptionMemo('hkd', '500', 'someone-else') }),
+      output({ memo: '' }),
     ];
     for (const candidate of cases) {
       const verifier = new BigtAiRedemptionVerifier(
@@ -171,13 +206,13 @@ describe('redemption verifier', () => {
       wallet({ tokenOutputs: vi.fn(async () => [output({ confirmed: false })]) }),
       [ASSET],
     );
-    expect(await unconfirmed.check(op(), ASSET)).toBe('pending');
+    expect((await unconfirmed.check(op(), ASSET)).status).toBe('pending');
 
     const missing = new BigtAiRedemptionVerifier(
       wallet({ tokenOutputs: vi.fn(async () => []) }),
       [ASSET],
     );
-    expect(await missing.check(op(), ASSET)).toBe('pending');
+    expect((await missing.check(op(), ASSET)).status).toBe('pending');
   });
 
   it('rejects a release with no L1 reference or no redemption address', async () => {
@@ -185,10 +220,10 @@ describe('redemption verifier', () => {
       wallet({ tokenOutputs: vi.fn(async () => [output()]) }),
       [ASSET],
     );
-    expect(await verifier.check(op({ ref: undefined }), ASSET)).toBe('invalid');
-    expect(await verifier.check(op({ ref: { chain: 'ethereum', txHash: 'th', logIndex: 0 } }), ASSET))
+    expect((await verifier.check(op({ ref: undefined }), ASSET)).status).toBe('invalid');
+    expect((await verifier.check(op({ ref: { chain: 'ethereum', txHash: 'th', logIndex: 0 } }), ASSET)).status)
       .toBe('invalid');
-    expect(await verifier.check(op(), { ...ASSET, redemptionAddress: undefined })).toBe('invalid');
+    expect((await verifier.check(op(), { ...ASSET, redemptionAddress: undefined })).status).toBe('invalid');
   });
 });
 

@@ -16,8 +16,8 @@ import { Pool } from 'pg';
 import type { AssetConfig } from './config.js';
 import type { AttestationRecord, Operation, OperationStatus, ReserveEntry } from './domain.js';
 import type {
-  DepositAddressRecord, HolderBalance, RedeemIntentRecord, RedeemRequestResult,
-  ReserveDelta, SettleEffect, Store,
+  DepositAddressRecord, HolderBalance, MintCaps, MintReserveResult, RedeemIntentRecord,
+  RedeemRequestResult, ReserveDelta, SettleEffect, Store,
 } from './store.js';
 
 interface OperationRow {
@@ -35,6 +35,7 @@ interface OperationRow {
   external_ref: string | null;
   destination: string | null;
   payout_ref: string | null;
+  issuance_ref: string | null;
   attempts: number;
   error: string | null;
   created_at: Date;
@@ -43,17 +44,18 @@ interface OperationRow {
 
 const OPERATION_COLUMNS = `id, kind, asset_id, account, amount_raw, l1_amount_raw, status,
   chain, tx_hash, log_index, idempotency_key, external_ref, destination, payout_ref,
-  attempts, error, created_at, updated_at`;
+  issuance_ref, attempts, error, created_at, updated_at`;
 
 /** Placeholders for {@link OPERATION_COLUMNS}, shared by every insert path. */
-const OPERATION_VALUES = '($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)';
+const OPERATION_VALUES = '($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)';
 
 function operationParams(op: Operation): unknown[] {
   return [
     op.id, op.kind, op.assetId, op.account, op.amountRaw, op.l1AmountRaw, op.status,
     op.ref?.chain ?? null, op.ref?.txHash ?? null, op.ref?.logIndex ?? null,
     op.idempotencyKey ?? null, op.externalRef ?? null, op.destination ?? null,
-    op.payoutRef ?? null, op.attempts, op.error ?? null, op.createdAt, op.updatedAt,
+    op.payoutRef ?? null, op.issuanceRef ?? null, op.attempts, op.error ?? null,
+    op.createdAt, op.updatedAt,
   ];
 }
 
@@ -93,6 +95,7 @@ function toOperation(row: OperationRow): Operation {
     ...(row.external_ref ? { externalRef: row.external_ref } : {}),
     ...(row.destination ? { destination: row.destination } : {}),
     ...(row.payout_ref ? { payoutRef: row.payout_ref } : {}),
+    ...(row.issuance_ref ? { issuanceRef: row.issuance_ref } : {}),
     attempts: row.attempts,
     ...(row.error ? { error: row.error } : {}),
     createdAt: row.created_at.toISOString(),
@@ -147,6 +150,7 @@ export class PgStore implements Store {
          external_ref = EXCLUDED.external_ref,
          destination = EXCLUDED.destination,
          payout_ref = EXCLUDED.payout_ref,
+         issuance_ref = EXCLUDED.issuance_ref,
          updated_at = EXCLUDED.updated_at`,
       operationParams(op),
     );
@@ -529,6 +533,76 @@ export class PgStore implements Store {
   }
 
   /**
+   * Reserve mint capacity before the signer runs. The reserve row is locked so
+   * two workers cannot both read the same headroom; reservations are counted
+   * against `supply_raw` and the caps. Idempotent per operation id.
+   */
+  async reserveMint(
+    operationId: string,
+    assetId: string,
+    amountRaw: bigint,
+    caps: MintCaps,
+  ): Promise<MintReserveResult> {
+    if (amountRaw <= 0n || amountRaw > caps.maxMintRaw) return 'exceeds';
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Lock the reserve first, then re-check idempotency: two concurrent
+      // requeues of the same operation must not count its slot twice.
+      const reserve = await client.query<{ reserve_raw: string; supply_raw: string }>(
+        `SELECT reserve_raw, supply_raw FROM reserves WHERE asset_id = $1 FOR UPDATE`,
+        [assetId],
+      );
+      const row = reserve.rows[0];
+      if (!row) {
+        await client.query('ROLLBACK');
+        return 'exceeds';
+      }
+      const existing = await client.query(
+        `SELECT 1 FROM mint_reservations WHERE operation_id = $1`, [operationId],
+      );
+      if (existing.rowCount === 1) {
+        await client.query('COMMIT');
+        return 'reserved';
+      }
+      const pending = await client.query<{ total: string }>(
+        `SELECT COALESCE(SUM(amount_raw), 0) AS total
+           FROM mint_reservations WHERE asset_id = $1`,
+        [assetId],
+      );
+      const after = BigInt(row.supply_raw) + BigInt(pending.rows[0]?.total ?? '0') + amountRaw;
+      if (after > BigInt(row.reserve_raw) || after > caps.maxSupplyRaw) {
+        await client.query('ROLLBACK');
+        return 'exceeds';
+      }
+      await client.query(
+        `INSERT INTO mint_reservations (operation_id, asset_id, amount_raw)
+         VALUES ($1,$2,$3) ON CONFLICT (operation_id) DO NOTHING`,
+        [operationId, assetId, amountRaw.toString()],
+      );
+      await client.query('COMMIT');
+      return 'reserved';
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async releaseMintReservation(operationId: string): Promise<void> {
+    await this.pool.query(`DELETE FROM mint_reservations WHERE operation_id = $1`, [operationId]);
+  }
+
+  async countRedeemRefsAtZero(): Promise<number> {
+    const res = await this.pool.query<{ count: string }>(
+      `SELECT count(*) AS count FROM operations
+        WHERE kind = 'redeem' AND log_index = 0 AND status <> 'completed'`,
+    );
+    return Number(res.rows[0]?.count ?? 0);
+  }
+
+  /**
    * Complete the operation and apply its ledger effect under one row lock.
    * `completed` is terminal, so a replayed settlement is a no-op instead of a
    * second supply/balance write.
@@ -564,6 +638,8 @@ export class PgStore implements Store {
              updated_at = now()`,
           [op.assetId, op.account, amount],
         );
+        // Consume the capacity reservation with the supply write.
+        await client.query(`DELETE FROM mint_reservations WHERE operation_id = $1`, [op.id]);
       } else if (effect.kind === 'release') {
         const updated = await client.query(
           `UPDATE reserves

@@ -66,6 +66,53 @@ describe('redeem request reservation', () => {
   });
 });
 
+describe('mint capacity reservations', () => {
+  it('serializes headroom and is idempotent per operation', async () => {
+    const store = new MemoryStore();
+    await store.putReserve({ assetId: 'usdt', reserveRaw: 1000n, supplyRaw: 0n, dustRaw: 0n });
+    const caps = { maxSupplyRaw: 1000n, maxMintRaw: 1000n };
+
+    expect(await store.reserveMint('a', 'usdt', 600n, caps)).toBe('reserved');
+    // A requeue keeps its slot instead of double-counting it.
+    expect(await store.reserveMint('a', 'usdt', 600n, caps)).toBe('reserved');
+    expect(await store.reserveMint('b', 'usdt', 500n, caps)).toBe('exceeds');
+    expect(await store.reserveMint('c', 'usdt', 400n, caps)).toBe('reserved');
+    expect(await store.reserveMint('d', 'usdt', 1n, caps)).toBe('exceeds');
+
+    // Releasing a reservation returns its headroom.
+    await store.releaseMintReservation('a');
+    expect(await store.reserveMint('d', 'usdt', 600n, caps)).toBe('reserved');
+    expect(await store.reserveMint('e', 'usdt', 1n, caps)).toBe('exceeds');
+  });
+
+  it('consumes the reservation on settlement, not before', async () => {
+    const store = new MemoryStore();
+    await store.putReserve({ assetId: 'usdt', reserveRaw: 1000n, supplyRaw: 0n, dustRaw: 0n });
+    const caps = { maxSupplyRaw: 1000n, maxMintRaw: 1000n };
+    await store.saveOperation(op({ id: 'a', kind: 'deposit' }));
+    expect(await store.reserveMint('a', 'usdt', 600n, caps)).toBe('reserved');
+
+    await store.settleOperation(
+      op({ id: 'a', kind: 'deposit', status: 'completed' }),
+      { kind: 'mint', amountRaw: 600n },
+    );
+    expect((await store.getReserve('usdt'))?.supplyRaw).toBe(600n);
+    // Settled supply now backs the slot; 400 is the only headroom left.
+    expect(await store.reserveMint('b', 'usdt', 400n, caps)).toBe('reserved');
+    expect(await store.reserveMint('c', 'usdt', 1n, caps)).toBe('exceeds');
+  });
+
+  it('enforces the per-operation and total-supply caps', async () => {
+    const store = new MemoryStore();
+    await store.putReserve({ assetId: 'usdt', reserveRaw: 10_000n, supplyRaw: 0n, dustRaw: 0n });
+    const caps = { maxSupplyRaw: 1500n, maxMintRaw: 1000n };
+    expect(await store.reserveMint('a', 'usdt', 1001n, caps)).toBe('exceeds');
+    expect(await store.reserveMint('a', 'usdt', 1000n, caps)).toBe('reserved');
+    expect(await store.reserveMint('b', 'usdt', 501n, caps)).toBe('exceeds');
+    expect(await store.reserveMint('b', 'usdt', 500n, caps)).toBe('reserved');
+  });
+});
+
 describe('settlement', () => {
   it('applies the ledger effect once and ignores a replay', async () => {
     const store = new MemoryStore();

@@ -49,7 +49,7 @@ import {
   type RedeemNetwork,
 } from './intent.js';
 import { bytesToHex } from './ethTx.js';
-import type { RedemptionCheck } from './l1.js';
+import type { RedemptionMatch } from './l1.js';
 
 export interface ServerOptions {
   store: Store;
@@ -91,7 +91,7 @@ export interface ServerOptions {
    * Confirms a redemption is backed by a finalized L1 transfer to the asset's
    * `redemptionAddress`. Without it `/redeem-intents` fails closed.
    */
-  verifyRedemption?: (operation: Operation, asset: AssetConfig) => Promise<RedemptionCheck>;
+  verifyRedemption?: (operation: Operation, asset: AssetConfig) => Promise<RedemptionMatch>;
 }
 
 interface OperationBody {
@@ -273,7 +273,10 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   app.get('/health', async () => {
     const breaches = reconcile(await store.listReserves());
-    return { ok: breaches.length === 0, breaches };
+    // Historical redeem rows cannot have their output index recovered from the
+    // hash; surface unsettled index-0 rows so an operator audits them.
+    const legacyRedeemRefs = await store.countRedeemRefsAtZero();
+    return { ok: breaches.length === 0, breaches, legacyRedeemRefs };
   });
 
   app.get('/metrics', async (_request, reply) => {
@@ -299,6 +302,9 @@ export function buildServer(options: ServerOptions): FastifyInstance {
       // The wallet must send L1 tokens here before it can sign a redemption;
       // exposing it is what makes the funding leg possible.
       ...(a.redemptionAddress ? { redemptionAddress: a.redemptionAddress } : {}),
+      // The canonical L1 token id: the wallet must pay this exact token, not a
+      // same-named token it happens to hold.
+      ...(a.l1TokenId ? { l1TokenId: a.l1TokenId } : {}),
     })),
   }));
 
@@ -537,19 +543,24 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     };
 
     const check = await options.verifyRedemption(op, asset);
-    if (check === 'pending') {
+    if (check.status === 'pending') {
       throw new HttpError(
         409,
         'the L1 funding transfer is not confirmed yet; retry shortly',
         true,
       );
     }
-    if (check !== 'ok') {
+    if (check.status !== 'ok' || check.txHash === undefined || check.logIndex === undefined) {
       throw new HttpError(
         409,
         `no confirmed L1 transfer of ${amount.toString()} to the ${asset.assetId} redemption address`,
       );
     }
+
+    // Store the outpoint the verifier actually matched (canonical hash + real
+    // output index), never the client's spelling or a hardcoded index 0. The
+    // unique index then enforces "one matched return, one release".
+    op.ref = { chain: 'l1-order', txHash: check.txHash, logIndex: check.logIndex };
 
     // Nonce, intent hash, L1 funding ref, pending operation and the (optional)
     // holder-balance debit are one atomic write, so a worker cannot claim a

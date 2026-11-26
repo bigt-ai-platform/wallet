@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseCli, runPass, type Pipeline } from '../src/cli.js';
 import { DEFAULT_ASSETS } from '../src/config.js';
 import { MemoryStore } from '../src/store.js';
@@ -106,7 +106,10 @@ describe('one pass', () => {
       assets: DEFAULT_ASSETS,
       fromBlock: 0,
       live: false,
-      minter: { mint: async () => { throw new Error('not configured'); } },
+      minter: {
+        issue: async () => { throw new Error('not configured'); },
+        pay: async () => { throw new Error('not configured'); },
+      },
       treasury: { release: async () => { throw new Error('not configured'); } },
       close: async () => {},
     };
@@ -139,6 +142,46 @@ describe('one pass', () => {
   });
 });
 
+describe('release verification', () => {
+  it('uses the exact stored outpoint at settlement, not just a matching transaction', async () => {
+    const store = new MemoryStore();
+    const release = vi.fn(async () => ({ txHash: '0xrelease' }));
+    await store.putReserve({ assetId: 'gold', reserveRaw: 5000n, supplyRaw: 4000n, dustRaw: 0n });
+    await store.saveOperation({
+      id: 'op1',
+      kind: 'redeem',
+      assetId: 'gold',
+      account: 'w1',
+      amountRaw: '2000',
+      l1AmountRaw: '2000',
+      status: 'pending',
+      ref: { chain: 'l1-order', txHash: 'th', logIndex: 1 },
+      destination: '0x2222222222222222222222222222222222222222',
+      attempts: 0,
+      createdAt: 't',
+      updatedAt: 't',
+    });
+    const p: Pipeline = {
+      store,
+      assets: DEFAULT_ASSETS,
+      fromBlock: 0,
+      live: false,
+      minter: {
+        issue: async () => ({ txHash: '0xissue' }),
+        pay: async () => ({ txHash: '0xmint' }),
+      },
+      treasury: { release },
+      // Intake sees a matching transaction, but the stored output index differs.
+      verifyRedemption: async () => ({ status: 'ok', txHash: 'th', logIndex: 2 }),
+      verifyRedemptionExact: async () => false,
+      close: async () => {},
+    };
+
+    const summary = await runPass(p);
+    expect(summary.executed).toEqual({ completed: 0, failed: 1, skipped: 0 });
+    expect(release).not.toHaveBeenCalled();
+  });
+});
 describe('deposit scan cursor', () => {
   function chainOf(rows: Array<{ blockNumber: number; txHash: string; externalRaw?: string }>, head: () => number): ChainClient {
     return {
@@ -166,7 +209,10 @@ describe('deposit scan cursor', () => {
       chain,
       fromBlock: 0,
       live: false,
-      minter: { mint: async () => ({ txHash: '0xmint' }) },
+      minter: {
+        issue: async () => ({ txHash: '0xissue' }),
+        pay: async () => ({ txHash: '0xmint' }),
+      },
       treasury: { release: async () => ({ txHash: '0xrelease' }) },
       verifyDeposit: async () => true,
       close: async () => {},

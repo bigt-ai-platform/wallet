@@ -105,6 +105,7 @@ export function createBigtAiWallet(options: BigtAiWalletOptions): WalletLike {
           valueRaw: utxo.getValue().getValue(),
           tokenId,
           address: utxo.getAddress() ?? '',
+          memo: utxo.getMemo?.() ?? '',
           // Spend candidates are already confirmed by the node; the chain is
           // responsible for not reporting a reorgable output here.
           confirmed: true,

@@ -34,6 +34,49 @@ export function orderPriceShift(baseTokenId: string): number {
 }
 
 /**
+ * Decimals of the raw order price: the **quote** token's decimals plus the
+ * quote shift. Java formats the ticker price with
+ * `base.getDecimals() + getOrderPriceShift(base)` (Wallet.java:1868-1872);
+ * the traded token's decimals scale only the quantity. Mixing these up
+ * mis-prices every pair whose two tokens have different decimals.
+ */
+export function orderPriceDecimals(quoteDecimals: number, quoteTokenId: string): number {
+  return quoteDecimals + orderPriceShift(quoteTokenId);
+}
+
+/** The SDK serializes order longs through a JS `number`. */
+const MAX_SIGNED_INTEGER = BigInt(Number.MAX_SAFE_INTEGER);
+
+/** The raw quote amount the SDK will compute for a price/quantity pair. */
+export function orderRawTotal(
+  priceRaw: bigint,
+  amountRaw: bigint,
+  tokenDecimals: number,
+  quoteTokenId: string,
+): bigint {
+  const divisor = 10n ** BigInt(tokenDecimals + orderPriceShift(quoteTokenId));
+  return (priceRaw * amountRaw) / divisor;
+}
+
+/**
+ * True when every raw field the SDK will convert to `number` is exactly
+ * representable. The SDK checks the total against MAX_SAFE_INTEGER; price and
+ * quantity are converted with `Number(...)` without a check, so reject them
+ * before approval rather than signing a rounded order.
+ */
+export function orderRawEncodable(
+  priceRaw: bigint,
+  amountRaw: bigint,
+  tokenDecimals: number,
+  quoteTokenId: string,
+): boolean {
+  if (priceRaw <= 0n || amountRaw <= 0n) return false;
+  if (priceRaw > MAX_SIGNED_INTEGER || amountRaw > MAX_SIGNED_INTEGER) return false;
+  const total = orderRawTotal(priceRaw, amountRaw, tokenDecimals, quoteTokenId);
+  return total >= 1n && total <= MAX_SIGNED_INTEGER;
+}
+
+/**
  * Format a raw smallest-unit amount like Java
  * `MonetaryFormat.FIAT.format(value, decimals)`: exact BigInt math, no
  * floating point, trailing zeros trimmed, "0" for zero.

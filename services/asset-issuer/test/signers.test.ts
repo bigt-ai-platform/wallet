@@ -72,14 +72,26 @@ describe('command signers', () => {
       return { txHash: '0xhash' };
     };
 
-    expect(await new CommandL1Minter('/l1', runner).mint('usdt', 'l1-1', '100000000'))
+    const minter = new CommandL1Minter('/l1', runner);
+    expect(await minter.issue('usdt', '100000000', { operationId: 'op1' }))
+      .toEqual({ txHash: '0xhash' });
+    expect(await minter.pay('usdt', 'l1-1', '100000000', { operationId: 'op1' }))
       .toEqual({ txHash: '0xhash' });
     expect(await new CommandTreasury('/treasury', runner).release(
       'usdt', 'l1-1', OMNIBUS, '2000000',
     )).toEqual({ txHash: '0xhash' });
 
     expect(calls).toEqual([
-      { op: 'l1-mint', assetId: 'usdt', account: 'l1-1', amountRaw: '100000000' },
+      {
+        op: 'l1-mint-issue', assetId: 'usdt', amountRaw: '100000000', operationId: 'op1',
+      },
+      {
+        op: 'l1-mint-pay',
+        assetId: 'usdt',
+        account: 'l1-1',
+        amountRaw: '100000000',
+        operationId: 'op1',
+      },
       {
         op: 'treasury-release',
         assetId: 'usdt',

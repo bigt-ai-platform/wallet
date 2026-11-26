@@ -8,7 +8,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import ExternalAssetsCard from '@/components/ExternalAssetsCard';
 import { httpService } from '@/services/http';
-import { decimalsFor, orderPriceShift, shortTokenId } from '@/lib/tokenformat';
+import { BC_DECIMALS, decimalsFor, orderPriceDecimals, shortTokenId } from '@/lib/tokenformat';
 import {
   BellIcon, ChartIcon, MarketIcon, QrScanIcon, SearchIcon, SendIcon, SwapIcon,
 } from '@/components/Icons';
@@ -104,17 +104,22 @@ export default function HomeScreen() {
   const load = React.useCallback(async () => {
     try {
       // Quote bases: BC plus the fixed USDT/CNY tokens when the L1 has them.
-      const bases: { id: string; name: string }[] = [{ id: 'bc', name: 'BC' }];
+      const bases: { id: string; name: string; decimals: number }[] = [
+        { id: 'bc', name: 'BC', decimals: BC_DECIMALS },
+      ];
       for (const symbol of ['USDT', 'CNY']) {
         const tk = await httpService.findExchangeToken(symbol);
         if (tk?.tokenid && !bases.some((b) => b.id === tk.tokenid)) {
-          bases.push({ id: tk.tokenid, name: symbol });
+          bases.push({ id: tk.tokenid, name: symbol, decimals: tk.decimals ?? 0 });
         }
       }
       const names: Record<string, { tokenname?: string; decimals?: number }> = {};
       // One row per traded token: keep the most recent match; the quote base
-      // determines the raw price scale (tokenDecimals + priceShift).
-      const latest = new Map<string, { tk: TickerRow; quote: { id: string; name: string } }>();
+      // determines the raw price scale (quote decimals + shift).
+      const latest = new Map<
+        string,
+        { tk: TickerRow; quote: { id: string; name: string; decimals: number } }
+      >();
       for (const base of bases) {
         const res = await httpService.getOrdersTicker([], base.id);
         if (!res.success || !res.data) continue;
@@ -135,7 +140,9 @@ export default function HomeScreen() {
       for (const [tokenid, { tk, quote }] of latest) {
         const meta = names[tokenid];
         const dec = decimalsFor(tokenid, meta?.decimals);
-        const scale = dec + orderPriceShift(quote.id);
+        // Price is in the quote token (Java formats it with the base token's
+        // decimals + shift); quantity uses the traded token's decimals.
+        const scale = orderPriceDecimals(quote.decimals, quote.id);
         const price = toHuman(tk.price, scale);
         const dayPrice = toHuman(tk.lastdayprice, scale);
         const tokenName = meta?.tokenname || (tokenid === 'bc' ? 'BIG' : shortTokenId(tokenid));

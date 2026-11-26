@@ -50,7 +50,7 @@ import {
   BigtAiRedemptionVerifier,
   RefusingTreasury,
   composeChainClient,
-  type RedemptionCheck,
+  type RedemptionMatch,
   type WalletLike,
 } from './l1.js';
 import { createBigtAiWallet } from './l1.bigt-ai.js';
@@ -183,12 +183,21 @@ export interface Pipeline {
   /** Set when an EVM deposit source exists; the executor fails closed without it. */
   verifyDeposit?: DepositVerifier;
   /** Set when the issuer L1 wallet exists; every release fails closed without it. */
-  verifyRedemption?: (operation: Operation, asset: AssetConfig) => Promise<RedemptionCheck>;
+  verifyRedemption?: (operation: Operation, asset: AssetConfig) => Promise<RedemptionMatch>;
+  /**
+   * Exact settlement check: the matched outpoint must equal the stored
+   * `(txHash, logIndex)`. `runPass` must use this, not the intake check — a
+   * different matching output in the same transaction would otherwise pass.
+   */
+  verifyRedemptionExact?: (operation: Operation, asset: AssetConfig) => Promise<boolean>;
   close: () => Promise<void>;
 }
 
 function missing(reason: string) {
-  return { mint: async (): Promise<never> => { throw new Error(`minting unavailable: ${reason}`); } };
+  const fail = async (): Promise<never> => {
+    throw new Error(`minting unavailable: ${reason}`);
+  };
+  return { issue: fail, pay: fail };
 }
 
 export function buildPipeline(options: CliOptions, wallet?: WalletLike): Pipeline {
@@ -242,6 +251,7 @@ export function buildPipeline(options: CliOptions, wallet?: WalletLike): Pipelin
       : new RefusingTreasury(),
     ...(deposits ? { verifyDeposit: (op, asset) => deposits.verifyDeposit(op, asset) } : {}),
     ...(verifier ? { verifyRedemption: (op, asset) => verifier.check(op, asset) } : {}),
+    ...(verifier ? { verifyRedemptionExact: (op, asset) => verifier.verify(op, asset) } : {}),
     fromBlock: options.fromBlock,
     live: options.live,
     close: async () => {
@@ -305,11 +315,11 @@ export async function runPass(pipeline: Pipeline): Promise<PassSummary> {
     treasury: pipeline.treasury,
     now: () => new Date().toISOString(),
     ...(pipeline.verifyDeposit ? { verifyDeposit: pipeline.verifyDeposit } : {}),
-    ...(pipeline.verifyRedemption
-      ? {
-        verifyRedemption: async (op: Operation, asset: AssetConfig) =>
-          (await pipeline.verifyRedemption!(op, asset)) === 'ok',
-      }
+    // Releases require the exact outpoint verifier. The status-only intake
+    // check is not a settlement check; if the exact verifier is absent the
+    // executor fails closed instead of falling back to it.
+    ...(pipeline.verifyRedemptionExact
+      ? { verifyRedemption: pipeline.verifyRedemptionExact }
       : {}),
   });
   summary.attestations = (await publishAttestations({

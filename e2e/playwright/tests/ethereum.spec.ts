@@ -261,8 +261,10 @@ test.describe('USDT deposit (exchange style)', () => {
     await expect(page.getByTestId('deposit-warning')).toContainText('Ethereum (ERC-20)');
     await expect(page.getByTestId('deposit-address-card')).toContainText('personal deposit address');
     await expect(page.getByTestId('deposit-address-card')).toContainText('Minimum deposit: 1');
-    // The issuer keys per-user addresses by the L1 account, not the 0x address.
+    // The issuer keys per-user addresses by the L1 account, not the 0x address,
+    // and the page must name USDT so a multi-asset issuer allocates the right one.
     expect(mock.depositQueries.account).toBe(BTC_ADDRESS);
+    expect(mock.depositQueries.assetId).toBe('usdt');
     expect(await page.locator('[data-testid="deposit-address-card"] svg').count()).toBeGreaterThan(0);
 
     // Redeem: the L1 key signs the destination and the L1 funding tx; the

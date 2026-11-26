@@ -724,3 +724,65 @@ After any failing run, `e2eremote.sh` stops the infra via `infra.sh down`.
   `FeeExceedsApprovalError` when a fresh estimate exceeds the fee shown on the
   confirm sheet; `/withdraw` re-previews and asks for confirmation again
   instead of broadcasting at a higher fee.
+
+## Notes as of 2026-11-25 (redemption/trading review fixes)
+
+- **A redemption return is bound to the signing account.** The verifier now
+  requires the L1 payment output to carry
+  `wallet-redeem:v1:<assetId>:<amountRaw>:<account>` as its memo
+  (`redemptionMemo` in `services/asset-issuer/src/l1.ts` and
+  `expo-app/sources/services/redeemFunding.ts`, pinned by tests on both sides).
+  A transfer from another account, or one without the memo, cannot authorize a
+  release. The wallet sends the memo automatically and shows it for manual
+  senders. Existing transfers without a memo must be re-sent.
+- **The stored redeem ref is the verifier's canonical outpoint.** The matcher
+  returns the lower-case/no-`0x` hash and the real output index; the server
+  stores exactly that (not the client spelling or a hardcoded index 0), and the
+  executor re-checks the index. `schema.sql` normalizes pre-existing redeem refs
+  and warns if two rows already share one return.
+- **Pending funding survives a reload.** The wallet persists
+  `{txHash, account, assetId, amountRaw, memo}` under `redeem.pendingFunding`
+  and reuses it only for the same account/asset/amount
+  (`services/redeemFunding.ts`), so a rejected request or reload cannot send a
+  second L1 payment.
+- **The deposit page names the asset and the canonical token.** `/deposit-address`
+  and `/deposits` are queried with `assetId=usdt`; `/assets` now publishes
+  `l1TokenId`, and the redeem card matches that exact token id in the L1
+  balances (name matching is only a fallback for older issuers). This prevents
+  sending a same-named token the issuer does not accept.
+- **`parseUnits` rejects commas.** `1,5` in a comma-decimal locale used to be
+  stripped to `15`; it now fails validation and must be retyped as `1.5`.
+- **Mint capacity is reserved before the signer, and minting is two-phase.**
+  `mint_reservations` (new table) holds headroom per operation, counted with
+  `supply_raw` against the reserve and the asset caps; the executor reserves,
+  then signs, then settles (which consumes the row). `L1Minter` is split into
+  `issue` (reissue → `operations.issuance_ref`) and `pay` (drain signatures →
+  pay → `payout_ref`), so a failed payment retries without reissuing. Before
+  `issue` the executor writes the sentinel `issuance_ref = 'attempted'`; an
+  ordinary `requeue` of a mint in that state is **refused** (the chain may
+  already hold the issuance) and only `{ force: true }` after reconciliation is
+  allowed. The command signer's protocol is `l1-mint-issue` / `l1-mint-pay`
+  (docs/issuer-hsm-adapter.md); both dedupe on `operationId`.
+- **Spot prices use the quote token's decimals everywhere.** `trade.tsx`,
+  `TokenOrderScreen` and `HomeScreen` encode/display the raw price at
+  `quote.decimals + orderPriceShift` (Java `Wallet.getPrice` formats the ticker
+  with `base.getDecimals() + shift`, `Wallet.java:1868-1872`); the quantity and
+  the settlement divisor use the traded token's decimals. `orderPriceDecimals`
+  pins it. `orderRawEncodable` rejects any raw price/quantity/total above
+  `Number.MAX_SAFE_INTEGER` **before approval**, because the SDK still converts
+  order longs through a JS `number` (follow-up: make those bigint end to end).
+  Deep links resolve the traded token's decimals before selecting it.
+- **Settlement uses the exact stored redeem outpoint.** `runPass` uses
+  `Pipeline.verifyRedemptionExact` (the verifier's `verify`, which compares
+  `txHash` + `logIndex`), not the intake `check` that only reports a matching
+  transaction. A schema collision on canonical redeem refs now **fails the
+  migration** instead of warning. Historical rows at index 0 cannot be repaired
+  from the hash; `/health` reports `legacyRedeemRefs` (unsettled) so they are
+  audited.
+- **Pending redemption funding is per outpoint.** `redeem.pendingFunding` stores
+  a list (50 max) keyed by outpoint and the UI lists each pending return so the
+  user can pick one; distinct returns for the same amount are all kept, a
+  success clears only the accepted return, and resuming is checked before
+  requiring a spendable balance. A new payment requires the issuer's canonical
+  `l1TokenId` (no name fallback) and shows the exact L1 transfer in the
+  confirmation sheet.

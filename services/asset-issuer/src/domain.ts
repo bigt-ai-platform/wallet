@@ -62,6 +62,13 @@ export interface Operation {
    * second payout for the same operation.
    */
   payoutRef?: string;
+  /**
+   * Reissuance reference for a mint: the token-creation transaction hash once
+   * reported, or the sentinel `attempted` while the signer is running. A
+   * requeue must not issue again when this is `attempted` (the outcome is
+   * unknown); see `requeue`.
+   */
+  issuanceRef?: string;
   attempts: number;
   error?: string;
   createdAt: string;

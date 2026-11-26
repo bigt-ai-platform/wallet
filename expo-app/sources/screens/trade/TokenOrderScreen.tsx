@@ -8,7 +8,10 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWallet } from '@/state/wallet';
 import { httpService } from '@/services/http';
 import { orderOnLayer1 } from '@/services/transaction';
-import { decimalsFor } from '@/lib/tokenformat';
+import {
+  BC_DECIMALS, decimalsFor, orderPriceDecimals, orderRawEncodable,
+} from '@/lib/tokenformat';
+import { parseUnits } from '@/lib/eth/units';
 import { listOrders, recordOrder } from '@/services/tracking';
 import WalletUnlock from '@/components/WalletUnlock';
 import { useTransactionConfirm } from '@/components/TransactionConfirm';
@@ -40,6 +43,28 @@ export default function TokenOrderScreen({ side, baseToken = 'bc' }: Props) {
   const [tokenSearch, setTokenSearch] = React.useState('');
   const [filtered, setFiltered] = React.useState<MarketPrice[]>([]);
   const [selectedToken, setSelectedToken] = React.useState<MarketPrice | null>(null);
+  const [quoteDecimals, setQuoteDecimals] = React.useState<number | null>(
+    baseToken === 'bc' ? BC_DECIMALS : null,
+  );
+  // The quote token's decimals drive the raw price scale; resolve them before
+  // enabling submission (a non-BC quote is not necessarily 0 or 6).
+  React.useEffect(() => {
+    if (baseToken === 'bc') {
+      setQuoteDecimals(BC_DECIMALS);
+      return undefined;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await httpService.searchExchangeTokens(baseToken);
+        const listed = (res.data ?? []).find((tk) => tk.tokenid === baseToken) ?? res.data?.[0];
+        if (!cancelled) setQuoteDecimals(listed?.decimals ?? null);
+      } catch {
+        if (!cancelled) setQuoteDecimals(null);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [baseToken]);
   const [orderPrice, setOrderPrice] = React.useState('');
   const [orderAmount, setOrderAmount] = React.useState('');
   const [orderTotal, setOrderTotal] = React.useState('');
@@ -119,17 +144,40 @@ export default function TokenOrderScreen({ side, baseToken = 'bc' }: Props) {
     });
     if (!approved) { Alert.alert(t('transaction.error'), t('confirm.cancelled')); return; }
 
+    if (quoteDecimals == null) {
+      Alert.alert('', t('trade.quoteUnavailable'));
+      return;
+    }
+    const decimals = decimalsFor(selectedToken.tokenid, selectedToken.decimals);
+    const priceDecimals = orderPriceDecimals(quoteDecimals, baseToken);
+    let priceRaw: bigint;
+    let amountRaw: bigint;
+    try {
+      priceRaw = parseUnits(orderPrice, priceDecimals);
+      amountRaw = parseUnits(orderAmount, decimals);
+    } catch {
+      Alert.alert('', t('order.invalidAmount'));
+      return;
+    }
+    if (priceRaw <= 0n || amountRaw <= 0n) {
+      Alert.alert('', t('order.invalidAmount'));
+      return;
+    }
+    if (!orderRawEncodable(priceRaw, amountRaw, decimals, baseToken)) {
+      Alert.alert('', t('trade.priceTooLarge'));
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const decimals = decimalsFor(selectedToken.tokenid, selectedToken.decimals);
       const txHash = await orderOnLayer1({
         side,
         privateKeyHex: wallet.wallet.privateKey,
         keyType: wallet.wallet.keyType,
         l1Url,
         tokenId: selectedToken.tokenid,
-        price: BigInt(Math.floor(price * Math.pow(10, decimals))),
-        amount: BigInt(Math.floor(amount * Math.pow(10, decimals))),
+        price: priceRaw,
+        amount: amountRaw,
         baseToken,
         decimals,
       });

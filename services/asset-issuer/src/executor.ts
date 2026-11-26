@@ -13,9 +13,7 @@
 
 import { findAssetConfig, type AssetConfig } from './config.js';
 import {
-  canMint,
   fromL1Amount,
-  withinCaps,
   type Operation,
   type OperationStatus,
   type ReserveEntry,
@@ -28,12 +26,19 @@ export interface SignerContext {
 }
 
 export interface L1Minter {
-  /** Reissue `l1Raw` of the asset's token to `account` on L1-order. */
-  mint(
+  /**
+   * Reissue the asset's token to the issuer wallet. Split from `pay` so the
+   * issuance reference is durable before the risky payment step: a retry then
+   * skips reissuance and only pays. `operationId` lets an HSM/MPC command
+   * return the same transaction on a retry.
+   */
+  issue(assetId: string, l1Raw: string, context: SignerContext): Promise<{ txHash: string }>;
+  /** Drain signatures and pay the holder. */
+  pay(
     assetId: string,
     account: string,
     l1Raw: string,
-    context?: SignerContext,
+    context: SignerContext,
   ): Promise<{ txHash: string }>;
 }
 
@@ -160,6 +165,7 @@ export async function runOnce(options: ExecutorOptions, limit = 50): Promise<Run
       await store.saveOperation({
         ...operation,
         ...(latest?.payoutRef ? { payoutRef: latest.payoutRef } : {}),
+        ...(latest?.issuanceRef ? { issuanceRef: latest.issuanceRef } : {}),
         status: 'failed',
         error: error instanceof Error ? error.message : String(error),
         updatedAt: now(),
@@ -184,20 +190,42 @@ async function executeMint(
   // persisted before the ledger settles, so its presence means "minted, only
   // the settlement is outstanding".
   if (!current.payoutRef) {
-    const reserve = await reserveFor(store, asset.assetId);
-    const caps = { maxSupplyRaw: asset.maxSupplyRaw, maxMintRaw: asset.maxMintRaw };
-    // Re-checked at execution time: the HTTP layer only saw an earlier snapshot.
-    if (!canMint(reserve, amount) || !withinCaps(reserve, amount, caps)) {
+    // Reserve capacity atomically BEFORE the signer: two workers can otherwise
+    // read the same headroom and both mint, and a later DB rejection cannot
+    // undo an on-chain mint.
+    const reserved = await store.reserveMint(operation.id, asset.assetId, amount, {
+      maxSupplyRaw: asset.maxSupplyRaw,
+      maxMintRaw: asset.maxMintRaw,
+    });
+    if (reserved !== 'reserved') {
       throw new Error('mint would exceed the reserve or the asset cap');
     }
-    const { txHash } = await l1.mint(
-      asset.assetId,
-      operation.account,
-      operation.l1AmountRaw,
-      { operationId: operation.id },
-    );
-    current = { ...current, payoutRef: txHash, updatedAt: now() };
-    await store.saveOperation(current);
+    // Persist an attempt marker before the signer call. If the process dies or
+    // the call throws, the outcome is unknown: `requeue` refuses unless the
+    // operator forces it, so a local (non-idempotent) signer cannot reissue.
+    if (current.issuanceRef !== 'attempted' && !current.issuanceRef) {
+      current = { ...current, issuanceRef: 'attempted', updatedAt: now() };
+      await store.saveOperation(current);
+    }
+    if (!current.issuanceRef || current.issuanceRef === 'attempted') {
+      const { txHash } = await l1.issue(
+        asset.assetId,
+        operation.l1AmountRaw,
+        { operationId: operation.id },
+      );
+      current = { ...current, issuanceRef: txHash, updatedAt: now() };
+      await store.saveOperation(current);
+    }
+    if (!current.payoutRef) {
+      const { txHash } = await l1.pay(
+        asset.assetId,
+        operation.account,
+        operation.l1AmountRaw,
+        { operationId: operation.id },
+      );
+      current = { ...current, payoutRef: txHash, updatedAt: now() };
+      await store.saveOperation(current);
+    }
   }
 
   await store.settleOperation(
@@ -265,11 +293,25 @@ async function reserveFor(store: Store, assetId: string): Promise<ReserveEntry> 
 }
 
 /** Explicit requeue: the only way a failed operation may run again. */
-export async function requeue(store: Store, operationId: string, now: () => string): Promise<Operation> {
+export async function requeue(
+  store: Store,
+  operationId: string,
+  now: () => string,
+  options: { force?: boolean } = {},
+): Promise<Operation> {
   const operation = await store.getOperation(operationId);
   if (!operation) throw new Error(`unknown operation: ${operationId}`);
   if (operation.status !== 'failed') {
     throw new Error(`only failed operations can be requeued (is ${operation.status})`);
+  }
+  // `attempted` means a mint signer started but did not report an issuance
+  // reference. The chain may already hold the issuance, so an ordinary requeue
+  // could issue twice; require explicitly reconciled/forced action.
+  if (!options.force && operation.issuanceRef === 'attempted') {
+    throw new Error(
+      'mint outcome is ambiguous (signer started without an issuance reference); '
+        + 'reconcile on chain, then requeue with force',
+    );
   }
   const next: Operation = {
     ...operation,

@@ -8,7 +8,8 @@
  *
  * Three operations:
  *   - `sweep-sign`       deposit address → signed type-2 transaction
- *   - `l1-mint`          reissue + pay on L1-order
+ *   - `l1-mint-issue`    reissue the token to the issuer wallet
+ *   - `l1-mint-pay`      drain signatures and pay the holder
  *   - `treasury-release` release the external asset on redemption
  *
  * Every adapter is fail-closed: a missing command or a malformed response is an
@@ -201,20 +202,34 @@ export class CommandL1Minter implements L1Minter {
     private readonly runner: CommandRunner = execCommandRunner(),
   ) {}
 
-  async mint(
+  async issue(
+    assetId: string,
+    l1Raw: string,
+    context: { operationId: string },
+  ): Promise<{ txHash: string }> {
+    const response = parseJsonOutput(await this.runner(this.command, {
+      op: 'l1-mint-issue',
+      assetId,
+      amountRaw: l1Raw,
+      // The signer must return the same issuance for the same operation, so a
+      // retry after a crash cannot reissue a second time.
+      operationId: context.operationId,
+    }));
+    return { txHash: requireString(response.txHash, 'txHash') };
+  }
+
+  async pay(
     assetId: string,
     account: string,
     l1Raw: string,
-    context?: { operationId: string },
+    context: { operationId: string },
   ): Promise<{ txHash: string }> {
     const response = parseJsonOutput(await this.runner(this.command, {
-      op: 'l1-mint',
+      op: 'l1-mint-pay',
       assetId,
       account,
       amountRaw: l1Raw,
-      // The signer must return the same tx for the same operation, so a retry
-      // after a crash cannot reissue a second time.
-      ...(context ? { operationId: context.operationId } : {}),
+      operationId: context.operationId,
     }));
     return { txHash: requireString(response.txHash, 'txHash') };
   }

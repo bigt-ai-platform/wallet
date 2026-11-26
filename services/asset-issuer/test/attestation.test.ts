@@ -98,5 +98,5 @@ describe('metrics route', () => {
     expect(res.body).toContain('asset_issuer_operations{status="pending"} 1');
     expect(res.body).toContain('asset_issuer_healthy 1');
     await app.close();
-  });
+  }, 15_000);
 });

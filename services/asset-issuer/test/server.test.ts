@@ -23,7 +23,7 @@ beforeEach(async () => {
     now: () => `2026-01-01T00:00:0${tick++}.000Z`,
     newId: () => `op${tick}`,
     mintToken: 'mint-secret',
-    verifyRedemption: async () => 'ok',
+    verifyRedemption: async () => ({ status: 'ok', txHash: CANONICAL_L1_TX, logIndex: 3 }),
   });
 });
 
@@ -33,6 +33,8 @@ afterEach(async () => {
 });
 
 const ACCOUNT = 'wallet-1';
+/** What the verifier returns: canonical (no 0x) and the real output index. */
+const CANONICAL_L1_TX = 'ab'.repeat(32);
 
 function seedBalance(assetId: string, available: bigint) {
   return store.putHolderBalance({ assetId, account: ACCOUNT, availableRaw: available, pendingRaw: 0n });
@@ -229,7 +231,9 @@ describe('signed redeem intents', () => {
     const op = await store.getOperation(id);
     expect(op?.destination).toBe(DESTINATION);
     // The release is bound to the L1 return, not just to the signature.
-    expect(op?.ref).toEqual({ chain: 'l1-order', txHash: L1_TX, logIndex: 0 });
+    // The stored ref is the outpoint the verifier matched, not the client's
+    // `0x` spelling or a hardcoded index 0.
+    expect(op?.ref).toEqual({ chain: 'l1-order', txHash: CANONICAL_L1_TX, logIndex: 3 });
   });
 
   it('refuses a redemption whose L1 funding transfer is missing or unconfirmed', async () => {
@@ -237,7 +241,7 @@ describe('signed redeem intents', () => {
       store,
       now: () => `2026-01-01T00:00:0${tick++}.000Z`,
       newId: () => `op${tick}`,
-      verifyRedemption: async () => 'pending',
+      verifyRedemption: async () => ({ status: 'pending' }),
     });
     const pending = await app.inject({ method: 'POST', url: '/redeem-intents', payload: body() });
     expect(pending.statusCode).toBe(409);
@@ -247,7 +251,7 @@ describe('signed redeem intents', () => {
       store,
       now: () => `2026-01-01T00:00:0${tick++}.000Z`,
       newId: () => `op${tick}`,
-      verifyRedemption: async () => 'invalid',
+      verifyRedemption: async () => ({ status: 'invalid' }),
     });
     const invalid = await app.inject({ method: 'POST', url: '/redeem-intents', payload: body() });
     expect(invalid.statusCode).toBe(409);
@@ -318,6 +322,25 @@ describe('statement and health', () => {
     expect(body.items[0]).toMatchObject({ direction: 'out', amount: '10', status: 'pending' });
   });
 
+  it('surfaces unsettled redeem refs stored at output index 0', async () => {
+    await store.saveOperation({
+      id: 'legacy-redeem',
+      kind: 'redeem',
+      assetId: 'gold',
+      account: 'w1',
+      amountRaw: '1',
+      l1AmountRaw: '1',
+      status: 'pending',
+      ref: { chain: 'l1-order', txHash: 'legacy', logIndex: 0 },
+      destination: '0x2222222222222222222222222222222222222222',
+      attempts: 0,
+      createdAt: 't',
+      updatedAt: 't',
+    });
+    const res = await app.inject({ method: 'GET', url: '/health' });
+    expect((res.json() as { legacyRedeemRefs: number }).legacyRedeemRefs).toBe(1);
+  });
+
   it('reports unhealthy when supply exceeds reserve, per asset', async () => {
     await seedReserve('hkd', 100n, 100n);
     await seedReserve('usd', 100n, 101n);
@@ -365,6 +388,21 @@ async function rebuild(options: Parameters<typeof buildServer>[0]): Promise<void
 }
 
 describe('deposit page endpoints', () => {
+  it('publishes the canonical L1 token id and the redemption address', async () => {
+    await rebuild({
+      store,
+      assets: [usdt({ redemptionAddress: 'REDEEM-ADDR' })],
+      defaultDepositAssetId: 'usdt',
+    });
+    const res = await app.inject({ method: 'GET', url: '/assets' });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { items: Array<Record<string, unknown>> }).items[0]).toMatchObject({
+      assetId: 'usdt',
+      l1TokenId: 'token',
+      redemptionAddress: 'REDEEM-ADDR',
+    });
+  });
+
   it('returns the static custody address when the asset is not per-user', async () => {
     await rebuild({
       store,

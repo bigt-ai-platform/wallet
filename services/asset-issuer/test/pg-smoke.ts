@@ -147,6 +147,33 @@ async function main() {
   await store.putScanCursor('ethereum', 123);
   check('scan cursor round-trips', (await store.getScanCursor('ethereum')) === 123);
 
+  // Mint capacity reservations: serialize headroom, consume on settlement.
+  // Use a clean asset so the numbers prove consumption, not a coincidence.
+  await store.putReserve({ assetId: 'usd', reserveRaw: 1000n, supplyRaw: 0n, dustRaw: 0n });
+  const caps = { maxSupplyRaw: 1000n, maxMintRaw: 1000n };
+  check('mint reservation applies', (await store.reserveMint('smoke_mint_a', 'usd', 100n, caps)) === 'reserved');
+  check('mint reservation is idempotent', (await store.reserveMint('smoke_mint_a', 'usd', 100n, caps)) === 'reserved');
+  check('mint reservation above the per-mint cap is refused',
+    (await store.reserveMint('smoke_mint_b', 'usd', 1001n, caps)) === 'exceeds');
+  await store.saveOperation({
+    ...op,
+    id: 'smoke_mint_a',
+    assetId: 'usd',
+    ref: { chain: 'ethereum', txHash: '0xMINT', logIndex: 0 },
+    idempotencyKey: 'smoke-mint-a',
+    amountRaw: '100',
+    l1AmountRaw: '100',
+  });
+  check('settling a reserved mint consumes the reservation', await store.settleOperation(
+    { ...op, id: 'smoke_mint_a', assetId: 'usd', status: 'completed', amountRaw: '100', l1AmountRaw: '100' },
+    { kind: 'mint', amountRaw: 100n },
+  ));
+  // supply=100, no pending: 900 is exactly the remaining headroom. If the
+  // settled reservation were still counted, this would exceed 1000.
+  check('settlement freed the reservation (900 fits exactly)',
+    (await store.reserveMint('smoke_mint_c', 'usd', 900n, caps)) === 'reserved');
+  await store.releaseMintReservation('smoke_mint_c');
+
   await store.close();
   console.log(failures === 0 ? '\nRESULT=OK' : `\nRESULT=FAIL(${failures})`);
   process.exit(failures === 0 ? 0 : 1);

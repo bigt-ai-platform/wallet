@@ -13,17 +13,29 @@ credit while the buyer holds the tokens. A release therefore also requires a
 one release.
 
 ```
-1. wallet pays   L1 USDT ──▶ issuer redemptionAddress        (tx H)
+1. wallet pays   L1 USDT ──▶ issuer redemptionAddress        (tx H, memo M)
 2. L1 key signs  { asset, account, amount, destination, H = l1TxHash, nonce, expiry }
         │
         ▼
 POST /redeem-intents ──▶ verify key == account, signature, fields, expiry
-        │                 verify H: confirmed output of the token/amount to
-        │                 redemptionAddress (else 409 "not confirmed yet")
-        │                 atomically: redeem_intents(nonce+hash) + operations(H) + debit
+        │                 verify H: confirmed output of the token/amount at
+        │                 redemptionAddress carrying memo M for this account
+        │                 (else 409 "not confirmed yet")
+        │                 atomically: redeem_intents(nonce+hash) + operations(H/index) + debit
         ▼
-executor ──▶ re-verify H at finality ──▶ Treasury.release(asset, account, destination, external)
+executor ──▶ re-verify H/index/memo at finality ──▶ Treasury.release(asset, account, destination, external)
 ```
+
+The payment must carry the **funding memo**
+
+```
+wallet-redeem:v1:<assetId>:<amountRaw>:<L1 account>
+```
+
+e.g. `wallet-redeem:v1:usdt:5000000:1FB3WS…`. The issuer recomputes it from the
+intent; a return without the matching memo is ignored, so one account cannot
+claim another account's transfer. The wallet sets it automatically
+(`payOnLayer1` with `memo`) and shows it for manual senders.
 
 A bare L1 transfer to the issuer without an intent has **no destination** and is
 never released. `BigtAiRedemptionSource` still exists for diagnostics, but it
@@ -69,18 +81,24 @@ value. Rebuild the wallet against the v2 signer.
 
 `/deposit` → USDT → **Redeem to Ethereum**:
 
-1. The card reads the issuer's `/assets` for `redemptionAddress` and the L1
-   balance for the USDT token id.
+1. The card reads the issuer's `/assets` for `redemptionAddress` and the
+   canonical `l1TokenId`, then matches that **exact** token id in the wallet's
+   L1 balances (a same-named token is not accepted).
 2. On submit it sends the amount with `payOnLayer1` (multi-key, like the Payment
-   screen) to the redemption address, then signs and posts the intent with the
-   returned transaction hash.
+   screen) to the redemption address **with the funding memo**, then signs and
+   posts the intent with the returned transaction hash.
 3. A fresh transfer may not be final on the node the issuer reads yet. The
    server answers `409 { retryable: true }` and the card retries the **same**
    signed intent; nothing is reserved until the output is confirmed.
-4. If the send succeeded but the submit failed, the card keeps the hash: the
-   next tap retries the intent without sending a second L1 transfer. A hash can
-   also be pasted into `redeem-funding-tx` (e.g. when the tokens were sent from
-   another wallet).
+4. Pending payments are persisted per outpoint on the device
+   (`redeem.pendingFunding`, up to 50 records), reused only for the same
+   account/asset/amount/network, and listed so the user can pick one to resume.
+   A success clears only the accepted return, and resuming is checked before
+   requiring a spendable balance. A hash can also be pasted into
+   `redeem-funding-tx` — that transfer must carry the memo shown by the card.
+5. A new L1 payment requires the issuer's canonical `l1TokenId` (no name
+   matching) and the card asks for confirmation of the exact L1 amount, token,
+   address and Ethereum destination before signing.
 
 ## Signing
 
@@ -137,6 +155,7 @@ amount). The executor then releases via `Treasury`.
 | amount, destination, `l1TxHash`, nonce or expiry invalid | 400 |
 | the L1 transfer is not indexed/confirmed yet | 409 `{ retryable: true }` |
 | no confirmed output of the exact token/amount at `redemptionAddress` | 409 |
+| the output does not carry this account's funding memo | 409 |
 | nonce, intent hash or L1 funding already used | 409 |
 | L1 verification not configured (`L1_URL` + `L1_ISSUER_KEY`) | 503 |
 | `/redeem-requests` (unsigned) | 400 — use `/redeem-intents` |
@@ -153,10 +172,17 @@ Both inserts and the balance debit happen in **one transaction**, so the DB
 enforces the replay guards even with several API replicas and a worker cannot
 claim the operation before its debit is committed.
 
+The operation ref is the **canonical matched outpoint** returned by the
+verifier (lower-case, no `0x`, real output index), never the client's spelling
+or a hardcoded index. `schema.sql` normalizes pre-existing redeem refs and
+**fails the migration** if two rows already share one return; reconcile those
+before deploying.
+
 `operations.destination` is the verified EVM address the treasury may pay;
 `operations.payout_ref` is the payout/mint transaction hash, written before the
 ledger settles so a requeue never pays twice. Apply the idempotent `schema.sql`
-to an existing database (it adds `destination`, `payout_ref` and `scan_cursors`).
+to an existing database (it adds `destination`, `payout_ref`, `scan_cursors`
+and `mint_reservations`).
 
 ## What remains
 

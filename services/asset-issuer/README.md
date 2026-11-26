@@ -27,7 +27,7 @@ Scaffold, with the parts that must be provable already tested:
 | Sweeper (`src/sweep.ts`, `src/sweep.evm.ts`, `src/ethTx.ts`) | done — threshold/gas planning; live only with `ALLOW_LIVE_SWEEP=1` + `DEPOSIT_XPRV`; verifies the key controls the address before signing |
 | API auth (`src/auth.ts`) + executor claim/revalidation (`src/executor.ts`) | done — default-deny outside Test, bearer or account-bound HMAC, `FOR UPDATE SKIP LOCKED` claim, receipt/finality re-check before minting |
 | HSM/MPC adapter (`src/signers.ts`) | done — command protocol for `sweep-sign`, `l1-mint`, `treasury-release`; no key material in the service; local key paths remain Testnet/small-float |
-| Mint executor (`src/executor.ts`) + `src/l1.ts` / `src/l1.bigt-ai.ts` | done — reissue → **drain pending signatures** → pay the holder; verified end to end on the Java L1-order infra, gated by `ALLOW_LIVE_L1` |
+| Mint executor (`src/executor.ts`) + `src/l1.ts` / `src/l1.bigt-ai.ts` | done — **two-phase** `issue` (reissue → `issuance_ref`) and `pay` (drain pending signatures → pay the holder → `payout_ref`); a failed payment retries without reissuing, and an ambiguous issuance refuses an ordinary requeue. Gated by `ALLOW_LIVE_L1` |
 | Redemption verification (`BigtAiRedemptionVerifier`) | done — an intent's `l1TxHash` must have a confirmed output of the exact token/amount at `redemptionAddress`; the unique L1 reference backs one release. `BigtAiRedemptionSource` (blind scan) remains for diagnostics only |
 | Deposit scan cursor (`scan_cursors`) | done — catches up to the finalized head window by window and advances only after a window commits |
 | Release (`Treasury`) | **not implemented** — `RefusingTreasury` fails loudly until the HSM/MPC custody adapter exists |
@@ -169,13 +169,21 @@ one — silently falling back to a shared address would misattribute funds.
 `{domain, network, assetId, account, amountRaw, destination, l1TxHash, nonce, expiry}`.
 The signature proves **who chose the destination**; it does not prove the tokens
 came back. The request is refused unless `l1TxHash` has a confirmed L1 output of
-the exact token and amount to the asset's `redemptionAddress`
-(`409 { retryable: true }` while it is not confirmed yet). The intent (unique
-nonce + hash), the operation (unique L1 reference) and the balance debit commit
-in one transaction, and `operations.destination` carries the verified Ethereum
-address. `executeRelease` re-checks the L1 return and refuses without it — an
-observed L1 transfer alone cannot choose a destination. Format and client
-examples: [`../../docs/redeem-intent.md`](../../docs/redeem-intent.md).
+the exact token and amount to the asset's `redemptionAddress`, carrying the
+funding memo `wallet-redeem:v1:<assetId>:<amountRaw>:<account>` (the memo binds
+the return to the signing account; `409 { retryable: true }` while it is not
+confirmed yet). The intent (unique nonce + hash), the operation (the verifier's
+**canonical matched outpoint**: lower-case hash + real output index) and the
+balance debit commit in one transaction. `executeRelease` re-checks the memo and
+the stored outpoint and refuses otherwise — an observed L1 transfer alone cannot
+choose a destination. Format and client examples:
+[`../../docs/redeem-intent.md`](../../docs/redeem-intent.md).
+
+Mint capacity is reserved before the L1 signer runs (`mint_reservations`, counted
+with `supply_raw` against the reserve and the asset caps), so two concurrent
+mints cannot both pass the execution-time check. A signer failure **keeps** the
+reservation (issuance may be partial); reconcile or requeue the operation rather
+than freeing the capacity. Settlement consumes the row.
 
 `/mint-requests` is operator-only (`MINT_API_TOKEN` + `x-mint-token`): the
 wallet-facing bearer ships in the web bundle and must not be able to mint

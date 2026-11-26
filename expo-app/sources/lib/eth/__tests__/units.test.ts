@@ -16,9 +16,13 @@ describe('Ethereum amount units', () => {
     expect(() => parseUnits('abc', 18)).toThrow();
     expect(() => parseUnits('1.2.3', 18)).toThrow();
     expect(() => parseUnits('-1', 18)).toThrow();
+    // Never strip a comma: `1,5` in a comma-decimal locale is not 15.
+    expect(() => parseUnits('1,5', 18)).toThrow();
+    expect(() => parseUnits('1,000', 18)).toThrow();
     expect(() => parseUnits('0.0000001', 6)).toThrow();
     expect(isValidUnits('1.5', 6)).toBe(true);
     expect(isValidUnits('1.1234567', 6)).toBe(false);
+    expect(isValidUnits('1,5', 6)).toBe(false);
   });
 
   it('formats raw units back', () => {

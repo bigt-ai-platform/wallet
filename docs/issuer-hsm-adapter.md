@@ -63,10 +63,10 @@ Response:
 The service verifies that `signer` equals the allocated address, that the raw
 transaction is type-2, and only then broadcasts it.
 
-### `l1-mint`
+### `l1-mint-issue`
 
 ```json
-{ "op": "l1-mint", "assetId": "usdt", "account": "<base58 L1>", "amountRaw": "100000000", "operationId": "op_…" }
+{ "op": "l1-mint-issue", "assetId": "usdt", "amountRaw": "100000000", "operationId": "op_…" }
 ```
 
 Response:
@@ -75,12 +75,33 @@ Response:
 { "txHash": "…" }
 ```
 
-The command owns the token id, the signer set/threshold and the
-reissue → drain signatures → pay sequence. `operationId` is the service's
-operation row: the command **must** persist it and return the **same**
-transaction for a repeated call, so a retry after a crash cannot reissue. It
-must also refuse a replay where the key cannot be honoured; the service's
-operation row is the idempotency key, not a second ledger.
+Reissues the token to the issuer wallet. The command owns the token id and the
+signer set/threshold. `operationId` is the service's operation row: the command
+**must** persist it and return the **same** issuance transaction for a repeated
+call, so a retry after a crash cannot reissue. The service stores this hash as
+`operations.issuance_ref` before asking for the payment step.
+
+### `l1-mint-pay`
+
+```json
+{ "op": "l1-mint-pay", "assetId": "usdt", "account": "<base58 L1>", "amountRaw": "100000000", "operationId": "op_…" }
+```
+
+Response:
+
+```json
+{ "txHash": "…" }
+```
+
+Waits until the issuance is solid (drain the node's pending token signatures if
+needed), then pays the holder. Dedupe on `operationId` and return the original
+payment transaction on a retry. Splitting the two steps is what lets the service
+retry a failed payment without reissuing; a `l1-mint-issue` that succeeded but
+was not reported is ambiguous, so the service refuses an ordinary requeue of
+that operation.
+
+If a deployment still runs the old single `l1-mint` command, it must implement
+these two operations before upgrading the issuer image.
 
 ### `treasury-release`
 
@@ -96,10 +117,10 @@ Response:
 
 `destination` is the address the holder **signed** in `/redeem-intents`; pay
 exactly it, never the L1 account or another DB-supplied address. The L1 return
-that backs the release has already been verified by the service. Like
-`l1-mint`, the command must dedupe on `operationId` and return the original
-transaction on a retry. Keep `ALLOW_LIVE_TREASURY` off until the approval policy
-exists above the signer.
+that backs the release has already been verified by the service. Like the mint
+commands, it must dedupe on `operationId` and return the original transaction on
+a retry. Keep `ALLOW_LIVE_TREASURY` off until the approval policy exists above
+the signer.
 
 ## Wrapper shape
 
@@ -121,7 +142,7 @@ stderr at 8 KB, and kills the child after `SIGNER_TIMEOUT_MS`.
 - non-empty command output and valid JSON;
 - `sweep-sign`: `rawTransaction` starts with `0x02`, `signer` matches the
   allocation;
-- `l1-mint` / `treasury-release`: non-empty `txHash`;
+- `l1-mint-issue` / `l1-mint-pay` / `treasury-release`: non-empty `txHash`;
 - non-zero exit, timeout, or an over-size response fails the operation.
 
 ## Still required on the signer side

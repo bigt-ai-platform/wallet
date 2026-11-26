@@ -29,6 +29,8 @@ export interface L1TokenOutput {
   valueRaw: bigint;
   tokenId: string;
   address: string;
+  /** Memo carried by the payment output (the redemption binding). */
+  memo: string;
   confirmed: boolean;
 }
 
@@ -58,7 +60,23 @@ export interface L1MinterOptions {
 export class BigtAiL1Minter implements L1Minter {
   constructor(private readonly options: L1MinterOptions) {}
 
-  async mint(
+  async issue(
+    assetId: string,
+    l1Raw: string,
+    _context?: SignerContext,
+  ): Promise<{ txHash: string }> {
+    const asset = this.options.assets.find((a) => a.assetId === assetId);
+    if (!asset) throw new Error(`unknown asset: ${assetId}`);
+    if (!asset.l1TokenId) {
+      throw new Error(`asset ${assetId} has no l1TokenId configured; run the issuance ceremony first`);
+    }
+    if (BigInt(l1Raw) <= BigInt(0)) throw new Error('mint amount must be > 0');
+    if (!this.options.live) throw new Error('L1 minting is disabled (set ALLOW_LIVE_L1=1 on Test)');
+    const { blockHash } = await this.options.wallet.reissue(asset, l1Raw);
+    return { txHash: blockHash };
+  }
+
+  async pay(
     assetId: string,
     account: string,
     l1Raw: string,
@@ -72,8 +90,6 @@ export class BigtAiL1Minter implements L1Minter {
     if (!account) throw new Error('mint requires a destination account');
     if (BigInt(l1Raw) <= BigInt(0)) throw new Error('mint amount must be > 0');
     if (!this.options.live) throw new Error('L1 minting is disabled (set ALLOW_LIVE_L1=1 on Test)');
-
-    await this.options.wallet.reissue(asset, l1Raw);
     // A token block is only solid once the node has every signature it asks for
     // (the issuer signs at creation; the chain's domain key is the second one).
     // Paying before that leaves the mint stuck, so drain first — proven on the
@@ -166,14 +182,35 @@ export class RefusingTreasury implements Treasury {
 export type RedemptionCheck = 'ok' | 'pending' | 'invalid';
 
 /**
- * Verifies that a redemption is backed by a real, finalized L1 return.
+ * The redemption funding memo. The wallet puts it on the L1 payment so a
+ * confirmed output can only authorize a release for the account that signed the
+ * intent: the issuer recomputes this exact string from the operation. Keep the
+ * client (`expo-app/sources/services/redeemIntent.ts`) byte-for-byte in sync.
+ */
+export function redemptionMemo(assetId: string, amountRaw: string, account: string): string {
+  return `wallet-redeem:v1:${assetId.trim().toLowerCase()}:${amountRaw}:${account.trim()}`;
+}
+
+export interface RedemptionMatch {
+  status: RedemptionCheck;
+  /** Canonical hash (lower-case, no `0x`) of the matched funding output. */
+  txHash?: string;
+  /** Output index of the matched funding output. */
+  logIndex?: number;
+}
+
+/**
+ * Verifies that a redemption is backed by a real, finalized L1 return for the
+ * **same account** that signed the intent.
  *
  * The issuer cannot pay out on its own holder-balance record alone: after a
  * spot trade the seller keeps that credit while the buyer holds the tokens, so
  * releasing on the credit would drain the reserve without retiring any supply.
  * A release therefore needs an L1 output paid to `redemptionAddress` for the
- * **exact** token and amount the intent names, and the operation's
- * `(chain, txHash, logIndex)` is unique, so one return authorizes one release.
+ * exact token and amount, carrying the `redemptionMemo` for this account, and
+ * the operation's `(chain, txHash, logIndex)` is unique, so one return
+ * authorizes one release. The matched outpoint is returned in canonical form so
+ * the caller stores exactly what was verified (not a client-supplied spelling).
  */
 export class BigtAiRedemptionVerifier {
   constructor(
@@ -181,30 +218,43 @@ export class BigtAiRedemptionVerifier {
     private readonly assets: AssetConfig[],
   ) {}
 
-  async check(operation: Operation, asset: AssetConfig): Promise<RedemptionCheck> {
-    if (!operation.ref || operation.ref.chain !== 'l1-order') return 'invalid';
-    if (!asset.l1TokenId || !asset.redemptionAddress) return 'invalid';
+  async check(operation: Operation, asset: AssetConfig): Promise<RedemptionMatch> {
+    if (!operation.ref || operation.ref.chain !== 'l1-order') return { status: 'invalid' };
+    if (!asset.l1TokenId || !asset.redemptionAddress) return { status: 'invalid' };
     const want = BigInt(operation.l1AmountRaw);
-    if (want <= 0n) return 'invalid';
+    if (want <= 0n) return { status: 'invalid' };
+    const memo = redemptionMemo(asset.assetId, operation.l1AmountRaw, operation.account);
 
     const txHash = normalizeHash(operation.ref.txHash);
     const outputs = await this.wallet.tokenOutputs(asset.l1TokenId);
     const inTx = outputs.filter((output) => normalizeHash(output.txHash) === txHash);
     if (inTx.length === 0) {
       // The transaction may not be indexed by this node yet; the caller retries.
-      return 'pending';
+      return { status: 'pending' };
     }
     for (const output of inTx) {
       if (output.tokenId !== asset.l1TokenId) continue;
       if (output.address !== asset.redemptionAddress) continue;
       if (output.valueRaw !== want) continue;
-      return output.confirmed ? 'ok' : 'pending';
+      // Binding: only the account that signed the intent can claim this return.
+      if (output.memo !== memo) continue;
+      return output.confirmed
+        ? { status: 'ok', txHash: normalizeHash(output.txHash), logIndex: output.index }
+        : { status: 'pending' };
     }
-    return 'invalid';
+    return { status: 'invalid' };
   }
 
   async verify(operation: Operation, asset: AssetConfig): Promise<boolean> {
-    return (await this.check(operation, asset)) === 'ok';
+    const match = await this.check(operation, asset);
+    if (match.status !== 'ok' || match.txHash === undefined || match.logIndex === undefined) {
+      return false;
+    }
+    // Re-check the stored outpoint, not just "some output in this tx matched":
+    // a tampered `logIndex` must fail closed.
+    if (!operation.ref) return false;
+    return normalizeHash(operation.ref.txHash) === match.txHash
+      && operation.ref.logIndex === match.logIndex;
   }
 }
 

@@ -605,21 +605,24 @@ A redemption needs **two** things: the L1 account authorizes the destination,
 and the tokens actually come back on L1.
 
 1. The wallet sends the amount with `payOnLayer1` to the asset's
-   `redemptionAddress` (published in `/assets`), then builds and signs the
-   intent with the L1 key (PQ or legacy EC):
+   `redemptionAddress` (published in `/assets`) **with the funding memo**
+   `wallet-redeem:v1:<assetId>:<amountRaw>:<L1 account>`, then builds and signs
+   the intent with the L1 key (PQ or legacy EC):
    `{domain, network, assetId, account, amountRaw, destination, l1TxHash, nonce, expiry}`.
    See [`redeem-intent.md`](./redeem-intent.md) for the exact bytes and a
    `bigt-ai-ts` signing example. A hash can also be pasted into the card's
-   `redeem-funding-tx` field if the tokens were sent elsewhere.
+   `redeem-funding-tx` field — that transfer must carry the memo shown by the
+   card.
 2. `POST /redeem-intents` with the proof (`keyType`, `publicKey`, `signature`).
 3. The server verifies the signature and the fields, then verifies `l1TxHash`:
-   a confirmed output of the **exact** token and amount to `redemptionAddress`.
-   Not yet indexed/confirmed is `409 { retryable: true }`; the wallet retries the
-   same intent.
+   a confirmed output of the **exact** token and amount to `redemptionAddress`
+   carrying this account's memo. Not yet indexed/confirmed is
+   `409 { retryable: true }`; the wallet retries the same intent.
 4. Only then does it atomically store the intent (unique nonce + hash), create
-   the `redeem` operation with `destination` and the L1 reference, and debit the
-   holder balance when it covers the amount. The unique
-   `(chain, tx_hash, log_index)` means one L1 return backs one release.
+   the `redeem` operation with `destination` and the **canonical matched
+   outpoint** (hash + real output index), and debit the holder balance when it
+   covers the amount. The unique `(chain, tx_hash, log_index)` means one L1
+   return backs one release.
 5. The executor re-verifies the L1 output at finality and calls
    `Treasury.release(assetId, account, destination, externalRaw)`; supply and
    reserve drop by the same amount and `health` stays clean. `payout_ref` is
@@ -706,13 +709,15 @@ Incidents:
 6. Deposit while the issuer is stopped, then start it: exactly one mint.
 7. Withdraw 25 USDT self-custody to an exchange deposit address; confirm
    `success`, fee paid in ETH only, notification + explorer link.
-8. Redeem 10 USDT: send 10 L1 USDT to `redemptionAddress`, sign an intent with
-   that transaction hash, `POST /redeem-intents` → `200`, operation `redeem`
-   has the destination and the L1 reference. Without the treasury command it
-   fails with the treasury message; with `TREASURY_RELEASE_COMMAND` +
+8. Redeem 10 USDT: send 10 L1 USDT to `redemptionAddress` **with the memo**
+   shown by the card, sign an intent with that transaction hash,
+   `POST /redeem-intents` → `200`, operation `redeem` has the destination and
+   the canonical matched outpoint. Without the treasury command it fails with
+   the treasury message; with `TREASURY_RELEASE_COMMAND` +
    `ALLOW_LIVE_TREASURY=1` the command receives the verified destination.
-   An unsigned `/redeem-requests`, an intent with no confirmed L1 return, and a
-   second intent reusing the same L1 transaction all fail closed.
+   An unsigned `/redeem-requests`, a return without the memo, an intent with no
+   confirmed L1 return, and a second intent reusing the same L1 transaction all
+   fail closed.
 9. Sell the L1 USDT to a second wallet on the spot market, then try to redeem
    from the seller's old issuer balance: the request is refused because the
    seller no longer holds an L1 transfer to return (the buyer can redeem).

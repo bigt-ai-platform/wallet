@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS operations (
     destination   TEXT,
     -- external payout/mint tx hash, written before the ledger settles
     payout_ref    TEXT,
+    -- token-creation reference for a mint (or 'attempted' while the signer runs)
+    issuance_ref  TEXT,
     attempts      INTEGER NOT NULL DEFAULT 0,
     error         TEXT,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -58,11 +60,28 @@ CREATE TABLE IF NOT EXISTS operations (
 ALTER TABLE operations ADD COLUMN IF NOT EXISTS destination TEXT;
 -- Existing databases: add the payout/mint transaction hash.
 ALTER TABLE operations ADD COLUMN IF NOT EXISTS payout_ref TEXT;
+-- Existing databases: add the reissuance reference for mints.
+ALTER TABLE operations ADD COLUMN IF NOT EXISTS issuance_ref TEXT;
 
 -- idempotency: one operation per observed chain event
 CREATE UNIQUE INDEX IF NOT EXISTS operations_chain_ref
     ON operations (chain, lower(tx_hash), log_index)
     WHERE chain IS NOT NULL;
+
+-- Redemption refs are stored as the verifier's canonical outpoint (lower-case,
+-- no `0x`). Normalize pre-rename rows so the unique index sees one identity;
+-- a collision means two rows already authorize the same return and must be
+-- reconciled by hand (warn instead of failing the whole schema apply).
+DO $$
+BEGIN
+    UPDATE operations
+       SET tx_hash = lower(regexp_replace(tx_hash, '^0x', ''))
+     WHERE kind = 'redeem'
+       AND tx_hash IS NOT NULL
+       AND tx_hash <> lower(regexp_replace(tx_hash, '^0x', ''));
+EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION 'duplicate canonical redeem tx refs exist; reconcile operations before deploying';
+END $$;
 
 CREATE INDEX IF NOT EXISTS operations_account_created
     ON operations (account, created_at DESC);
@@ -87,6 +106,19 @@ CREATE TABLE IF NOT EXISTS redeem_intents (
     PRIMARY KEY (asset_id, account, nonce),
     CONSTRAINT redeem_intent_hash_unique UNIQUE (intent_hash)
 );
+
+-- Mint capacity reservations: a worker reserves headroom (reserve + caps)
+-- before calling the L1 signer, so two concurrent mints cannot both pass the
+-- execution-time check. The settlement consumes the row.
+CREATE TABLE IF NOT EXISTS mint_reservations (
+    operation_id TEXT PRIMARY KEY,
+    asset_id     TEXT NOT NULL REFERENCES assets (asset_id),
+    amount_raw   NUMERIC(38, 0) NOT NULL CHECK (amount_raw > 0),
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS mint_reservations_asset
+    ON mint_reservations (asset_id);
 
 CREATE TABLE IF NOT EXISTS holder_balances (
     asset_id      TEXT NOT NULL REFERENCES assets (asset_id),

@@ -82,10 +82,10 @@ describe('USDT bridge settings', () => {
     }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const result = await getDepositAddress('l1-account');
+    const result = await getDepositAddress('l1-account', 'usdt');
     expect(result?.address).toBe('0x1111111111111111111111111111111111111111');
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://issuer.example/deposit-address?account=l1-account',
+      'https://issuer.example/deposit-address?account=l1-account&assetId=usdt',
       { headers: { authorization: 'Bearer secret' } },
     );
     vi.unstubAllGlobals();
